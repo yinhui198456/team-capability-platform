@@ -19,13 +19,13 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql://tcp:tcp_dev_only@postgres:5432/tcp
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      CORS_ORIGINS: http://localhost:5173,http://localhost:18081
       PORT: 8000
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "18001:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
@@ -38,7 +38,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "18081:80"
 
 volumes:
   postgres-data:

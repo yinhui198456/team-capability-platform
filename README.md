@@ -641,9 +641,9 @@ docker compose up --build
 
 服务地址：
 
-- 前端工程壳：<http://localhost:8080>
-- FastAPI 健康检查：<http://localhost:8000/health>
-- FastAPI 数据库就绪检查：<http://localhost:8000/ready>
+- 前端工程壳：<http://localhost:18081>
+- FastAPI 健康检查：<http://localhost:18001/health>
+- FastAPI 数据库就绪检查：<http://localhost:18001/ready>
 - PostgreSQL：`localhost:5432`，数据库 `tcp`，用户 `tcp`，开发密码 `tcp_dev_only`
 
 停止服务：
