@@ -1,10 +1,10 @@
 import asyncio
+import json
 from pathlib import Path
 
 import psycopg
 
-from app.catalog.repository import get_capability_model, list_learning_resources
-from app.main import lifespan
+from app.main import app, lifespan
 from app.settings import settings
 
 WORKBOOK_DIR = Path("/app/capability-model")
@@ -27,14 +27,15 @@ def test_image_workbooks_bootstrap_the_catalog_baseline() -> None:
     assert all((WORKBOOK_DIR / workbook).is_file() for workbook in WORKBOOKS)
 
     reset_catalog()
-    asyncio.run(_initialize())
+    model_status, model, resource_status, resources = asyncio.run(
+        _initialize_and_request_catalog()
+    )
 
-    with psycopg.connect(settings.database_url) as connection:
-        model = get_capability_model(connection, None)
-        resources = list_learning_resources(connection, None, None, None)
-
+    assert model_status == 200
     assert model is not None
-    assert {domain["code"] for domain in model["domains"]} == {
+    domains = model["domains"]
+    assert len(domains) == 6
+    assert {domain["code"] for domain in domains} == {
         "P01",
         "P02",
         "P03",
@@ -42,18 +43,52 @@ def test_image_workbooks_bootstrap_the_catalog_baseline() -> None:
         "C02",
         "C03",
     }
-    assert sum(len(domain["children"]) for domain in model["domains"]) == 47
+    assert sum(len(domain["children"]) for domain in domains) == 47
     assert (
-        sum(
-            len(l2["children"])
-            for domain in model["domains"]
-            for l2 in domain["children"]
-        )
+        sum(len(l2["children"]) for domain in domains for l2 in domain["children"])
         == 310
     )
+    assert resource_status == 200
     assert len(resources) == 95
 
 
-async def _initialize() -> None:
+async def _initialize_and_request_catalog() -> tuple[int, object, int, object]:
     async with lifespan(None):
-        pass
+        model_status, model = await _request("/api/capability-model")
+        resource_status, resources = await _request("/api/learning-resources")
+    return model_status, model, resource_status, resources
+
+
+async def _request(path: str) -> tuple[int, object]:
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        },
+        receive,
+        send,
+    )
+    status = next(message["status"] for message in messages if "status" in message)
+    body = b"".join(
+        message["body"]
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return status, json.loads(body)
