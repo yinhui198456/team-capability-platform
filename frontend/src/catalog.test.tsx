@@ -11,6 +11,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 
+function emptyDomain(code: string) {
+  return {
+    code,
+    name: `${code} 允许域`,
+    p4_description: null,
+    p5_description: null,
+    p6_description: null,
+    p7_description: null,
+    p8_description: null,
+    children: [],
+  }
+}
+
 const model = {
   code: '技术架构与开发专业线能力模型',
   version: 'V1.0',
@@ -64,6 +77,15 @@ const model = {
           ],
         },
       ],
+    },
+    emptyDomain('P02'),
+    emptyDomain('P03'),
+    emptyDomain('C01'),
+    emptyDomain('C02'),
+    emptyDomain('C03'),
+    {
+      ...emptyDomain('P04'),
+      name: 'P04 扩展能力域',
     },
   ],
 }
@@ -159,6 +181,10 @@ describe('catalog routes', () => {
     expect(screen.getByText(/来源待补充 \/ 未关联/)).toBeTruthy()
     expect(screen.getByText('P4 描述')).toBeTruthy()
     expect(screen.getByText(/产品体系材料/)).toBeTruthy()
+    for (const code of ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']) {
+      expect(screen.getByText(new RegExp(`${code} ·`))).toBeTruthy()
+    }
+    expect(screen.queryByText(/P04 扩展能力域/)).toBeNull()
   })
 
   it('filters resources by name, status, and L3 then links reverse L3 details', async () => {
