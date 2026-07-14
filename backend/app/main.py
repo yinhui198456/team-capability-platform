@@ -1,10 +1,23 @@
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from pathlib import Path
+
 import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .catalog.importer import ensure_catalog_initialized
 from .settings import settings
 
-app = FastAPI(title="TCP Backend", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    with psycopg.connect(settings.database_url) as connection:
+        ensure_catalog_initialized(connection, Path("/app/capability-model"))
+    yield
+
+
+app = FastAPI(title="TCP Backend", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
