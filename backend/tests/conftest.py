@@ -8,6 +8,7 @@ from app.settings import settings
 TEST_DATABASE = "tcp_test"
 TEST_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/tcp_test"
 ADMIN_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/postgres"
+TEST_DATABASE_LOCK_KEY = 651042
 
 
 def _ensure_test_database() -> None:
@@ -29,13 +30,26 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def isolated_test_database() -> Iterator[None]:
-    _ensure_test_database()
-    development_database_url = settings.database_url
-    settings.database_url = TEST_DATABASE_URL
+    lock_connection = psycopg.connect(ADMIN_DATABASE_URL, autocommit=True)
+    lock_acquired = False
     try:
-        yield
+        lock_connection.execute(
+            "SELECT pg_advisory_lock(%s)", (TEST_DATABASE_LOCK_KEY,)
+        )
+        lock_acquired = True
+        development_database_url = settings.database_url
+        _ensure_test_database()
+        settings.database_url = TEST_DATABASE_URL
+        try:
+            yield
+        finally:
+            settings.database_url = development_database_url
     finally:
-        settings.database_url = development_database_url
+        if lock_acquired:
+            lock_connection.execute(
+                "SELECT pg_advisory_unlock(%s)", (TEST_DATABASE_LOCK_KEY,)
+            )
+        lock_connection.close()
 
 
 @pytest.fixture
