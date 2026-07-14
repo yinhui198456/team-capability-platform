@@ -112,7 +112,12 @@ const resources = [
 ]
 
 const detail = {
-  ...resources[0],
+  material_code: 'P01-M001',
+  name: '产品体系材料',
+  material_type: '文档',
+  source_text: '内部知识库',
+  purpose: '了解产品定位',
+  status: '已提供附件',
   l3_nodes: [
     {
       code: 'P01.01.01',

@@ -49,7 +49,13 @@ export type Resource = {
   l3_count: number
 }
 
-export type ResourceDetail = Resource & {
+export type ResourceDetail = {
+  material_code: string
+  name: string
+  material_type: string
+  source_text: string | null
+  purpose: string | null
+  status: string
   l3_nodes: Array<{
     code: string
     name: string
