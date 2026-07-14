@@ -15,7 +15,7 @@ export type L3Node = {
   recommended_start_level: string | null
   materials_text: string
   expected_output: string | null
-  estimated_hours: number | null
+  estimated_hours: string | null
   resources: ResourceSummary[]
   unmatched_materials: string[]
 }

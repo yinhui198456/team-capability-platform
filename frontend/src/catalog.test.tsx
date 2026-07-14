@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
+import type { CapabilityModel } from './catalog'
 
 function emptyDomain(code: string) {
   return {
@@ -24,7 +25,7 @@ function emptyDomain(code: string) {
   }
 }
 
-const model = {
+const model: CapabilityModel = {
   code: '技术架构与开发专业线能力模型',
   version: 'V1.0',
   domains: [
@@ -47,7 +48,7 @@ const model = {
               recommended_start_level: 'L1',
               materials_text: 'P01-M001、A8',
               expected_output: '能力说明',
-              estimated_hours: 8,
+              estimated_hours: '8',
               resources: [
                 {
                   material_code: 'P01-M001',
@@ -185,6 +186,7 @@ describe('catalog routes', () => {
     ).toBeTruthy()
     expect(screen.getByText(/来源待补充 \/ 未关联/)).toBeTruthy()
     expect(screen.getByText('P4 描述')).toBeTruthy()
+    expect(screen.getByText('8 小时')).toBeTruthy()
     expect(screen.getByText(/产品体系材料/)).toBeTruthy()
     for (const code of ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']) {
       expect(screen.getByText(new RegExp(`${code} ·`))).toBeTruthy()
