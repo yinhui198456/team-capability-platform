@@ -123,6 +123,78 @@ def test_rejects_learning_resource_link_for_non_l3_node(
             )
 
 
+@pytest.mark.parametrize(
+    ("node_key", "parent_key"),
+    [("l2", "l3"), ("l3", "l1")],
+)
+def test_rejects_invalid_capability_node_parent_updates(
+    connection: psycopg.Connection, node_key: str, parent_key: str
+) -> None:
+    create_catalog_schema(connection)
+    ids = seed_catalog_nodes(connection)
+
+    with pytest.raises(psycopg.Error):
+        with connection.transaction():
+            connection.execute(
+                "UPDATE capability_node SET parent_node_id = %s WHERE id = %s",
+                (ids[parent_key], ids[node_key]),
+            )
+
+
+def test_rejects_capability_node_parent_update_across_models(
+    connection: psycopg.Connection,
+) -> None:
+    create_catalog_schema(connection)
+    ids = seed_catalog_nodes(connection)
+    other_model_id = connection.execute(
+        """
+        INSERT INTO capability_model
+            (code, name, version, source_workbook, source_sheet, source_row)
+        VALUES ('other-model', 'Other model', '1', 'test.xlsx', 'Sheet1', 1)
+        RETURNING id
+        """
+    ).fetchone()[0]
+    other_l1_id = connection.execute(
+        """
+        INSERT INTO capability_node (
+            model_id, parent_node_id, node_type, code, name, sort_order,
+            source_workbook, source_sheet, source_row
+        ) VALUES (%s, NULL, 'L1', 'U01', 'U01', 1, 'test.xlsx', 'Sheet1', 1)
+        RETURNING id
+        """,
+        (other_model_id,),
+    ).fetchone()[0]
+
+    with pytest.raises(psycopg.Error):
+        with connection.transaction():
+            connection.execute(
+                "UPDATE capability_node SET parent_node_id = %s WHERE id = %s",
+                (other_l1_id, ids["l2"]),
+            )
+
+
+def test_rejects_learning_resource_link_update_for_non_l3_node(
+    connection: psycopg.Connection,
+) -> None:
+    create_catalog_schema(connection)
+    ids = seed_catalog_nodes(connection)
+    connection.execute(
+        """
+        INSERT INTO capability_node_resource (node_id, resource_id)
+        VALUES (%s, %s)
+        """,
+        (ids["l3"], ids["resource"]),
+    )
+
+    with pytest.raises(psycopg.Error):
+        with connection.transaction():
+            connection.execute(
+                "UPDATE capability_node_resource SET node_id = %s "
+                "WHERE resource_id = %s",
+                (ids["l2"], ids["resource"]),
+            )
+
+
 def test_import_requires_the_two_fixed_workbooks(
     connection: psycopg.Connection, tmp_path: Path
 ) -> None:
