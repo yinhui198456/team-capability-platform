@@ -67,7 +67,8 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS capability_node_resource (
             node_id BIGINT NOT NULL REFERENCES capability_node(id) ON DELETE CASCADE,
-            resource_id BIGINT NOT NULL REFERENCES learning_resource(id) ON DELETE CASCADE,
+            resource_id BIGINT NOT NULL
+                REFERENCES learning_resource(id) ON DELETE CASCADE,
             PRIMARY KEY (node_id, resource_id)
         )
         """

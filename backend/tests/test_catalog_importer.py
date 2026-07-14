@@ -5,11 +5,10 @@ from shutil import copy2
 
 import psycopg
 import pytest
+from openpyxl import load_workbook
 
 from app.catalog.importer import ensure_catalog_initialized, import_catalog
 from app.catalog.schema import create_catalog_schema
-from openpyxl import load_workbook
-
 
 WORKBOOK_DIR = Path("/capability-model")
 MODEL_WORKBOOK = "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx"
@@ -49,7 +48,12 @@ def test_imports_six_domains_and_catalog_baseline(
     report = import_catalog(WORKBOOK_DIR, connection)
 
     assert report.model_count == 1
-    assert (report.l1_count, report.l2_count, report.l3_count, report.resource_count) == (
+    assert (
+        report.l1_count,
+        report.l2_count,
+        report.l3_count,
+        report.resource_count,
+    ) == (
         6,
         47,
         310,
@@ -78,9 +82,12 @@ def test_preserves_materials_text_and_warns_for_unmatched_a8(
     ).fetchone()[0]
     assert materials_text == "P01-M001、P01-M007"
     assert "A8" in report.unmatched_materials
-    assert connection.execute(
-        "SELECT count(*) FROM learning_resource WHERE material_code = %s", ("A8",)
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM learning_resource WHERE material_code = %s", ("A8",)
+        ).fetchone()[0]
+        == 0
+    )
     assert count(connection, "capability_node_resource") > 0
 
 
@@ -89,7 +96,10 @@ def test_unknown_l1_rejects_import_without_replacing_existing_catalog(
 ) -> None:
     create_catalog_schema(connection)
     import_catalog(WORKBOOK_DIR, connection)
-    before = (count(connection, "capability_model"), count(connection, "capability_node"))
+    before = (
+        count(connection, "capability_model"),
+        count(connection, "capability_node"),
+    )
 
     copy2(WORKBOOK_DIR / MODEL_WORKBOOK, tmp_path / MODEL_WORKBOOK)
     copied_plan = tmp_path / PLAN_WORKBOOK
@@ -103,10 +113,15 @@ def test_unknown_l1_rejects_import_without_replacing_existing_catalog(
     with pytest.raises(ValueError, match="unknown L1"):
         import_catalog(tmp_path, connection)
 
-    assert (count(connection, "capability_model"), count(connection, "capability_node")) == before
+    assert (
+        count(connection, "capability_model"),
+        count(connection, "capability_node"),
+    ) == before
 
 
-def test_second_initialization_does_not_reimport(connection: psycopg.Connection) -> None:
+def test_second_initialization_does_not_reimport(
+    connection: psycopg.Connection,
+) -> None:
     first_report = ensure_catalog_initialized(connection, WORKBOOK_DIR)
     first_model_id = connection.execute("SELECT id FROM capability_model").fetchone()[0]
 
@@ -114,4 +129,7 @@ def test_second_initialization_does_not_reimport(connection: psycopg.Connection)
 
     assert first_report is not None
     assert second_report is None
-    assert connection.execute("SELECT id FROM capability_model").fetchone()[0] == first_model_id
+    assert (
+        connection.execute("SELECT id FROM capability_model").fetchone()[0]
+        == first_model_id
+    )

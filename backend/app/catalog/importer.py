@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import psycopg
 from openpyxl import load_workbook
 
 from .repository import catalog_is_empty
 from .schema import create_catalog_schema
-
 
 MODEL_WORKBOOK = "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx"
 PLAN_WORKBOOK = "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx"
@@ -130,7 +129,7 @@ def _parse_plan(plan_path: Path) -> tuple[list[_L2], list[_L3]]:
         for row_number, row in enumerate(
             workbook[SELF_ASSESSMENT_SHEET].iter_rows(min_row=2, values_only=True), 2
         ):
-            category = _required(row[0], "capability category", row_number)
+            _required(row[0], "capability category", row_number)
             l1_code = _required(row[1], "L1 code", row_number)
             l1_name = _required(row[2], "L1 name", row_number)
             l2_code = _required(row[3], "L2 code", row_number)
@@ -144,7 +143,9 @@ def _parse_plan(plan_path: Path) -> tuple[list[_L2], list[_L3]]:
             if l1_code not in DOMAINS:
                 raise ValueError(f"unknown L1 code {l1_code} at row {row_number}")
             if l1_name != DOMAINS[l1_code]:
-                raise ValueError(f"inconsistent L1 name for {l1_code} at row {row_number}")
+                raise ValueError(
+                    f"inconsistent L1 name for {l1_code} at row {row_number}"
+                )
             if not l2_code.startswith(f"{l1_code}.") or not l3_code.startswith(
                 f"{l2_code}."
             ):
@@ -202,7 +203,9 @@ def _parse_resources(plan_path: Path) -> dict[str, _Resource]:
         workbook.close()
 
 
-def _unmatched_materials(l3_nodes: list[_L3], resources: dict[str, _Resource]) -> tuple[str, ...]:
+def _unmatched_materials(
+    l3_nodes: list[_L3], resources: dict[str, _Resource]
+) -> tuple[str, ...]:
     unmatched: list[str] = []
     for node in l3_nodes:
         codes = MATERIAL_CODE.findall(node.materials_text)
@@ -232,7 +235,14 @@ def import_catalog(workbook_dir: Path, connection: psycopg.Connection) -> Import
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (MODEL_CODE, "技术架构与开发专业线能力胜任模型", MODEL_VERSION, MODEL_WORKBOOK, MODEL_SHEET, 1),
+            (
+                MODEL_CODE,
+                "技术架构与开发专业线能力胜任模型",
+                MODEL_VERSION,
+                MODEL_WORKBOOK,
+                MODEL_SHEET,
+                1,
+            ),
         ).fetchone()[0]
         node_ids: dict[str, int] = {}
         for order, node in enumerate(l1_nodes, 1):
@@ -241,8 +251,11 @@ def import_catalog(workbook_dir: Path, connection: psycopg.Connection) -> Import
                 INSERT INTO capability_node (
                     model_id, parent_node_id, node_type, code, name, sort_order,
                     l1_category, p4_description, p5_description, p6_description,
-                    p7_description, p8_description, source_workbook, source_sheet, source_row
-                ) VALUES (%s, NULL, 'L1', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    p7_description, p8_description, source_workbook, source_sheet,
+                    source_row
+                ) VALUES (
+                    %s, NULL, 'L1', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
                 RETURNING id
                 """,
                 (
@@ -266,19 +279,42 @@ def import_catalog(workbook_dir: Path, connection: psycopg.Connection) -> Import
                 ) VALUES (%s, %s, 'L2', %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (model_id, node_ids[node.parent_code], node.code, node.name, order, PLAN_WORKBOOK, SELF_ASSESSMENT_SHEET, node.source_row),
+                (
+                    model_id,
+                    node_ids[node.parent_code],
+                    node.code,
+                    node.name,
+                    order,
+                    PLAN_WORKBOOK,
+                    SELF_ASSESSMENT_SHEET,
+                    node.source_row,
+                ),
             ).fetchone()[0]
         for order, node in enumerate(l3_nodes, 1):
             node_ids[node.code] = connection.execute(
                 """
                 INSERT INTO capability_node (
                     model_id, parent_node_id, node_type, code, name, sort_order,
-                    recommended_start_level, materials_text, expected_output, estimated_hours,
+                    recommended_start_level, materials_text, expected_output,
+                    estimated_hours,
                     source_workbook, source_sheet, source_row
                 ) VALUES (%s, %s, 'L3', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (model_id, node_ids[node.parent_code], node.code, node.name, order, node.start_level, node.materials_text, node.expected_output, node.estimated_hours, PLAN_WORKBOOK, SELF_ASSESSMENT_SHEET, node.source_row),
+                (
+                    model_id,
+                    node_ids[node.parent_code],
+                    node.code,
+                    node.name,
+                    order,
+                    node.start_level,
+                    node.materials_text,
+                    node.expected_output,
+                    node.estimated_hours,
+                    PLAN_WORKBOOK,
+                    SELF_ASSESSMENT_SHEET,
+                    node.source_row,
+                ),
             ).fetchone()[0]
         resource_ids: dict[str, int] = {}
         for resource in resources.values():
@@ -290,7 +326,17 @@ def import_catalog(workbook_dir: Path, connection: psycopg.Connection) -> Import
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (resource.code, resource.name, resource.material_type, resource.source_text, resource.purpose, resource.status, PLAN_WORKBOOK, RESOURCE_SHEET, resource.source_row),
+                (
+                    resource.code,
+                    resource.name,
+                    resource.material_type,
+                    resource.source_text,
+                    resource.purpose,
+                    resource.status,
+                    PLAN_WORKBOOK,
+                    RESOURCE_SHEET,
+                    resource.source_row,
+                ),
             ).fetchone()[0]
         links = {
             (node_ids[node.code], resource_ids[code])
@@ -300,11 +346,20 @@ def import_catalog(workbook_dir: Path, connection: psycopg.Connection) -> Import
         }
         for node_id, resource_id in links:
             connection.execute(
-                "INSERT INTO capability_node_resource (node_id, resource_id) VALUES (%s, %s)",
+                "INSERT INTO capability_node_resource (node_id, resource_id) "
+                "VALUES (%s, %s)",
                 (node_id, resource_id),
             )
 
-    return ImportReport(1, len(l1_nodes), len(l2_nodes), len(l3_nodes), len(resources), len(links), unmatched)
+    return ImportReport(
+        1,
+        len(l1_nodes),
+        len(l2_nodes),
+        len(l3_nodes),
+        len(resources),
+        len(links),
+        unmatched,
+    )
 
 
 def ensure_catalog_initialized(
