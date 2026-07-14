@@ -47,6 +47,22 @@ const model = {
             },
           ],
         },
+        {
+          code: 'P01.02',
+          name: '其他能力项',
+          children: [
+            {
+              code: 'P01.02.01',
+              name: '默认折叠能力',
+              recommended_start_level: null,
+              materials_text: '',
+              expected_output: null,
+              estimated_hours: null,
+              resources: [],
+              unmatched_materials: [],
+            },
+          ],
+        },
       ],
     },
   ],
@@ -215,6 +231,9 @@ describe('catalog routes', () => {
     render(<App />)
 
     await screen.findByText(/TDC \/ TDH \/ ArgoDB \/ TDS 产品定位/)
-    expect(document.getElementById('P01.01.01')).toBeTruthy()
+    const target = document.getElementById('P01.01.01')
+    expect(target).toBeTruthy()
+    expect(target?.closest('details')?.open).toBe(true)
+    expect(screen.getByText(/其他能力项/).closest('details')?.open).toBe(false)
   })
 })

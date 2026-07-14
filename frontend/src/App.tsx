@@ -62,11 +62,12 @@ function CapabilityModelPage() {
   const { data: model, error } = useCatalog<CapabilityModel>(
     '/api/capability-model',
   )
+  const targetCode = window.location.hash.slice(1)
 
   useEffect(() => {
-    const target = window.location.hash.slice(1)
-    if (model && target) document.getElementById(target)?.scrollIntoView?.()
-  }, [model])
+    if (model && targetCode)
+      document.getElementById(targetCode)?.scrollIntoView?.()
+  }, [model, targetCode])
 
   return (
     <section className="page">
@@ -100,7 +101,11 @@ function CapabilityModelPage() {
               ))}
             </dl>
             {domain.children.map((l2) => (
-              <details className="l2-node" key={l2.code}>
+              <details
+                className="l2-node"
+                key={l2.code}
+                open={l2.children.some((l3) => l3.code === targetCode)}
+              >
                 <summary>
                   {l2.code} · {l2.name}
                 </summary>
