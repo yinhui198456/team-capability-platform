@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
   allL3,
@@ -13,7 +13,7 @@ import {
 
 function L3Details({ node }: { node: L3Node }) {
   return (
-    <article className="l3-node">
+    <article className="l3-node" id={node.code}>
       <h4>
         {node.code} · {node.name}
       </h4>
@@ -62,6 +62,11 @@ function CapabilityModelPage() {
   const { data: model, error } = useCatalog<CapabilityModel>(
     '/api/capability-model',
   )
+
+  useEffect(() => {
+    const target = window.location.hash.slice(1)
+    if (model && target) document.getElementById(target)?.scrollIntoView?.()
+  }, [model])
 
   return (
     <section className="page">
@@ -219,7 +224,9 @@ function LearningResourcesPage() {
             <ul>
               {detail.l3_nodes.map((node) => (
                 <li key={node.code}>
-                  {node.code} · {node.name}
+                  <a href={`/capability/model#${node.code}`}>
+                    {node.code} · {node.name}
+                  </a>
                 </li>
               ))}
             </ul>
@@ -234,6 +241,17 @@ function LearningResourcesPage() {
 
 export function App() {
   const pathname = window.location.pathname
+
+  if (
+    pathname !== '/capability/model' &&
+    pathname !== '/operations/resources'
+  ) {
+    return (
+      <main className="catalog-shell">
+        <p>页面不存在</p>
+      </main>
+    )
+  }
 
   return (
     <main className="catalog-shell">

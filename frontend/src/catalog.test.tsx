@@ -113,6 +113,12 @@ beforeEach(() => {
       if (input.includes('name=%E4%BA%A7%E5%93%81%E4%BD%93%E7%B3%BB')) {
         return response([resources[0]])
       }
+      if (
+        input.includes('status=%E5%B7%B2%E6%8F%90%E4%BE%9B%E9%99%84%E4%BB%B6')
+      ) {
+        return response([resources[0]])
+      }
+      if (input.includes('l3_code=P01.01.01')) return response([resources[0]])
       return response(resources)
     }),
   )
@@ -139,7 +145,7 @@ describe('catalog routes', () => {
     expect(screen.getByText(/产品体系材料/)).toBeTruthy()
   })
 
-  it('renders resources, filters by name, and shows reverse L3 links', async () => {
+  it('filters resources by name, status, and L3 then links reverse L3 details', async () => {
     window.history.pushState({}, '', '/operations/resources')
     render(<App />)
 
@@ -148,24 +154,67 @@ describe('catalog routes', () => {
       target: { value: '产品体系' },
     })
     await waitFor(() => expect(screen.queryByText('有效未关联资源')).toBeNull())
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('状态'), {
+      target: { value: '已提供附件' },
+    })
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/learning-resources?status=%E5%B7%B2%E6%8F%90%E4%BE%9B%E9%99%84%E4%BB%B6',
+      ),
+    )
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('L3'), {
+      target: { value: 'P01.01.01' },
+    })
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/learning-resources?l3_code=P01.01.01',
+      ),
+    )
     fireEvent.change(screen.getByLabelText('资源详情'), {
       target: { value: 'P01-M001' },
     })
 
-    expect(
-      await screen.findByText('P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位'),
-    ).toBeTruthy()
+    const reverseLink = await screen.findByRole('link', {
+      name: 'P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位',
+    })
+    expect(reverseLink.getAttribute('href')).toBe('/capability/model#P01.01.01')
   })
 
-  it('does not render mutation or other-domain controls', async () => {
-    window.history.pushState({}, '', '/capability/model')
+  it.each(['/capability/model', '/operations/resources'])(
+    'does not render mutation or other-domain controls on %s',
+    async (path) => {
+      window.history.pushState({}, '', path)
+      render(<App />)
+
+      await screen.findByText(
+        path === '/capability/model' ? /Data Infra 能力/ : '有效未关联资源',
+      )
+      expect(
+        [...document.querySelectorAll('button, a, label')].some((element) =>
+          /导入|添加|编辑|删除|保存|提交|上传|导出|登录|账号|Gap|成长目标|评估|计划|任务|Evidence/i.test(
+            element.textContent ?? '',
+          ),
+        ),
+      ).toBe(false)
+    },
+  )
+
+  it('renders an unknown-route state without loading catalog data', () => {
+    window.history.pushState({}, '', '/')
     render(<App />)
 
-    await screen.findByText(/Data Infra 能力/)
-    expect(
-      screen.queryByText(
-        /导入|添加|编辑|删除|保存|提交|登录|用户|评估|计划|任务|Evidence|Review/i,
-      ),
-    ).toBeNull()
+    expect(screen.getByText('页面不存在')).toBeTruthy()
+    expect(screen.queryByText('能力模型')).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('locates a linked L3 through the capability-model hash', async () => {
+    window.history.pushState({}, '', '/capability/model#P01.01.01')
+    render(<App />)
+
+    await screen.findByText(/TDC \/ TDH \/ ArgoDB \/ TDS 产品定位/)
+    expect(document.getElementById('P01.01.01')).toBeTruthy()
   })
 })
