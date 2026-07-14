@@ -16,7 +16,9 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql://tcp:tcp_dev_only@postgres:5432/tcp
       CORS_ORIGINS: http://localhost:5173,http://localhost:18081
