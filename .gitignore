@@ -16,4 +16,5 @@ coverage/
 
 postgres-data/
 runtime/
+.superpowers/
 .DS_Store
