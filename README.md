@@ -621,9 +621,9 @@ MVP
 
 # 7. 开发环境与工程初始化
 
-当前仓库已完成最小工程脚手架初始化，技术基线为 React + TypeScript + Ant Design Pro/ProComponents、FastAPI、PostgreSQL 和 Docker Compose。
+当前仓库已完成工程初始化及迭代 2 的只读目录能力，技术基线为 React + TypeScript + Ant Design Pro/ProComponents、FastAPI、PostgreSQL 和 Docker Compose。
 
-本阶段明确不包含业务页面、业务路由、业务 API、认证、Evidence 文件处理、数据库迁移或业务数据表。
+迭代 2 仅交付能力模型与学习资源目录的匿名只读展示：启动时由后端镜像内固定 Excel 源导入六个 MVP 域及其目录资料。数据库仅包含四张 catalog 表：`capability_model`、`capability_node`、`learning_resource`、`capability_node_resource`。
 
 ## 7.1 前置环境
 
@@ -641,7 +641,8 @@ docker compose up --build
 
 服务地址：
 
-- 前端工程壳：<http://localhost:18081>
+- 能力模型只读页：<http://localhost:18081/capability/model>
+- 学习资源只读页：<http://localhost:18081/operations/resources>
 - FastAPI 健康检查：<http://localhost:18001/health>
 - FastAPI 数据库就绪检查：<http://localhost:18001/ready>
 - PostgreSQL：`localhost:5432`，数据库 `tcp`，用户 `tcp`，开发密码 `tcp_dev_only`
@@ -652,7 +653,7 @@ docker compose up --build
 docker compose down
 ```
 
-Compose 只创建 PostgreSQL 命名卷，不包含初始化 SQL 或业务表。
+Compose 创建 PostgreSQL 命名卷；后端仅在 catalog 为空时导入镜像内固定 Excel 源，不提供 HTTP 导入入口。
 
 ## 7.3 本地运行
 
@@ -692,4 +693,6 @@ pytest
 
 ## 7.5 当前交付边界
 
-前端只渲染中性的工程壳占位，不实现 TCP 业务页面或业务导航。后端只提供 `/health` 与 `/ready`；`/ready` 仅执行 PostgreSQL `SELECT 1`，不创建表。业务对象、权限、路由、状态和原型绑定以 `docs/01_Product.md` 至 `docs/05_Development.md` 为准，待后续阶段按门禁实现。
+已交付的匿名只读页面为 `/capability/model` 和 `/operations/resources`，对应只读 API 为 `GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`；健康检查仍为 `/health` 与 `/ready`。
+
+当前不含任何写入或导入 HTTP 接口、登录账号、Assessment、Gap、Goal、Plan、Task、Evidence、Review 或其他业务功能。业务对象、权限、路由、状态和原型绑定以 `docs/01_Product.md` 至 `docs/05_Development.md` 为准，后续能力仍须按门禁实施。
