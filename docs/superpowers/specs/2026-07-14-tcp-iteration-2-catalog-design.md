@@ -94,7 +94,7 @@
 - 附件托管、资源内容代理下载、课程/学时/讲师/认证生命周期。
 - Assessment、Gap、Growth Goal、年度成长计划、Plan Item、Learning Task、Learning Progress Log、Evidence、Buddy Review、成长档案和团队分析。
 - 认证、Cookie 会话、用户、角色、权限执行、Buddy 关系和多团队。
-- 对 Compose 服务、端口、持久卷拓扑或既有健康检查的改动。
+- 对 Compose 服务、端口、持久卷拓扑或既有健康检查的改动。唯一例外是：允许将后端镜像的 Compose 构建上下文设为仓库根目录，并继续指定 `backend/Dockerfile`，以便 Dockerfile 复制根目录 `capability-model/*.xlsx` 到后端镜像；不得借此改动任何服务、端口、卷或健康检查。
 
 ## 9. 导入错误与验收
 
@@ -117,4 +117,4 @@
 5. `A8` 和内部文本在 L3 页面中明确显示为来源待补充/未关联，且不会被伪造为学习资源。
 6. 四条 API 只接受读取方法；任何写方法不创建或修改目录数据。
 7. 匿名访问可读取两个目录路由和只读 API，但看不到任何评估、Gap、计划、任务、Evidence、Review 或用户数据。
-8. `docker compose config` 继续通过；现有前端、后端、PostgreSQL 服务名、端口、卷和健康检查不变。
+8. `docker compose config` 继续通过；允许后端镜像为复制根目录 `capability-model/*.xlsx` 而将构建上下文改为仓库根目录并指定 `backend/Dockerfile`；现有前端、后端、PostgreSQL 服务名、端口、卷和健康检查不变。
