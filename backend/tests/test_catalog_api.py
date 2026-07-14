@@ -1,6 +1,5 @@
 import asyncio
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -15,21 +14,11 @@ from app.main import app
 WORKBOOK_DIR = Path("/capability-model")
 
 
-@pytest.fixture
-def connection() -> Iterator[psycopg.Connection]:
-    connection = psycopg.connect("postgresql://tcp:tcp_dev_only@postgres:5432/tcp")
-    with connection.transaction():
-        connection.execute("DROP TABLE IF EXISTS capability_node_resource")
-        connection.execute("DROP TABLE IF EXISTS learning_resource")
-        connection.execute("DROP TABLE IF EXISTS capability_node")
-        connection.execute("DROP TABLE IF EXISTS capability_model")
+@pytest.fixture(autouse=True)
+def initialize_catalog(connection: psycopg.Connection) -> None:
     create_catalog_schema(connection)
     import_catalog(WORKBOOK_DIR, connection)
     connection.commit()
-    try:
-        yield connection
-    finally:
-        connection.close()
 
 
 def request(

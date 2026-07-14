@@ -15,20 +15,6 @@ MODEL_WORKBOOK = "技术架构与开发专业线能力胜任模型20260509_V1.0.
 PLAN_WORKBOOK = "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx"
 
 
-@pytest.fixture
-def connection() -> psycopg.Connection:
-    connection = psycopg.connect("postgresql://tcp:tcp_dev_only@postgres:5432/tcp")
-    with connection.transaction():
-        connection.execute("DROP TABLE IF EXISTS capability_node_resource")
-        connection.execute("DROP TABLE IF EXISTS learning_resource")
-        connection.execute("DROP TABLE IF EXISTS capability_node")
-        connection.execute("DROP TABLE IF EXISTS capability_model")
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
 def count(connection: psycopg.Connection, table: str) -> int:
     return connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 

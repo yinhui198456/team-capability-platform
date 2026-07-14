@@ -5,7 +5,6 @@ from pathlib import Path
 import psycopg
 
 from app.main import app, lifespan
-from app.settings import settings
 
 WORKBOOK_DIR = Path("/app/capability-model")
 WORKBOOKS = (
@@ -14,19 +13,20 @@ WORKBOOKS = (
 )
 
 
-def reset_catalog() -> None:
-    with psycopg.connect(settings.database_url) as connection:
-        with connection.transaction():
-            connection.execute("DROP TABLE IF EXISTS capability_node_resource")
-            connection.execute("DROP TABLE IF EXISTS learning_resource")
-            connection.execute("DROP TABLE IF EXISTS capability_node")
-            connection.execute("DROP TABLE IF EXISTS capability_model")
+def reset_catalog(connection: psycopg.Connection) -> None:
+    with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS capability_node_resource")
+        connection.execute("DROP TABLE IF EXISTS learning_resource")
+        connection.execute("DROP TABLE IF EXISTS capability_node")
+        connection.execute("DROP TABLE IF EXISTS capability_model")
 
 
-def test_image_workbooks_bootstrap_the_catalog_baseline() -> None:
+def test_image_workbooks_bootstrap_the_catalog_baseline(
+    connection: psycopg.Connection,
+) -> None:
     assert all((WORKBOOK_DIR / workbook).is_file() for workbook in WORKBOOKS)
 
-    reset_catalog()
+    reset_catalog(connection)
     model_status, model, resource_status, resources = asyncio.run(
         _initialize_and_request_catalog()
     )

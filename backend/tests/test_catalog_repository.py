@@ -14,20 +14,10 @@ from app.catalog.schema import create_catalog_schema
 WORKBOOK_DIR = Path("/capability-model")
 
 
-@pytest.fixture
-def connection() -> psycopg.Connection:
-    connection = psycopg.connect("postgresql://tcp:tcp_dev_only@postgres:5432/tcp")
-    with connection.transaction():
-        connection.execute("DROP TABLE IF EXISTS capability_node_resource")
-        connection.execute("DROP TABLE IF EXISTS learning_resource")
-        connection.execute("DROP TABLE IF EXISTS capability_node")
-        connection.execute("DROP TABLE IF EXISTS capability_model")
+@pytest.fixture(autouse=True)
+def initialize_catalog(connection: psycopg.Connection) -> None:
     create_catalog_schema(connection)
     import_catalog(WORKBOOK_DIR, connection)
-    try:
-        yield connection
-    finally:
-        connection.close()
 
 
 def test_capability_model_returns_only_the_six_enabled_domains(
