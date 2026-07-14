@@ -73,3 +73,102 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE OR REPLACE FUNCTION validate_capability_node_hierarchy()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            parent_type TEXT;
+            parent_model_id BIGINT;
+        BEGIN
+            IF NEW.node_type = 'L1' THEN
+                IF NEW.parent_node_id IS NOT NULL THEN
+                    RAISE EXCEPTION 'L1 capability nodes cannot have a parent';
+                END IF;
+            ELSE
+                SELECT node_type, model_id
+                INTO parent_type, parent_model_id
+                FROM capability_node
+                WHERE id = NEW.parent_node_id;
+
+                IF NOT FOUND
+                   OR parent_model_id <> NEW.model_id
+                   OR (NEW.node_type = 'L2' AND parent_type <> 'L1')
+                   OR (NEW.node_type = 'L3' AND parent_type <> 'L2') THEN
+                    RAISE EXCEPTION 'invalid capability node parent hierarchy';
+                END IF;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM capability_node AS child
+                WHERE child.parent_node_id = NEW.id
+                  AND (
+                      child.model_id <> NEW.model_id
+                      OR (child.node_type = 'L2' AND NEW.node_type <> 'L1')
+                      OR (child.node_type = 'L3' AND NEW.node_type <> 'L2')
+                  )
+            ) THEN
+                RAISE EXCEPTION 'capability node update would invalidate a child';
+            END IF;
+
+            IF NEW.node_type <> 'L3' AND EXISTS (
+                SELECT 1
+                FROM capability_node_resource
+                WHERE node_id = NEW.id
+            ) THEN
+                RAISE EXCEPTION 'only L3 capability nodes can link resources';
+            END IF;
+
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    connection.execute(
+        """
+        CREATE OR REPLACE FUNCTION validate_capability_node_resource()
+        RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF (
+                SELECT node_type FROM capability_node WHERE id = NEW.node_id
+            ) <> 'L3' THEN
+                RAISE EXCEPTION 'only L3 capability nodes can link resources';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    connection.execute(
+        """
+        DROP TRIGGER IF EXISTS capability_node_hierarchy_trigger
+        ON capability_node
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER capability_node_hierarchy_trigger
+        BEFORE INSERT OR UPDATE OF node_type, parent_node_id, model_id
+        ON capability_node
+        FOR EACH ROW EXECUTE FUNCTION validate_capability_node_hierarchy()
+        """
+    )
+    connection.execute(
+        """
+        DROP TRIGGER IF EXISTS capability_node_resource_type_trigger
+        ON capability_node_resource
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER capability_node_resource_type_trigger
+        BEFORE INSERT OR UPDATE OF node_id
+        ON capability_node_resource
+        FOR EACH ROW EXECUTE FUNCTION validate_capability_node_resource()
+        """
+    )
