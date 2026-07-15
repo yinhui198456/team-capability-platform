@@ -162,6 +162,10 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 ## 6. 端到端验收场景
 
+### 6.1 分阶段 UAT
+
+每个业务纵向切片在 Codex 验收通过后进入用户 UAT：用户基于可操作的演示环境执行该切片的核心流程并给出反馈。UAT 是该迭代的最终门禁之一；UAT 未通过时，只修复当前迭代已授权范围内的缺陷或体验问题，不借机新增业务规则、不扩大原型范围、不提前启动后续迭代。最终端到端 UAT 集中在迭代 7 执行。
+
 | 场景 | 前置条件 | 操作 | 预期结果 |
 |---|---|---|---|
 | Member 主线 | Member 有六域评估和 Gap；最新 Review 已认可 | 提交自评 → 查看 Gap → 选入计划 → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task |
@@ -180,11 +184,11 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | 0 | 文档与契约校验：对象、状态、权限、路由、原型路径、门禁原文 | 01–04 交叉校验通过；不写业务代码 |
 | 1 | 前后端壳工程、Compose、质量工具、健康入口、空页面路由 | 容器可启动；无业务页面实现 |
 | 2 | 能力模型只读展示与 Excel 导入边界；学习资源只读 | 六域和 L3 层级可追溯 |
-| 3 | Assessment、Assessment Review、Gap 与门禁策略 | 自评历史、Review 闭环、阻塞/解除场景通过 |
-| 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 1:1 任务关系和时长聚合场景通过 |
-| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 旧版本不回流，Review 历史闭环 |
-| 6 | UI-01～UI-05 看板、团队分析和权限过滤 | 五张原型截图验收通过 |
-| 7 | 种子数据、端到端回归、容器重启、日志与文档硬化 | 验收场景全通过；再决定是否进入正式工程初始化 |
+| 3 | Assessment、Assessment Review、Gap 与门禁策略 | 绑定 UI-02 及 UI-04 的 Assessment Review 子流程；自评/复核/Gap/门禁场景通过，并完成该切片 UAT |
+| 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 绑定 UI-03 的 Goal/计划/任务/日志子流程；1:1 任务关系和时长聚合场景通过，并完成该切片 UAT |
+| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案；旧版本不回流、Review 历史闭环，并完成该切片 UAT |
+| 6 | UI-01 我的成长看板、UI-05 团队能力分析；补齐 UI-02～UI-04 的全量视觉与权限联调 | 五张原型截图与集成 UAT 通过 |
+| 7 | 种子数据、端到端回归、容器重启、日志与文档硬化 | 端到端场景全通过；完成最终 UAT/发布决策 |
 
 ### 7.1 风险与缓解
 
