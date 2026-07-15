@@ -247,7 +247,9 @@ def test_create_buddy_relationship_and_get_primary_buddy(
     access_schema: psycopg.Connection,
 ) -> None:
     member_id = create_user(access_schema, "member", "Member One", "secret")
+    assign_role(access_schema, member_id, "Member")
     buddy_id = create_user(access_schema, "buddy", "Buddy One", "secret")
+    assign_role(access_schema, buddy_id, "Buddy")
     relationship_id = create_buddy_relationship(
         access_schema, member_id, buddy_id, is_primary=True
     )
@@ -262,8 +264,11 @@ def test_create_buddy_relationship_and_get_primary_buddy(
 
 def test_get_assigned_members(access_schema: psycopg.Connection) -> None:
     buddy_id = create_user(access_schema, "buddy", "Buddy One", "secret")
+    assign_role(access_schema, buddy_id, "Buddy")
     member_one_id = create_user(access_schema, "member1", "Member One", "secret")
+    assign_role(access_schema, member_one_id, "Member")
     member_two_id = create_user(access_schema, "member2", "Member Two", "secret")
+    assign_role(access_schema, member_two_id, "Member")
     create_buddy_relationship(access_schema, member_one_id, buddy_id)
     create_buddy_relationship(access_schema, member_two_id, buddy_id)
 
@@ -276,7 +281,9 @@ def test_primary_buddy_unique_index_enforced(
     access_schema: psycopg.Connection,
 ) -> None:
     member_id = create_user(access_schema, "member", "Member One", "secret")
+    assign_role(access_schema, member_id, "Member")
     buddy_id = create_user(access_schema, "buddy", "Buddy One", "secret")
+    assign_role(access_schema, buddy_id, "Buddy")
     create_buddy_relationship(access_schema, member_id, buddy_id)
 
     with pytest.raises(psycopg.errors.UniqueViolation):
@@ -286,6 +293,8 @@ def test_primary_buddy_unique_index_enforced(
 
 def test_member_cannot_be_own_buddy(access_schema: psycopg.Connection) -> None:
     user_id = create_user(access_schema, "solo", "Solo User", "secret")
+    assign_role(access_schema, user_id, "Member")
+    assign_role(access_schema, user_id, "Buddy")
 
     with pytest.raises(psycopg.errors.CheckViolation):
         with access_schema.transaction():

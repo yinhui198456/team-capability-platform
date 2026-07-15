@@ -158,12 +158,22 @@ def delete_expired_sessions(connection: psycopg.Connection) -> None:
         connection.execute("DELETE FROM tcp_session WHERE expires_at <= NOW()")
 
 
+def _require_role(
+    connection: psycopg.Connection, user_id: int, role_code: str, param_name: str
+) -> None:
+    roles = _fetch_user_roles(connection, user_id)
+    if role_code not in roles:
+        raise ValueError(f"{param_name} {user_id} does not have the {role_code} role")
+
+
 def create_buddy_relationship(
     connection: psycopg.Connection,
     member_id: int,
     buddy_id: int,
     is_primary: bool = True,
 ) -> int:
+    _require_role(connection, member_id, "Member", "member_id")
+    _require_role(connection, buddy_id, "Buddy", "buddy_id")
     with connection.transaction():
         row = connection.execute(
             """
