@@ -184,7 +184,7 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | 0 | 文档与契约校验：对象、状态、权限、路由、原型路径、门禁原文 | 01–04 交叉校验通过；不写业务代码 |
 | 1 | 前后端壳工程、Compose、质量工具、健康入口、空页面路由 | 容器可启动；无业务页面实现 |
 | 2 | 能力模型只读展示与 Excel 导入边界；学习资源只读 | 六域和 L3 层级可追溯 |
-| 3 | **3A**：MVP 本地会话、演示账号与有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 3A 门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 通过；3B 验收门禁：自评/复核/Gap/门禁阻塞与解除场景通过，并完成切片 UAT |
+| 3 | **3A**：MVP 本地会话、演示账号与有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 3A 门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 经 Codex 审核通过；3B 验收门禁：自评/复核/Gap/门禁阻塞与解除场景通过，并完成切片 UAT |
 | 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 绑定 UI-03 的 Goal/计划/任务/日志子流程；1:1 任务关系和时长聚合场景通过，并完成该切片 UAT |
 | 5 | Evidence 版本、Evidence Review、成长档案聚合 | 绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案；旧版本不回流、Review 历史闭环，并完成该切片 UAT |
 | 6 | **6A**：UI-01 我的成长看板，以及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；**6B**：UI-05 团队能力分析、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收 | 6A 进入门禁：迭代 5 验收通过；6A 验收门禁：UI-01 与 UI-02～UI-04 视觉交互整合通过；6B 进入门禁：6A 通过；6B 验收门禁：五张原型截图与集成 UAT 通过 |
