@@ -282,12 +282,12 @@ Preserve existing `/capability/model` and `/operations/resources` branches.
 
 ## Demo Accounts & UAT
 
-`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_PASSWORDS`, which must be a JSON object containing **exactly** the five required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty string passwords:
+`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_PASSWORDS`, which must be a JSON object containing **exactly** the five required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty string passwords.
+
+**Operator prerequisite:** Before running any seed/startup or integration command below, export `TCP_DEMO_PASSWORDS` in the host shell with a complete local UAT value. The plan only references the variable name; real passwords must never be committed. Pass the already-exported host value into containers with `-e TCP_DEMO_PASSWORDS` (no `=` and no literal JSON in commands):
 
 ```bash
-# Operator prerequisite: export a complete local UAT value before seed/startup.
-# The committed plan only shows a placeholder; real passwords must never be committed.
-TCP_DEMO_PASSWORDS=""
+export TCP_DEMO_PASSWORDS='{"admin":"<replace>","leader":"<replace>","buddy":"<replace>","member":"<replace>","member2":"<replace>"}'
 ```
 
 `TCP_DEMO_PASSWORDS` must parse as a JSON object, include all five usernames, and assign a non-empty password to each. Missing values, malformed JSON, extra/missing usernames, or empty passwords abort seeding and prevent the application from starting with default credentials. Deployments inject this value at runtime via a secret manager or `.env` file that is not committed to the repository. The seed hashes passwords via `hash_password` before insertion.
@@ -400,9 +400,9 @@ TCP_DEMO_PASSWORDS=""
 **Interfaces:**
 - `seed_demo_accounts(connection: psycopg.Connection) -> None` inserts the five demo accounts, assigns roles, and creates buddy relationships only when `tcp_user` is empty.
 
-- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Before running, export a complete local UAT value for `TCP_DEMO_PASSWORDS` (not committed). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS="" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
+- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Precondition: `TCP_DEMO_PASSWORDS` is already exported in the host shell with a complete local UAT value (see §Demo Accounts & UAT). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
 - [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_PASSWORDS` via `settings.demo_passwords_json` and parse it explicitly with `json.loads`; validate that the object contains **exactly** the required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty passwords. Abort seed/startup on missing, malformed, or incomplete values.
-- [ ] **GREEN:** repeat the RED command with the same local `TCP_DEMO_PASSWORDS` value; expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
+- [ ] **GREEN:** repeat the RED command; it inherits the already-exported host `TCP_DEMO_PASSWORDS`. Expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
 - [ ] **Commit:** `git add backend/app/access/seed.py backend/tests/test_access_seed.py backend/app/main.py && git commit -m "feat: seed uat demo accounts"`.
 
 ### Task 8: Minimal frontend login page
@@ -429,7 +429,7 @@ After all tasks are GREEN, run the integration suite:
 # 1. Validate schema and all access tests
 docker compose up -d postgres
 until docker compose exec -T postgres pg_isready -U tcp -d tcp >/dev/null; do sleep 1; done
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
 
 # 2. Build and run full stack
 docker compose build backend frontend
@@ -478,6 +478,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt http://localhost:18081/api/auth/me
 - [ ] `POST /api/auth/login` and `POST /api/auth/logout` work cross-origin from `http://localhost:5173` and `http://localhost:18081`.
 - [ ] N:M role assignment is tested; role union is used for 403.
 - [ ] One-primary-Buddy partial unique index is present and tested.
+- [ ] Both invalid Buddy role pairings were tested: a user without the `Member` role cannot be used as the member, and a user without the `Buddy` role cannot be used as the buddy.
 - [ ] All tests pass under the existing `tcp_test` advisory-lock fixture.
 - [ ] `git diff --check` reports no trailing whitespace or conflict markers.
 
