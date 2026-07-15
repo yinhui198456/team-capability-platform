@@ -122,14 +122,25 @@ cmd_start() {
             run_log: $run_log
         }' | write_state
 
-    (
-        monitor_task "$task" "$prompt" "$run_log" "$started_epoch"
-    ) >/dev/null 2>&1 &
+    # Export runtime/notify paths so the detached monitor session inherits them.
+    export TCP_RUNTIME_DIR="$RUNTIME_DIR"
+    export TCP_NOTIFY_SCRIPT="${TCP_NOTIFY_SCRIPT:-$DEFAULT_NOTIFY_SCRIPT}"
+
+    # Start the monitor in its own session so it survives cleanup of the
+    # start command's process group (e.g. Codex non-interactive exec exit).
+    /usr/bin/setsid "$0" __monitor "$task" "$prompt" "$run_log" "$started_epoch" >/dev/null 2>&1 &
     local monitor_pid=$!
-    disown $monitor_pid 2>/dev/null || true
 
     update_state_field monitor_pid "$monitor_pid"
     echo "Started task $task (monitor_pid=$monitor_pid)"
+}
+
+cmd_monitor() {
+    local task="$1"
+    local prompt="$2"
+    local run_log="$3"
+    local started_epoch="$4"
+    monitor_task "$task" "$prompt" "$run_log" "$started_epoch"
 }
 
 monitor_task() {
@@ -200,6 +211,9 @@ main() {
     shift || true
 
     case "$cmd" in
+        __monitor)
+            cmd_monitor "$@"
+            ;;
         start)
             cmd_start "$@"
             ;;

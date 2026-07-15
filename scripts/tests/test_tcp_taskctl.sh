@@ -88,6 +88,22 @@ wait_for_state() {
   return 1
 }
 
+wait_for_state_nonempty() {
+  local key="$1"
+  local timeout_ms="${2:-5000}"
+  local waited=0
+  while (( waited < timeout_ms )); do
+    local actual
+    actual="$(state_key "$key")"
+    if [[ -n "$actual" && "$actual" != "null" ]]; then
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 100))
+  done
+  return 1
+}
+
 test_success_notifies_green() {
   setup_test
   echo "complete some task" > command.txt
@@ -184,6 +200,88 @@ test_status_does_not_notify() {
   teardown_test
 }
 
+test_monitor_survives_start_session_cleanup() {
+  setup_test
+
+  # Mock claude sleeps briefly so the monitor is still active when we
+  # simulate the Codex exec host cleaning up the start command's session.
+  cat > "$TMP_DIR/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_CLAUDE_ARGS_LOG"
+sleep 1
+exit 0
+EOF
+  chmod +x "$TMP_DIR/bin/claude"
+
+  echo "survive session cleanup" > command.txt
+
+  # Start taskctl in its own session.  $! is the PID and PGID of that
+  # launcher session; simulates the Codex non-interactive exec process group.
+  setsid "$TCP_TASKCTL" start --task "TEST-SURVIVE" --command-file command.txt &
+  local launcher_pid=$!
+
+  if ! wait_for_state state running 2000; then
+    fail "survive: state did not become running (got $(state_key state))"
+    kill -- -$launcher_pid 2>/dev/null || true
+    kill "$launcher_pid" 2>/dev/null || true
+    teardown_test
+    return
+  fi
+
+  if ! wait_for_state_nonempty cc_pid 2000; then
+    fail "survive: cc_pid was not set (monitor may not have started claude)"
+    kill -- -$launcher_pid 2>/dev/null || true
+    kill "$launcher_pid" 2>/dev/null || true
+    teardown_test
+    return
+  fi
+
+  local monitor_pid monitor_pgid
+  monitor_pid="$(state_key monitor_pid)"
+  monitor_pgid="$(ps -o pgid= -p "$monitor_pid" 2>/dev/null | tr -d ' ' || true)"
+
+  if [[ -z "$monitor_pid" || "$monitor_pid" == "null" ]]; then
+    fail "survive: monitor_pid missing from state"
+    kill -- -$launcher_pid 2>/dev/null || true
+    kill "$launcher_pid" 2>/dev/null || true
+    teardown_test
+    return
+  fi
+
+  if [[ "$monitor_pgid" == "$launcher_pid" ]]; then
+    fail "survive: monitor ($monitor_pid) shares process group ($monitor_pgid) with launcher session ($launcher_pid)"
+    kill -- -$launcher_pid 2>/dev/null || true
+    kill "$launcher_pid" 2>/dev/null || true
+    teardown_test
+    return
+  fi
+
+  # Simulate Codex exec host cleaning up the start command's process group.
+  kill -- -$launcher_pid 2>/dev/null || true
+  sleep 0.1
+  kill "$launcher_pid" 2>/dev/null || true
+
+  if ! wait_for_state state completed 5000; then
+    fail "survive: state did not become completed after launcher session cleanup (got $(state_key state))"
+    teardown_test
+    return
+  fi
+
+  if [[ ! -f "$NOTIFY_LOG" ]]; then
+    fail "survive: notification mock not called after launcher session cleanup"
+  else
+    local template
+    template="$(awk -F'\t' 'NR==1 {print $3}' "$NOTIFY_LOG")"
+    if [[ "$template" != "green" ]]; then
+      fail "survive: expected green notification, got template=$template"
+    else
+      pass "monitor_survives_start_session_cleanup"
+    fi
+  fi
+
+  teardown_test
+}
+
 test_runtime_ignores_state_and_runs() {
   setup_test
 
@@ -227,6 +325,7 @@ main() {
   test_success_notifies_green
   test_failure_notifies_red
   test_status_does_not_notify
+  test_monitor_survives_start_session_cleanup
   test_runtime_ignores_state_and_runs
 
   echo
