@@ -23,7 +23,7 @@
 - **CORS change is minimal.** Extend `allow_methods` from `["GET"]` to `["GET", "POST", "OPTIONS"]`; keep `allow_credentials=True`, `allow_origins=settings.cors_origin_list`, and `allow_headers=["*"]`.
 - **Cookie only.** The session token never appears in JSON response bodies or `localStorage`. Frontend login uses `fetch(..., { credentials: 'include' })` and relies on the browser cookie store.
 - **N:M roles.** A user can have any subset of `{Member, Buddy, Leader, Admin}`; effective permissions are the union of assigned roles. 3A only exposes the role list, not fine-grained resource permissions.
-- **One primary Buddy per Member.** `buddy_relationship` enforces at most one active primary relationship per member through a partial unique index.
+- **One primary Buddy per Member.** `buddy_relationship` enforces at most one active primary relationship per member through a partial unique index; repository creation also validates that the member has the `Member` role and the buddy has the `Buddy` role.
 - **Session expiry.** Sessions carry `expires_at`; expired rows are rejected; logout deletes the row.
 
 ---
@@ -36,7 +36,7 @@
 |------|----------------|
 | `backend/app/access/__init__.py` | Package marker. |
 | `backend/app/access/schema.py` | DDL for `tcp_user`, `tcp_role`, `tcp_user_role`, `tcp_session`, `buddy_relationship`; role seed; idempotent `create_access_schema(connection)`. |
-| `backend/app/access/security.py` | `hash_password(password, salt) -> str`, `verify_password(password, hash) -> bool` using `hashlib.scrypt` + `secrets.token_hex` salt; `generate_session_token() -> str`. |
+| `backend/app/access/security.py` | `hash_password(password, salt) -> str`, `verify_password(password, hash) -> bool` using `hashlib.scrypt` + `secrets.token_hex` salt; `generate_session_token() -> str`; `hash_session_token(token) -> str` using SHA-256. |
 | `backend/app/access/repository.py` | psycopg CRUD for users, roles, sessions, buddy relationships; lookup by token; delete expired sessions. |
 | `backend/app/access/policies.py` | `get_current_user(request)`, `require_any_role(*roles)`, `require_authenticated` FastAPI dependencies; 401/403 logic. |
 | `backend/app/access/api.py` | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`. |
@@ -439,7 +439,7 @@ curl -fsS http://localhost:18081/api/capability-model | jq '.domains | length'
 # expected: 6
 
 # 4. UAT smoke: login returns HttpOnly cookie (local HTTP omits Secure)
-# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_PASSWORDS value.
+# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_ACCOUNT_PASSWORDS_JSON value.
 curl -fsS -c /tmp/tcp_uat_cookies.txt -X POST http://localhost:18081/api/auth/login \
   -H 'Content-Type: application/json' \
   -d "{\"username\":\"${TCP_UAT_USERNAME}\",\"password\":\"${TCP_UAT_PASSWORD}\"}" | jq '.roles'
