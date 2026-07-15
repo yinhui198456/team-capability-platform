@@ -55,7 +55,7 @@
 | Path | Change |
 |------|--------|
 | `backend/app/main.py` | Import and `app.include_router(access_router)`; extend CORS `allow_methods` to `["GET", "POST", "OPTIONS"]`; call `create_access_schema` and seed demo accounts in lifespan after catalog initialization. |
-| `backend/app/settings.py` | Add `session_cookie_secure: bool = False`, `session_max_age_seconds: int = 86400`, `demo_account_passwords_json: str | None = None`, and keep existing `database_url`, `cors_origins`, `port`. Parse `demo_account_passwords_json` explicitly as JSON; missing, malformed, or incomplete values fail fast at startup/seed. |
+| `backend/app/settings.py` | Add `session_cookie_secure: bool = False`, `session_max_age_seconds: int = 86400`, `demo_passwords_json: str | None = None`, and keep existing `database_url`, `cors_origins`, `port`. Parse `demo_passwords_json` explicitly as JSON; missing, malformed, or incomplete values fail fast at startup/seed. |
 | `backend/app/catalog/api.py` | No route changes; keep catalog endpoints unprotected. |
 | `frontend/src/App.tsx` | Add `/login` route branch; preserve `/capability/model` and `/operations/resources`; after login, redirect to `/capability/model`. |
 | `frontend/src/styles.css` | Add minimal login form layout without changing catalog styles. |
@@ -282,13 +282,15 @@ Preserve existing `/capability/model` and `/operations/resources` branches.
 
 ## Demo Accounts & UAT
 
-`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` as a JSON string, e.g.:
+`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_PASSWORDS`, which must be a JSON object containing **exactly** the five required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty string passwords:
 
 ```bash
-TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}'
+# Operator prerequisite: export a complete local UAT value before seed/startup.
+# The committed plan only shows a placeholder; real passwords must never be committed.
+TCP_DEMO_PASSWORDS=""
 ```
 
-There is **no fallback or default password set**. `seed.py` explicitly parses the JSON with `json.loads`, validates that **all five** usernames (`admin`, `leader`, `buddy`, `member`, `member2`) are present with non-empty string passwords, and aborts seed/startup if the configuration is missing, malformed, or incomplete. Deployments inject this value at runtime via a secret manager or `.env` file that is not committed to the repository. The seed hashes passwords via `hash_password` before insertion.
+`TCP_DEMO_PASSWORDS` must parse as a JSON object, include all five usernames, and assign a non-empty password to each. Missing values, malformed JSON, extra/missing usernames, or empty passwords abort seeding and prevent the application from starting with default credentials. Deployments inject this value at runtime via a secret manager or `.env` file that is not committed to the repository. The seed hashes passwords via `hash_password` before insertion.
 
 | Username | Roles | Primary Buddy | Purpose |
 |----------|-------|---------------|---------|
@@ -326,11 +328,11 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 - Modify: `backend/app/settings.py`
 
 **Interfaces:**
-- `hash_password(password, salt=None)`, `verify_password(password, hashed)`, `generate_session_token()`
+- `hash_password(password, salt=None)`, `verify_password(password, hashed)`, `generate_session_token()`, `hash_session_token(token)`
 - Repository functions listed in §Repository / Policy / API Contract.
 
-- [ ] **RED:** add repository tests for user CRUD, role assignment, session creation/lookup/expiry/deletion, and buddy one-primary invariant. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_repository.py"`; expect module import failures.
-- [ ] **Implement:** implement `security.py` with `hashlib.scrypt` and `secrets`; implement `repository.py` with parameterized psycopg queries; add `session_cookie_secure` and `session_max_age_seconds` to settings; parse `demo_account_passwords_json` explicitly.
+- [ ] **RED:** add repository tests for user CRUD, role assignment, session creation/lookup/expiry/deletion, and buddy one-primary invariant; assert that `create_session` persists only the SHA-256 `token_hash`, and that `get_session_user` and `delete_session` query/delete by `token_hash` (no raw token column exists). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_repository.py"`; expect module import failures.
+- [ ] **Implement:** implement `security.py` with `hashlib.scrypt` and `secrets`; implement `repository.py` with parameterized psycopg queries; add `session_cookie_secure` and `session_max_age_seconds` to settings; parse `demo_passwords_json` explicitly.
 - [ ] **GREEN:** repeat the RED command; expect user, session, and buddy assertions to pass.
 - [ ] **Commit:** `git add backend/app/access/security.py backend/app/access/repository.py backend/app/settings.py backend/tests/test_access_repository.py && git commit -m "feat: access security and repository"`.
 
@@ -344,9 +346,9 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
 - `current_user` dependency; `require_authenticated`, `require_any_role` helpers.
 
-- [ ] **RED:** add tests that login sets an `HttpOnly` `tcp_session` cookie, returns user without a token, rejects bad passwords with 401, `/api/auth/me` returns 401 without a cookie, logout clears the cookie, and expired sessions are rejected. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_auth.py"`; expect route failures.
+- [ ] **RED:** add tests that login sets an `HttpOnly` `tcp_session` cookie, returns user without a token, rejects bad passwords with 401, `/api/auth/me` returns 401 without a cookie, logout clears the cookie, expired sessions are rejected, and the `Secure` cookie attribute is present when `session_cookie_secure=true` and absent when `session_cookie_secure=false`. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_auth.py"`; expect route failures.
 - [ ] **Implement:** build `policies.py` and `api.py`; wire the router in `main.py`; change CORS `allow_methods` to `["GET", "POST", "OPTIONS"]`; set the `Secure` cookie attribute based on `settings.session_cookie_secure` (false for local HTTP UAT, true for HTTPS deployments).
-- [ ] **GREEN:** repeat the RED command; expect all cookie, 401, and expiry assertions to pass.
+- [ ] **GREEN:** repeat the RED command; expect all cookie, 401, expiry, and conditional `Secure` assertions to pass.
 - [ ] **Commit:** `git add backend/app/access/policies.py backend/app/access/api.py backend/tests/test_access_auth.py backend/app/main.py && git commit -m "feat: auth api with httponly cookie"`.
 
 ### Task 4: N:M roles and 403 policy
@@ -361,7 +363,7 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 - [ ] **RED:** add tests for `require_any_role` directly or via a test-only fixture: a user with only `Member` requesting a Leader-protected operation receives 403, a user with `Leader` succeeds, and an `Admin` without `Leader` receives 403. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_roles.py"`; expect 403 logic missing.
 - [ ] **Implement:** complete `require_any_role`; exercise it through test-only fixtures, not production routes.
 - [ ] **GREEN:** repeat the RED command; expect 401/403 role assertions to pass.
-- [ ] **Commit:** `git add backend/app/access/policies.py backend/app/access/api.py backend/tests/test_access_roles.py && git commit -m "feat: enforce n:m role based 403"`.
+- [ ] **Commit:** `git add backend/app/access/policies.py backend/tests/test_access_roles.py && git commit -m "feat: enforce n:m role based 403"`.
 
 ### Task 5: One-primary-Buddy relationship
 
@@ -369,7 +371,7 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 - Create: `backend/tests/test_access_buddy.py`
 
 **Interfaces:**
-- `create_buddy_relationship`, `get_primary_buddy`, `get_assigned_members`.
+- `create_buddy_relationship` validates `Member`/`Buddy` roles before inserting; `get_primary_buddy`; `get_assigned_members`.
 
 - [ ] **RED:** add tests that creating a second active primary Buddy for the same Member raises a unique violation, that `member` resolves `buddy` as primary Buddy, that `buddy` lists `[member, member2]`, and that creating a relationship fails when the member does not have the `Member` role or the buddy does not have the `Buddy` role. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_buddy.py"`; expect repository not yet used.
 - [ ] **Implement:** ensure the partial unique index in schema.py is created; verify `create_buddy_relationship` checks roles before inserting; verify repository functions return the correct shape.
@@ -398,9 +400,9 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 **Interfaces:**
 - `seed_demo_accounts(connection: psycopg.Connection) -> None` inserts the five demo accounts, assigns roles, and creates buddy relationships only when `tcp_user` is empty.
 
-- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
-- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` via `settings.demo_account_passwords_json` and parse it explicitly with `json.loads`; validate all five usernames with non-empty passwords and abort seed/startup if the configuration is missing, malformed, or incomplete.
-- [ ] **GREEN:** repeat the RED command; expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
+- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Before running, export a complete local UAT value for `TCP_DEMO_PASSWORDS` (not committed). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS="" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
+- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_PASSWORDS` via `settings.demo_passwords_json` and parse it explicitly with `json.loads`; validate that the object contains **exactly** the required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty passwords. Abort seed/startup on missing, malformed, or incomplete values.
+- [ ] **GREEN:** repeat the RED command with the same local `TCP_DEMO_PASSWORDS` value; expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
 - [ ] **Commit:** `git add backend/app/access/seed.py backend/tests/test_access_seed.py backend/app/main.py && git commit -m "feat: seed uat demo accounts"`.
 
 ### Task 8: Minimal frontend login page
@@ -427,7 +429,7 @@ After all tasks are GREEN, run the integration suite:
 # 1. Validate schema and all access tests
 docker compose up -d postgres
 until docker compose exec -T postgres pg_isready -U tcp -d tcp >/dev/null; do sleep 1; done
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
 
 # 2. Build and run full stack
 docker compose build backend frontend
@@ -439,7 +441,7 @@ curl -fsS http://localhost:18081/api/capability-model | jq '.domains | length'
 # expected: 6
 
 # 4. UAT smoke: login returns HttpOnly cookie (local HTTP omits Secure)
-# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_ACCOUNT_PASSWORDS_JSON value.
+# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_PASSWORDS value.
 curl -fsS -c /tmp/tcp_uat_cookies.txt -X POST http://localhost:18081/api/auth/login \
   -H 'Content-Type: application/json' \
   -d "{\"username\":\"${TCP_UAT_USERNAME}\",\"password\":\"${TCP_UAT_PASSWORD}\"}" | jq '.roles'
@@ -470,7 +472,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt http://localhost:18081/api/auth/me
 - [ ] No token appears in `/api/auth/login` or `/api/auth/me` JSON bodies.
 - [ ] `tcp_session` stores only SHA-256 digests (`token_hash`); raw tokens exist only in cookies.
 - [ ] `tcp_session` cookie attributes include `HttpOnly`, `SameSite=Lax`, `Path=/`; `Secure` is present only when `session_cookie_secure=true`.
-- [ ] Demo password seeding has no fallback defaults; missing/invalid `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` fails fast.
+- [ ] Demo password seeding has no fallback defaults; missing, malformed, or incomplete `TCP_DEMO_PASSWORDS` fails fast.
 - [ ] No `/api/demo/*` routes exist in production; 401/403 tests use test-only fixtures or direct dependency tests.
 - [ ] `GET /api/capability-model` and `GET /api/learning-resources*` require no cookie.
 - [ ] `POST /api/auth/login` and `POST /api/auth/logout` work cross-origin from `http://localhost:5173` and `http://localhost:18081`.
