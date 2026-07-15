@@ -9,6 +9,8 @@ TEST_DATABASE = "tcp_test"
 TEST_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/tcp_test"
 ADMIN_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/postgres"
 TEST_DATABASE_LOCK_KEY = 651042
+# ponytail: global PostgreSQL advisory lock on tcp_test blocks cross-process conflicts.
+# Serial test sessions are a known ceiling; isolate per worker only if throughput caps.
 
 
 def _ensure_test_database() -> None:
