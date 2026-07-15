@@ -55,7 +55,7 @@
 | Path | Change |
 |------|--------|
 | `backend/app/main.py` | Import and `app.include_router(access_router)`; extend CORS `allow_methods` to `["GET", "POST", "OPTIONS"]`; call `create_access_schema` and seed demo accounts in lifespan after catalog initialization. |
-| `backend/app/settings.py` | Add `session_cookie_secure: bool = False`, `session_max_age_seconds: int = 86400`, `demo_passwords_json: str | None = None`, and keep existing `database_url`, `cors_origins`, `port`. Parse `demo_passwords_json` explicitly as JSON; missing, malformed, or incomplete values fail fast at startup/seed. |
+| `backend/app/settings.py` | Add `session_cookie_secure: bool = False` and `session_max_age_seconds: int = 86400` and keep existing `database_url`, `cors_origins`, `port`. |
 | `backend/app/catalog/api.py` | No route changes; keep catalog endpoints unprotected. |
 | `frontend/src/App.tsx` | Add `/login` route branch; preserve `/capability/model` and `/operations/resources`; after login, redirect to `/capability/model`. |
 | `frontend/src/styles.css` | Add minimal login form layout without changing catalog styles. |
@@ -282,15 +282,9 @@ Preserve existing `/capability/model` and `/operations/resources` branches.
 
 ## Demo Accounts & UAT
 
-`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_PASSWORDS`, which must be a JSON object containing **exactly** the five required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty string passwords.
+`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. The local UAT default password is `123456`; it is hashed by `create_user` before storage and is never returned by any API.
 
-**Operator prerequisite:** Before running any seed/startup or integration command below, export `TCP_DEMO_PASSWORDS` in the host shell with a complete local UAT value. The plan only references the variable name; real passwords must never be committed. Pass the already-exported host value into containers with `-e TCP_DEMO_PASSWORDS` (no `=` and no literal JSON in commands):
-
-```bash
-export TCP_DEMO_PASSWORDS='{"admin":"<replace>","leader":"<replace>","buddy":"<replace>","member":"<replace>","member2":"<replace>"}'
-```
-
-`TCP_DEMO_PASSWORDS` must parse as a JSON object, include all five usernames, and assign a non-empty password to each. Missing values, malformed JSON, extra/missing usernames, or empty passwords abort seeding and prevent the application from starting with default credentials. Deployments inject this value at runtime via a secret manager or `.env` file that is not committed to the repository. The seed hashes passwords via `hash_password` before insertion.
+This default is intentionally simple and is **only** for local development/UAT. It is not a production authentication design, and real deployments should seed production users through a separate, secure process.
 
 | Username | Roles | Primary Buddy | Purpose |
 |----------|-------|---------------|---------|
@@ -332,7 +326,7 @@ export TCP_DEMO_PASSWORDS='{"admin":"<replace>","leader":"<replace>","buddy":"<r
 - Repository functions listed in §Repository / Policy / API Contract.
 
 - [ ] **RED:** add repository tests for user CRUD, role assignment, session creation/lookup/expiry/deletion, and buddy one-primary invariant; assert that `create_session` persists only the SHA-256 `token_hash`, and that `get_session_user` and `delete_session` query/delete by `token_hash` (no raw token column exists). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_repository.py"`; expect module import failures.
-- [ ] **Implement:** implement `security.py` with `hashlib.scrypt` and `secrets`; implement `repository.py` with parameterized psycopg queries; add `session_cookie_secure` and `session_max_age_seconds` to settings; parse `demo_passwords_json` explicitly.
+- **Implement:** implement `security.py` with `hashlib.scrypt` and `secrets`; implement `repository.py` with parameterized psycopg queries; add `session_cookie_secure` and `session_max_age_seconds` to settings.
 - [ ] **GREEN:** repeat the RED command; expect user, session, and buddy assertions to pass.
 - [ ] **Commit:** `git add backend/app/access/security.py backend/app/access/repository.py backend/app/settings.py backend/tests/test_access_repository.py && git commit -m "feat: access security and repository"`.
 
@@ -400,9 +394,9 @@ export TCP_DEMO_PASSWORDS='{"admin":"<replace>","leader":"<replace>","buddy":"<r
 **Interfaces:**
 - `seed_demo_accounts(connection: psycopg.Connection) -> None` inserts the five demo accounts, assigns roles, and creates buddy relationships only when `tcp_user` is empty.
 
-- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Precondition: `TCP_DEMO_PASSWORDS` is already exported in the host shell with a complete local UAT value (see §Demo Accounts & UAT). Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
-- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_PASSWORDS` via `settings.demo_passwords_json` and parse it explicitly with `json.loads`; validate that the object contains **exactly** the required usernames (`admin`, `leader`, `buddy`, `member`, `member2`) with non-empty passwords. Abort seed/startup on missing, malformed, or incomplete values.
-- [ ] **GREEN:** repeat the RED command; it inherits the already-exported host `TCP_DEMO_PASSWORDS`. Expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
+- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify against the local UAT default `123456`, roles are assigned, and buddy relationships are created. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
+- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; use a hard-coded local UAT default password of `123456` and hash it via `create_user`. Only seed when `tcp_user` is empty; if any user already exists, skip all inserts.
+- [ ] **GREEN:** repeat the RED command; expect idempotent seed, login with the seeded passwords, and buddy assignments to pass.
 - [ ] **Commit:** `git add backend/app/access/seed.py backend/tests/test_access_seed.py backend/app/main.py && git commit -m "feat: seed uat demo accounts"`.
 
 ### Task 8: Minimal frontend login page
@@ -429,7 +423,7 @@ After all tasks are GREEN, run the integration suite:
 # 1. Validate schema and all access tests
 docker compose up -d postgres
 until docker compose exec -T postgres pg_isready -U tcp -d tcp >/dev/null; do sleep 1; done
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
 
 # 2. Build and run full stack
 docker compose build backend frontend
@@ -441,10 +435,10 @@ curl -fsS http://localhost:18081/api/capability-model | jq '.domains | length'
 # expected: 6
 
 # 4. UAT smoke: login returns HttpOnly cookie (local HTTP omits Secure)
-# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_PASSWORDS value.
+# Use the local UAT default password 123456.
 curl -fsS -c /tmp/tcp_uat_cookies.txt -X POST http://localhost:18081/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d "{\"username\":\"${TCP_UAT_USERNAME}\",\"password\":\"${TCP_UAT_PASSWORD}\"}" | jq '.roles'
+  -d '{"username":"member","password":"123456"}' | jq '.roles'
 # expected: ["Member"]
 grep -q 'HttpOnly' /tmp/tcp_uat_cookies.txt && echo 'cookie is HttpOnly'
 # HTTPS deployments must also set session_cookie_secure=true and verify Secure is present.
@@ -458,7 +452,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt -c /tmp/tcp_uat_cookies.txt -X POST http:/
 curl -fsS -b /tmp/tcp_uat_cookies.txt http://localhost:18081/api/auth/me
 # expected: 401
 
-# 7. Frontend UAT: open http://localhost:18081/login, sign in as leader/leader, verify redirect to /capability/model
+# 7. Frontend UAT: open http://localhost:18081/login, sign in as leader/123456, verify redirect to /capability/model
 ```
 
 ---
@@ -472,7 +466,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt http://localhost:18081/api/auth/me
 - [ ] No token appears in `/api/auth/login` or `/api/auth/me` JSON bodies.
 - [ ] `tcp_session` stores only SHA-256 digests (`token_hash`); raw tokens exist only in cookies.
 - [ ] `tcp_session` cookie attributes include `HttpOnly`, `SameSite=Lax`, `Path=/`; `Secure` is present only when `session_cookie_secure=true`.
-- [ ] Demo password seeding has no fallback defaults; missing, malformed, or incomplete `TCP_DEMO_PASSWORDS` fails fast.
+- [ ] Demo password seeding uses the user-approved local UAT default `123456`, hashed before storage; it is skipped entirely when any user already exists.
 - [ ] No `/api/demo/*` routes exist in production; 401/403 tests use test-only fixtures or direct dependency tests.
 - [ ] `GET /api/capability-model` and `GET /api/learning-resources*` require no cookie.
 - [ ] `POST /api/auth/login` and `POST /api/auth/logout` work cross-origin from `http://localhost:5173` and `http://localhost:18081`.

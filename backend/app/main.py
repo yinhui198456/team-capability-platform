@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .access.api import router as access_router
 from .access.schema import create_access_schema
+from .access.seed import seed_demo_accounts
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
 from .settings import settings
@@ -18,6 +19,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     with psycopg.connect(settings.database_url) as connection:
         ensure_catalog_initialized(connection, Path("/app/capability-model"))
         create_access_schema(connection)
+        seed_demo_accounts(connection)
     yield
 
 
