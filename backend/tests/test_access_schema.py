@@ -87,7 +87,9 @@ def test_primary_buddy_unique_index(connection: psycopg.Connection) -> None:
         )
         connection.execute(
             """
-            INSERT INTO buddy_relationship (member_id, buddy_id, is_primary, effective_to)
+            INSERT INTO buddy_relationship (
+                member_id, buddy_id, is_primary, effective_to
+            )
             VALUES (%s, %s, TRUE, NULL)
             """,
             (member_id, buddy_id),
@@ -97,7 +99,9 @@ def test_primary_buddy_unique_index(connection: psycopg.Connection) -> None:
         with connection.transaction():
             connection.execute(
                 """
-                INSERT INTO buddy_relationship (member_id, buddy_id, is_primary, effective_to)
+                INSERT INTO buddy_relationship (
+                    member_id, buddy_id, is_primary, effective_to
+                )
                 VALUES (%s, %s, TRUE, NULL)
                 """,
                 (member_id, buddy_id),
@@ -123,7 +127,9 @@ def test_member_cannot_be_own_buddy(connection: psycopg.Connection) -> None:
         with connection.transaction():
             connection.execute(
                 """
-                INSERT INTO buddy_relationship (member_id, buddy_id, is_primary, effective_to)
+                INSERT INTO buddy_relationship (
+                    member_id, buddy_id, is_primary, effective_to
+                )
                 VALUES (%s, %s, TRUE, NULL)
                 """,
                 (user_id, user_id),
