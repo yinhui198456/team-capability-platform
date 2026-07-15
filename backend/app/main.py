@@ -6,6 +6,7 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .access.api import router as access_router
 from .access.schema import create_access_schema
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
@@ -22,11 +23,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="TCP Backend", version="0.1.0", lifespan=lifespan)
 app.include_router(catalog_router)
+app.include_router(access_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
