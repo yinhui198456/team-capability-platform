@@ -2,13 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prevent drift between a GitHub Project task, the Claude Code (CC) subprocess that owns it, the Git commit that records the work, the Codex audit outcome, and the next task dispatch. This is a project-operations mechanism only; it adds no business feature, API, database table, or page.
+**Goal:** Prevent drift between a GitHub Project task, the Claude Code (CC) subprocess that owns it, the monitor wrapper that waits for it, the Git commit that records the work, the Codex audit outcome, and the next task dispatch. This is a project-operations mechanism only; it adds no business feature, API, database table, or page.
 
-**Architecture:** A single tracked Bash script `scripts/tcp-taskctl.sh` provides four subcommands (`start`, `status`, `recover`, `sync-audit`). It keeps one authoritative state file at `runtime/tcp-task-state.json` and one exclusive writer lock at `runtime/tcp-task-state.lock`. Per-run logs live under `runtime/tcp-runs/`.
+**Architecture:** A single tracked Bash script `scripts/tcp-taskctl.sh` provides five subcommands (`start`, `status`, `watch`, `recover`, `sync-audit`). It keeps one authoritative state file at `runtime/tcp-task-state.json` and one exclusive writer lock at `runtime/tcp-task-state.lock`. Per-run logs live under `runtime/tcp-runs/`.
 
-`start` launches exactly one `claude` child process from a required `--command-file`. The child's PID is recorded as `child_pid`, and its `stdout`/`stderr` are redirected to the per-run log. `start` updates GitHub Project fields **only** when passed `--sync-board`; otherwise it records only local state. `status` and `recover` detect child completion by polling the recorded `child_pid` but never transition board status on process exit. The script updates the board only through explicit `sync-audit` calls.
+`start` launches exactly one background **monitor wrapper** from a required `--command-file`. The monitor then launches exactly one `claude` child process, records its PID as `cc_pid`, waits for it to exit, and atomically writes `exit_code`, `completed_at`, and `completion_state` to the state file and run log. `start` records the wrapper's PID as `monitor_pid` before it exits. Once known, both `monitor_pid` and `cc_pid` are stored in state.
 
-Read-only workers (e.g. `status`) may run in parallel; any mutation holds the writer lock and logs every change.
+`status` reports the recorded `completion_state` (`running`, `completed`, `failed`, `recovered`, `overdue`) and process liveness, but it does not transition board status on process exit. `watch` is a read-only polling loop that repeatedly calls `status` and exits only when the recorded state reaches a terminal condition. `recover` terminates the recorded `monitor_pid` then `cc_pid` if still alive and records `completion_state=recovered`. The script updates the board only through explicit `sync-audit` calls or `start --sync-board`.
+
+Read-only workers (`status`, `watch`) may run in parallel; any mutation holds the writer lock and logs every change.
 
 **Tech Stack:** Bash, `jq`, `gh` (already available), Git. No new runtime dependencies, no Python/Node packages, no Docker changes.
 
@@ -20,9 +22,9 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
 
 - **No business code.** This mechanism must not create, modify, or depend on any business API, database schema, frontend page, or catalog/auth/growth feature.
 - **No new dependencies.** Use only Bash, `git`, `jq`, and the existing `gh` CLI. Do not add packages to `backend/requirements*.txt`, `frontend/package.json`, or `compose.yaml`.
-- **No automatic state transitions.** A process exit must never trigger `git merge`, `git reset`, `git checkout --force`, any GitHub Project field update, or any next-task dispatch. Those actions require an explicit subcommand and explicit arguments.
+- **No automatic state transitions.** A process exit must never trigger `git merge`, `git reset`, `git checkout --force`, any GitHub Project field update, or any next-task dispatch. The monitor wrapper may record local completion state (`completed`/`failed`) only; it may not mutate the board, worktree, or dispatch.
 - **`start` mutates the board only with `--sync-board`.** Without `--sync-board`, `start` records local state only. With `--sync-board`, it resolves live field metadata and updates only the three single-select fields (`Status`, `阶段状态`, `当前实施方`) for "CC now owns this task."
-- **Track the real CC subprocess, not the launcher shell.** The state file stores the PID of the background `claude` child, not the PID of `tcp-taskctl.sh` itself.
+- **Track both the monitor wrapper and the real CC subprocess.** The state file stores `monitor_pid` (the persistent wrapper) and `cc_pid` (the actual `claude` child). `start` records `monitor_pid` before exiting; the monitor records `cc_pid` as soon as it launches the child.
 - **One active writer only.** At most one CC subprocess may own the board state for a task at a time. Read-only preparation workers may run concurrently but must not hold the writer lock or update board state.
 - **Safe defaults, explicit overrides.** Staleness threshold is configurable per command with a safe default (3600 s). Any mutation is appended to a per-run log under `runtime/tcp-runs/`.
 - **No real GitHub changes during tests.** All automated tests use temporary directories and mocked `gh`/`claude` binaries in `PATH`. Tests never call the real GitHub API or modify the actual project board.
@@ -36,10 +38,10 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
 
 | Path | Responsibility |
 |------|----------------|
-| `scripts/tcp-taskctl.sh` | Tracked executable shell script with `start`, `status`, `recover`, and `sync-audit` subcommands. |
+| `scripts/tcp-taskctl.sh` | Tracked executable shell script with `start`, `status`, `watch`, `recover`, and `sync-audit` subcommands. |
 | `scripts/tests/test_tcp_taskctl.sh` | Deterministic shell-test suite using temp dirs and mocked `gh`/`claude` commands. |
 | `runtime/.gitignore` | Ignores `tcp-task-state.json`, `tcp-task-state.lock`, and `tcp-runs/` while keeping the `runtime/` directory tracked. |
-| `docs/07_Task_Control.md` | Operator manual: subcommands, state file schema, field mapping, and recovery playbook. Created only after tool tests pass. |
+| `docs/07_Task_Control.md` | Operator manual: subcommands, state file schema, field mapping, recovery playbook, and Codex operating loop. Created only after tool tests pass. |
 
 ### Modified files
 
@@ -68,9 +70,13 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
   "project_item_id": "PVTI_lADO...",
   "task_key": "3A-1",
   "command_file": "/abs/path/to/prompt.txt",
-  "child_pid": 12345,
+  "monitor_pid": 12345,
+  "cc_pid": 12346,
   "owner": "CC",
   "started_at": "2026-07-15T09:30:00Z",
+  "completed_at": null,
+  "exit_code": null,
+  "completion_state": "running",
   "base_head": "a1b2c3d...",
   "allowed_files": ["docs/06_Roadmap.md", "scripts/tcp-taskctl.sh"],
   "stale_after_seconds": 3600,
@@ -79,7 +85,15 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
 }
 ```
 
-`runtime/tcp-task-state.lock` is an empty lock file used with `flock(1)`. Mutations acquire an exclusive non-blocking lock; read-only `status` acquires a shared non-blocking lock. All writes are atomic (`tmpfile` + `mv`).
+Field semantics:
+
+- `monitor_pid`: PID of the background monitor wrapper launched by `start`. `start` records this before exiting.
+- `cc_pid`: PID of the actual `claude` child process. The monitor records this immediately after launching CC.
+- `completion_state`: one of `running`, `completed`, `failed`, `recovered`. `overdue` is computed at query time from `started_at` + `stale_after_seconds` and is not stored.
+- `exit_code`: the exit status returned by the `claude` child; set by the monitor when `completion_state` becomes `completed` or `failed`.
+- `completed_at`: ISO timestamp set by the monitor on completion/failure or by `recover`.
+
+`runtime/tcp-task-state.lock` is an empty lock file used with `flock(1)`. Mutations acquire an exclusive non-blocking lock; read-only `status`/`watch` acquire a shared non-blocking lock. All writes are atomic (`tmpfile` + `mv`).
 
 ---
 
@@ -102,18 +116,29 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
 - `--command-file` is required. The file contains the literal CC prompt text. The script rejects shell command strings and any attempt to bypass `--command-file`; there is no `--command` flag and no `eval`/`bash -c` path.
 - `--project-owner` and `--project-number` are required for `--sync-board` (either as flags or via `TCP_PROJECT_OWNER` / `TCP_PROJECT_NUMBER` environment variables). They are ignored when `--sync-board` is absent.
 - Reads the current Git HEAD as `base_head` if not supplied.
-- Checks the writer lock. If an active writer exists (state present, child PID alive, and not stale), exits non-zero with the existing task key and child PID.
-- Launches exactly one background `claude` child with this controlled command, redirecting both streams to the per-run log:
+- Checks the writer lock. If an active writer exists (state present, monitor PID alive, and not stale), exits non-zero with the existing task key and monitor PID.
+- Launches exactly one background **monitor wrapper**. The wrapper is responsible for launching, waiting, and recording completion. The `start` process records `monitor_pid` and exits immediately; it does not wait for the child.
 
-  ```bash
-  prompt=$(<"$command_file")
-  claude -p -- "$prompt" >>"$run_log" 2>&1 &
-  child_pid=$!
-  ```
+  The monitor wrapper runs with this contract:
 
-- Records the project owner/number, project item ID, task key, `command_file`, `child_pid`, start time, allowed file list, base HEAD, stale threshold, run-log path, and whether `--sync-board` was used.
+  1. Acquire the writer lock.
+  2. Read the prompt from `--command-file`.
+  3. Launch exactly one `claude` child, redirecting both streams to the per-run log:
+
+     ```bash
+     prompt=$(<"$command_file")
+     claude -p -- "$prompt" >>"$run_log" 2>&1 &
+     cc_pid=$!
+     ```
+
+  4. Atomically update the state file with `cc_pid` while `completion_state` remains `running`.
+  5. Release the writer lock.
+  6. `wait "$cc_pid"` and capture `exit_code`.
+  7. Re-acquire the writer lock, read the state to confirm it still belongs to this monitor (matching `monitor_pid`), then atomically write `exit_code`, `completed_at`, and `completion_state` (`completed` if `exit_code` is 0, otherwise `failed`). Release the lock.
+  8. Append the completion event (`exit_code`, `completed_at`, `completion_state`) to the run log.
+
+- Records the project owner/number, project item ID, task key, `command_file`, `monitor_pid`, start time, allowed file list, base HEAD, stale threshold, run-log path, and whether `--sync-board` was used. `cc_pid`, `exit_code`, `completed_at`, and final `completion_state` are added by the monitor as they become known.
 - If `--sync-board` is passed, resolves live field IDs and single-select option IDs and updates `Status` → `In Progress`, `阶段状态` → `进行中`, `当前实施方` → `CC`. Without `--sync-board`, the board is not touched.
-- The `tcp-taskctl.sh` process exits immediately after launching and recording the child; it does not wait for the child.
 
 ### `status`
 
@@ -124,14 +149,31 @@ Read-only workers (e.g. `status`) may run in parallel; any mutation holds the wr
 Reports, in machine-parseable lines plus a human summary:
 
 - state present / absent
-- project item ID, task key, recorded `child_pid`, owner
-- process state: `alive`, `completed` (child PID is gone), `stale` (child PID gone unexpectedly), or `overdue` (elapsed > threshold)
+- project item ID, task key, recorded `monitor_pid`, recorded `cc_pid`, owner
+- recorded `completion_state`: `running`, `completed`, `failed`, `recovered`
+- computed `overdue` flag (`true` when `completion_state=running` and elapsed > `stale_after_seconds`)
+- effective display state: `running`, `completed`, `failed`, `recovered`, or `overdue`
 - last file change among `allowed_files` (UTC ISO timestamp, or repo-wide if no list)
 - dirty paths from `git status --porcelain`
 - latest commit from `git log -1 --oneline`
 - run-log path
+- `exit_code` and `completed_at` if set
 
-`status` is read-only and may run concurrently with other readers. Detecting that the child has exited does **not** update any GitHub Project field; it only reports the state.
+`status` is read-only and may run concurrently with other readers. It derives the display state from the recorded `completion_state`; it does not infer "completed" simply because a PID is dead. Detecting that the child has exited does **not** update any GitHub Project field; it only reports the state.
+
+### `watch`
+
+```bash
+./scripts/tcp-taskctl.sh watch --interval <seconds> --max-wait <seconds>
+```
+
+- Read-only polling loop. It repeatedly calls the internal `status` logic and inspects the recorded `completion_state`.
+- Exits `0` only when `completion_state=completed`.
+- Exits nonzero on `failed`, `recovered`, or `overdue`.
+- Exits nonzero if `--max-wait` elapses without reaching `completed`.
+- Never modifies the board, Git worktree, or state file; never dispatches tasks.
+- `--interval` must be at least 1 s and at most `--max-wait`.
+- `--max-wait` must be at least `--interval` and defaults to `stale_after_seconds` from state if omitted.
 
 ### `recover`
 
@@ -141,10 +183,13 @@ Reports, in machine-parseable lines plus a human summary:
 
 - Acquires the writer lock.
 - If no state exists, exits 0 with an informational message.
-- If a process is recorded and still alive, sends `SIGTERM` to **only** that `child_pid`. Waits up to 10 s; if still alive, sends `SIGKILL` to **only** that `child_pid`.
-- If the recorded child has already exited, no signal is sent.
+- Reads the recorded `monitor_pid` and `cc_pid`.
+- If `monitor_pid` is alive, sends `SIGTERM` to **only** that PID. Waits up to 10 s; if still alive, sends `SIGKILL` to **only** that PID.
+- If `cc_pid` is still alive after the monitor terminates, sends `SIGTERM` then `SIGKILL` to **only** that PID with the same 10 s grace.
+- If the recorded child/monitor has already exited, no signal is sent.
 - Preserves the worktree: no `git reset`, `git checkout --force`, `git clean`, or merge is run.
-- Moves the state file to `runtime/tcp-runs/<timestamp>-recovered.json` and appends a recovery entry to the run log.
+- Atomically updates the state with `completion_state=recovered` and `completed_at`, then moves the state file to `runtime/tcp-runs/<timestamp>-recovered.json`.
+- Appends a recovery entry to the run log.
 - Does not update GitHub Project fields.
 
 ### `sync-audit`
@@ -198,15 +243,15 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 
 | Threat / failure | Mitigation |
 |---|---|
-| Two CC processes try to own the same task | Exclusive writer lock on `runtime/tcp-task-state.lock`; second `start` fails with existing task key and child PID. |
-| Stale state from a crashed process blocks a new start | `status` reports `stale`/`overdue`; `recover` clears it without touching the worktree. No implicit recovery in `start`. |
+| Two CC processes try to own the same task | Exclusive writer lock on `runtime/tcp-task-state.lock`; second `start` fails with existing task key and monitor PID. |
+| Stale state from a crashed process blocks a new start | `status` reports `overdue`; `recover` clears it without touching the worktree. No implicit recovery in `start`. |
 | `start` mutates the board unexpectedly | `start` updates board fields only when `--sync-board` is passed; default behavior is local-state only. |
-| Wrong PID is recorded or signaled | `start` stores the PID returned by the `claude` background launch (`$!`), not its own shell PID. `recover` sends signals only to the recorded `child_pid`, never to a PID discovered from `ps`. |
-| Recover kills the wrong process | `recover` sends signals only to the `child_pid` recorded in the state file. |
+| Wrong PID is recorded or signaled | `start` stores `monitor_pid` of the wrapper and the wrapper stores `cc_pid` of the `claude` child. `recover` sends signals only to the recorded `monitor_pid` then `cc_pid`, never to a PID discovered from `ps`. |
+| Recover kills the wrong process | `recover` sends signals only to PIDs recorded in the state file. |
 | Audit result updates board before commit exists | `sync-audit` runs `git cat-file -e <sha>` before any `gh project item-edit` call. |
-| Audit result is misspelled | `sync-audit` accepts only `accepted` or `rejected`; anything else exits non-zero before any board mutation. |
-| Process exit triggers an automatic state change | The script has no `trap` that calls `sync-audit`, `recover`, or board updates on `EXIT`. Child completion is reported by `status`/`recover` but never transitions board fields. |
-| Read-only worker mutates board state | `status` and future read-only helpers use shared lock or no lock and call no `gh project item-edit`. |
+| Audit result is misspelled | `sync-audit` accepts only `accepted` or `rejected`; anything else exits non-zero. |
+| Process exit triggers an automatic board state change | The monitor wrapper records local `completion_state` only; it has no `trap` that calls `sync-audit`, `recover`, board updates, or next-task dispatch. |
+| Read-only worker mutates board state | `status`/`watch` use shared lock or no lock and call no `gh project item-edit`. |
 | `gh` CLI is unavailable or unauthenticated | Each `gh` call is wrapped; on non-zero exit the script logs stderr and exits without partial board updates. `sync-audit` does not fall back to cached IDs if live resolution fails. |
 | Stale threshold is set dangerously low | Values below 60 s are rejected; default is 3600 s. |
 | Allowed-file list leaks or drifts | Recorded in state at `start`; `status` checks only those paths. If empty, it reports repo-wide last change. |
@@ -214,6 +259,8 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | Worktree is destroyed during recovery | `recover` performs no `git` destructive operations. Tests assert absence of `git reset`/`git checkout --force`/`git clean` in the script body. |
 | Missing command file | `start` exits non-zero before launching any child if `--command-file` is missing or unreadable. |
 | Shell command injection | `start` rejects any flag that would pass a raw shell command; the prompt is read from file and passed as a single argument to `claude -p -- "$prompt"`. |
+| Monitor crash leaves completion unknown | `status` can still see `monitor_pid`/`cc_pid`; if both are dead, the state is treated as terminal and `recover` archives it as `recovered`. |
+| `watch` is used to drive automation | `watch` exits nonzero on any non-success terminal state and never writes state or board fields; the controlling turn must inspect the result and decide on `sync-audit`. |
 
 ---
 
@@ -223,14 +270,14 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 
 | # | Test | Pass criteria |
 |---|---|---|
-| 1 | `start` records state | State file exists with correct project owner/number, project item ID, task key, `child_pid`, `command_file`, base HEAD, allowed files, and default stale threshold. |
-| 2 | `start` rejects missing `--command-file` | Exits non-zero before launching `claude` and does not create state. |
-| 3 | `start` records mock child PID and run log | Mock `claude` writes its PID to a known file; `tcp-taskctl.sh start` records that same PID and redirects output to a log under `runtime/tcp-runs/`. |
+| 1 | `start` records state | State file exists with correct project owner/number, project item ID, task key, `monitor_pid`, `command_file`, base HEAD, allowed files, and default stale threshold. `cc_pid` is initially null or added by the monitor within a short timeout. |
+| 2 | `start` rejects missing `--command-file` | Exits non-zero before launching the monitor and does not create state. |
+| 3 | `start` records `monitor_pid` and run log | Mock `claude` writes its PID to a known file; the monitor records that PID as `cc_pid` and redirects output to a log under `runtime/tcp-runs/`. |
 | 4 | `start` rejects shell command bypass | Passing a raw command string flag (e.g. `--command`) is not accepted; the script exits non-zero. |
-| 5 | Active writer guard | Second `start` while the first child process is alive exits non-zero and does not overwrite state. |
-| 6 | `status` alive/completed/stale | `status` reports `alive` for a running child PID and `completed`/`stale` after the child exits. |
+| 5 | Active writer guard | Second `start` while the first monitor process is alive exits non-zero and does not overwrite state. |
+| 6 | `status` reads recorded `completion_state` | Mock success produces `completion_state=completed`; mock failure produces `completion_state=failed`; `recover` produces `completion_state=recovered`; running produces `running`; elapsed stale threshold produces `overdue`. |
 | 7 | `status` dirty paths | After touching an untracked file, `status` lists the dirty path. |
-| 8 | `recover` terminates only recorded PID | `recover` kills the recorded `child_pid`, preserves tracked and untracked files, and moves state to `runtime/tcp-runs/*-recovered.json`. |
+| 8 | `recover` terminates only recorded PIDs | `recover` kills the recorded `monitor_pid` then `cc_pid`, preserves tracked and untracked files, and archives state with `completion_state=recovered`. |
 | 9 | `recover` no-op when idle or child already exited | `recover` with no state exits 0 and logs "no active task"; if the child already exited, it archives state without sending signals. |
 | 10 | `start --sync-board` updates board | Mock `gh` receives the correct owner/number, item ID, field IDs, and single-select option IDs for `Status=In Progress`, `阶段状态=进行中`, `当前实施方=CC`. |
 | 11 | `sync-audit accepted` updates board | Mock `gh` receives the correct item ID, field IDs, and single-select option ID for `Done`; output contains the commit and `accepted`. |
@@ -239,6 +286,10 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | 14 | `sync-audit` rejects missing commit | Exits non-zero before any `gh project item-edit` if commit SHA does not exist. |
 | 15 | No forbidden commands | The script source does not contain `git merge`, `git reset`, `git checkout --force`, `git clean -f`, or any dispatch of a next task. |
 | 16 | Stale threshold safe default | Calling `start` without `--stale-after` sets 3600 s; `--stale-after 30` is rejected. |
+| 17 | Monitor writes atomic completion state | Mock `claude` exiting 0 causes the state to transition atomically from `running` to `completed` with `exit_code=0` and a non-null `completed_at`; mock `claude` exiting nonzero causes `failed` with the nonzero `exit_code`. No partial writes are observable. |
+| 18 | `watch` succeeds only on completed | `watch --interval 1 --max-wait 5` returns 0 after a mock successful CC run; returns nonzero after a failed run; returns nonzero when the task is overdue. |
+| 19 | `watch` never mutates board or worktree | Running `watch` does not call `gh project item-edit`, `git merge`, `git reset`, `git checkout --force`, `git clean`, or modify `runtime/tcp-task-state.json` except by reading. |
+| 20 | `recover` records recovered state | Archived state file contains `completion_state=recovered` and `completed_at`; run log contains a recovery entry. |
 
 Run the suite with:
 
@@ -250,26 +301,49 @@ The suite exits 0 only when all cases pass and leaves no temp directories behind
 
 ---
 
+## Codex Operating Loop
+
+This mechanism is designed for an **active controlling chat turn**. The expected loop is:
+
+1. **Start:** Run `start --sync-board` to record local state, launch the monitor wrapper, and set the GitHub Project fields to "CC now owns this task."
+2. **Watch:** In the same active turn, run `watch --interval <seconds> --max-wait <seconds>` in the foreground. `watch` polls `status` until the recorded `completion_state` becomes terminal.
+3. **Inspect:** When `watch` exits:
+   - Exit `0` (`completed`): inspect the resulting Git commit and run log.
+   - Exit nonzero (`failed`, `recovered`, or `overdue`): inspect the run log and worktree to decide whether to retry, recover, or audit-reject.
+4. **Audit:** Review the commit, diff, and run log. Decide `accepted` or `rejected`.
+5. **Sync-audit:** Run `sync-audit --result accepted|rejected --commit <sha>` to update the GitHub Project fields explicitly. No board update happens automatically.
+
+**Important limitations:**
+
+- Keeping `watch` in the foreground provides **automatic detection** of completion inside the active turn, but it does **not** magically wake a finished chat turn. Once the turn ends, no further tool call occurs unless the user returns and sends a new message.
+- Persistent external notification (e.g. push notification, Slack message, webhook) would require a separately authorized daemon or integration; this plan adds no such daemon and makes no outbound network calls beyond the existing `gh` CLI.
+- `watch` is intentionally read-only and exits on terminal states; it does not perform recovery, sync-audit, or next-task dispatch.
+
+---
+
 ## TDD Steps and Commands
 
-### Task 1: Scaffold script, state contract, writer guard, and command-file child launch
+### Task 1: Scaffold script, state contract, writer guard, monitor wrapper, and command-file child launch
 
 **Files:**
 - Create: `scripts/tcp-taskctl.sh`, `runtime/.gitignore`
 - Modify: `.gitignore`
 
 **Interfaces:**
-- Produces: `start` and `status` subcommands with state-file schema, lock-file handling, safe default `--stale-after 3600`, required `--command-file`, controlled `claude` child launch, and optional `--sync-board` board mutation.
+- Produces: `start`, `status`, and `watch` subcommands with state-file schema, lock-file handling, safe default `--stale-after 3600`, required `--command-file`, controlled `claude` child launch via monitor wrapper, and optional `--sync-board` board mutation.
 
 **Concrete snippets for this task:**
 
-`scripts/tcp-taskctl.sh` helper to launch the CC child:
+`scripts/tcp-taskctl.sh` monitor wrapper that launches the CC child and records completion atomically:
 
 ```bash
-launch_child() {
-  local command_file="$1"
-  local run_log="$2"
-  local prompt
+monitor_wrapper() {
+  local state_file="$1"
+  local lock_file="$2"
+  local run_log="$3"
+  local command_file="$4"
+  local monitor_pid="$5"
+  local prompt cc_pid exit_code completed_at completion_state
 
   if [[ ! -f "$command_file" ]]; then
     log_error "command-file not found: $command_file"
@@ -284,7 +358,22 @@ launch_child() {
 
   # Exact controlled interface: one claude process, no shell evaluation.
   claude -p -- "$prompt" >>"$run_log" 2>&1 &
-  echo $!
+  cc_pid=$!
+
+  # Atomically record cc_pid while still running.
+  with_writer_lock "$lock_file" update_state_field "$state_file" "cc_pid" "$cc_pid"
+
+  wait "$cc_pid"
+  exit_code=$?
+  completed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  if [[ "$exit_code" -eq 0 ]]; then
+    completion_state="completed"
+  else
+    completion_state="failed"
+  fi
+
+  # Atomically record completion only if state still belongs to this monitor.
+  with_writer_lock "$lock_file" finalize_state "$state_file" "$monitor_pid" "$exit_code" "$completed_at" "$completion_state" "$run_log"
 }
 ```
 
@@ -308,6 +397,19 @@ while [[ $# -gt 0 ]]; do
     *)                 log_error "unknown argument: $1"; exit 2 ;;
   esac
 done
+```
+
+`start` launches the monitor wrapper and records `monitor_pid`:
+
+```bash
+monitor_wrapper "$state_file" "$lock_file" "$run_log" "$command_file" "$$" &
+monitor_pid=$!
+
+# Record initial state with monitor_pid before the parent exits.
+with_writer_lock "$lock_file" write_initial_state \
+  "$state_file" "$project_owner" "$project_number" "$project_item_id" \
+  "$task_key" "$command_file" "$monitor_pid" "$base_head" \
+  "$allowed_files" "$stale_after" "$run_log" "$sync_board"
 ```
 
 Mock `claude` binary used in tests:
@@ -340,10 +442,10 @@ tcp-task-state.lock
 tcp-runs/
 ```
 
-- [ ] **RED:** Add `scripts/tests/test_tcp_taskctl.sh` with tests 1–4, 6–7, 10, 15–16. Run `bash scripts/tests/test_tcp_taskctl.sh`; expect failures because the script is missing.
-- [ ] **Implement:** Create `scripts/tcp-taskctl.sh` with argument parsing, `flock`-based writer guard, state-file write/read, `start` (command-file child launch and optional `--sync-board`), and read-only `status`. Add `runtime/.gitignore`. Modify root `.gitignore` with `!runtime/.gitignore`.
-- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect tests 1–4, 6–7, 10, 15–16 to pass.
-- [ ] **Commit:** `git add scripts/tcp-taskctl.sh scripts/tests/test_tcp_taskctl.sh runtime/.gitignore .gitignore && git commit -m "feat: tcp task control start/status with command-file child and optional board sync"`.
+- [ ] **RED:** Add `scripts/tests/test_tcp_taskctl.sh` with tests 1–6, 10, 15–20 (mock success/failure/recover/overdue, atomic state transitions, no board mutation from watch). Run `bash scripts/tests/test_tcp_taskctl.sh`; expect failures because the script is missing.
+- [ ] **Implement:** Create `scripts/tcp-taskctl.sh` with argument parsing, `flock`-based writer guard, state-file write/read, `start` (command-file child launch via monitor wrapper and optional `--sync-board`), read-only `status`, and read-only `watch`. Add `runtime/.gitignore`. Modify root `.gitignore` with `!runtime/.gitignore`.
+- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect tests 1–6, 10, 15–20 to pass.
+- [ ] **Commit:** `git add scripts/tcp-taskctl.sh scripts/tests/test_tcp_taskctl.sh runtime/.gitignore .gitignore && git commit -m "feat: tcp task control start/status/watch with monitor wrapper and optional board sync"`.
 
 ### Task 2: Recover and sync-audit
 
@@ -352,7 +454,7 @@ tcp-runs/
 - Modify: `scripts/tests/test_tcp_taskctl.sh`
 
 **Interfaces:**
-- Produces: `recover` (PID-only termination, worktree preservation, no-op when child already gone) and `sync-audit` (explicit accepted/rejected + commit validation + live single-select option resolution + atomic pre-edit validation).
+- Produces: `recover` (monitor_PID then cc_PID termination, worktree preservation, no-op when child already gone, records `recovered` state) and `sync-audit` (explicit accepted/rejected + commit validation + live single-select option resolution + atomic pre-edit validation).
 
 **Concrete snippets for this task:**
 
@@ -426,6 +528,20 @@ sync_audit() {
 }
 ```
 
+`recover` snippet (terminate monitor first, then cc, then record recovered state):
+
+```bash
+recover() {
+  local state_file="$1"
+  local lock_file="$2"
+
+  with_writer_lock "$lock_file" bash -c '
+    state_file="$1"; shift
+    # ... load state, kill monitor_pid then cc_pid, update completion_state=recovered, archive state ...
+  ' _ "$state_file"
+}
+```
+
 Mock `gh project field-list` for tests (excerpt):
 
 ```bash
@@ -450,9 +566,9 @@ EOF
 chmod +x "$tmp/bin/gh"
 ```
 
-- [ ] **RED:** Add tests 5, 8–9, 11–14 to the test file. Run `bash scripts/tests/test_tcp_taskctl.sh`; expect `recover`/`sync-audit` assertions to fail.
-- [ ] **Implement:** Add `recover` with `SIGTERM`/`SIGKILL` only to recorded `child_pid`; add `sync-audit` with result/commit validation, live field/option ID resolution, atomic pre-edit validation, and partial-failure logging; add helper functions to call mocked/real `gh project item-edit`.
-- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect all 16 tests to pass.
+- [ ] **RED:** Add tests 8–9, 11–14, 20 to the test file. Run `bash scripts/tests/test_tcp_taskctl.sh`; expect `recover`/`sync-audit` assertions to fail.
+- [ ] **Implement:** Add `recover` with `SIGTERM`/`SIGKILL` only to recorded `monitor_pid` then `cc_pid`; record `completion_state=recovered`. Add `sync-audit` with result/commit validation, live field/option ID resolution, atomic pre-edit validation, and partial-failure logging; add helper functions to call mocked/real `gh project item-edit`.
+- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect all 20 tests to pass.
 - [ ] **Commit:** `git add scripts/tcp-taskctl.sh scripts/tests/test_tcp_taskctl.sh && git commit -m "feat: tcp task control recover and sync-audit"`.
 
 ### Task 3: Hardening and operator manual
@@ -462,7 +578,7 @@ chmod +x "$tmp/bin/gh"
 - Modify: `docs/06_Roadmap.md`
 
 **Interfaces:**
-- Produces: operator manual and targeted roadmap update reflecting iteration 3 in progress.
+- Produces: operator manual (including the Codex operating loop) and targeted roadmap update reflecting iteration 3 in progress.
 
 **Concrete snippets for this task:**
 
@@ -477,10 +593,14 @@ if ! grep -q "tcp-taskctl.sh" "docs/07_Task_Control.md"; then
   echo "FAIL: manual does not reference tcp-taskctl.sh"
   exit 1
 fi
+if ! grep -q "Codex operating loop" "docs/07_Task_Control.md"; then
+  echo "FAIL: manual does not document the Codex operating loop"
+  exit 1
+fi
 ```
 
-- [ ] **RED:** Add a test-level lint that verifies `docs/07_Task_Control.md` exists and references the script. Run the suite; expect failure.
-- [ ] **Implement:** Write `docs/07_Task_Control.md` covering subcommands, state schema, field mapping, recovery playbook, and mock-based test instructions. Update `docs/06_Roadmap.md` §2/§3 to set iteration 3 status to `进行中`, record the task-control commit range, and link to `docs/07_Task_Control.md`. Update only if the user has explicitly authorized iteration 3 to start.
+- [ ] **RED:** Add a test-level lint that verifies `docs/07_Task_Control.md` exists, references the script, and documents the Codex operating loop. Run the suite; expect failure.
+- [ ] **Implement:** Write `docs/07_Task_Control.md` covering subcommands, state schema, field mapping, recovery playbook, and the Codex operating loop (start → watch → inspect → audit → sync-audit, with the limitation that it cannot wake a finished chat turn). Update `docs/06_Roadmap.md` §2/§3 to set iteration 3 status to `进行中`, record the task-control commit range, and link to `docs/07_Task_Control.md`. Update only if the user has explicitly authorized iteration 3 to start.
 - [ ] **GREEN:** Re-run `bash scripts/tests/test_tcp_taskctl.sh`; expect the doc-existence assertion to pass.
 - [ ] **Commit:** `git add docs/07_Task_Control.md docs/06_Roadmap.md && git commit -m "docs: task control manual and iteration 3 progress"`.
 
@@ -489,11 +609,12 @@ fi
 ## Self-Review Checklist
 
 - [x] Smallest workable design: one shell script, one state file, one lock file, one log directory.
-- [x] Active writer guard implemented with exclusive `flock`; read-only `status` uses shared lock.
-- [x] `start` records project owner/number, project item ID, task key, `command_file`, `child_pid`, start time, allowed files, base HEAD, and `--sync-board` flag.
+- [x] Active writer guard implemented with exclusive `flock`; read-only `status`/`watch` use shared lock.
+- [x] `start` records project owner/number, project item ID, task key, `command_file`, `monitor_pid`, start time, allowed files, base HEAD, and `--sync-board` flag; the monitor records `cc_pid`, `exit_code`, `completed_at`, and `completion_state` atomically.
 - [x] `start` mutates GitHub Project fields only when `--sync-board` is supplied.
-- [x] `status` reports child `alive`/`completed`/`stale`/`overdue`, last file change, dirty paths, and latest commit without touching board fields.
-- [x] `recover` terminates only the recorded `child_pid` and preserves the worktree.
+- [x] `status` reports recorded `running`/`completed`/`failed`/`recovered`/`overdue` states, last file change, dirty paths, and latest commit without touching board fields.
+- [x] `watch` is read-only, exits `0` only on `completed`, and never mutates board, worktree, or state.
+- [x] `recover` terminates only the recorded `monitor_pid` then `cc_pid`, preserves the worktree, and records `completion_state=recovered`.
 - [x] `sync-audit` requires explicit `accepted`/`rejected`, project owner/number, and a validated commit before board updates.
 - [x] `sync-audit` resolves `Status`, `阶段状态`, and `当前实施方` as single-select fields by name and never uses a nonexistent `Blocked` option.
 - [x] `sync-audit` validates all required IDs/options/commit before the first project edit and logs partial external failures without pretending success.
@@ -502,5 +623,7 @@ fi
 - [x] Every mutation is logged under `runtime/tcp-runs/`.
 - [x] GitHub Project fields (`Status`, `阶段状态`, `当前实施方`, `实施过程`, `输出与验收`, `执行顺序`) are resolved dynamically; no task-specific IDs are embedded.
 - [x] Deterministic shell tests use temp directories and mocked `gh`/`claude`; no real GitHub changes.
+- [x] Tests mock success, failure, overdue, and recover; prove atomic state transitions; prove no board mutation from monitor/watch.
 - [x] Only Bash, `jq`, `gh`, and Git are used; no dependency additions.
 - [x] `docs/07_Task_Control.md` and the `docs/06_Roadmap.md` update are sequenced after tool tests pass.
+- [x] Codex operating loop is documented: `start --sync-board`, foreground `watch`, inspect, audit, explicit `sync-audit`; no automatic wake of a finished chat turn.
