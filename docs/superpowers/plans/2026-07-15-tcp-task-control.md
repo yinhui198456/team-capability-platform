@@ -123,10 +123,9 @@ Field semantics:
   The monitor wrapper runs with this contract:
 
   1. Discover its own PID via `BASHPID`.
-  2. Acquire the writer lock and read the state. Wait in a bounded loop (e.g., up to 5 s, polling 100 ms) for `monitor_pid` to equal its own `BASHPID` and `completion_state` to equal `running`. If the timeout expires or the state belongs to another monitor, log a diagnostic error and exit without launching `claude`.
-  3. Release the writer lock.
-  4. Read the prompt from `--command-file`.
-  5. Launch exactly one `claude` child, redirecting both streams to the per-run log:
+  2. Handshake: poll the state in a bounded loop (e.g., up to 5 s, polling 100 ms). On each iteration, briefly acquire the writer lock, read the state, and release the lock immediately before sleeping. Wait for `monitor_pid` to equal its own `BASHPID` and `completion_state` to equal `running`. The lock must never be held across a sleep so `start` can write the captured `$!` wrapper PID as soon as the wrapper is backgrounded. If the timeout expires or the state belongs to another monitor, log a diagnostic error and exit without launching `claude`.
+  3. Read the prompt from `--command-file`.
+  4. Launch exactly one `claude` child, redirecting both streams to the per-run log:
 
      ```bash
      prompt=$(<"$command_file")
@@ -134,11 +133,11 @@ Field semantics:
      cc_pid=$!
      ```
 
-  6. Atomically update the state file with `cc_pid` while `completion_state` remains `running`.
-  7. Release the writer lock.
-  8. `wait "$cc_pid"` and capture `exit_code`.
-  9. Re-acquire the writer lock, read the state to confirm it still belongs to this monitor (matching `monitor_pid`), then atomically write `exit_code`, `completed_at`, and `completion_state` (`completed` if `exit_code` is 0, otherwise `failed`). Release the lock.
-  10. Append the completion event (`exit_code`, `completed_at`, `completion_state`) to the run log.
+  5. Atomically update the state file with `cc_pid` while `completion_state` remains `running`.
+  6. Release the writer lock.
+  7. `wait "$cc_pid"` and capture `exit_code`.
+  8. Re-acquire the writer lock, read the state to confirm it still belongs to this monitor (matching `monitor_pid`), then atomically write `exit_code`, `completed_at`, and `completion_state` (`completed` if `exit_code` is 0, otherwise `failed`). Release the lock.
+  9. Append the completion event (`exit_code`, `completed_at`, `completion_state`) to the run log.
 
 - Records the project owner/number, project item ID, task key, `command_file`, start time, allowed file list, base HEAD, stale threshold, run-log path, and whether `--sync-board` was used. `monitor_pid` is set only after the wrapper is launched and confirmed; `cc_pid`, `exit_code`, `completed_at`, and final `completion_state` are added by the monitor as they become known.
 - If `--sync-board` is passed, resolves live field IDs and single-select option IDs and updates `Status` → `In Progress`, `阶段状态` → `进行中`, `当前实施方` → `CC`. Without `--sync-board`, the board is not touched.
@@ -264,7 +263,7 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | Missing command file | `start` exits non-zero before launching any child if `--command-file` is missing or unreadable. |
 | Shell command injection | `start` rejects any flag that would pass a raw shell command; the prompt is read from file and passed as a single argument to `claude -p -- "$prompt"`. |
 | Monitor crash leaves completion unknown | `status` can still see `monitor_pid`/`cc_pid`; if both are dead, the state is treated as terminal and `recover` archives it as `recovered`. |
-| Wrapper handshake timeout | If `start` fails to update `monitor_pid` or writes the wrong PID, the wrapper logs the mismatch and exits without launching `claude`; `start` still records the launcher PID and a diagnostic message, making the failure observable. |
+| Wrapper handshake timeout | If the wrapper handshake times out before `start` writes the captured `$!` wrapper PID, the wrapper logs the mismatch and exits without launching `claude`. The state remains `starting` (or is explicitly transitioned to `failed` / safely archived by `recover`) so the failure is observable. `monitor_pid`, whenever present in state, is always the wrapper PID captured by `start` as `$!`, never the launcher `$$`; no code path writes the parent PID into state. |
 | `watch` is used to drive automation | `watch` exits nonzero on any non-success terminal state and never writes state or board fields; the controlling turn must inspect the result and decide on `sync-audit`. |
 
 ---
@@ -295,7 +294,7 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | 18 | `watch` succeeds only on completed | `watch --interval 1 --max-wait 5` returns 0 after a mock successful CC run; returns nonzero after a failed run; returns nonzero when the task is overdue. |
 | 19 | `watch` never mutates board or worktree | Running `watch` does not call `gh project item-edit`, `git merge`, `git reset`, `git checkout --force`, `git clean`, or modify `runtime/tcp-task-state.json` except by reading. |
 | 20 | `recover` records recovered state | Archived state file contains `completion_state=recovered` and `completed_at`; run log contains a recovery entry. |
-| 21 | `start` captures real wrapper PID and survives fast-exit mock claude | A mock `claude` that exits immediately still leaves `monitor_pid` equal to the actual background wrapper PID (`$!` / wrapper `BASHPID`), never the launcher `$$`. After `claude` exits, `completion_state` is `completed` and `monitor_pid` remains the wrapper PID. |
+| 21 | `start` captures real wrapper PID and survives fast-exit mock claude | While the wrapper is handshake-polling, it releases the writer lock between polls so `start` can still acquire the lock and write the captured `$!` wrapper PID. A mock `claude` that exits immediately still leaves `monitor_pid` equal to the actual background wrapper PID (`$!` / wrapper `BASHPID`), never the launcher `$$`. After `claude` exits, `completion_state` is `completed` and `monitor_pid` remains the wrapper PID. |
 
 Run the suite with:
 
@@ -353,6 +352,7 @@ monitor_wrapper() {
   local waited=0
 
   # Bounded handshake: refuse to launch claude until state names this wrapper.
+  # Each poll acquires and releases the writer lock; never hold it while sleeping.
   while (( waited < 5000 )); do
     if with_writer_lock "$lock_file" state_belongs_to_monitor "$state_file" "$my_pid"; then
       break
