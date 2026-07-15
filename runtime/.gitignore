@@ -1,0 +1,6 @@
+# TCP runtime artifacts: state, lock, and run logs
+tcp-task-state.json
+tcp-task-state.json.lock
+tcp-runs/
+*.log
+!.gitignore

@@ -15,6 +15,7 @@ coverage/
 *.log
 
 postgres-data/
-runtime/
+runtime/*
+!runtime/.gitignore
 .superpowers/
 .DS_Store
