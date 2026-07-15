@@ -144,3 +144,33 @@ select {
 .muted {
   color: #667085;
 }
+
+.login-shell {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-form {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  max-width: 360px;
+  padding: 24px;
+  width: 100%;
+}
+
+.login-form h1 {
+  margin: 0;
+}
+
+.login-form button {
+  font: inherit;
+  justify-self: start;
+  padding: 8px 16px;
+}

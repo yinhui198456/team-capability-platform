@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { LoginPage } from './LoginPage'
 import {
   allL3,
   enabledDomains,
@@ -246,6 +247,10 @@ function LearningResourcesPage() {
 
 export function App() {
   const pathname = window.location.pathname
+
+  if (pathname === '/login') {
+    return <LoginPage />
+  }
 
   if (
     pathname !== '/capability/model' &&
