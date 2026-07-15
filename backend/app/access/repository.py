@@ -132,7 +132,10 @@ def get_session_user(
         """
         SELECT s.user_id
         FROM tcp_session s
-        WHERE s.token_hash = %s AND s.expires_at > NOW()
+        JOIN tcp_user u ON u.id = s.user_id
+        WHERE s.token_hash = %s
+          AND s.expires_at > NOW()
+          AND u.is_active = TRUE
         """,
         (token_hash,),
     ).fetchone()

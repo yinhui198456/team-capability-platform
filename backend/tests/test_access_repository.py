@@ -166,11 +166,13 @@ def test_create_session_returns_raw_token_and_stores_only_hash(
     assert rows[0][0] == token_hash
     assert rows[0][1] == user_id
 
-    columns = access_schema.execute("""
+    columns = access_schema.execute(
+        """
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'tcp_session'
-        """).fetchall()
+        """
+    ).fetchall()
     column_names = {col[0] for col in columns}
     assert "token_hash" in column_names
     assert "token" not in column_names
@@ -201,6 +203,17 @@ def test_expired_session_does_not_authenticate(
 ) -> None:
     user_id = create_user(access_schema, "grace", "Grace Grey", "secret")
     token = create_session(access_schema, user_id, max_age_seconds=-1)
+
+    assert get_session_user(access_schema, token) is None
+
+
+def test_get_session_user_returns_none_for_inactive_user(
+    access_schema: psycopg.Connection,
+) -> None:
+    user_id = create_user(
+        access_schema, "inactive", "Inactive User", "secret", is_active=False
+    )
+    token = create_session(access_schema, user_id, max_age_seconds=3600)
 
     assert get_session_user(access_schema, token) is None
 
