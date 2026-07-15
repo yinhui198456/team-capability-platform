@@ -6,7 +6,7 @@
 
 **Architecture:** A single tracked Bash script `scripts/tcp-taskctl.sh` provides five subcommands (`start`, `status`, `watch`, `recover`, `sync-audit`). It keeps one authoritative state file at `runtime/tcp-task-state.json` and one exclusive writer lock at `runtime/tcp-task-state.lock`. Per-run logs live under `runtime/tcp-runs/`.
 
-`start` launches exactly one background **monitor wrapper** from a required `--command-file`. The monitor then launches exactly one `claude` child process, records its PID as `cc_pid`, waits for it to exit, and atomically writes `exit_code`, `completed_at`, and `completion_state` to the state file and run log. `start` records the wrapper's PID as `monitor_pid` before it exits. Once known, both `monitor_pid` and `cc_pid` are stored in state.
+`start` launches exactly one background **monitor wrapper** from a required `--command-file`. The monitor then launches exactly one `claude` child process, records its PID as `cc_pid`, waits for it to exit, and atomically writes `exit_code`, `completed_at`, and `completion_state` to the state file and run log. `start` records the wrapper's PID as `monitor_pid` before it exits, where the PID is the same value the wrapper discovers as `BASHPID`. Once known, both `monitor_pid` and `cc_pid` are stored in state.
 
 `status` reports the recorded `completion_state` (`running`, `completed`, `failed`, `recovered`, `overdue`) and process liveness, but it does not transition board status on process exit. `watch` is a read-only polling loop that repeatedly calls `status` and exits only when the recorded state reaches a terminal condition. `recover` terminates the recorded `monitor_pid` then `cc_pid` if still alive and records `completion_state=recovered`. The script updates the board only through explicit `sync-audit` calls or `start --sync-board`.
 
@@ -87,9 +87,9 @@ Read-only workers (`status`, `watch`) may run in parallel; any mutation holds th
 
 Field semantics:
 
-- `monitor_pid`: PID of the background monitor wrapper launched by `start`. `start` records this before exiting.
+- `monitor_pid`: PID of the background monitor wrapper launched by `start`. The wrapper discovers its own PID via `BASHPID`; `start` records that same PID (captured as `$!` after backgrounding the wrapper) after launching the wrapper and before exiting. The wrapper refuses to launch `claude` until it reads `monitor_pid` equal to its own `BASHPID` from the state file.
 - `cc_pid`: PID of the actual `claude` child process. The monitor records this immediately after launching CC.
-- `completion_state`: one of `running`, `completed`, `failed`, `recovered`. `overdue` is computed at query time from `started_at` + `stale_after_seconds` and is not stored.
+- `completion_state`: one of `starting`, `running`, `completed`, `failed`, `recovered`. `starting` means the initial state has been written but the wrapper has not yet confirmed ownership; `overdue` is computed at query time from `started_at` + `stale_after_seconds` and is not stored.
 - `exit_code`: the exit status returned by the `claude` child; set by the monitor when `completion_state` becomes `completed` or `failed`.
 - `completed_at`: ISO timestamp set by the monitor on completion/failure or by `recover`.
 
@@ -117,13 +117,16 @@ Field semantics:
 - `--project-owner` and `--project-number` are required for `--sync-board` (either as flags or via `TCP_PROJECT_OWNER` / `TCP_PROJECT_NUMBER` environment variables). They are ignored when `--sync-board` is absent.
 - Reads the current Git HEAD as `base_head` if not supplied.
 - Checks the writer lock. If an active writer exists (state present, monitor PID alive, and not stale), exits non-zero with the existing task key and monitor PID.
-- Launches exactly one background **monitor wrapper**. The wrapper is responsible for launching, waiting, and recording completion. The `start` process records `monitor_pid` and exits immediately; it does not wait for the child.
+- Atomically writes an initial state with `completion_state=starting` and `monitor_pid=null` while holding the writer lock.
+- Launches exactly one background **monitor wrapper**. The wrapper is responsible for launching, waiting, and recording completion. The `start` process captures the wrapper PID as `$!`, updates the state with that `monitor_pid` and `completion_state=running`, releases the lock, and exits immediately; it does not wait for the child.
 
   The monitor wrapper runs with this contract:
 
-  1. Acquire the writer lock.
-  2. Read the prompt from `--command-file`.
-  3. Launch exactly one `claude` child, redirecting both streams to the per-run log:
+  1. Discover its own PID via `BASHPID`.
+  2. Acquire the writer lock and read the state. Wait in a bounded loop (e.g., up to 5 s, polling 100 ms) for `monitor_pid` to equal its own `BASHPID` and `completion_state` to equal `running`. If the timeout expires or the state belongs to another monitor, log a diagnostic error and exit without launching `claude`.
+  3. Release the writer lock.
+  4. Read the prompt from `--command-file`.
+  5. Launch exactly one `claude` child, redirecting both streams to the per-run log:
 
      ```bash
      prompt=$(<"$command_file")
@@ -131,13 +134,13 @@ Field semantics:
      cc_pid=$!
      ```
 
-  4. Atomically update the state file with `cc_pid` while `completion_state` remains `running`.
-  5. Release the writer lock.
-  6. `wait "$cc_pid"` and capture `exit_code`.
-  7. Re-acquire the writer lock, read the state to confirm it still belongs to this monitor (matching `monitor_pid`), then atomically write `exit_code`, `completed_at`, and `completion_state` (`completed` if `exit_code` is 0, otherwise `failed`). Release the lock.
-  8. Append the completion event (`exit_code`, `completed_at`, `completion_state`) to the run log.
+  6. Atomically update the state file with `cc_pid` while `completion_state` remains `running`.
+  7. Release the writer lock.
+  8. `wait "$cc_pid"` and capture `exit_code`.
+  9. Re-acquire the writer lock, read the state to confirm it still belongs to this monitor (matching `monitor_pid`), then atomically write `exit_code`, `completed_at`, and `completion_state` (`completed` if `exit_code` is 0, otherwise `failed`). Release the lock.
+  10. Append the completion event (`exit_code`, `completed_at`, `completion_state`) to the run log.
 
-- Records the project owner/number, project item ID, task key, `command_file`, `monitor_pid`, start time, allowed file list, base HEAD, stale threshold, run-log path, and whether `--sync-board` was used. `cc_pid`, `exit_code`, `completed_at`, and final `completion_state` are added by the monitor as they become known.
+- Records the project owner/number, project item ID, task key, `command_file`, start time, allowed file list, base HEAD, stale threshold, run-log path, and whether `--sync-board` was used. `monitor_pid` is set only after the wrapper is launched and confirmed; `cc_pid`, `exit_code`, `completed_at`, and final `completion_state` are added by the monitor as they become known.
 - If `--sync-board` is passed, resolves live field IDs and single-select option IDs and updates `Status` → `In Progress`, `阶段状态` → `进行中`, `当前实施方` → `CC`. Without `--sync-board`, the board is not touched.
 
 ### `status`
@@ -246,7 +249,8 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | Two CC processes try to own the same task | Exclusive writer lock on `runtime/tcp-task-state.lock`; second `start` fails with existing task key and monitor PID. |
 | Stale state from a crashed process blocks a new start | `status` reports `overdue`; `recover` clears it without touching the worktree. No implicit recovery in `start`. |
 | `start` mutates the board unexpectedly | `start` updates board fields only when `--sync-board` is passed; default behavior is local-state only. |
-| Wrong PID is recorded or signaled | `start` stores `monitor_pid` of the wrapper and the wrapper stores `cc_pid` of the `claude` child. `recover` sends signals only to the recorded `monitor_pid` then `cc_pid`, never to a PID discovered from `ps`. |
+| Wrong PID is recorded or signaled | `start` stores `monitor_pid` of the wrapper using `$!`, not the launcher `$$`; the wrapper stores `cc_pid` of the `claude` child. `recover` sends signals only to the recorded `monitor_pid` then `cc_pid`, never to a PID discovered from `ps`. |
+| Wrapper starts before `monitor_pid` is written | `start` writes `completion_state=starting`/`monitor_pid=null` before launching the wrapper; the wrapper handshakes by reading state and confirming `monitor_pid == $BASHPID` before launching `claude`, with a bounded timeout and safe failure. |
 | Recover kills the wrong process | `recover` sends signals only to PIDs recorded in the state file. |
 | Audit result updates board before commit exists | `sync-audit` runs `git cat-file -e <sha>` before any `gh project item-edit` call. |
 | Audit result is misspelled | `sync-audit` accepts only `accepted` or `rejected`; anything else exits non-zero. |
@@ -260,6 +264,7 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | Missing command file | `start` exits non-zero before launching any child if `--command-file` is missing or unreadable. |
 | Shell command injection | `start` rejects any flag that would pass a raw shell command; the prompt is read from file and passed as a single argument to `claude -p -- "$prompt"`. |
 | Monitor crash leaves completion unknown | `status` can still see `monitor_pid`/`cc_pid`; if both are dead, the state is treated as terminal and `recover` archives it as `recovered`. |
+| Wrapper handshake timeout | If `start` fails to update `monitor_pid` or writes the wrong PID, the wrapper logs the mismatch and exits without launching `claude`; `start` still records the launcher PID and a diagnostic message, making the failure observable. |
 | `watch` is used to drive automation | `watch` exits nonzero on any non-success terminal state and never writes state or board fields; the controlling turn must inspect the result and decide on `sync-audit`. |
 
 ---
@@ -270,7 +275,7 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 
 | # | Test | Pass criteria |
 |---|---|---|
-| 1 | `start` records state | State file exists with correct project owner/number, project item ID, task key, `monitor_pid`, `command_file`, base HEAD, allowed files, and default stale threshold. `cc_pid` is initially null or added by the monitor within a short timeout. |
+| 1 | `start` records state | State file exists with correct project owner/number, project item ID, task key, `command_file`, base HEAD, allowed files, and default stale threshold. The initial state has `completion_state=starting` and `monitor_pid=null`; after the wrapper handshake it transitions to `completion_state=running` with the real wrapper PID. `cc_pid` is initially null or added by the monitor within a short timeout. |
 | 2 | `start` rejects missing `--command-file` | Exits non-zero before launching the monitor and does not create state. |
 | 3 | `start` records `monitor_pid` and run log | Mock `claude` writes its PID to a known file; the monitor records that PID as `cc_pid` and redirects output to a log under `runtime/tcp-runs/`. |
 | 4 | `start` rejects shell command bypass | Passing a raw command string flag (e.g. `--command`) is not accepted; the script exits non-zero. |
@@ -290,6 +295,7 @@ All single-select updates use `gh project item-edit --single-select-option-id ..
 | 18 | `watch` succeeds only on completed | `watch --interval 1 --max-wait 5` returns 0 after a mock successful CC run; returns nonzero after a failed run; returns nonzero when the task is overdue. |
 | 19 | `watch` never mutates board or worktree | Running `watch` does not call `gh project item-edit`, `git merge`, `git reset`, `git checkout --force`, `git clean`, or modify `runtime/tcp-task-state.json` except by reading. |
 | 20 | `recover` records recovered state | Archived state file contains `completion_state=recovered` and `completed_at`; run log contains a recovery entry. |
+| 21 | `start` captures real wrapper PID and survives fast-exit mock claude | A mock `claude` that exits immediately still leaves `monitor_pid` equal to the actual background wrapper PID (`$!` / wrapper `BASHPID`), never the launcher `$$`. After `claude` exits, `completion_state` is `completed` and `monitor_pid` remains the wrapper PID. |
 
 Run the suite with:
 
@@ -342,8 +348,22 @@ monitor_wrapper() {
   local lock_file="$2"
   local run_log="$3"
   local command_file="$4"
-  local monitor_pid="$5"
   local prompt cc_pid exit_code completed_at completion_state
+  local my_pid="$BASHPID"
+  local waited=0
+
+  # Bounded handshake: refuse to launch claude until state names this wrapper.
+  while (( waited < 5000 )); do
+    if with_writer_lock "$lock_file" state_belongs_to_monitor "$state_file" "$my_pid"; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 100))
+  done
+  if (( waited >= 5000 )); then
+    log_error "monitor wrapper $my_pid failed to confirm ownership in state"
+    return 1
+  fi
 
   if [[ ! -f "$command_file" ]]; then
     log_error "command-file not found: $command_file"
@@ -373,7 +393,18 @@ monitor_wrapper() {
   fi
 
   # Atomically record completion only if state still belongs to this monitor.
-  with_writer_lock "$lock_file" finalize_state "$state_file" "$monitor_pid" "$exit_code" "$completed_at" "$completion_state" "$run_log"
+  with_writer_lock "$lock_file" finalize_state "$state_file" "$my_pid" "$exit_code" "$completed_at" "$completion_state" "$run_log"
+}
+```
+
+```bash
+state_belongs_to_monitor() {
+  local state_file="$1"
+  local my_pid="$2"
+  local state_pid state_phase
+  state_pid=$(jq -r '.monitor_pid // empty' "$state_file")
+  state_phase=$(jq -r '.completion_state // empty' "$state_file")
+  [[ "$state_pid" == "$my_pid" && "$state_phase" == "running" ]]
 }
 ```
 
@@ -399,24 +430,32 @@ while [[ $# -gt 0 ]]; do
 done
 ```
 
-`start` launches the monitor wrapper and records `monitor_pid`:
+`start` writes the initial state, launches the monitor wrapper, and records the captured wrapper PID:
 
 ```bash
-monitor_wrapper "$state_file" "$lock_file" "$run_log" "$command_file" "$$" &
-monitor_pid=$!
-
-# Record initial state with monitor_pid before the parent exits.
+# Write starting state with monitor_pid=null under the writer lock.
 with_writer_lock "$lock_file" write_initial_state \
   "$state_file" "$project_owner" "$project_number" "$project_item_id" \
-  "$task_key" "$command_file" "$monitor_pid" "$base_head" \
+  "$task_key" "$command_file" "null" "$base_head" \
   "$allowed_files" "$stale_after" "$run_log" "$sync_board"
+
+# Launch wrapper in background; $! is the wrapper PID, not $$.
+monitor_wrapper "$state_file" "$lock_file" "$run_log" "$command_file" &
+monitor_pid=$!
+
+# Update state with the real wrapper PID and transition to running.
+with_writer_lock "$lock_file" update_state_pid_running \
+  "$state_file" "$monitor_pid"
 ```
+
+`update_state_pid_running` atomically sets `monitor_pid` to the captured `$!` and `completion_state` to `running`.
 
 Mock `claude` binary used in tests:
 
 ```bash
 cat > "$tmp/bin/claude" <<'EOF'
 #!/usr/bin/env bash
+# $$ here is the mock claude child PID (recorded as cc_pid), not the monitor wrapper.
 printf '%s\n' "MOCK_CLAUDE_PID=$$" >> "$MOCK_CLAUDE_PID_FILE"
 printf '%s\n' "$*" >> "$MOCK_CLAUDE_LOG"
 if [[ "${MOCK_CLAUDE_EXIT:-}" == "1" ]]; then
@@ -442,9 +481,9 @@ tcp-task-state.lock
 tcp-runs/
 ```
 
-- [ ] **RED:** Add `scripts/tests/test_tcp_taskctl.sh` with tests 1–6, 10, 15–20 (mock success/failure/recover/overdue, atomic state transitions, no board mutation from watch). Run `bash scripts/tests/test_tcp_taskctl.sh`; expect failures because the script is missing.
+- [ ] **RED:** Add `scripts/tests/test_tcp_taskctl.sh` with tests 1–6, 10, 15–21 (mock success/failure/recover/overdue, atomic state transitions, no board mutation from watch, real wrapper PID capture). Run `bash scripts/tests/test_tcp_taskctl.sh`; expect failures because the script is missing.
 - [ ] **Implement:** Create `scripts/tcp-taskctl.sh` with argument parsing, `flock`-based writer guard, state-file write/read, `start` (command-file child launch via monitor wrapper and optional `--sync-board`), read-only `status`, and read-only `watch`. Add `runtime/.gitignore`. Modify root `.gitignore` with `!runtime/.gitignore`.
-- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect tests 1–6, 10, 15–20 to pass.
+- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect tests 1–6, 10, 15–21 to pass.
 - [ ] **Commit:** `git add scripts/tcp-taskctl.sh scripts/tests/test_tcp_taskctl.sh runtime/.gitignore .gitignore && git commit -m "feat: tcp task control start/status/watch with monitor wrapper and optional board sync"`.
 
 ### Task 2: Recover and sync-audit
@@ -566,9 +605,9 @@ EOF
 chmod +x "$tmp/bin/gh"
 ```
 
-- [ ] **RED:** Add tests 8–9, 11–14, 20 to the test file. Run `bash scripts/tests/test_tcp_taskctl.sh`; expect `recover`/`sync-audit` assertions to fail.
+- [ ] **RED:** Add tests 8–9, 11–14, 20–21 to the test file. Run `bash scripts/tests/test_tcp_taskctl.sh`; expect `recover`/`sync-audit` assertions to fail.
 - [ ] **Implement:** Add `recover` with `SIGTERM`/`SIGKILL` only to recorded `monitor_pid` then `cc_pid`; record `completion_state=recovered`. Add `sync-audit` with result/commit validation, live field/option ID resolution, atomic pre-edit validation, and partial-failure logging; add helper functions to call mocked/real `gh project item-edit`.
-- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect all 20 tests to pass.
+- [ ] **GREEN:** Run `bash scripts/tests/test_tcp_taskctl.sh`; expect all 21 tests to pass.
 - [ ] **Commit:** `git add scripts/tcp-taskctl.sh scripts/tests/test_tcp_taskctl.sh && git commit -m "feat: tcp task control recover and sync-audit"`.
 
 ### Task 3: Hardening and operator manual
@@ -610,7 +649,8 @@ fi
 
 - [x] Smallest workable design: one shell script, one state file, one lock file, one log directory.
 - [x] Active writer guard implemented with exclusive `flock`; read-only `status`/`watch` use shared lock.
-- [x] `start` records project owner/number, project item ID, task key, `command_file`, `monitor_pid`, start time, allowed files, base HEAD, and `--sync-board` flag; the monitor records `cc_pid`, `exit_code`, `completed_at`, and `completion_state` atomically.
+- [x] `start` records project owner/number, project item ID, task key, `command_file`, `monitor_pid` (captured as `$!` and confirmed by the wrapper), start time, allowed files, base HEAD, and `--sync-board` flag; the monitor records `cc_pid`, `exit_code`, `completed_at`, and `completion_state` atomically.
+- [x] `start` writes `completion_state=starting`/`monitor_pid=null` before launching the wrapper, then updates `monitor_pid` and `completion_state=running`; the wrapper handshakes on `BASHPID` before launching `claude`.
 - [x] `start` mutates GitHub Project fields only when `--sync-board` is supplied.
 - [x] `status` reports recorded `running`/`completed`/`failed`/`recovered`/`overdue` states, last file change, dirty paths, and latest commit without touching board fields.
 - [x] `watch` is read-only, exits `0` only on `completed`, and never mutates board, worktree, or state.
@@ -624,6 +664,7 @@ fi
 - [x] GitHub Project fields (`Status`, `阶段状态`, `当前实施方`, `实施过程`, `输出与验收`, `执行顺序`) are resolved dynamically; no task-specific IDs are embedded.
 - [x] Deterministic shell tests use temp directories and mocked `gh`/`claude`; no real GitHub changes.
 - [x] Tests mock success, failure, overdue, and recover; prove atomic state transitions; prove no board mutation from monitor/watch.
+- [x] Tests include a fast-exit mock claude scenario that asserts the recorded `monitor_pid` is the real wrapper PID (`$!` / `BASHPID`), never the launcher `$$`.
 - [x] Only Bash, `jq`, `gh`, and Git are used; no dependency additions.
 - [x] `docs/07_Task_Control.md` and the `docs/06_Roadmap.md` update are sequenced after tool tests pass.
 - [x] Codex operating loop is documented: `start --sync-board`, foreground `watch`, inspect, audit, explicit `sync-audit`; no automatic wake of a finished chat turn.
