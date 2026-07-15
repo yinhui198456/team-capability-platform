@@ -55,7 +55,7 @@
 | Path | Change |
 |------|--------|
 | `backend/app/main.py` | Import and `app.include_router(access_router)`; extend CORS `allow_methods` to `["GET", "POST", "OPTIONS"]`; call `create_access_schema` and seed demo accounts in lifespan after catalog initialization. |
-| `backend/app/settings.py` | Add `session_cookie_secure: bool = False`, `session_max_age_seconds: int = 86400`, `demo_account_passwords_json: str | None = None`, and keep existing `database_url`, `cors_origins`, `port`. Parse `demo_account_passwords_json` explicitly as JSON; missing or invalid values fail fast. |
+| `backend/app/settings.py` | Add `session_cookie_secure: bool = False`, `session_max_age_seconds: int = 86400`, `demo_account_passwords_json: str | None = None`, and keep existing `database_url`, `cors_origins`, `port`. Parse `demo_account_passwords_json` explicitly as JSON; missing, malformed, or incomplete values fail fast at startup/seed. |
 | `backend/app/catalog/api.py` | No route changes; keep catalog endpoints unprotected. |
 | `frontend/src/App.tsx` | Add `/login` route branch; preserve `/capability/model` and `/operations/resources`; after login, redirect to `/capability/model`. |
 | `frontend/src/styles.css` | Add minimal login form layout without changing catalog styles. |
@@ -282,10 +282,10 @@ Preserve existing `/capability/model` and `/operations/resources` branches.
 
 ## Demo Accounts & UAT
 
-`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_PASSWORDS` as a complete JSON string, e.g.:
+`backend/app/access/seed.py` seeds the following accounts only when `tcp_user` is empty at lifespan startup. Passwords are read from the environment variable `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` as a JSON string, e.g.:
 
 ```bash
-TCP_DEMO_PASSWORDS='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}'
+TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}'
 ```
 
 There is **no fallback or default password set**. `seed.py` explicitly parses the JSON with `json.loads`, validates that **all five** usernames (`admin`, `leader`, `buddy`, `member`, `member2`) are present with non-empty string passwords, and aborts seed/startup if the configuration is missing, malformed, or incomplete. Deployments inject this value at runtime via a secret manager or `.env` file that is not committed to the repository. The seed hashes passwords via `hash_password` before insertion.
@@ -398,8 +398,8 @@ There is **no fallback or default password set**. `seed.py` explicitly parses th
 **Interfaces:**
 - `seed_demo_accounts(connection: psycopg.Connection) -> None` inserts the five demo accounts, assigns roles, and creates buddy relationships only when `tcp_user` is empty.
 
-- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
-- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_PASSWORDS` via `settings.demo_account_passwords_json` and parse it explicitly with `json.loads`; validate all five usernames with non-empty passwords and abort seed/startup if the configuration is missing, malformed, or incomplete.
+- [ ] **RED:** add tests that seed runs idempotently (second run does not duplicate), passwords verify, roles are assigned, and buddy relationships are created. Run `docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_access_seed.py"`; expect seed module missing.
+- [ ] **Implement:** create `seed.py` and call it from lifespan after schema creation; read `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` via `settings.demo_account_passwords_json` and parse it explicitly with `json.loads`; validate all five usernames with non-empty passwords and abort seed/startup if the configuration is missing, malformed, or incomplete.
 - [ ] **GREEN:** repeat the RED command; expect idempotent seed, login with seeded passwords, and buddy assignments to pass.
 - [ ] **Commit:** `git add backend/app/access/seed.py backend/tests/test_access_seed.py backend/app/main.py && git commit -m "feat: seed uat demo accounts"`.
 
@@ -427,7 +427,7 @@ After all tasks are GREEN, run the integration suite:
 # 1. Validate schema and all access tests
 docker compose up -d postgres
 until docker compose exec -T postgres pg_isready -U tcp -d tcp >/dev/null; do sleep 1; done
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_PASSWORDS='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/capability-model:ro" -e TCP_DEMO_ACCOUNT_PASSWORDS_JSON='{"admin":"admin","leader":"leader","buddy":"buddy","member":"member","member2":"member2"}' backend sh -c "pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/"
 
 # 2. Build and run full stack
 docker compose build backend frontend
@@ -439,9 +439,10 @@ curl -fsS http://localhost:18081/api/capability-model | jq '.domains | length'
 # expected: 6
 
 # 4. UAT smoke: login returns HttpOnly cookie (local HTTP omits Secure)
+# Set TCP_UAT_USERNAME and TCP_UAT_PASSWORD from the noncommitted complete TCP_DEMO_PASSWORDS value.
 curl -fsS -c /tmp/tcp_uat_cookies.txt -X POST http://localhost:18081/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"member","password":"member"}' | jq '.roles'
+  -d "{\"username\":\"${TCP_UAT_USERNAME}\",\"password\":\"${TCP_UAT_PASSWORD}\"}" | jq '.roles'
 # expected: ["Member"]
 grep -q 'HttpOnly' /tmp/tcp_uat_cookies.txt && echo 'cookie is HttpOnly'
 # HTTPS deployments must also set session_cookie_secure=true and verify Secure is present.
@@ -469,7 +470,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt http://localhost:18081/api/auth/me
 - [ ] No token appears in `/api/auth/login` or `/api/auth/me` JSON bodies.
 - [ ] `tcp_session` stores only SHA-256 digests (`token_hash`); raw tokens exist only in cookies.
 - [ ] `tcp_session` cookie attributes include `HttpOnly`, `SameSite=Lax`, `Path=/`; `Secure` is present only when `session_cookie_secure=true`.
-- [ ] Demo password seeding has no fallback defaults; missing/invalid `TCP_DEMO_PASSWORDS` fails fast.
+- [ ] Demo password seeding has no fallback defaults; missing/invalid `TCP_DEMO_ACCOUNT_PASSWORDS_JSON` fails fast.
 - [ ] No `/api/demo/*` routes exist in production; 401/403 tests use test-only fixtures or direct dependency tests.
 - [ ] `GET /api/capability-model` and `GET /api/learning-resources*` require no cookie.
 - [ ] `POST /api/auth/login` and `POST /api/auth/logout` work cross-origin from `http://localhost:5173` and `http://localhost:18081`.
