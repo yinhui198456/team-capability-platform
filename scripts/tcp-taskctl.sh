@@ -149,8 +149,8 @@ monitor_task() {
     local run_log="$3"
     local started_epoch="$4"
 
-    # Launch CC via claude -p
-    claude -p -- "$prompt" >"$run_log" 2>&1 &
+    # Launch CC via claude -p in automated permission mode.
+    claude -p --safe-mode --permission-mode auto -- "$prompt" >"$run_log" 2>&1 &
     local cc_pid=$!
     update_state_field cc_pid "$cc_pid"
 

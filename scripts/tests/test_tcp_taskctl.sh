@@ -36,7 +36,7 @@ setup_test() {
   # Mock claude: records args, optionally fails/sleeps based on MOCK_CLAUDE_EXIT
   cat > "$TMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MOCK_CLAUDE_ARGS_LOG"
+printf '%s\n' "$@" >> "$MOCK_CLAUDE_ARGS_LOG"
 if [[ "${MOCK_CLAUDE_EXIT:-0}" != "0" ]]; then
   exit "${MOCK_CLAUDE_EXIT}"
 fi
@@ -141,6 +141,52 @@ test_success_notifies_green() {
   teardown_test
 }
 
+test_monitor_invokes_claude_with_auto_permissions() {
+  setup_test
+  printf 'do the thing\n' > command.txt
+
+  "$TCP_TASKCTL" start --task "TEST-AUTO" --command-file command.txt
+
+  if ! wait_for_state state completed 5000; then
+    fail "auto: state did not become completed (got $(state_key state))"
+    teardown_test
+    return
+  fi
+
+  if [[ ! -f "$MOCK_CLAUDE_ARGS_LOG" ]]; then
+    fail "auto: claude mock was not invoked"
+    teardown_test
+    return
+  fi
+
+  local ok=1
+  if ! grep -qx -- '--safe-mode' "$MOCK_CLAUDE_ARGS_LOG"; then
+    fail "auto: --safe-mode not found in claude args"
+    ok=0
+  fi
+  if ! grep -qx -- '--permission-mode' "$MOCK_CLAUDE_ARGS_LOG"; then
+    fail "auto: --permission-mode not found in claude args"
+    ok=0
+  fi
+  if ! grep -qx -- 'auto' "$MOCK_CLAUDE_ARGS_LOG"; then
+    fail "auto: permission-mode value 'auto' not found in claude args"
+    ok=0
+  fi
+
+  # Verify the prompt is passed as a single argument after '--'.
+  local after_dash
+  after_dash="$(awk '/^--$/ { seen=1; next } seen { print; seen=0 }' "$MOCK_CLAUDE_ARGS_LOG")"
+  if [[ "$after_dash" != "do the thing" ]]; then
+    fail "auto: prompt after -- was not a single argument: $(printf '%q' "$after_dash")"
+    ok=0
+  fi
+
+  if (( ok )); then
+    pass "monitor_invokes_claude_with_auto_permissions"
+  fi
+  teardown_test
+}
+
 test_failure_notifies_red() {
   setup_test
   echo "fail some task" > command.txt
@@ -207,7 +253,7 @@ test_monitor_survives_start_session_cleanup() {
   # simulate the Codex exec host cleaning up the start command's session.
   cat > "$TMP_DIR/bin/claude" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MOCK_CLAUDE_ARGS_LOG"
+printf '%s\n' "$@" >> "$MOCK_CLAUDE_ARGS_LOG"
 sleep 1
 exit 0
 EOF
@@ -323,6 +369,7 @@ main() {
   fi
 
   test_success_notifies_green
+  test_monitor_invokes_claude_with_auto_permissions
   test_failure_notifies_red
   test_status_does_not_notify
   test_monitor_survives_start_session_cleanup
