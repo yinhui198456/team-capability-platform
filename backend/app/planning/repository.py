@@ -764,6 +764,84 @@ def get_monthly_hours(
     ]
 
 
+def get_member_dashboard(
+    connection: psycopg.Connection, member_id: int, year: int
+) -> dict[str, object]:
+    """Return the Member-only, read-only aggregation used by UI-01."""
+    total_hours_row = connection.execute(
+        """
+        SELECT COALESCE(SUM(lpl.actual_hours), 0)
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    completed_row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s AND lt.status = '已完成'
+        """,
+        (member_id, year),
+    ).fetchone()
+    pending_evidence_row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+          AND e.status IN ('草稿', '待 Review', '需补充')
+        """,
+        (member_id, year),
+    ).fetchone()
+    score_rows = connection.execute(
+        """
+        SELECT SUBSTRING(ad.l3_code FROM 1 FOR 3),
+               ROUND(AVG(ad.current_level))::INT
+        FROM assessment_detail ad
+        JOIN assessment a ON a.id = ad.assessment_id
+        WHERE a.id = (
+            SELECT id FROM assessment
+            WHERE member_id = %s AND year = %s AND status = '已归档'
+            ORDER BY archived_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+        )
+        GROUP BY SUBSTRING(ad.l3_code FROM 1 FOR 3)
+        """,
+        (member_id, year),
+    ).fetchall()
+    scores = {str(row[0]): int(row[1]) for row in score_rows}
+    current_tasks = [
+        task
+        for task in list_learning_tasks(connection, member_id)
+        if task["status"] not in {"已完成", "取消"}
+    ]
+
+    return {
+        "year": year,
+        "summary": {
+            "total_learning_hours": int(total_hours_row[0]) if total_hours_row else 0,
+            "completed_task_count": int(completed_row[0]) if completed_row else 0,
+            "pending_evidence_count": (
+                int(pending_evidence_row[0]) if pending_evidence_row else 0
+            ),
+        },
+        "domain_radar": [
+            {"domain_code": code, "score": scores.get(code, 0)}
+            for code in ("P01", "P02", "P03", "C01", "C02", "C03")
+        ],
+        "gaps": list_eligible_gaps(connection, member_id),
+        "current_tasks": current_tasks,
+    }
+
+
 _EVIDENCE_UPDATABLE_FIELDS = {"content", "evidence_link"}
 
 _ALLOWED_EVIDENCE_STATUSES = {

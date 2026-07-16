@@ -14,6 +14,7 @@ from .repository import (
     get_capability_profile,
     get_evidence,
     get_learning_task,
+    get_member_dashboard,
     get_monthly_hours,
     list_eligible_gaps,
     list_evidence_reviews_for_task,
@@ -47,6 +48,14 @@ def _require_buddy(user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+
+
+@planning_router.get("/member-dashboard")
+def get_member_dashboard_view(
+    user: CurrentUser, connection: Connection, year: int
+) -> dict[str, object]:
+    _require_member(user)
+    return get_member_dashboard(connection, int(user["id"]), year)
 
 
 @planning_router.get("/annual-plan-eligibility")

@@ -74,6 +74,18 @@ export type LearningTask = {
   plan_item_estimated_hours: string | null
 }
 
+export type MemberDashboard = {
+  year: number
+  summary: {
+    total_learning_hours: number
+    completed_task_count: number
+    pending_evidence_count: number
+  }
+  domain_radar: { domain_code: string; score: number }[]
+  gaps: EligibleGap[]
+  current_tasks: LearningTask[]
+}
+
 export type AnnualPlan = {
   id: number
   member_id: number
@@ -432,6 +444,15 @@ export async function getCapabilityProfile(
   return request<CapabilityProfile>(`/api/planning/profiles?year=${year}`, {
     method: 'GET',
   })
+}
+
+export async function getMemberDashboard(
+  year: number,
+): Promise<MemberDashboard> {
+  return request<MemberDashboard>(
+    `/api/planning/member-dashboard?year=${year}`,
+    { method: 'GET' },
+  )
 }
 
 export async function getCapabilityProfileForMember(

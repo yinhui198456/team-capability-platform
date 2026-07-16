@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { AnnualPlanPage } from './AnnualPlanPage'
+import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentPage } from './AssessmentPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
@@ -10,6 +11,7 @@ import { GrowthGoalPage } from './GrowthGoalPage'
 import { LearningTaskPage } from './LearningTaskPage'
 import { LoginPage } from './LoginPage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
+import { MemberDashboardPage } from './MemberDashboardPage'
 import { ProfilePage } from './ProfilePage'
 import {
   allL3,
@@ -264,6 +266,7 @@ export function App() {
 
   if (
     pathname !== '/capability/model' &&
+    pathname !== '/dashboard/member' &&
     pathname !== '/operations/resources' &&
     pathname !== '/capability/assessment' &&
     pathname !== '/capability/assessment/history' &&
@@ -274,6 +277,7 @@ export function App() {
     pathname !== '/growth/profile' &&
     pathname !== '/growth/review/monthly' &&
     pathname !== '/mentoring/assessment-review' &&
+    pathname !== '/mentoring/dashboard' &&
     pathname !== '/mentoring/evidence-review'
   ) {
     return (
@@ -286,6 +290,18 @@ export function App() {
   return (
     <main className="catalog-shell">
       <nav aria-label="目录导航">
+        <a
+          className={pathname === '/dashboard/member' ? 'active' : ''}
+          href="/dashboard/member"
+        >
+          我的成长
+        </a>
+        <a
+          className={pathname === '/mentoring/dashboard' ? 'active' : ''}
+          href="/mentoring/dashboard"
+        >
+          Buddy 审核中心
+        </a>
         <a
           className={pathname === '/capability/model' ? 'active' : ''}
           href="/capability/model"
@@ -383,8 +399,12 @@ export function App() {
         <MonthlyReviewPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
+      ) : pathname === '/mentoring/dashboard' ? (
+        <BuddyReviewCenter />
       ) : pathname === '/mentoring/evidence-review' ? (
         <EvidenceReviewPage />
+      ) : pathname === '/dashboard/member' ? (
+        <MemberDashboardPage />
       ) : (
         <CapabilityModelPage />
       )}
