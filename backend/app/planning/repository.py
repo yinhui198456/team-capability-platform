@@ -2,6 +2,7 @@ from typing import Any
 
 import psycopg
 
+from ..access.repository import get_primary_buddy
 from ..assessment.repository import get_gap
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 
@@ -757,3 +758,214 @@ def get_monthly_hours(
         {"month": row[0], "total_hours": int(row[1]) if row[1] is not None else 0}
         for row in rows
     ]
+
+
+_EVIDENCE_UPDATABLE_FIELDS = {"content", "evidence_link"}
+
+_ALLOWED_EVIDENCE_STATUSES = {
+    "草稿",
+    "待 Review",
+    "通过",
+    "需补充",
+    "驳回",
+    "已归档",
+}
+
+
+def _evidence_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "learning_task_id": row[1],
+        "l3_code": row[2],
+        "version_number": row[3],
+        "content": row[4],
+        "evidence_link": row[5],
+        "status": row[6],
+        "submitted_at": row[7],
+        "created_at": row[8],
+    }
+
+
+def _assert_evidence_ownership(
+    connection: psycopg.Connection, member_id: int, evidence_id: int
+) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
+               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE e.id = %s AND agp.member_id = %s
+        """,
+        (evidence_id, member_id),
+    ).fetchone()
+    if row is None:
+        raise PermissionError("evidence does not belong to member")
+    return _evidence_row(row)
+
+
+def create_evidence_draft(
+    connection: psycopg.Connection,
+    member_id: int,
+    learning_task_id: int,
+    content: object,
+    evidence_link: object,
+) -> dict[str, object]:
+    _assert_task_ownership(connection, member_id, learning_task_id)
+
+    task = connection.execute(
+        "SELECT l3_code FROM learning_task WHERE id = %s",
+        (learning_task_id,),
+    ).fetchone()
+    assert task is not None
+    l3_code = task[0]
+
+    draft = connection.execute(
+        """
+        SELECT 1 FROM evidence
+        WHERE learning_task_id = %s AND status = '草稿'
+        LIMIT 1
+        """,
+        (learning_task_id,),
+    ).fetchone()
+    if draft is not None:
+        raise ValueError("draft evidence already exists for this task")
+
+    max_version = connection.execute(
+        """
+        SELECT COALESCE(MAX(version_number), 0)
+        FROM evidence
+        WHERE learning_task_id = %s
+        """,
+        (learning_task_id,),
+    ).fetchone()
+    assert max_version is not None
+    version_number = int(max_version[0]) + 1
+
+    row = connection.execute(
+        """
+        INSERT INTO evidence (
+            learning_task_id, l3_code, version_number, content,
+            evidence_link, status
+        )
+        VALUES (%s, %s, %s, %s, %s, '草稿')
+        RETURNING id, learning_task_id, l3_code, version_number,
+                  content, evidence_link, status, submitted_at, created_at
+        """,
+        (learning_task_id, l3_code, version_number, content, evidence_link),
+    ).fetchone()
+    assert row is not None
+    return _evidence_row(row)
+
+
+def update_evidence_draft(
+    connection: psycopg.Connection,
+    member_id: int,
+    evidence_id: int,
+    fields: dict[str, object],
+) -> dict[str, object]:
+    evidence = _assert_evidence_ownership(connection, member_id, evidence_id)
+    if evidence["status"] != "草稿":
+        raise ValueError("only draft evidence can be updated")
+
+    updates: dict[str, object] = {}
+    for key, value in fields.items():
+        if key not in _EVIDENCE_UPDATABLE_FIELDS:
+            raise ValueError(f"field '{key}' is not updatable")
+        updates[key] = value
+
+    if not updates:
+        return evidence
+
+    columns = list(updates.keys())
+    set_clause = ", ".join(f"{col} = %s" for col in columns)
+    values = [updates[col] for col in columns]
+    values.append(evidence_id)
+
+    row = connection.execute(
+        f"""
+        UPDATE evidence
+        SET {set_clause}
+        WHERE id = %s
+        RETURNING id, learning_task_id, l3_code, version_number,
+                  content, evidence_link, status, submitted_at, created_at
+        """,
+        values,
+    ).fetchone()
+    assert row is not None
+    return _evidence_row(row)
+
+
+def submit_evidence(
+    connection: psycopg.Connection, member_id: int, evidence_id: int
+) -> dict[str, object]:
+    evidence = _assert_evidence_ownership(connection, member_id, evidence_id)
+    if evidence["status"] != "草稿":
+        raise ValueError("only draft evidence can be submitted")
+
+    buddy = get_primary_buddy(connection, member_id)
+    if buddy is None:
+        raise ValueError("no primary buddy assigned")
+
+    with connection.transaction():
+        row = connection.execute(
+            """
+            UPDATE evidence
+            SET status = '待 Review', submitted_at = NOW()
+            WHERE id = %s
+            RETURNING id, learning_task_id, l3_code, version_number,
+                      content, evidence_link, status, submitted_at, created_at
+            """,
+            (evidence_id,),
+        ).fetchone()
+        assert row is not None
+        submitted = _evidence_row(row)
+
+        connection.execute(
+            """
+            INSERT INTO evidence_review (evidence_id, buddy_id, status)
+            VALUES (%s, %s, '待 Review')
+            """,
+            (evidence_id, int(buddy["id"])),
+        )
+
+    return submitted
+
+
+def list_evidences(
+    connection: psycopg.Connection, member_id: int, learning_task_id: int
+) -> list[dict[str, object]]:
+    _assert_task_ownership(connection, member_id, learning_task_id)
+    rows = connection.execute(
+        """
+        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
+               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        FROM evidence e
+        WHERE e.learning_task_id = %s
+        ORDER BY e.version_number DESC
+        """,
+        (learning_task_id,),
+    ).fetchall()
+    return [_evidence_row(row) for row in rows]
+
+
+def get_evidence(
+    connection: psycopg.Connection, member_id: int, evidence_id: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
+               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE e.id = %s AND agp.member_id = %s
+        """,
+        (evidence_id, member_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return _evidence_row(row)

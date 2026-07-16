@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
+    create_evidence_draft,
     create_growth_goal,
     create_learning_task,
     create_progress_log,
@@ -10,13 +11,17 @@ from .repository import (
     delete_progress_log,
     generate_plan_items,
     get_annual_plan_with_items,
+    get_evidence,
     get_learning_task,
     get_monthly_hours,
     list_eligible_gaps,
+    list_evidences,
     list_growth_goals,
     list_learning_tasks,
     list_plan_items,
     list_progress_logs,
+    submit_evidence,
+    update_evidence_draft,
     update_learning_task,
     update_progress_log,
 )
@@ -306,3 +311,98 @@ def remove_progress_log(
             detail=str(exc),
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@planning_router.post("/learning-tasks/{task_id}/evidences")
+def post_evidence(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    content = body.get("content")
+    evidence_link = body.get("evidence_link")
+    try:
+        return create_evidence_draft(
+            connection, int(user["id"]), task_id, content, evidence_link
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.put("/evidences/{evidence_id}")
+def put_evidence(
+    user: CurrentUser,
+    connection: Connection,
+    evidence_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return update_evidence_draft(connection, int(user["id"]), evidence_id, body)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.post("/evidences/{evidence_id}/submit")
+def post_submit_evidence(
+    user: CurrentUser, connection: Connection, evidence_id: int
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return submit_evidence(connection, int(user["id"]), evidence_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/learning-tasks/{task_id}/evidences")
+def get_evidences(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    try:
+        return list_evidences(connection, int(user["id"]), task_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/evidences/{evidence_id}")
+def get_evidence_by_id(
+    user: CurrentUser, connection: Connection, evidence_id: int
+) -> dict[str, object]:
+    _require_member(user)
+    result = get_evidence(connection, int(user["id"]), evidence_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="evidence not found",
+        )
+    return result
