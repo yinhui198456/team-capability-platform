@@ -20,6 +20,7 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS assessment_review")
+        connection.execute("DROP TABLE IF EXISTS gap")
         connection.execute("DROP TABLE IF EXISTS assessment_detail")
         connection.execute("DROP TABLE IF EXISTS assessment")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
@@ -33,6 +34,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS assessment_review")
+        connection.execute("DROP TABLE IF EXISTS gap")
         connection.execute("DROP TABLE IF EXISTS assessment_detail")
         connection.execute("DROP TABLE IF EXISTS assessment")
     create_assessment_schema(connection)

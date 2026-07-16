@@ -215,6 +215,153 @@ def submit_assessment(
             (assessment_id, next_sequence, buddy_id),
         )
 
+        generate_gaps_for_assessment(connection, assessment_id)
+
+
+def generate_gaps_for_assessment(
+    connection: psycopg.Connection, assessment_id: int
+) -> None:
+    details = _get_assessment_details(connection, assessment_id)
+    for detail in details:
+        gap_value = int(detail["gap_value"])
+        if gap_value > 0:
+            connection.execute(
+                """
+                INSERT INTO gap (
+                    assessment_id, l3_code, current_level, target_level,
+                    gap_value, plan_candidate
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (assessment_id, l3_code)
+                DO UPDATE SET
+                    current_level = EXCLUDED.current_level,
+                    target_level = EXCLUDED.target_level,
+                    gap_value = EXCLUDED.gap_value,
+                    plan_candidate = EXCLUDED.plan_candidate
+                """,
+                (
+                    assessment_id,
+                    detail["l3_code"],
+                    detail["current_level"],
+                    detail["target_level"],
+                    gap_value,
+                    detail["plan_candidate"],
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                DELETE FROM gap
+                WHERE assessment_id = %s AND l3_code = %s
+                """,
+                (assessment_id, detail["l3_code"]),
+            )
+
+
+def list_gaps(
+    connection: psycopg.Connection,
+    member_id: int | None = None,
+    assessment_id: int | None = None,
+) -> list[dict[str, object]]:
+    where_clauses: list[str] = []
+    params: list[object] = []
+    if assessment_id is not None:
+        where_clauses.append("g.assessment_id = %s")
+        params.append(assessment_id)
+    if member_id is not None:
+        where_clauses.append("a.member_id = %s")
+        params.append(member_id)
+
+    where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    rows = connection.execute(
+        f"""
+        SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
+               g.target_level, g.gap_value, g.priority, g.plan_candidate,
+               a.member_id
+        FROM gap g
+        JOIN assessment a ON a.id = g.assessment_id
+        {where}
+        ORDER BY g.l3_code
+        """,
+        tuple(params),
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "assessment_id": row[1],
+            "l3_code": row[2],
+            "current_level": row[3],
+            "target_level": row[4],
+            "gap_value": row[5],
+            "priority": row[6],
+            "plan_candidate": row[7],
+            "member_id": row[8],
+        }
+        for row in rows
+    ]
+
+
+def get_gap(connection: psycopg.Connection, gap_id: int) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
+               g.target_level, g.gap_value, g.priority, g.plan_candidate,
+               a.member_id
+        FROM gap g
+        JOIN assessment a ON a.id = g.assessment_id
+        WHERE g.id = %s
+        """,
+        (gap_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "assessment_id": row[1],
+        "l3_code": row[2],
+        "current_level": row[3],
+        "target_level": row[4],
+        "gap_value": row[5],
+        "priority": row[6],
+        "plan_candidate": row[7],
+        "member_id": row[8],
+    }
+
+
+def update_gap(
+    connection: psycopg.Connection,
+    gap_id: int,
+    member_id: int,
+    priority: str,
+    plan_candidate: bool,
+) -> None:
+    if priority not in ("高", "中", "低"):
+        raise ValueError("invalid priority")
+
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT a.member_id
+            FROM gap g
+            JOIN assessment a ON a.id = g.assessment_id
+            WHERE g.id = %s
+            """,
+            (gap_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("gap not found")
+        if int(row[0]) != member_id:
+            raise ValueError("gap does not belong to member")
+
+        connection.execute(
+            """
+            UPDATE gap
+            SET priority = %s, plan_candidate = %s
+            WHERE id = %s
+            """,
+            (priority, plan_candidate, gap_id),
+        )
+
 
 def _next_review_sequence(connection: psycopg.Connection, assessment_id: int) -> int:
     row = connection.execute(
