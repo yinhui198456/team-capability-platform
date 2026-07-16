@@ -26,6 +26,28 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
+_ALLOWED_TASK_STATUSES = {
+    "未开始",
+    "进行中",
+    "待 Evidence Review",
+    "已完成",
+    "延期",
+    "暂停",
+    "取消",
+}
+
+
+_UPDATABLE_TASK_FIELDS = {
+    "status",
+    "actual_start_date",
+    "actual_end_date",
+    "actual_hours",
+    "completion_quality",
+    "review_conclusion",
+    "next_action",
+}
+
+
 def get_or_create_annual_plan(
     connection: psycopg.Connection, member_id: int, year: int
 ) -> dict[str, object]:
@@ -364,3 +386,191 @@ def list_plan_items(
         (member_id,),
     ).fetchall()
     return [_plan_item_row(row) for row in rows]
+
+
+def _learning_task_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "plan_item_id": row[1],
+        "l3_code": row[2],
+        "status": row[3],
+        "actual_start_date": row[4],
+        "actual_end_date": row[5],
+        "actual_hours": row[6],
+        "completion_quality": row[7],
+        "review_conclusion": row[8],
+        "next_action": row[9],
+    }
+
+
+def create_learning_task(
+    connection: psycopg.Connection, member_id: int, plan_item_id: int
+) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT pi.id, pi.l3_code
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE pi.id = %s AND agp.member_id = %s
+        """,
+        (plan_item_id, member_id),
+    ).fetchone()
+    if row is None:
+        raise PermissionError("plan item does not belong to member")
+
+    existing = connection.execute(
+        "SELECT 1 FROM learning_task WHERE plan_item_id = %s LIMIT 1",
+        (plan_item_id,),
+    ).fetchone()
+    if existing is not None:
+        raise ValueError("learning task already exists for this plan item")
+
+    inserted = connection.execute(
+        """
+        INSERT INTO learning_task (plan_item_id, l3_code, status)
+        VALUES (%s, %s, '未开始')
+        RETURNING id, plan_item_id, l3_code, status,
+                  actual_start_date, actual_end_date, actual_hours,
+                  completion_quality, review_conclusion, next_action
+        """,
+        (plan_item_id, row[1]),
+    ).fetchone()
+    assert inserted is not None
+    return _learning_task_row(inserted)
+
+
+def list_learning_tasks(
+    connection: psycopg.Connection, member_id: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
+               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
+               lt.completion_quality, lt.review_conclusion, lt.next_action,
+               pi.current_level, pi.target_level, pi.priority,
+               pi.learning_material, pi.learning_task_content,
+               pi.expected_output, pi.estimated_hours
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+        ORDER BY lt.l3_code
+        """,
+        (member_id,),
+    ).fetchall()
+    return [
+        {
+            **_learning_task_row(row[:10]),
+            "plan_item_current_level": row[10],
+            "plan_item_target_level": row[11],
+            "plan_item_priority": row[12],
+            "plan_item_learning_material": row[13],
+            "plan_item_learning_task_content": row[14],
+            "plan_item_expected_output": row[15],
+            "plan_item_estimated_hours": row[16],
+        }
+        for row in rows
+    ]
+
+
+def get_learning_task(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
+               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
+               lt.completion_quality, lt.review_conclusion, lt.next_action,
+               pi.current_level, pi.target_level, pi.priority,
+               pi.learning_material, pi.learning_task_content,
+               pi.expected_output, pi.estimated_hours
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s AND agp.member_id = %s
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        **_learning_task_row(row[:10]),
+        "plan_item_current_level": row[10],
+        "plan_item_target_level": row[11],
+        "plan_item_priority": row[12],
+        "plan_item_learning_material": row[13],
+        "plan_item_learning_task_content": row[14],
+        "plan_item_expected_output": row[15],
+        "plan_item_estimated_hours": row[16],
+    }
+
+
+def update_learning_task(
+    connection: psycopg.Connection,
+    member_id: int,
+    task_id: int,
+    fields: dict[str, object],
+) -> dict[str, object]:
+    owned = connection.execute(
+        """
+        SELECT lt.id
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s AND agp.member_id = %s
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if owned is None:
+        raise PermissionError("learning task does not belong to member")
+
+    updates: dict[str, object] = {}
+    for key, value in fields.items():
+        if key not in _UPDATABLE_TASK_FIELDS:
+            raise ValueError(f"field '{key}' is not updatable")
+        updates[key] = value
+
+    if "status" in updates and updates["status"] not in _ALLOWED_TASK_STATUSES:
+        raise ValueError("invalid status")
+
+    if "actual_hours" in updates:
+        try:
+            hours = int(updates["actual_hours"])  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("actual_hours must be a non-negative integer") from exc
+        if hours < 0:
+            raise ValueError("actual_hours must be a non-negative integer")
+        updates["actual_hours"] = hours
+
+    if not updates:
+        row = connection.execute(
+            """
+            SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
+                   lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
+                   lt.completion_quality, lt.review_conclusion, lt.next_action
+            FROM learning_task lt
+            WHERE lt.id = %s
+            """,
+            (task_id,),
+        ).fetchone()
+        assert row is not None
+        return _learning_task_row(row)
+
+    columns = list(updates.keys())
+    set_clause = ", ".join(f"{col} = %s" for col in columns)
+    values = [updates[col] for col in columns]
+    values.append(task_id)
+
+    updated = connection.execute(
+        f"""
+        UPDATE learning_task
+        SET {set_clause}
+        WHERE id = %s
+        RETURNING id, plan_item_id, l3_code, status,
+                  actual_start_date, actual_end_date, actual_hours,
+                  completion_quality, review_conclusion, next_action
+        """,
+        values,
+    ).fetchone()
+    assert updated is not None
+    return _learning_task_row(updated)

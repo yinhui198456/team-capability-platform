@@ -4,12 +4,16 @@ from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
     create_growth_goal,
+    create_learning_task,
     delete_growth_goal,
     generate_plan_items,
     get_annual_plan_with_items,
+    get_learning_task,
     list_eligible_gaps,
     list_growth_goals,
+    list_learning_tasks,
     list_plan_items,
+    update_learning_task,
 )
 
 planning_router = APIRouter(prefix="/api/planning")
@@ -129,3 +133,66 @@ def get_plan_items(
 ) -> list[dict[str, object]]:
     _require_member(user)
     return list_plan_items(connection, int(user["id"]))
+
+
+@planning_router.post("/plan-items/{plan_item_id}/learning-task")
+def post_learning_task(
+    user: CurrentUser, connection: Connection, plan_item_id: int
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return create_learning_task(connection, int(user["id"]), plan_item_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/learning-tasks")
+def get_learning_tasks(
+    user: CurrentUser, connection: Connection
+) -> list[dict[str, object]]:
+    _require_member(user)
+    return list_learning_tasks(connection, int(user["id"]))
+
+
+@planning_router.get("/learning-tasks/{task_id}")
+def get_learning_task_by_id(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> dict[str, object]:
+    _require_member(user)
+    result = get_learning_task(connection, int(user["id"]), task_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="learning task not found",
+        )
+    return result
+
+
+@planning_router.put("/learning-tasks/{task_id}")
+def put_learning_task(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return update_learning_task(connection, int(user["id"]), task_id, body)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
