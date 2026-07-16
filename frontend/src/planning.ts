@@ -24,6 +24,18 @@ export type GrowthGoal = {
   priority: '高' | '中' | '低'
 }
 
+export type PlanItemStatus =
+  '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
+
+export type LearningTaskStatus =
+  | '未开始'
+  | '进行中'
+  | '待 Evidence Review'
+  | '已完成'
+  | '延期'
+  | '暂停'
+  | '取消'
+
 export type PlanItem = {
   id: number
   annual_growth_plan_id: number
@@ -39,7 +51,27 @@ export type PlanItem = {
   plan_start_date: string | null
   plan_end_date: string | null
   target_month: number | null
-  status: '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
+  status: PlanItemStatus
+}
+
+export type LearningTask = {
+  id: number
+  plan_item_id: number
+  l3_code: string
+  status: LearningTaskStatus
+  actual_start_date: string | null
+  actual_end_date: string | null
+  actual_hours: number
+  completion_quality: string | null
+  review_conclusion: string | null
+  next_action: string | null
+  plan_item_current_level: number
+  plan_item_target_level: number
+  plan_item_priority: '高' | '中' | '低'
+  plan_item_learning_material: string | null
+  plan_item_learning_task_content: string | null
+  plan_item_expected_output: string | null
+  plan_item_estimated_hours: string | null
 }
 
 export type AnnualPlan = {
@@ -137,4 +169,47 @@ export async function generatePlanItems(): Promise<{
 
 export async function listPlanItems(): Promise<PlanItem[]> {
   return request<PlanItem[]>('/api/planning/plan-items', { method: 'GET' })
+}
+
+export async function createLearningTask(
+  plan_item_id: number,
+): Promise<LearningTask> {
+  return request<LearningTask>(
+    `/api/planning/plan-items/${plan_item_id}/learning-task`,
+    { method: 'POST' },
+    {},
+  )
+}
+
+export async function listLearningTasks(): Promise<LearningTask[]> {
+  return request<LearningTask[]>('/api/planning/learning-tasks', {
+    method: 'GET',
+  })
+}
+
+export async function getLearningTask(task_id: number): Promise<LearningTask> {
+  return request<LearningTask>(`/api/planning/learning-tasks/${task_id}`, {
+    method: 'GET',
+  })
+}
+
+export type LearningTaskUpdate = Partial<{
+  status: LearningTaskStatus
+  actual_start_date: string | null
+  actual_end_date: string | null
+  actual_hours: number
+  completion_quality: string | null
+  review_conclusion: string | null
+  next_action: string | null
+}>
+
+export async function updateLearningTask(
+  task_id: number,
+  fields: LearningTaskUpdate,
+): Promise<LearningTask> {
+  return request<LearningTask>(
+    `/api/planning/learning-tasks/${task_id}`,
+    { method: 'PUT' },
+    fields,
+  )
 }
