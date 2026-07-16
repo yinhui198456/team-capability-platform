@@ -559,3 +559,70 @@ export async function archiveTeamAnnualPlan(
     { year },
   )
 }
+
+export type TeamAnalytics = {
+  year: number
+  filters: { member_id: number | null; domain_code: string | null }
+  kpis: {
+    assessment_completion_rate: number
+    assessment_completed_count: number
+    assessment_total_count: number
+    plan_completion_rate: number
+    plan_completed_count: number
+    plan_total_count: number
+    evidence_pass_rate: number
+    evidence_passed_count: number
+    evidence_total_count: number
+    overdue_plan_item_count: number
+  }
+  domain_averages: Array<{
+    domain_code: string
+    actual: number
+    target: number
+  }>
+  member_attainment: Array<{
+    member_id: number
+    username: string
+    full_name: string
+    domain_code: string
+    attainment: number | null
+    actual: number | null
+    target: number | null
+  }>
+  monthly_trends: Array<{
+    month: number
+    planned_count: number
+    actual_count: number
+    cumulative_planned_rate: number
+    cumulative_actual_rate: number
+    planned_hours: number
+    actual_hours: number
+    cumulative_planned_hours: number
+    cumulative_actual_hours: number
+  }>
+  overdue_items: Array<{
+    member_id: number
+    username: string
+    full_name: string
+    l3_code: string
+    l3_name: string | null
+    due_date: string
+    overdue_days: number
+    status: string
+  }>
+}
+
+export async function getTeamAnalytics(query: {
+  year: number
+  member_id?: number
+  domain_code?: string
+}): Promise<TeamAnalytics> {
+  const parameters = new URLSearchParams({ year: String(query.year) })
+  if (query.member_id !== undefined) {
+    parameters.set('member_id', String(query.member_id))
+  }
+  if (query.domain_code) parameters.set('domain_code', query.domain_code)
+  return request<TeamAnalytics>(`/api/planning/team-analytics?${parameters}`, {
+    method: 'GET',
+  })
+}

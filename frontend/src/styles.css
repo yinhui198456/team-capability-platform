@@ -321,6 +321,37 @@ select {
   margin-top: 8px;
 }
 
+.analytics-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.analytics-filters label {
+  display: grid;
+  gap: 6px;
+}
+
+.analytics-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  width: 100%;
+}
+
+.analytics-table th,
+.analytics-table td {
+  border: 1px solid #e4e7ec;
+  padding: 8px;
+  text-align: left;
+}
+
+.analytics-table progress {
+  accent-color: #1570ef;
+  vertical-align: middle;
+  width: 56px;
+}
+
 .compact-list,
 .radar-list {
   display: grid;

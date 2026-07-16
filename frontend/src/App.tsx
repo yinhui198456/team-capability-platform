@@ -14,6 +14,7 @@ import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { MemberDashboardPage } from './MemberDashboardPage'
 import { ProfilePage } from './ProfilePage'
 import { TeamAnnualPlanPage } from './TeamAnnualPlanPage'
+import { TeamAnalyticsPage } from './TeamAnalyticsPage'
 import {
   allL3,
   archiveLearningResource,
@@ -746,6 +747,7 @@ export function App() {
     pathname !== '/capability/model' &&
     pathname !== '/dashboard/member' &&
     pathname !== '/operations/resources' &&
+    pathname !== '/operations/analytics' &&
     pathname !== '/operations/team-annual-plan' &&
     pathname !== '/capability/assessment' &&
     pathname !== '/capability/assessment/history' &&
@@ -858,6 +860,12 @@ export function App() {
           学习资源
         </a>
         <a
+          className={pathname === '/operations/analytics' ? 'active' : ''}
+          href="/operations/analytics"
+        >
+          团队能力分析
+        </a>
+        <a
           className={
             pathname === '/operations/team-annual-plan' ? 'active' : ''
           }
@@ -868,6 +876,8 @@ export function App() {
       </nav>
       {pathname === '/operations/resources' ? (
         <LearningResourcesPage />
+      ) : pathname === '/operations/analytics' ? (
+        <TeamAnalyticsPage />
       ) : pathname === '/operations/team-annual-plan' ? (
         <TeamAnnualPlanPage />
       ) : pathname === '/capability/assessment' ? (
