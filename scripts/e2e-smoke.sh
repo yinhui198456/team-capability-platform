@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+base_url="${TCP_E2E_BASE_URL:-http://localhost:18081}"
+backend_url="${TCP_E2E_BACKEND_URL:-http://localhost:18001}"
+year="${TCP_E2E_YEAR:-$(date +%Y)}"
+cookies="$(mktemp)"
+trap 'rm -f "$cookies"' EXIT
+
+assert_json() {
+  local condition="$1"
+  python3 -c "import json, sys; payload = json.load(sys.stdin); assert $condition"
+}
+
+curl -fsS "$backend_url/ready" | assert_json "payload['status'] == 'ready'"
+curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']) == 6"
+
+curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"member","password":"123456"}' | \
+  assert_json "payload['username'] == 'member' and 'Member' in payload['roles']"
+curl -fsS -b "$cookies" "$base_url/api/auth/me" | \
+  assert_json "payload['username'] == 'member'"
+curl -fsS -b "$cookies" "$base_url/api/planning/profiles?year=$year" | \
+  assert_json "payload['member']['username'] == 'member' and payload['assessments'] and payload['annual_plan'] is not None and payload['statistics']['total_learning_hours'] >= 0"
+curl -fsS -b "$cookies" -X POST "$base_url/api/auth/logout" | \
+  assert_json "payload['ok'] is True"
+
+echo "PASS: TCP end-to-end smoke ($year)"
