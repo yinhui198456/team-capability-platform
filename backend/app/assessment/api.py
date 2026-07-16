@@ -7,9 +7,11 @@ from .repository import (
     create_assessment_draft,
     get_assessment,
     get_assessment_reviews,
+    get_pending_reviews_for_buddy,
     list_member_assessments,
     save_assessment_draft,
     submit_assessment,
+    submit_assessment_review,
 )
 
 
@@ -28,6 +30,11 @@ class DetailItem(BaseModel):
 
 class SaveDraftRequest(BaseModel):
     details: list[DetailItem]
+
+
+class SubmitReviewRequest(BaseModel):
+    conclusion: str = Field(pattern=r"^(认可|建议调整)$")
+    feedback: str | None = None
 
 
 assessment_router = APIRouter(prefix="/api/assessments")
@@ -122,6 +129,19 @@ def list_assessments(
 
     # Member only
     return list_member_assessments(connection, int(user["id"]))
+
+
+@assessment_router.get("/reviews/pending")
+def list_pending_reviews(
+    user: CurrentUser,
+    connection: Connection,
+) -> list[dict[str, object]]:
+    if "Buddy" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return get_pending_reviews_for_buddy(connection, int(user["id"]))
 
 
 @assessment_router.get("/{assessment_id}")
@@ -230,6 +250,41 @@ def get_history(
             detail="insufficient permissions",
         )
     return get_assessment_reviews(connection, assessment_id)
+
+
+@assessment_router.post("/{assessment_id}/reviews/{review_id}")
+def submit_review(
+    assessment_id: int,
+    review_id: int,
+    request: SubmitReviewRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, bool]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if not policies.can_buddy_review(connection, user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    try:
+        submit_assessment_review(
+            connection,
+            review_id,
+            int(user["id"]),
+            request.conclusion,
+            request.feedback,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True}
 
 
 # ponytail: archive remains a repository function only; not exposed via API.
