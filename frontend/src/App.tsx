@@ -4,6 +4,7 @@ import { AnnualPlanPage } from './AnnualPlanPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentPage } from './AssessmentPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
+import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { GapPage } from './GapPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
 import { LearningTaskPage } from './LearningTaskPage'
@@ -270,7 +271,8 @@ export function App() {
     pathname !== '/growth/annual-plan' &&
     pathname !== '/growth/tasks' &&
     pathname !== '/growth/review/monthly' &&
-    pathname !== '/mentoring/assessment-review'
+    pathname !== '/mentoring/assessment-review' &&
+    pathname !== '/mentoring/evidence-review'
   ) {
     return (
       <main className="catalog-shell">
@@ -341,6 +343,12 @@ export function App() {
           自评复核
         </a>
         <a
+          className={pathname === '/mentoring/evidence-review' ? 'active' : ''}
+          href="/mentoring/evidence-review"
+        >
+          Evidence Review
+        </a>
+        <a
           className={pathname === '/operations/resources' ? 'active' : ''}
           href="/operations/resources"
         >
@@ -365,6 +373,8 @@ export function App() {
         <MonthlyReviewPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
+      ) : pathname === '/mentoring/evidence-review' ? (
+        <EvidenceReviewPage />
       ) : (
         <CapabilityModelPage />
       )}

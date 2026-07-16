@@ -9,6 +9,7 @@ import {
   getAnnualPlan,
   getMonthlyHours,
   listEvidences,
+  listEvidenceReviewsForTask,
   listLearningTasks,
   listProgressLogs,
   submitEvidence,
@@ -16,6 +17,7 @@ import {
   updateLearningTask,
   type AnnualPlan,
   type Evidence,
+  type EvidenceReview,
   type LearningTask,
   type LearningTaskStatus,
   type PlanItem,
@@ -71,6 +73,9 @@ export function LearningTaskPage() {
   const [taskEvidences, setTaskEvidences] = useState<
     Record<number, Evidence[]>
   >({})
+  const [taskEvidenceReviews, setTaskEvidenceReviews] = useState<
+    Record<number, EvidenceReview[]>
+  >({})
   const [monthlyHours, setMonthlyHours] = useState<
     { month: number; total_hours: number }[]
   >([])
@@ -112,6 +117,16 @@ export function LearningTaskPage() {
         }),
       )
       setTaskEvidences(Object.fromEntries(evidenceEntries))
+
+      const reviewEntries = await Promise.all(
+        taskList.map(async (task) => {
+          const reviews = await listEvidenceReviewsForTask(task.id).catch(
+            () => [],
+          )
+          return [task.id, reviews] as [number, EvidenceReview[]]
+        }),
+      )
+      setTaskEvidenceReviews(Object.fromEntries(reviewEntries))
 
       const summary = await getMonthlyHours(2026).catch(() => [])
       setMonthlyHours(summary)
@@ -245,8 +260,12 @@ export function LearningTaskPage() {
         })
       }
       cancelEvidenceForm(task.id)
-      const evidences = await listEvidences(task.id)
+      const [evidences, reviews] = await Promise.all([
+        listEvidences(task.id),
+        listEvidenceReviewsForTask(task.id),
+      ])
       setTaskEvidences((prev) => ({ ...prev, [task.id]: evidences }))
+      setTaskEvidenceReviews((prev) => ({ ...prev, [task.id]: reviews }))
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存 Evidence 失败')
     }
@@ -256,8 +275,12 @@ export function LearningTaskPage() {
     setError('')
     try {
       await submitEvidence(evidence.id)
-      const evidences = await listEvidences(task.id)
+      const [evidences, reviews] = await Promise.all([
+        listEvidences(task.id),
+        listEvidenceReviewsForTask(task.id),
+      ])
       setTaskEvidences((prev) => ({ ...prev, [task.id]: evidences }))
+      setTaskEvidenceReviews((prev) => ({ ...prev, [task.id]: reviews }))
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交 Evidence 失败')
     }
@@ -477,6 +500,23 @@ export function LearningTaskPage() {
                         </a>
                       </p>
                     )}
+                    {(() => {
+                      const review = (taskEvidenceReviews[task.id] ?? []).find(
+                        (r) => r.evidence_id === evidence.id,
+                      )
+                      if (!review?.conclusion) return null
+                      return (
+                        <div className="evidence-review-result">
+                          <p>Review 结论：{review.conclusion}</p>
+                          {review.feedback && <p>反馈：{review.feedback}</p>}
+                          {review.reviewed_at && (
+                            <p>
+                              Review 时间：{formatDateTime(review.reviewed_at)}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })()}
                     {canManage && evidence.status === '草稿' && (
                       <div className="evidence-actions">
                         <button

@@ -343,3 +343,53 @@ export async function getEvidence(evidence_id: number): Promise<Evidence> {
     method: 'GET',
   })
 }
+
+export type EvidenceReviewStatus =
+  '待 Review' | '通过' | '需补充' | '驳回' | '已闭环'
+
+export type EvidenceReviewConclusion = '通过' | '需补充' | '驳回'
+
+export type EvidenceReview = {
+  id: number
+  evidence_id: number
+  version_number: number
+  status: EvidenceReviewStatus
+  conclusion: EvidenceReviewConclusion | null
+  feedback: string | null
+  reviewed_at: string | null
+  created_at?: string
+  submitted_at?: string | null
+  member_id?: number
+  username?: string
+  learning_task_id?: number
+  l3_code?: string
+  content?: string | null
+  evidence_link?: string | null
+}
+
+export async function listPendingEvidenceReviews(): Promise<EvidenceReview[]> {
+  return request<EvidenceReview[]>('/api/planning/evidence-reviews/pending', {
+    method: 'GET',
+  })
+}
+
+export async function submitEvidenceReview(
+  review_id: number,
+  conclusion: EvidenceReviewConclusion,
+  feedback: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/planning/evidence-reviews/${review_id}`,
+    { method: 'POST' },
+    { conclusion, feedback },
+  )
+}
+
+export async function listEvidenceReviewsForTask(
+  task_id: number,
+): Promise<EvidenceReview[]> {
+  return request<EvidenceReview[]>(
+    `/api/planning/learning-tasks/${task_id}/evidence-reviews`,
+    { method: 'GET' },
+  )
+}
