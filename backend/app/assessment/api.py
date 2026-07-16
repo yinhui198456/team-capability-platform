@@ -36,7 +36,7 @@ class SaveDraftRequest(BaseModel):
 assessment_router = APIRouter(prefix="/api/assessments")
 
 
-@assessment_router.post("/")
+@assessment_router.post("")
 def create_assessment(
     request: CreateAssessmentRequest,
     user: CurrentUser,
@@ -56,7 +56,7 @@ def create_assessment(
     return {"id": assessment_id}
 
 
-@assessment_router.get("/")
+@assessment_router.get("")
 def list_assessments(
     user: CurrentUser,
     connection: Connection,

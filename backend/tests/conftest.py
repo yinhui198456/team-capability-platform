@@ -30,6 +30,13 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS capability_model")
 
 
+def _clear_assessment(connection: psycopg.Connection) -> None:
+    with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS assessment_review")
+        connection.execute("DROP TABLE IF EXISTS assessment_detail")
+        connection.execute("DROP TABLE IF EXISTS assessment")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolated_test_database() -> Iterator[None]:
     lock_connection = psycopg.connect(ADMIN_DATABASE_URL, autocommit=True)
@@ -58,4 +65,5 @@ def isolated_test_database() -> Iterator[None]:
 def connection() -> Iterator[psycopg.Connection]:
     with psycopg.connect(TEST_DATABASE_URL) as test_connection:
         _clear_catalog(test_connection)
+        _clear_assessment(test_connection)
         yield test_connection
