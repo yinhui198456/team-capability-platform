@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { AnnualPlanPage } from './AnnualPlanPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentPage } from './AssessmentPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
@@ -264,6 +265,7 @@ export function App() {
     pathname !== '/capability/assessment/history' &&
     pathname !== '/capability/gap' &&
     pathname !== '/growth/goals' &&
+    pathname !== '/growth/annual-plan' &&
     pathname !== '/mentoring/assessment-review'
   ) {
     return (
@@ -309,6 +311,12 @@ export function App() {
           成长目标
         </a>
         <a
+          className={pathname === '/growth/annual-plan' ? 'active' : ''}
+          href="/growth/annual-plan"
+        >
+          年度成长计划
+        </a>
+        <a
           className={
             pathname === '/mentoring/assessment-review' ? 'active' : ''
           }
@@ -333,6 +341,8 @@ export function App() {
         <GapPage />
       ) : pathname === '/growth/goals' ? (
         <GrowthGoalPage />
+      ) : pathname === '/growth/annual-plan' ? (
+        <AnnualPlanPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
       ) : (
