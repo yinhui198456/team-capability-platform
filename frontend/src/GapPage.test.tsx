@@ -214,6 +214,51 @@ describe('GapPage', () => {
       })
     })
   })
+
+  it('shows the Gap overview landmark around the gap list', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '待复核',
+        created_at: '2026-01-01T00:00:00Z',
+        submitted_at: '2026-01-02T00:00:00Z',
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(gapApi, 'listGaps').mockResolvedValue([
+      {
+        id: 10,
+        assessment_id: 7,
+        member_id: 1,
+        l3_code: 'P01-L2A-L3A',
+        current_level: 2,
+        target_level: 4,
+        gap_value: 2,
+        priority: '中',
+        plan_candidate: false,
+      },
+    ])
+
+    window.history.pushState({}, '', '/capability/gap')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Gap 概览' })).toBeTruthy()
+    })
+
+    expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
+    expect(screen.getByLabelText('优先级')).toBeTruthy()
+  })
 })
 
 describe('gap api helpers', () => {

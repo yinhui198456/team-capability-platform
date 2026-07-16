@@ -323,17 +323,21 @@ export function LearningTaskPage() {
       <ul className="learning-task-list">
         {tasks.map((task) => (
           <li key={task.id} className="learning-task-item">
-            <div className="learning-task-header">
-              <span className="learning-task-l3">{task.l3_code}</span>
-              <span className="learning-task-levels">
-                当前 {task.plan_item_current_level} → 目标{' '}
-                {task.plan_item_target_level}
-              </span>
-              <span className="learning-task-priority">
-                优先级：{task.plan_item_priority}
-              </span>
-            </div>
-            <div className="learning-task-fields">
+            <section
+              aria-label={`学习任务详情：${task.l3_code}`}
+              className="task-detail"
+            >
+              <div className="learning-task-header">
+                <span className="learning-task-l3">{task.l3_code}</span>
+                <span className="learning-task-levels">
+                  当前 {task.plan_item_current_level} → 目标{' '}
+                  {task.plan_item_target_level}
+                </span>
+                <span className="learning-task-priority">
+                  优先级：{task.plan_item_priority}
+                </span>
+              </div>
+              <div className="learning-task-fields">
               <label>
                 状态
                 <select
@@ -471,7 +475,10 @@ export function LearningTaskPage() {
               )}
             </div>
 
-            <div className="evidence-section">
+            <section
+              aria-label={`Evidence 版本：${task.l3_code}`}
+              className="evidence-section evidence-versions"
+            >
               <h3>Evidence</h3>
               <ul className="evidence-list">
                 {(taskEvidences[task.id] ?? []).map((evidence) => (
@@ -588,7 +595,8 @@ export function LearningTaskPage() {
                     )}
                   </>
                 )}
-            </div>
+            </section>
+          </section>
           </li>
         ))}
       </ul>

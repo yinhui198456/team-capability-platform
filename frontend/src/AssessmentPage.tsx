@@ -224,6 +224,14 @@ export function AssessmentPage() {
           </div>
         </>
       )}
+      <section aria-label="Gap 分析入口" className="gap-handoff">
+        <p className="muted">
+          提交自评后可前往 Gap 分析查看差距并设置优先级。
+        </p>
+        <a className="primary-link" href="/capability/gap">
+          查看 Gap 分析
+        </a>
+      </section>
     </section>
   )
 }

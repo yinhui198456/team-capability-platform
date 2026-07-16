@@ -719,6 +719,62 @@ describe('LearningTaskPage', () => {
       expect(screen.getByText('待 Review')).toBeTruthy()
     })
   })
+
+  it('shows task detail and Evidence version landmarks for a task', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    vi.spyOn(planningApi, 'listEvidences').mockResolvedValue([
+      {
+        id: 10,
+        learning_task_id: 100,
+        l3_code: 'P01-L2A-L3B',
+        version_number: 1,
+        content: '完成 P01 实践项目',
+        evidence_link: 'http://example.com/demo',
+        status: '已归档',
+        submitted_at: '2026-07-16T10:05:00Z',
+        created_at: '2026-07-16T10:00:00Z',
+      },
+    ])
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('region', { name: /学习任务详情/ }),
+      ).toBeTruthy()
+    })
+
+    expect(screen.getByRole('region', { name: /Evidence 版本/ })).toBeTruthy()
+    expect(screen.getByText('版本 1')).toBeTruthy()
+    expect(screen.getByLabelText('状态')).toBeTruthy()
+  })
 })
 
 describe('learning task api helpers', () => {

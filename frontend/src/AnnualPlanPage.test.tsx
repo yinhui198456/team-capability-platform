@@ -160,6 +160,58 @@ describe('AnnualPlanPage', () => {
     expect(screen.getByText(/暂无已提交的能力评估/)).toBeTruthy()
     expect(screen.queryByText('生成计划项')).toBeNull()
   })
+
+  it('shows the annual plan overview landmark with the plan summary', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlanEligibility').mockResolvedValue({
+      eligible: true,
+      reason: null,
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 10,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '制定中',
+      start_date: '2026-01-01',
+      end_date: '2026-12-31',
+      created_at: '2026-01-01T00:00:00Z',
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 10,
+          growth_goal_id: 5,
+          l3_code: 'P01-L2A-L3A',
+          current_level: 2,
+          target_level: 4,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: null,
+          expected_output: null,
+          estimated_hours: '10',
+          plan_start_date: null,
+          plan_end_date: null,
+          target_month: null,
+          status: '未开始',
+        },
+      ],
+    })
+
+    window.history.pushState({}, '', '/growth/annual-plan')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: '年度计划总览' })).toBeTruthy()
+    })
+
+    expect(screen.getByText(/年度：2026/)).toBeTruthy()
+    expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
+  })
 })
 
 describe('annual plan api helpers', () => {

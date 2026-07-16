@@ -262,3 +262,128 @@ select {
     flex-direction: column;
   }
 }
+
+/* 6A-2: UI-02/UI-03 member page landmarks */
+.gap-handoff {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.gap-handoff p {
+  margin: 0;
+}
+
+.gap-overview,
+.plan-overview,
+.evidence-versions {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.plan-overview > h2:first-of-type {
+  margin-top: 20px;
+}
+
+.gap-list,
+.plan-item-list,
+.learning-task-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.gap-item,
+.plan-item,
+.learning-task-item {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.gap-item {
+  grid-template-columns: 1fr auto;
+}
+
+.gap-item .gap-l3 {
+  font-weight: 600;
+}
+
+.gap-item .gap-levels,
+.gap-item .gap-priority,
+.gap-item .gap-candidate {
+  grid-column: 1 / -1;
+}
+
+.task-detail {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.learning-task-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.learning-task-header .learning-task-l3 {
+  font-weight: 600;
+}
+
+.learning-task-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.progress-log-section,
+.evidence-versions {
+  margin-top: 8px;
+}
+
+.progress-log-list,
+.evidence-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.evidence-item {
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.evidence-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.evidence-header .evidence-version {
+  font-weight: 600;
+}

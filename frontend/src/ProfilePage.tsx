@@ -18,7 +18,10 @@ function PlanItemDetail({ item }: { item: CapabilityProfilePlanItem }) {
       <p>预计耗时：{item.estimated_hours ?? '未设置'}</p>
       <p>状态：{item.status}</p>
       {task ? (
-        <div className="learning-task">
+        <section
+          className="learning-task task-detail"
+          aria-label={`学习任务详情：${item.l3_code}`}
+        >
           <h5>学习任务</h5>
           <p>状态：{task.status}</p>
           <p>实际耗时：{task.actual_hours ?? 0} 小时</p>
@@ -36,7 +39,10 @@ function PlanItemDetail({ item }: { item: CapabilityProfilePlanItem }) {
             </div>
           )}
           {task.evidences.length > 0 && (
-            <div>
+            <section
+              className="evidence-versions"
+              aria-label={`Evidence 版本：${item.l3_code}`}
+            >
               <h6>Evidence</h6>
               <ul>
                 {task.evidences.map((evidence) => (
@@ -48,9 +54,9 @@ function PlanItemDetail({ item }: { item: CapabilityProfilePlanItem }) {
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           )}
-        </div>
+        </section>
       ) : (
         <p className="muted">暂无学习任务。</p>
       )}

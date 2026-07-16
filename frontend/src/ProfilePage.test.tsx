@@ -161,6 +161,27 @@ describe('ProfilePage', () => {
     expect(screen.getByText(/Review: 通过/)).toBeTruthy()
   })
 
+  it('shows the Evidence version landmark in the capability profile', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+
+    window.history.pushState({}, '', '/growth/profile')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('region', { name: /学习任务详情/ }),
+      ).toBeTruthy()
+    })
+
+    expect(screen.getByRole('region', { name: /Evidence 版本/ })).toBeTruthy()
+    expect(screen.getByText(/Review: 通过/)).toBeTruthy()
+  })
+
   it('shows empty state when profile data is missing', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 1,

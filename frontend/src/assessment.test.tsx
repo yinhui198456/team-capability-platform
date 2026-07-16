@@ -124,6 +124,47 @@ describe('AssessmentPage', () => {
       expect(screen.getByText('已提交，等待 Buddy 复核')).toBeTruthy()
     })
   })
+
+  it('shows the assessment-to-Gap handoff landmark for a draft', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '草稿',
+        created_at: '2026-01-01T00:00:00Z',
+        submitted_at: null,
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7,
+      member_id: 1,
+      year: 2026,
+      version: 1,
+      assessment_type: '年度',
+      status: '草稿',
+      created_at: '2026-01-01T00:00:00Z',
+      submitted_at: null,
+      archived_at: null,
+      details: [],
+    })
+
+    window.history.pushState({}, '', '/capability/assessment')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('region', { name: 'Gap 分析入口' }),
+      ).toBeTruthy()
+    })
+
+    const handoffLink = screen.getByRole('link', { name: '查看 Gap 分析' })
+    expect(handoffLink.getAttribute('href')).toBe('/capability/gap')
+    expect(screen.getByRole('button', { name: '提交' })).toBeTruthy()
+  })
 })
 
 describe('AssessmentHistoryPage', () => {

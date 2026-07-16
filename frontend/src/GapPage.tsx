@@ -128,47 +128,49 @@ export function GapPage() {
       <button type="button" onClick={handleDryRun}>
         模拟生成年度计划
       </button>
-      {gaps.length === 0 && <p className="muted">暂无 Gap 记录。</p>}
-      <ul className="gap-list">
-        {gaps.map((gap) => (
-          <li key={gap.id} className="gap-item">
-            <span className="gap-l3">{gap.l3_code}</span>
-            <span className="gap-levels">
-              当前 {gap.current_level} → 目标 {gap.target_level}（Gap{' '}
-              {gap.gap_value}）
-            </span>
-            <label className="gap-priority">
-              优先级
-              <select
-                value={gap.priority}
-                onChange={(event) =>
-                  handleChange(gap, {
-                    priority: event.target.value as Gap['priority'],
-                  })
-                }
-                disabled={!canEdit}
-              >
-                {PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="checkbox gap-candidate">
-              <input
-                type="checkbox"
-                checked={gap.plan_candidate}
-                onChange={(event) =>
-                  handleChange(gap, { plan_candidate: event.target.checked })
-                }
-                disabled={!canEdit}
-              />
-              纳入计划候选
-            </label>
-          </li>
-        ))}
-      </ul>
+      <section aria-label="Gap 概览" className="gap-overview">
+        {gaps.length === 0 && <p className="muted">暂无 Gap 记录。</p>}
+        <ul className="gap-list">
+          {gaps.map((gap) => (
+            <li key={gap.id} className="gap-item">
+              <span className="gap-l3">{gap.l3_code}</span>
+              <span className="gap-levels">
+                当前 {gap.current_level} → 目标 {gap.target_level}（Gap{' '}
+                {gap.gap_value}）
+              </span>
+              <label className="gap-priority">
+                优先级
+                <select
+                  value={gap.priority}
+                  onChange={(event) =>
+                    handleChange(gap, {
+                      priority: event.target.value as Gap['priority'],
+                    })
+                  }
+                  disabled={!canEdit}
+                >
+                  {PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="checkbox gap-candidate">
+                <input
+                  type="checkbox"
+                  checked={gap.plan_candidate}
+                  onChange={(event) =>
+                    handleChange(gap, { plan_candidate: event.target.checked })
+                  }
+                  disabled={!canEdit}
+                />
+                纳入计划候选
+              </label>
+            </li>
+          ))}
+        </ul>
+      </section>
     </section>
   )
 }
