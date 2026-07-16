@@ -15,12 +15,15 @@ from .repository import (
     get_learning_task,
     get_monthly_hours,
     list_eligible_gaps,
+    list_evidence_reviews_for_task,
     list_evidences,
     list_growth_goals,
     list_learning_tasks,
+    list_pending_evidence_reviews_for_buddy,
     list_plan_items,
     list_progress_logs,
     submit_evidence,
+    submit_evidence_review,
     update_evidence_draft,
     update_learning_task,
     update_progress_log,
@@ -31,6 +34,14 @@ planning_router = APIRouter(prefix="/api/planning")
 
 def _require_member(user: CurrentUser) -> None:
     if "Member" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+
+def _require_buddy(user: CurrentUser) -> None:
+    if "Buddy" not in user["roles"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
@@ -406,3 +417,72 @@ def get_evidence_by_id(
             detail="evidence not found",
         )
     return result
+
+
+@planning_router.get("/evidence-reviews/pending")
+def get_pending_evidence_reviews(
+    user: CurrentUser, connection: Connection
+) -> list[dict[str, object]]:
+    _require_buddy(user)
+    return list_pending_evidence_reviews_for_buddy(connection, int(user["id"]))
+
+
+@planning_router.post("/evidence-reviews/{review_id}")
+def post_evidence_review(
+    user: CurrentUser,
+    connection: Connection,
+    review_id: int,
+    body: dict[str, object],
+) -> dict[str, bool]:
+    _require_buddy(user)
+    try:
+        conclusion = str(body["conclusion"])
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="conclusion is required",
+        ) from exc
+    feedback = body.get("feedback")
+    try:
+        submit_evidence_review(
+            connection, review_id, int(user["id"]), conclusion, feedback
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "review not found":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=msg,
+            ) from exc
+        if msg in (
+            "review is not assigned to this buddy",
+            "buddy is not assigned to member",
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=msg,
+            ) from exc
+        if msg == "review is not pending":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=msg,
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=msg,
+        ) from exc
+    return {"ok": True}
+
+
+@planning_router.get("/learning-tasks/{task_id}/evidence-reviews")
+def get_task_evidence_reviews(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    try:
+        return list_evidence_reviews_for_task(connection, int(user["id"]), task_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
