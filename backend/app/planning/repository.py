@@ -1697,3 +1697,483 @@ def archive_team_annual_plan(
         ).fetchone()
         if row is None:
             raise KeyError("team annual plan not found")
+
+
+_TEAM_ANALYTICS_DOMAIN_CODES = list(DOMAIN_CODES)
+
+
+def _parse_hours_sql(column: str) -> str:
+    return (
+        "COALESCE(CAST(NULLIF(REGEXP_REPLACE("
+        f"COALESCE({column}, ''), '[^0-9]', '', 'g'), '') AS INTEGER), 0)"
+    )
+
+
+def validate_team_analytics_domain_filter(
+    connection: psycopg.Connection, domain_code: str | None
+) -> None:
+    """Validate an optional L1 domain filter for team analytics.
+
+    Raises ValueError when the code is not an enabled MVP L1 domain.
+    """
+    if domain_code is None:
+        return
+    _validate_focus_domains(connection, [domain_code])
+
+
+def _team_analytics_member_scope(
+    connection: psycopg.Connection, member_id: int | None
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT u.id, u.username, u.full_name
+        FROM tcp_user u
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE r.code = 'Member'
+          AND (%s::BIGINT IS NULL OR u.id = %s::BIGINT)
+        ORDER BY u.id
+        """,
+        (member_id, member_id),
+    ).fetchall()
+    return [
+        {"member_id": row[0], "username": row[1], "full_name": row[2]} for row in rows
+    ]
+
+
+def _team_analytics_assessment_kpi(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> tuple[int, int]:
+    row = connection.execute(
+        """
+        WITH member_scope AS (
+            SELECT DISTINCT u.id
+            FROM tcp_user u
+            JOIN tcp_user_role ur ON ur.user_id = u.id
+            JOIN tcp_role r ON r.id = ur.role_id
+            WHERE r.code = 'Member'
+              AND (%s::BIGINT IS NULL OR u.id = %s::BIGINT)
+        ), latest_assessments AS (
+            SELECT DISTINCT ON (a.member_id)
+                   a.id, a.member_id
+            FROM assessment a
+            WHERE a.year = %s AND a.status != '草稿'
+            ORDER BY a.member_id, a.submitted_at DESC NULLS LAST, a.created_at DESC
+        ), completed_members AS (
+            SELECT DISTINCT ms.id
+            FROM member_scope ms
+            JOIN latest_assessments la ON la.member_id = ms.id
+            JOIN assessment_detail ad ON ad.assessment_id = la.id
+            WHERE (%s::TEXT IS NULL OR LEFT(ad.l3_code, 3) = %s::TEXT)
+        )
+        SELECT
+            (SELECT COUNT(*) FROM completed_members) AS completed,
+            (SELECT COUNT(*) FROM member_scope) AS total
+        """,
+        (member_id, member_id, year, domain_code, domain_code),
+    ).fetchone()
+    if row is None:
+        return 0, 0
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _team_analytics_plan_kpi(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> tuple[int, int]:
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE pi.status = '已完成') AS completed,
+            COUNT(*) AS total
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s AND pi.status != '取消'
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchone()
+    if row is None:
+        return 0, 0
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _team_analytics_evidence_kpi(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> tuple[int, int]:
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE e.status IN ('通过', '已归档')) AS passed,
+            COUNT(*) FILTER (WHERE e.status IN (
+                '通过', '需补充', '驳回', '已归档'
+            )) AS total
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchone()
+    if row is None:
+        return 0, 0
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _team_analytics_overdue_items(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        WITH due AS (
+            SELECT agp.member_id, pi.l3_code, pi.status,
+                   CASE
+                       WHEN pi.plan_end_date IS NOT NULL THEN pi.plan_end_date
+                       WHEN pi.target_month IS NOT NULL THEN
+                           (MAKE_DATE(%s, pi.target_month, 1)
+                            + INTERVAL '1 month - 1 day')::DATE
+                   END AS due_date
+            FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.year = %s AND pi.status NOT IN ('已完成', '取消')
+              AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+              AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        )
+        SELECT d.member_id, u.username, u.full_name,
+               d.l3_code, cn.name AS l3_name,
+               d.due_date, (CURRENT_DATE - d.due_date) AS overdue_days, d.status
+        FROM due d
+        JOIN tcp_user u ON u.id = d.member_id
+        LEFT JOIN capability_node cn ON cn.code = d.l3_code AND cn.node_type = 'L3'
+        WHERE d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE
+        ORDER BY overdue_days DESC, d.l3_code
+        """,
+        (year, year, member_id, member_id, domain_code, domain_code),
+    ).fetchall()
+    return [
+        {
+            "member_id": row[0],
+            "username": row[1],
+            "full_name": row[2],
+            "l3_code": row[3],
+            "l3_name": row[4],
+            "due_date": str(row[5]) if row[5] is not None else None,
+            "overdue_days": int(row[6]) if row[6] is not None else 0,
+            "status": row[7],
+        }
+        for row in rows
+    ]
+
+
+def _team_analytics_domain_averages(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_codes: list[str],
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        WITH latest_assessments AS (
+            SELECT DISTINCT ON (a.member_id)
+                   a.id, a.member_id, a.status
+            FROM assessment a
+            WHERE a.year = %s AND a.status != '草稿'
+            ORDER BY a.member_id, a.submitted_at DESC NULLS LAST, a.created_at DESC
+        )
+        SELECT LEFT(ad.l3_code, 3) AS domain_code,
+               ROUND(AVG(ad.current_level), 2) AS actual,
+               ROUND(AVG(ad.target_level), 2) AS target
+        FROM latest_assessments la
+        JOIN assessment_detail ad ON ad.assessment_id = la.id
+        JOIN tcp_user u ON u.id = la.member_id
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE r.code = 'Member'
+          AND (%s::BIGINT IS NULL OR la.member_id = %s::BIGINT)
+          AND LEFT(ad.l3_code, 3) = ANY(%s)
+        GROUP BY LEFT(ad.l3_code, 3)
+        """,
+        (year, member_id, member_id, domain_codes),
+    ).fetchall()
+    averages = {str(row[0]): {"actual": row[1], "target": row[2]} for row in rows}
+    return [
+        {
+            "domain_code": code,
+            "actual": (
+                float(averages[code]["actual"])
+                if code in averages and averages[code]["actual"] is not None
+                else 0
+            ),
+            "target": (
+                float(averages[code]["target"])
+                if code in averages and averages[code]["target"] is not None
+                else 0
+            ),
+        }
+        for code in domain_codes
+    ]
+
+
+def _team_analytics_member_attainment(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_codes: list[str],
+) -> list[dict[str, object]]:
+    members = _team_analytics_member_scope(connection, member_id)
+    if not members:
+        return []
+
+    rows = connection.execute(
+        """
+        WITH latest_assessments AS (
+            SELECT DISTINCT ON (a.member_id)
+                   a.id, a.member_id, a.status
+            FROM assessment a
+            WHERE a.year = %s AND a.status != '草稿'
+            ORDER BY a.member_id, a.submitted_at DESC NULLS LAST, a.created_at DESC
+        )
+        SELECT la.member_id, LEFT(ad.l3_code, 3) AS domain_code,
+               AVG(ad.current_level) AS actual,
+               AVG(ad.target_level) AS target
+        FROM latest_assessments la
+        JOIN assessment_detail ad ON ad.assessment_id = la.id
+        JOIN tcp_user u ON u.id = la.member_id
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE r.code = 'Member'
+          AND (%s::BIGINT IS NULL OR la.member_id = %s::BIGINT)
+          AND LEFT(ad.l3_code, 3) = ANY(%s)
+        GROUP BY la.member_id, LEFT(ad.l3_code, 3)
+        ORDER BY la.member_id, LEFT(ad.l3_code, 3)
+        """,
+        (year, member_id, member_id, domain_codes),
+    ).fetchall()
+
+    member_domain_values: dict[int, dict[str, tuple[float, float]]] = {
+        int(member["member_id"]): {} for member in members
+    }
+    for row in rows:
+        member_domain_values[int(row[0])][str(row[1])] = (
+            float(row[2]) if row[2] is not None else 0.0,
+            float(row[3]) if row[3] is not None else 0.0,
+        )
+
+    attainment: list[dict[str, object]] = []
+    for member in members:
+        mid = int(member["member_id"])
+        for code in domain_codes:
+            actual, target = member_domain_values[mid].get(code, (None, None))
+            if actual is not None and target is not None and target > 0:
+                attainment_value = round((actual / target) * 100, 2)
+            else:
+                attainment_value = None
+            attainment.append(
+                {
+                    "member_id": mid,
+                    "username": member["username"],
+                    "full_name": member["full_name"],
+                    "domain_code": code,
+                    "attainment": attainment_value,
+                    "actual": actual,
+                    "target": target,
+                }
+            )
+    return attainment
+
+
+def _team_analytics_monthly_trends(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> list[dict[str, object]]:
+    hours_sql = _parse_hours_sql("pi.estimated_hours")
+    planned_rows = connection.execute(
+        f"""
+        SELECT month, COUNT(*) AS planned_count, SUM(hours) AS planned_hours
+        FROM (
+            SELECT
+                CASE
+                    WHEN pi.target_month IS NOT NULL THEN pi.target_month
+                    WHEN pi.plan_end_date IS NOT NULL THEN
+                        EXTRACT(MONTH FROM pi.plan_end_date)::INT
+                END AS month,
+                {hours_sql} AS hours
+            FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.year = %s AND pi.status != '取消'
+              AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+              AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        ) t
+        WHERE month IS NOT NULL
+        GROUP BY month
+        ORDER BY month
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchall()
+    planned_by_month = {int(row[0]): (int(row[1]), int(row[2])) for row in planned_rows}
+
+    actual_count_rows = connection.execute(
+        """
+        SELECT EXTRACT(MONTH FROM lt.actual_end_date)::INT AS month,
+               COUNT(*) AS actual_count
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.status = '已完成' AND EXTRACT(YEAR FROM lt.actual_end_date) = %s
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        GROUP BY month
+        ORDER BY month
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchall()
+    actual_count_by_month = {int(row[0]): int(row[1]) for row in actual_count_rows}
+
+    actual_hours_rows = connection.execute(
+        """
+        SELECT EXTRACT(MONTH FROM lpl.record_date)::INT AS month,
+               SUM(lpl.actual_hours) AS actual_hours
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE EXTRACT(YEAR FROM lpl.record_date) = %s
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        GROUP BY month
+        ORDER BY month
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchall()
+    actual_hours_by_month = {int(row[0]): int(row[1]) for row in actual_hours_rows}
+
+    total_row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s AND pi.status != '取消'
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        """,
+        (year, member_id, member_id, domain_code, domain_code),
+    ).fetchone()
+    total_plan_items = int(total_row[0]) if total_row else 0
+
+    trends: list[dict[str, object]] = []
+    cumulative_planned = 0
+    cumulative_actual = 0
+    cumulative_planned_hours = 0
+    cumulative_actual_hours = 0
+    for month in range(1, 13):
+        planned_count, planned_hours = planned_by_month.get(month, (0, 0))
+        actual_count = actual_count_by_month.get(month, 0)
+        actual_hours = actual_hours_by_month.get(month, 0)
+
+        cumulative_planned += planned_count
+        cumulative_actual += actual_count
+        cumulative_planned_hours += planned_hours
+        cumulative_actual_hours += actual_hours
+
+        trends.append(
+            {
+                "month": month,
+                "planned_count": planned_count,
+                "actual_count": actual_count,
+                "cumulative_planned_rate": (
+                    round(cumulative_planned / total_plan_items, 4)
+                    if total_plan_items
+                    else 0.0
+                ),
+                "cumulative_actual_rate": (
+                    round(cumulative_actual / total_plan_items, 4)
+                    if total_plan_items
+                    else 0.0
+                ),
+                "planned_hours": planned_hours,
+                "actual_hours": actual_hours,
+                "cumulative_planned_hours": cumulative_planned_hours,
+                "cumulative_actual_hours": cumulative_actual_hours,
+            }
+        )
+    return trends
+
+
+def get_team_analytics(
+    connection: psycopg.Connection,
+    year: int,
+    member_id: int | None,
+    domain_code: str | None,
+) -> dict[str, object]:
+    """Return Leader-only, read-only team analytics aggregates used by UI-05."""
+    domain_codes = (
+        [domain_code] if domain_code is not None else _TEAM_ANALYTICS_DOMAIN_CODES
+    )
+
+    assessment_completed, assessment_total = _team_analytics_assessment_kpi(
+        connection, year, member_id, domain_code
+    )
+    plan_completed, plan_total = _team_analytics_plan_kpi(
+        connection, year, member_id, domain_code
+    )
+    evidence_passed, evidence_total = _team_analytics_evidence_kpi(
+        connection, year, member_id, domain_code
+    )
+    overdue_items = _team_analytics_overdue_items(
+        connection, year, member_id, domain_code
+    )
+
+    return {
+        "year": year,
+        "filters": {
+            "member_id": member_id,
+            "domain_code": domain_code,
+        },
+        "kpis": {
+            "assessment_completion_rate": (
+                round(assessment_completed / assessment_total, 4)
+                if assessment_total
+                else 0.0
+            ),
+            "assessment_completed_count": assessment_completed,
+            "assessment_total_count": assessment_total,
+            "plan_completion_rate": (
+                round(plan_completed / plan_total, 4) if plan_total else 0.0
+            ),
+            "plan_completed_count": plan_completed,
+            "plan_total_count": plan_total,
+            "evidence_pass_rate": (
+                round(evidence_passed / evidence_total, 4) if evidence_total else 0.0
+            ),
+            "evidence_passed_count": evidence_passed,
+            "evidence_total_count": evidence_total,
+            "overdue_plan_item_count": len(overdue_items),
+        },
+        "domain_averages": _team_analytics_domain_averages(
+            connection, year, member_id, domain_codes
+        ),
+        "member_attainment": _team_analytics_member_attainment(
+            connection, year, member_id, domain_codes
+        ),
+        "monthly_trends": _team_analytics_monthly_trends(
+            connection, year, member_id, domain_code
+        ),
+        "overdue_items": overdue_items,
+    }

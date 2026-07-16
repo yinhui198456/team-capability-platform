@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Response, status
 
 from ..access.policies import Connection, CurrentUser
@@ -18,6 +20,7 @@ from .repository import (
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
+    get_team_analytics,
     get_team_annual_plan_by_year,
     list_eligible_gaps,
     list_evidence_reviews_for_task,
@@ -33,6 +36,7 @@ from .repository import (
     update_learning_task,
     update_progress_log,
     update_team_annual_plan,
+    validate_team_analytics_domain_filter,
 )
 
 planning_router = APIRouter(prefix="/api/planning")
@@ -537,6 +541,26 @@ def get_profiles(
             detail="member not found",
         )
     return result
+
+
+@planning_router.get("/team-analytics")
+def get_team_analytics_view(
+    user: CurrentUser,
+    connection: Connection,
+    year: int | None = None,
+    member_id: int | None = None,
+    domain_code: str | None = None,
+) -> dict[str, object]:
+    _require_leader(user)
+    target_year = year if year is not None else date.today().year
+    try:
+        validate_team_analytics_domain_filter(connection, domain_code)
+        return get_team_analytics(connection, target_year, member_id, domain_code)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @planning_router.get("/team-annual-plan")
