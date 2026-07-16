@@ -267,7 +267,11 @@ def _get_l3_defaults(
         (l3_code,),
     ).fetchone()
     if row is None:
-        return {"learning_material": None, "expected_output": None, "estimated_hours": None}
+        return {
+            "learning_material": None,
+            "expected_output": None,
+            "estimated_hours": None,
+        }
     return {
         "learning_material": row[0],
         "expected_output": row[1],

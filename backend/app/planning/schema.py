@@ -84,7 +84,9 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             plan_end_date DATE,
             target_month INT,
             status TEXT NOT NULL DEFAULT '未开始'
-                CHECK (status IN ('未开始', '进行中', '已完成', '延期', '暂停', '取消')),
+                CHECK (status IN (
+                    '未开始', '进行中', '已完成', '延期', '暂停', '取消'
+                )),
             UNIQUE(annual_growth_plan_id, l3_code),
             UNIQUE(growth_goal_id)
         )
