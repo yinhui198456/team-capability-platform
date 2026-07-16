@@ -160,9 +160,13 @@ def test_valid_unlinked_resource_is_visible(connection: psycopg.Connection) -> N
         "/api/learning-resources/P01-M001",
     ],
 )
-def test_write_methods_are_not_exposed(
+def test_anonymous_write_methods_are_rejected(
     connection: psycopg.Connection, method: str, path: str
 ) -> None:
     status, _ = request(method.upper(), path)
 
-    assert status == 405
+    protected_mutation = (path, method) in {
+        ("/api/learning-resources", "post"),
+        ("/api/learning-resources/P01-M001", "put"),
+    }
+    assert status == (401 if protected_mutation else 405)

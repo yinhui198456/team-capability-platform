@@ -240,3 +240,327 @@ def get_learning_resource(
         (material_code, list(DOMAIN_CODES)),
     )
     return resource
+
+
+_L3_ONLY_FIELDS = (
+    "recommended_start_level",
+    "materials_text",
+    "expected_output",
+    "estimated_hours",
+    "resource_codes",
+)
+
+
+def get_capability_node(
+    connection: psycopg.Connection, node_code: str
+) -> dict[str, object] | None:
+    node = _fetchone(
+        connection,
+        """
+        SELECT id, node_type, code, name, l1_category, enabled,
+               p4_description, p5_description, p6_description,
+               p7_description, p8_description,
+               recommended_start_level, materials_text, expected_output, estimated_hours
+        FROM capability_node
+        WHERE code = %s
+        """,
+        (node_code,),
+    )
+    if node is None:
+        return None
+
+    node_type = node["node_type"]
+    if node_type == "L1":
+        return {
+            "code": node["code"],
+            "name": node["name"],
+            "category": node["l1_category"],
+            "enabled": node["enabled"],
+            "p4_description": node["p4_description"],
+            "p5_description": node["p5_description"],
+            "p6_description": node["p6_description"],
+            "p7_description": node["p7_description"],
+            "p8_description": node["p8_description"],
+        }
+    if node_type == "L2":
+        return {
+            "code": node["code"],
+            "name": node["name"],
+            "enabled": node["enabled"],
+            "p4_description": node["p4_description"],
+            "p5_description": node["p5_description"],
+            "p6_description": node["p6_description"],
+            "p7_description": node["p7_description"],
+            "p8_description": node["p8_description"],
+        }
+
+    resources = _fetchall(
+        connection,
+        """
+        SELECT resource.material_code, resource.name,
+               resource.material_type, resource.status
+        FROM capability_node_resource AS link
+        JOIN learning_resource AS resource ON resource.id = link.resource_id
+        WHERE link.node_id = %s
+        ORDER BY resource.material_code
+        """,
+        (node["id"],),
+    )
+    return {
+        "code": node["code"],
+        "name": node["name"],
+        "enabled": node["enabled"],
+        "p4_description": node["p4_description"],
+        "p5_description": node["p5_description"],
+        "p6_description": node["p6_description"],
+        "p7_description": node["p7_description"],
+        "p8_description": node["p8_description"],
+        "recommended_start_level": node["recommended_start_level"],
+        "materials_text": node["materials_text"],
+        "expected_output": node["expected_output"],
+        "estimated_hours": node["estimated_hours"],
+        "resources": resources,
+        "unmatched_materials": _unmatched_materials(
+            node["materials_text"],
+            {resource["material_code"] for resource in resources},
+        ),
+    }
+
+
+def _validate_l3_codes(connection: psycopg.Connection, l3_codes: list[str]) -> None:
+    if not l3_codes:
+        return
+    rows = _fetchall(
+        connection,
+        """
+        SELECT code FROM capability_node
+        WHERE node_type = 'L3' AND code = ANY(%s)
+        """,
+        (list(set(l3_codes)),),
+    )
+    found = {row["code"] for row in rows}
+    missing = set(l3_codes) - found
+    if missing:
+        raise ValueError(f"unknown l3 codes: {sorted(missing)}")
+
+
+def _validate_resource_codes(
+    connection: psycopg.Connection, resource_codes: list[str]
+) -> None:
+    if not resource_codes:
+        return
+    rows = _fetchall(
+        connection,
+        """
+        SELECT material_code FROM learning_resource
+        WHERE material_code = ANY(%s)
+        """,
+        (list(set(resource_codes)),),
+    )
+    found = {row["material_code"] for row in rows}
+    missing = set(resource_codes) - found
+    if missing:
+        raise ValueError(f"unknown resource codes: {sorted(missing)}")
+
+
+def update_capability_node(
+    connection: psycopg.Connection,
+    node_code: str,
+    data: dict[str, object],
+) -> dict[str, object] | None:
+    node = _fetchone(
+        connection,
+        """
+        SELECT id, node_type FROM capability_node WHERE code = %s
+        """,
+        (node_code,),
+    )
+    if node is None:
+        return None
+
+    node_type = node["node_type"]
+    if node_type != "L3":
+        for field in _L3_ONLY_FIELDS:
+            if field in data:
+                raise ValueError(f"{field} is only allowed on L3 nodes")
+
+    scalar_fields = [
+        "name",
+        "enabled",
+        "p4_description",
+        "p5_description",
+        "p6_description",
+        "p7_description",
+        "p8_description",
+    ]
+    if node_type == "L3":
+        scalar_fields.extend(
+            [
+                "recommended_start_level",
+                "materials_text",
+                "expected_output",
+                "estimated_hours",
+            ]
+        )
+
+    updates = []
+    parameters: list[object] = []
+    for field in scalar_fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            parameters.append(data[field])
+
+    with connection.transaction():
+        if updates:
+            parameters.append(node_code)
+            connection.execute(
+                f"""
+                UPDATE capability_node
+                SET {', '.join(updates)}
+                WHERE code = %s
+                """,
+                parameters,
+            )
+
+        if node_type == "L3" and "resource_codes" in data:
+            _validate_resource_codes(connection, data["resource_codes"])
+            connection.execute(
+                "DELETE FROM capability_node_resource WHERE node_id = %s",
+                (node["id"],),
+            )
+            codes = list(set(data["resource_codes"]))
+            if codes:
+                connection.execute(
+                    """
+                    INSERT INTO capability_node_resource (node_id, resource_id)
+                    SELECT %s, id FROM learning_resource WHERE material_code = ANY(%s)
+                    """,
+                    (node["id"], codes),
+                )
+
+    return get_capability_node(connection, node_code)
+
+
+def create_learning_resource(
+    connection: psycopg.Connection, data: dict[str, object]
+) -> dict[str, object]:
+    material_code = data["material_code"]
+    existing = _fetchone(
+        connection,
+        "SELECT 1 FROM learning_resource WHERE material_code = %s",
+        (material_code,),
+    )
+    if existing is not None:
+        raise ValueError(f"material code already exists: {material_code}")
+
+    l3_codes = list(set(data.get("l3_codes", [])))
+    _validate_l3_codes(connection, l3_codes)
+
+    with connection.transaction():
+        resource = _fetchone(
+            connection,
+            """
+            INSERT INTO learning_resource (
+                material_code, name, material_type, source_text, purpose, status,
+                source_workbook, source_sheet, source_row
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, 'manual', 'manual', 0)
+            RETURNING id, material_code
+            """,
+            (
+                material_code,
+                data["name"],
+                data["material_type"],
+                data["source_text"],
+                data["purpose"],
+                data["status"],
+            ),
+        )
+        if l3_codes:
+            connection.execute(
+                """
+                INSERT INTO capability_node_resource (node_id, resource_id)
+                SELECT id, %s FROM capability_node
+                WHERE node_type = 'L3' AND code = ANY(%s)
+                """,
+                (resource["id"], l3_codes),
+            )
+
+    return get_learning_resource(connection, material_code)
+
+
+def update_learning_resource(
+    connection: psycopg.Connection,
+    material_code: str,
+    data: dict[str, object],
+) -> dict[str, object] | None:
+    resource = _fetchone(
+        connection,
+        "SELECT id FROM learning_resource WHERE material_code = %s",
+        (material_code,),
+    )
+    if resource is None:
+        return None
+
+    if "material_code" in data and data["material_code"] != material_code:
+        raise ValueError("material_code is immutable")
+
+    scalar_fields = ["name", "material_type", "source_text", "purpose", "status"]
+    updates = []
+    parameters: list[object] = []
+    for field in scalar_fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            parameters.append(data[field])
+
+    l3_codes: list[str] | None = None
+    if "l3_codes" in data:
+        l3_codes = list(set(data["l3_codes"]))
+        _validate_l3_codes(connection, l3_codes)
+
+    with connection.transaction():
+        if updates:
+            parameters.append(material_code)
+            connection.execute(
+                f"""
+                UPDATE learning_resource
+                SET {', '.join(updates)}
+                WHERE material_code = %s
+                """,
+                parameters,
+            )
+        if l3_codes is not None:
+            connection.execute(
+                "DELETE FROM capability_node_resource WHERE resource_id = %s",
+                (resource["id"],),
+            )
+            if l3_codes:
+                connection.execute(
+                    """
+                    INSERT INTO capability_node_resource (node_id, resource_id)
+                    SELECT id, %s FROM capability_node
+                    WHERE node_type = 'L3' AND code = ANY(%s)
+                    """,
+                    (resource["id"], l3_codes),
+                )
+
+    return get_learning_resource(connection, material_code)
+
+
+def archive_learning_resource(
+    connection: psycopg.Connection, material_code: str
+) -> dict[str, object] | None:
+    resource = _fetchone(
+        connection,
+        "SELECT 1 FROM learning_resource WHERE material_code = %s",
+        (material_code,),
+    )
+    if resource is None:
+        return None
+
+    with connection.transaction():
+        connection.execute(
+            "UPDATE learning_resource SET status = 'archived' WHERE material_code = %s",
+            (material_code,),
+        )
+    return get_learning_resource(connection, material_code)
