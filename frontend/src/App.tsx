@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { AssessmentHistoryPage } from './AssessmentHistoryPage'
+import { AssessmentPage } from './AssessmentPage'
 import { LoginPage } from './LoginPage'
 import {
   allL3,
@@ -254,7 +256,9 @@ export function App() {
 
   if (
     pathname !== '/capability/model' &&
-    pathname !== '/operations/resources'
+    pathname !== '/operations/resources' &&
+    pathname !== '/capability/assessment' &&
+    pathname !== '/capability/assessment/history'
   ) {
     return (
       <main className="catalog-shell">
@@ -273,6 +277,20 @@ export function App() {
           能力模型
         </a>
         <a
+          className={pathname === '/capability/assessment' ? 'active' : ''}
+          href="/capability/assessment"
+        >
+          能力自评
+        </a>
+        <a
+          className={
+            pathname === '/capability/assessment/history' ? 'active' : ''
+          }
+          href="/capability/assessment/history"
+        >
+          评估历史
+        </a>
+        <a
           className={pathname === '/operations/resources' ? 'active' : ''}
           href="/operations/resources"
         >
@@ -281,6 +299,10 @@ export function App() {
       </nav>
       {pathname === '/operations/resources' ? (
         <LearningResourcesPage />
+      ) : pathname === '/capability/assessment' ? (
+        <AssessmentPage />
+      ) : pathname === '/capability/assessment/history' ? (
+        <AssessmentHistoryPage />
       ) : (
         <CapabilityModelPage />
       )}

@@ -241,7 +241,11 @@ describe('catalog routes', () => {
         path === '/capability/model' ? /Data Infra 能力/ : '有效未关联资源',
       )
       expect(
-        [...document.querySelectorAll('button, a, label')].some((element) =>
+        [
+          ...document.querySelectorAll(
+            'main > section button, main > section a, main > section label',
+          ),
+        ].some((element) =>
           /导入|添加|编辑|删除|保存|提交|上传|导出|登录|账号|Gap|成长目标|评估|计划|任务|Evidence/i.test(
             element.textContent ?? '',
           ),
