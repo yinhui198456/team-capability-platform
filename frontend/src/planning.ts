@@ -493,3 +493,69 @@ export async function listEvidenceReviewsForTask(
     { method: 'GET' },
   )
 }
+
+export type TeamAnnualCapabilityPlan = {
+  id: number
+  code: string
+  year: number
+  publisher_id: number
+  resource_arrangement: string | null
+  description: string | null
+  published_at: string
+  status: string
+  created_at: string
+  updated_at: string
+  focus_domains: string[]
+}
+
+export type TeamAnnualPlanSave = {
+  year: number
+  focus_domain_codes: string[]
+  resource_arrangement: string
+  description: string
+}
+
+export async function getTeamAnnualPlan(
+  year: number,
+): Promise<TeamAnnualCapabilityPlan | null> {
+  const response = await fetch(`/api/planning/team-annual-plan?year=${year}`, {
+    method: 'GET',
+    credentials: 'include',
+  })
+  if (response.status === 404) return null
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
+    throw new Error(payload.detail ?? '请求失败')
+  }
+  return response.json() as Promise<TeamAnnualCapabilityPlan>
+}
+
+export async function publishTeamAnnualPlan(
+  body: TeamAnnualPlanSave,
+): Promise<TeamAnnualCapabilityPlan> {
+  return request<TeamAnnualCapabilityPlan>(
+    '/api/planning/team-annual-plan',
+    { method: 'POST' },
+    body,
+  )
+}
+
+export async function updateTeamAnnualPlan(
+  body: TeamAnnualPlanSave,
+): Promise<TeamAnnualCapabilityPlan> {
+  return request<TeamAnnualCapabilityPlan>(
+    '/api/planning/team-annual-plan',
+    { method: 'PUT' },
+    body,
+  )
+}
+
+export async function archiveTeamAnnualPlan(
+  year: number,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    '/api/planning/team-annual-plan/archive',
+    { method: 'POST' },
+    { year },
+  )
+}
