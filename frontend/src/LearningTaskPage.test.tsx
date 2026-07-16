@@ -17,6 +17,8 @@ describe('LearningTaskPage', () => {
   beforeEach(() => {
     vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
     vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([])
+    vi.spyOn(planningApi, 'getMonthlyHours').mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -280,6 +282,190 @@ describe('LearningTaskPage', () => {
 
     expect(screen.queryByText('创建学习任务')).toBeNull()
   })
+
+  it('renders progress logs and total hours for a task', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([
+      {
+        id: 1,
+        task_id: 100,
+        record_date: '2026-07-10',
+        actual_hours: 3,
+        note: '阅读文档',
+        recorder_id: 1,
+      },
+    ])
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('学习日志')).toBeTruthy()
+    })
+
+    expect(screen.getByText('总时长：3 小时')).toBeTruthy()
+    expect(screen.getByText('2026-07-10')).toBeTruthy()
+    expect(screen.getByText('阅读文档')).toBeTruthy()
+  })
+
+  it('calls createProgressLog and refreshes logs on add', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    const createProgressLog = vi
+      .spyOn(planningApi, 'createProgressLog')
+      .mockResolvedValue({
+        id: 2,
+        task_id: 100,
+        record_date: '2026-07-12',
+        actual_hours: 4,
+        note: '练习',
+        recorder_id: 1,
+      })
+    vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([
+      {
+        id: 2,
+        task_id: 100,
+        record_date: '2026-07-12',
+        actual_hours: 4,
+        note: '练习',
+        recorder_id: 1,
+      },
+    ])
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('添加日志')).toBeTruthy()
+    })
+
+    fireEvent.change(screen.getAllByLabelText('日期')[0], {
+      target: { value: '2026-07-12' },
+    })
+    fireEvent.change(screen.getAllByLabelText('时长（小时）')[0], {
+      target: { value: '4' },
+    })
+    fireEvent.change(screen.getAllByLabelText('备注')[0], {
+      target: { value: '练习' },
+    })
+    fireEvent.click(screen.getByText('添加日志'))
+
+    await waitFor(() => {
+      expect(createProgressLog).toHaveBeenCalledWith(
+        100,
+        '2026-07-12',
+        4,
+        '练习',
+      )
+    })
+  })
+
+  it('calls deleteProgressLog and refreshes logs on delete', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([
+      {
+        id: 1,
+        task_id: 100,
+        record_date: '2026-07-10',
+        actual_hours: 3,
+        note: '阅读文档',
+        recorder_id: 1,
+      },
+    ])
+    const deleteProgressLog = vi
+      .spyOn(planningApi, 'deleteProgressLog')
+      .mockResolvedValue(undefined)
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('删除')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByText('删除'))
+
+    await waitFor(() => {
+      expect(deleteProgressLog).toHaveBeenCalledWith(1)
+    })
+  })
 })
 
 describe('learning task api helpers', () => {
@@ -344,6 +530,85 @@ describe('learning task api helpers', () => {
         method: 'PUT',
         credentials: 'include',
         body: JSON.stringify({ status: '进行中', actual_hours: 5 }),
+      }),
+    )
+  })
+})
+
+describe('progress log api helpers', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 1 }),
+        }),
+      ),
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('createProgressLog posts log fields', async () => {
+    await planningApi.createProgressLog(100, '2026-07-10', 3, '阅读文档')
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/learning-tasks/100/progress-logs',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({
+          record_date: '2026-07-10',
+          actual_hours: 3,
+          note: '阅读文档',
+        }),
+      }),
+    )
+  })
+
+  it('listProgressLogs fetches by task id', async () => {
+    await planningApi.listProgressLogs(100)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/learning-tasks/100/progress-logs',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
+      }),
+    )
+  })
+
+  it('updateProgressLog puts fields', async () => {
+    await planningApi.updateProgressLog(1, { actual_hours: 4 })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/progress-logs/1',
+      expect.objectContaining({
+        method: 'PUT',
+        credentials: 'include',
+        body: JSON.stringify({ actual_hours: 4 }),
+      }),
+    )
+  })
+
+  it('deleteProgressLog deletes by id', async () => {
+    await planningApi.deleteProgressLog(1)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/progress-logs/1',
+      expect.objectContaining({
+        method: 'DELETE',
+        credentials: 'include',
+      }),
+    )
+  })
+
+  it('getMonthlyHours fetches with year query', async () => {
+    await planningApi.getMonthlyHours(2026)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/progress-logs/monthly?year=2026',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
       }),
     )
   })
