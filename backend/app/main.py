@@ -12,7 +12,7 @@ from .access.seed import seed_demo_accounts
 from .assessment import assessment_router, create_assessment_schema, gap_router
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
-from .planning import planning_router
+from .planning import create_planning_schema, planning_router
 from .settings import settings
 
 
@@ -22,6 +22,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         ensure_catalog_initialized(connection, Path("/app/capability-model"))
         create_access_schema(connection)
         create_assessment_schema(connection)
+        create_planning_schema(connection)
         seed_demo_accounts(connection)
     yield
 
