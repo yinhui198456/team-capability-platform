@@ -18,6 +18,7 @@ describe('LearningTaskPage', () => {
     vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
     vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
     vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listEvidences').mockResolvedValue([])
     vi.spyOn(planningApi, 'getMonthlyHours').mockResolvedValue([])
   })
 
@@ -464,6 +465,192 @@ describe('LearningTaskPage', () => {
 
     await waitFor(() => {
       expect(deleteProgressLog).toHaveBeenCalledWith(1)
+    })
+  })
+
+  it('renders evidence list and allows creating a draft', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    let listEvidencesCallCount = 0
+    vi.spyOn(planningApi, 'listEvidences').mockImplementation(() => {
+      listEvidencesCallCount += 1
+      return Promise.resolve(
+        listEvidencesCallCount === 1
+          ? []
+          : [
+              {
+                id: 10,
+                learning_task_id: 100,
+                l3_code: 'P01-L2A-L3B',
+                version_number: 1,
+                content: '完成 P01 实践项目',
+                evidence_link: 'http://example.com/demo',
+                status: '草稿',
+                submitted_at: null,
+                created_at: '2026-07-16T10:00:00Z',
+              },
+            ],
+      )
+    })
+    const createEvidence = vi
+      .spyOn(planningApi, 'createEvidence')
+      .mockResolvedValue({
+        id: 10,
+        learning_task_id: 100,
+        l3_code: 'P01-L2A-L3B',
+        version_number: 1,
+        content: '完成 P01 实践项目',
+        evidence_link: 'http://example.com/demo',
+        status: '草稿',
+        submitted_at: null,
+        created_at: '2026-07-16T10:00:00Z',
+      })
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('新增版本')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByText('新增版本'))
+
+    fireEvent.change(screen.getByLabelText('提交内容'), {
+      target: { value: '完成 P01 实践项目' },
+    })
+    fireEvent.change(screen.getByLabelText('证据链接'), {
+      target: { value: 'http://example.com/demo' },
+    })
+    fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() => {
+      expect(createEvidence).toHaveBeenCalledWith(
+        100,
+        '完成 P01 实践项目',
+        'http://example.com/demo',
+      )
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('版本 1')).toBeTruthy()
+    })
+  })
+
+  it('submits a draft evidence', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    let listEvidencesCallCount = 0
+    vi.spyOn(planningApi, 'listEvidences').mockImplementation(() => {
+      listEvidencesCallCount += 1
+      return Promise.resolve(
+        listEvidencesCallCount === 1
+          ? [
+              {
+                id: 10,
+                learning_task_id: 100,
+                l3_code: 'P01-L2A-L3B',
+                version_number: 1,
+                content: '完成 P01 实践项目',
+                evidence_link: 'http://example.com/demo',
+                status: '草稿',
+                submitted_at: null,
+                created_at: '2026-07-16T10:00:00Z',
+              },
+            ]
+          : [
+              {
+                id: 10,
+                learning_task_id: 100,
+                l3_code: 'P01-L2A-L3B',
+                version_number: 1,
+                content: '完成 P01 实践项目',
+                evidence_link: 'http://example.com/demo',
+                status: '待 Review',
+                submitted_at: '2026-07-16T10:05:00Z',
+                created_at: '2026-07-16T10:00:00Z',
+              },
+            ],
+      )
+    })
+    const submitEvidence = vi
+      .spyOn(planningApi, 'submitEvidence')
+      .mockResolvedValue({
+        id: 10,
+        learning_task_id: 100,
+        l3_code: 'P01-L2A-L3B',
+        version_number: 1,
+        content: '完成 P01 实践项目',
+        evidence_link: 'http://example.com/demo',
+        status: '待 Review',
+        submitted_at: '2026-07-16T10:05:00Z',
+        created_at: '2026-07-16T10:00:00Z',
+      })
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('提交')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByText('提交'))
+
+    await waitFor(() => {
+      expect(submitEvidence).toHaveBeenCalledWith(10)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('待 Review')).toBeTruthy()
     })
   })
 })
