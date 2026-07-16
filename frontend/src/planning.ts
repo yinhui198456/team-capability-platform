@@ -367,6 +367,85 @@ export type EvidenceReview = {
   evidence_link?: string | null
 }
 
+export type CapabilityProfileAssessmentReview = {
+  id: number
+  evidence_id?: number
+  version_number?: number
+  status: string
+  conclusion: '认可' | '建议调整' | null
+  feedback: string | null
+  reviewed_at: string | null
+  created_at?: string
+}
+
+export type CapabilityProfileAssessment = {
+  id: number
+  member_id: number
+  year: number
+  version: number
+  assessment_type: string
+  status: string
+  created_at: string
+  submitted_at: string | null
+  archived_at: string | null
+  reviews: CapabilityProfileAssessmentReview[]
+}
+
+export type CapabilityProfilePlanItem = PlanItem & {
+  learning_task:
+    | (LearningTask & {
+        progress_logs: ProgressLog[]
+        evidences: (Evidence & { review: EvidenceReview | null })[]
+      })
+    | null
+}
+
+export type CapabilityProfileAnnualPlan = Omit<AnnualPlan, 'items'> & {
+  items: CapabilityProfilePlanItem[]
+}
+
+export type CapabilityProfileStatistics = {
+  total_learning_hours: number
+  evidence_count_by_status: Record<string, number>
+}
+
+export type CapabilityProfile = {
+  id: number
+  member_id: number
+  year: number
+  status: string
+  created_at: string
+  updated_at: string
+  member: {
+    id: number
+    username: string
+    full_name: string
+  }
+  assessments: CapabilityProfileAssessment[]
+  annual_plan: CapabilityProfileAnnualPlan | null
+  statistics: CapabilityProfileStatistics
+}
+
+export async function getCapabilityProfile(
+  year: number,
+): Promise<CapabilityProfile> {
+  return request<CapabilityProfile>(`/api/planning/profiles?year=${year}`, {
+    method: 'GET',
+  })
+}
+
+export async function getCapabilityProfileForMember(
+  member_id: number,
+  year: number,
+): Promise<CapabilityProfile> {
+  return request<CapabilityProfile>(
+    `/api/planning/profiles?member_id=${member_id}&year=${year}`,
+    {
+      method: 'GET',
+    },
+  )
+}
+
 export async function listPendingEvidenceReviews(): Promise<EvidenceReview[]> {
   return request<EvidenceReview[]>('/api/planning/evidence-reviews/pending', {
     method: 'GET',
