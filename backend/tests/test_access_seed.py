@@ -1,6 +1,7 @@
 import psycopg
 import pytest
 
+from app.access import seed
 from app.access.repository import (
     assign_role,
     create_user,
@@ -11,6 +12,9 @@ from app.access.repository import (
 from app.access.schema import create_access_schema
 from app.access.security import verify_password
 from app.access.seed import seed_demo_accounts
+from app.assessment.schema import create_assessment_schema
+from app.catalog.schema import create_catalog_schema
+from app.planning.schema import create_planning_schema
 
 _DEMO_USERNAMES = ("admin", "leader", "buddy", "member", "member2")
 
@@ -138,3 +142,70 @@ def test_seed_skips_when_any_user_exists(access_schema: psycopg.Connection) -> N
     assert counts["users"] == 1
     assert counts["user_roles"] == 1
     assert counts["buddy_relationships"] == 0
+
+
+def test_seed_business_data_builds_repeatable_core_loop(
+    access_schema: psycopg.Connection,
+) -> None:
+    create_assessment_schema(access_schema)
+    create_planning_schema(access_schema)
+    create_catalog_schema(access_schema)
+    model_id = access_schema.execute(
+        """INSERT INTO capability_model
+        (code, name, version, source_workbook, source_sheet, source_row)
+        VALUES ('demo-model', 'Demo', '1.0', 'demo.xlsx', 'sheet', 1)
+        RETURNING id"""
+    ).fetchone()[0]
+    l1_id = access_schema.execute(
+        """INSERT INTO capability_node
+        (model_id, node_type, code, name, sort_order,
+         source_workbook, source_sheet, source_row)
+        VALUES (%s, 'L1', 'P01', 'Domain', 1, 'demo.xlsx', 'sheet', 2)
+        RETURNING id""",
+        (model_id,),
+    ).fetchone()[0]
+    l2_id = access_schema.execute(
+        """INSERT INTO capability_node
+        (model_id, parent_node_id, node_type, code, name, sort_order,
+         source_workbook, source_sheet, source_row)
+        VALUES (%s, %s, 'L2', 'P01-L2A', 'Item', 1, 'demo.xlsx', 'sheet', 3)
+        RETURNING id""",
+        (model_id, l1_id),
+    ).fetchone()[0]
+    access_schema.execute(
+        """INSERT INTO capability_node
+        (model_id, parent_node_id, node_type, code, name, sort_order,
+         source_workbook, source_sheet, source_row)
+        VALUES (%s, %s, 'L3', 'P01-L2A-L3A', 'Leaf', 1, 'demo.xlsx', 'sheet', 4)""",
+        (model_id, l2_id),
+    )
+    seed_demo_accounts(access_schema)
+
+    seed.seed_demo_business_data(access_schema)
+
+    counts = {
+        table: access_schema.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in (
+            "assessment",
+            "gap",
+            "growth_goal",
+            "plan_item",
+            "learning_task",
+            "learning_progress_log",
+            "evidence",
+            "evidence_review",
+            "capability_profile",
+        )
+    }
+    assert counts == dict.fromkeys(counts, 1)
+    assert (
+        access_schema.execute("SELECT conclusion FROM evidence_review").fetchone()[0]
+        == "通过"
+    )
+
+    seed.seed_demo_business_data(access_schema)
+    repeated = {
+        table: access_schema.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in counts
+    }
+    assert repeated == counts
