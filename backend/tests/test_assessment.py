@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -221,7 +220,7 @@ def test_member_cannot_view_or_edit_other_draft(
     assessment_schema: psycopg.Connection,
 ) -> None:
     member_a = _create_test_user(assessment_schema, "member_a2", ["Member"])
-    member_b = _create_test_user(assessment_schema, "member_b2", ["Member"])
+    _create_test_user(assessment_schema, "member_b2", ["Member"])
     assessment_id = create_assessment_draft(assessment_schema, member_a, 2026)
     assessment_schema.commit()
 
@@ -246,7 +245,7 @@ def test_buddy_can_view_assigned_member_assessment(
 ) -> None:
     member_id = _create_test_user(assessment_schema, "member_a3", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_a3", ["Buddy"])
-    other_buddy_id = _create_test_user(assessment_schema, "buddy_b3", ["Buddy"])
+    _create_test_user(assessment_schema, "buddy_b3", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
     assessment_schema.commit()

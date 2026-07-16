@@ -29,7 +29,7 @@
 | 0 | 文档与契约校验：对象、状态、权限、路由、原型路径、门禁原文 | 已完成 | 门禁：01–04 交叉校验通过；不写业务代码 | 基线文档已冻结：`docs/01_Product.md`、`02_Design.md`、`03_Data.md`、`04_UI.md`、`05_Development.md`；五张原型图位于 `docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png`、`UI-02-assessment-gap.png`、`UI-03-annual-plan-task.png`、`UI-04-buddy-review-center.png`、`UI-05-team-capability-analysis.png`；关键 commit `9a0d482`（docs: track frozen TCP baseline） |
 | 1 | 前后端壳工程、Compose、质量工具、健康入口、空页面路由 | 已完成 | 门禁：容器可启动；无业务页面实现 | 后端 `backend/app/main.py` 提供 `/health`、`/ready`；`compose.yaml` 编排 PostgreSQL / FastAPI / Nginx 前端；质量工具配置齐全（Ruff、Black、ESLint、Prettier）；关键 commit `bbcfaef`（chore: initialize TCP engineering scaffold） |
 | 2 | 能力模型只读展示与 Excel 导入边界；学习资源只读 | 已完成 | 门禁：六域和 L3 层级可追溯 | 后端 `backend/app/catalog/importer.py` 从固定 Excel 导入六个 MVP 域（P01/P02/P03/C01/C02/C03）；`backend/app/catalog/repository.py` 提供只读查询；`backend/app/catalog/api.py` 暴露 `GET /api/capability-model`、`GET /api/learning-resources`；前端 `frontend/src/App.tsx` + `frontend/src/catalog.ts` 实现 `/capability/model` 与 `/operations/resources` 匿名只读页；测试覆盖导入、API、E2E、数据库隔离；关键 commit 范围 `c43e0d4..9550bff` |
-| 3 | **3A**：MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 待用户确认 | 3A 进入门禁：迭代 2 验收通过；3A 验收门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 经 Codex 审核通过且用户 UAT 确认；3B 验收门禁：自评历史、Review 闭环、阻塞/解除场景通过，且该切片 UAT 通过 | **3A 技术验收已通过**；关键 commit `c39283f`（seed uat demo accounts）、`e701305`（minimal uat login page）及此前 3A-1..3A-6；`/login`、`/api/auth/login|logout|me`、HttpOnly Cookie、五账号本地 UAT 密码 `123456`、Member 主 Buddy 为 `buddy`；端到端 smoke 已通过。下一动作：用户执行 3A UAT 并确认；3B 未启动 |
+| 3 | **3A**：MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 进行中 | 3A 进入门禁：迭代 2 验收通过；3A 验收门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 经 Codex 审核通过且用户 UAT 确认；3B 验收门禁：自评历史、Review 闭环、阻塞/解除场景通过，且该切片 UAT 通过 | **3A 已完成，用户 UAT 已确认**；3B 已启动，当前执行 3B-1；关键 commit `c39283f`（seed uat demo accounts）、`e701305`（minimal uat login page）及此前 3A-1..3A-6。 |
 | 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 待开始 | 进入门禁：迭代 3 验收通过；验收门禁：1:1 任务关系和时长聚合场景通过，且该切片 UAT 通过 | 依赖迭代 3 完成；原型绑定 UI-03 的 Goal/计划/任务/日志子流程 |
 | 5 | Evidence 版本、Evidence Review、成长档案聚合 | 待开始 | 进入门禁：迭代 4 验收通过；验收门禁：旧版本不回流、Review 历史闭环，且该切片 UAT 通过 | 依赖迭代 4 完成；原型绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案 |
 | 6 | **6A**：UI-01 我的成长看板，以及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；**6B**：UI-05 团队能力分析、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收 | 待开始 | 6A 进入门禁：迭代 5 验收通过；6A 验收门禁：UI-01 与 UI-02～UI-04 视觉交互整合通过；6B 进入门禁：6A 通过；6B 验收门禁：五张原型截图与集成 UAT 通过 | 依赖迭代 5 完成；6A 完成后进入 6B；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过 |
@@ -39,8 +39,8 @@
 
 ## 3. 当前快照
 
-- **当前迭代**：迭代 3A 已完成技术验收，状态为“待用户确认”；等待用户执行 3A UAT 并给出确认后，方可进入 3B。**3B 未启动，任何 3B 业务代码、API 或页面均不允许提前实施。**
-- **迭代 3 子阶段**：3A 负责 MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，不含 Admin 管理页，目前已完成；3B 负责 Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程；3B 依赖 3A 且须等用户 UAT 确认后才能开始。
+- **当前迭代**：迭代 3 状态为“进行中”。**3A 已完成，用户 UAT 已确认**；**3B 已启动**，当前执行 3B-1 Assessment 草稿、提交与历史。任何 3B 业务代码、API 或页面均需在 3B 子任务授权后实施，不得跨子任务预装范围。
+- **迭代 3 子阶段**：3A 负责 MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，不含 Admin 管理页，目前已完成；3B 负责 Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程；3B 依赖 3A，现已获得用户 UAT 确认并开始。
 - **迭代 6 子阶段**：6A 负责 UI-01 及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；6B 负责 UI-05、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收；6B 依赖 6A；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过。
 - **UAT 节奏**：迭代 3 起，每个业务纵向切片在 Codex 验收通过后进入用户 UAT；UAT 反馈只修复当前已授权切片范围，不新增业务规则。
 - **迭代 3A 完成边界**：在迭代 2 匿名只读目录基础上，新增本地 HttpOnly Cookie 会话、`/login` 登录页、五个本地 UAT 演示账号（密码均为 `123456`）、N:M 有效角色与 Buddy 关系基础。不含 Assessment、Gap、Goal、Plan、Task、Evidence、Review、Admin 管理页、SSO、注册、密码重置。
@@ -52,7 +52,7 @@
   - 只读 API：`GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`
   - 健康检查：`/health`、`/ready`
   - 后端与前端测试：按 `docs/acceptance/ITERATION_3A_TECHNICAL_ACCEPTANCE.md` 中记录的命令执行
-- **下一决策点**：用户是否确认 3A UAT 通过并授权启动 3B。
+- **下一决策点**：3B-1 至 3B-4 全部完成并经 Codex 审核通过后，进入 3B-5 用户切片 UAT。
 
 ---
 
@@ -67,17 +67,19 @@
 
 ## 5. 下一个授权动作
 
-**用户执行 3A UAT 并确认通过后，由 Codex 指派 CC 启动迭代 3B。**
+**用户已确认 3A UAT 通过，CC 按 3B 子任务顺序启动迭代 3B。**
 
 当前状态：
 
-- **3A 已完成技术验收**，代码范围包含 MVP 本地会话、演示账号与有效角色、Buddy 关系与后端权限基础，只满足单团队 UAT 运行条件，不是完整 Admin 管理页。
-- **3B 未启动**，不得提前实施任何 3B 业务代码、API、数据库或页面。
+- **3A 已完成**，代码范围包含 MVP 本地会话、演示账号与有效角色、Buddy 关系与后端权限基础，只满足单团队 UAT 运行条件，不是完整 Admin 管理页。
+- **3B 已启动**，当前执行 3B-1；后续依次执行 3B-2、3B-3、3B-4，全部完成后经 Codex 审核进入 3B-5 用户切片 UAT。
 
-3B 范围预览（仅用于用户决策参考，须待 3A UAT 确认后方可启动）：
+3B 范围预览（来自冻结基线，不新增业务规则）：
 
-- **3B**：Assessment（能力自评）的创建、草稿、提交与历史快照；Assessment Review（自评复核）的闭环流程，结论为「认可」或「建议调整」；Gap 的自动生成、分级、优先级与纳入计划标记；年度计划生成门禁策略：`05_Development.md` 第 3.1 节原文。
-- 3B 依赖 3A；只有在 3A 经 Codex 审核通过且用户 UAT 确认后，3B 方可开始。
+- **3B-1**：Assessment（能力自评）的草稿、提交与历史快照。
+- **3B-2**：Assessment Review（自评复核）的闭环流程，结论为「认可」或「建议调整」。
+- **3B-3**：Gap 的自动生成、分级、优先级与纳入计划标记。
+- **3B-4**：年度计划生成统一门禁：后端强制“最新提交已认可且无待复核”，前端展示原因；阻塞/解除场景测试通过。
 
 ---
 

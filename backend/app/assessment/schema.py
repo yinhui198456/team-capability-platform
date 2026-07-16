@@ -9,8 +9,10 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             member_id BIGINT NOT NULL REFERENCES tcp_user(id) ON DELETE CASCADE,
             year INT NOT NULL,
             version INT NOT NULL DEFAULT 1,
-            assessment_type TEXT NOT NULL CHECK (assessment_type IN ('年度', '年中更新', '晋升复核')),
-            status TEXT NOT NULL CHECK (status IN ('草稿', '待复核', '已复核', '建议调整', '已归档')),
+            assessment_type TEXT NOT NULL
+                CHECK (assessment_type IN ('年度', '年中更新', '晋升复核')),
+            status TEXT NOT NULL
+                CHECK (status IN ('草稿', '待复核', '已复核', '建议调整', '已归档')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             submitted_at TIMESTAMPTZ,
             archived_at TIMESTAMPTZ,

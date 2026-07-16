@@ -1,12 +1,9 @@
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
-    archive_assessment,
     create_assessment_draft,
     get_assessment,
     get_assessment_reviews,
@@ -99,7 +96,7 @@ def list_assessments(
         if not member_ids:
             return []
         rows = connection.execute(
-            f"""
+            """
             SELECT id, member_id, year, version, assessment_type, status,
                    created_at, submitted_at, archived_at
             FROM assessment
@@ -185,12 +182,14 @@ def save_draft(
     return {"ok": True}
 
 
-@assessment_router.post("/{assessment_id}/submit")
+@assessment_router.post(
+    "/{assessment_id}/submit",
+    dependencies=[require_any_role("Member")],
+)
 def submit(
     assessment_id: int,
     user: CurrentUser,
     connection: Connection,
-    _: Any = require_any_role("Member"),
 ) -> dict[str, bool]:
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:

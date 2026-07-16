@@ -152,7 +152,9 @@ def save_assessment_draft(
             current_level = int(detail["current_level"])
             target_level = int(detail["target_level"])
             if not (1 <= current_level <= 5 and 1 <= target_level <= 5):
-                raise ValueError("current_level and target_level must be between 1 and 5")
+                raise ValueError(
+                    "current_level and target_level must be between 1 and 5"
+                )
             connection.execute(
                 """
                 INSERT INTO assessment_detail (
@@ -216,7 +218,11 @@ def submit_assessment(
 
 def _next_review_sequence(connection: psycopg.Connection, assessment_id: int) -> int:
     row = connection.execute(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM assessment_review WHERE assessment_id = %s",
+        """
+        SELECT COALESCE(MAX(sequence), 0) + 1
+        FROM assessment_review
+        WHERE assessment_id = %s
+        """,
         (assessment_id,),
     ).fetchone()
     assert row is not None
@@ -276,4 +282,3 @@ def get_assessment_reviews(
         }
         for row in rows
     ]
-

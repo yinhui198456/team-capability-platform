@@ -25,7 +25,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="TCP Backend", version="0.1.0", lifespan=lifespan, redirect_slashes=False)
+app = FastAPI(
+    title="TCP Backend",
+    version="0.1.0",
+    lifespan=lifespan,
+    redirect_slashes=False,
+)
 app.include_router(catalog_router)
 app.include_router(access_router)
 app.include_router(assessment_router)
