@@ -766,9 +766,7 @@ describe('LearningTaskPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('region', { name: /学习任务详情/ }),
-      ).toBeTruthy()
+      expect(screen.getByRole('region', { name: /学习任务详情/ })).toBeTruthy()
     })
 
     expect(screen.getByRole('region', { name: /Evidence 版本/ })).toBeTruthy()

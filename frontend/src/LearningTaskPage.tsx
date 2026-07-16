@@ -338,265 +338,274 @@ export function LearningTaskPage() {
                 </span>
               </div>
               <div className="learning-task-fields">
-              <label>
-                状态
-                <select
-                  value={task.status}
-                  onChange={(event) =>
-                    handleUpdate(task, {
-                      status: event.target.value as LearningTaskStatus,
-                    })
-                  }
-                  disabled={!canManage}
-                >
-                  {LEARNING_TASK_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                实际开始日期
-                <input
-                  type="date"
-                  value={task.actual_start_date ?? ''}
-                  onChange={(event) =>
-                    handleUpdate(task, {
-                      actual_start_date: event.target.value || null,
-                    })
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <label>
-                实际完成日期
-                <input
-                  type="date"
-                  value={task.actual_end_date ?? ''}
-                  onChange={(event) =>
-                    handleUpdate(task, {
-                      actual_end_date: event.target.value || null,
-                    })
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <label>
-                实际耗时（小时）
-                <input
-                  type="number"
-                  min={0}
-                  value={task.actual_hours}
-                  onChange={(event) =>
-                    handleUpdate(task, {
-                      actual_hours: Number(event.target.value),
-                    })
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-              <label>
-                下步动作
-                <input
-                  value={task.next_action ?? ''}
-                  onChange={(event) =>
-                    handleUpdate(task, { next_action: event.target.value })
-                  }
-                  disabled={!canManage}
-                />
-              </label>
-            </div>
+                <label>
+                  状态
+                  <select
+                    value={task.status}
+                    onChange={(event) =>
+                      handleUpdate(task, {
+                        status: event.target.value as LearningTaskStatus,
+                      })
+                    }
+                    disabled={!canManage}
+                  >
+                    {LEARNING_TASK_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  实际开始日期
+                  <input
+                    type="date"
+                    value={task.actual_start_date ?? ''}
+                    onChange={(event) =>
+                      handleUpdate(task, {
+                        actual_start_date: event.target.value || null,
+                      })
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <label>
+                  实际完成日期
+                  <input
+                    type="date"
+                    value={task.actual_end_date ?? ''}
+                    onChange={(event) =>
+                      handleUpdate(task, {
+                        actual_end_date: event.target.value || null,
+                      })
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <label>
+                  实际耗时（小时）
+                  <input
+                    type="number"
+                    min={0}
+                    value={task.actual_hours}
+                    onChange={(event) =>
+                      handleUpdate(task, {
+                        actual_hours: Number(event.target.value),
+                      })
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+                <label>
+                  下步动作
+                  <input
+                    value={task.next_action ?? ''}
+                    onChange={(event) =>
+                      handleUpdate(task, { next_action: event.target.value })
+                    }
+                    disabled={!canManage}
+                  />
+                </label>
+              </div>
 
-            <div className="progress-log-section">
-              <h3>学习日志</h3>
-              <p className="muted">
-                总时长：{sumHours(taskLogs[task.id] ?? [])} 小时
-              </p>
-              <ul className="progress-log-list">
-                {(taskLogs[task.id] ?? []).map((log) => (
-                  <li key={log.id} className="progress-log-item">
-                    <span className="progress-log-date">{log.record_date}</span>
-                    <span className="progress-log-hours">
-                      {log.actual_hours} 小时
-                    </span>
-                    {log.note && (
-                      <span className="progress-log-note">{log.note}</span>
-                    )}
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLog(task, log.id)}
-                      >
-                        删除
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {canManage && (
-                <div className="progress-log-form">
-                  <label>
-                    日期
-                    <input
-                      type="date"
-                      value={logForms[task.id]?.record_date ?? ''}
-                      onChange={(event) =>
-                        setLogForm(task.id, { record_date: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label>
-                    时长（小时）
-                    <input
-                      type="number"
-                      min={0}
-                      value={logForms[task.id]?.actual_hours ?? ''}
-                      onChange={(event) =>
-                        setLogForm(task.id, {
-                          actual_hours: event.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    备注
-                    <input
-                      value={logForms[task.id]?.note ?? ''}
-                      onChange={(event) =>
-                        setLogForm(task.id, { note: event.target.value })
-                      }
-                    />
-                  </label>
-                  <button type="button" onClick={() => handleAddLog(task)}>
-                    添加日志
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <section
-              aria-label={`Evidence 版本：${task.l3_code}`}
-              className="evidence-section evidence-versions"
-            >
-              <h3>Evidence</h3>
-              <ul className="evidence-list">
-                {(taskEvidences[task.id] ?? []).map((evidence) => (
-                  <li key={evidence.id} className="evidence-item">
-                    <div className="evidence-header">
-                      <span className="evidence-version">
-                        版本 {evidence.version_number}
+              <div className="progress-log-section">
+                <h3>学习日志</h3>
+                <p className="muted">
+                  总时长：{sumHours(taskLogs[task.id] ?? [])} 小时
+                </p>
+                <ul className="progress-log-list">
+                  {(taskLogs[task.id] ?? []).map((log) => (
+                    <li key={log.id} className="progress-log-item">
+                      <span className="progress-log-date">
+                        {log.record_date}
                       </span>
-                      <span className="evidence-status">{evidence.status}</span>
-                      {evidence.submitted_at && (
-                        <span className="evidence-submitted">
-                          提交于 {formatDateTime(evidence.submitted_at)}
-                        </span>
+                      <span className="progress-log-hours">
+                        {log.actual_hours} 小时
+                      </span>
+                      {log.note && (
+                        <span className="progress-log-note">{log.note}</span>
                       )}
-                    </div>
-                    <p className="evidence-content">{evidence.content}</p>
-                    {evidence.evidence_link && (
-                      <p className="evidence-link">
-                        链接：
-                        <a
-                          href={evidence.evidence_link}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {evidence.evidence_link}
-                        </a>
-                      </p>
-                    )}
-                    {(() => {
-                      const review = (taskEvidenceReviews[task.id] ?? []).find(
-                        (r) => r.evidence_id === evidence.id,
-                      )
-                      if (!review?.conclusion) return null
-                      return (
-                        <div className="evidence-review-result">
-                          <p>Review 结论：{review.conclusion}</p>
-                          {review.feedback && <p>反馈：{review.feedback}</p>}
-                          {review.reviewed_at && (
-                            <p>
-                              Review 时间：{formatDateTime(review.reviewed_at)}
-                            </p>
-                          )}
-                        </div>
-                      )
-                    })()}
-                    {canManage && evidence.status === '草稿' && (
-                      <div className="evidence-actions">
+                      {canManage && (
                         <button
                           type="button"
-                          onClick={() => startEditEvidence(task, evidence)}
+                          onClick={() => handleDeleteLog(task, log.id)}
                         >
-                          编辑
+                          删除
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleSubmitEvidence(task, evidence)}
-                        >
-                          提交
-                        </button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {canManage &&
-                !(taskEvidences[task.id] ?? []).some(
-                  (evidence) => evidence.status === '草稿',
-                ) && (
-                  <>
-                    {evidenceForms[task.id] ? (
-                      <div className="evidence-form">
-                        <label>
-                          提交内容
-                          <input
-                            value={evidenceForms[task.id]?.content ?? ''}
-                            onChange={(event) =>
-                              setEvidenceForm(task.id, {
-                                content: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          证据链接
-                          <input
-                            value={evidenceForms[task.id]?.evidence_link ?? ''}
-                            onChange={(event) =>
-                              setEvidenceForm(task.id, {
-                                evidence_link: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleSaveEvidence(task)}
-                        >
-                          保存
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => cancelEvidenceForm(task.id)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startCreateEvidence(task)}
-                      >
-                        新增版本
-                      </button>
-                    )}
-                  </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {canManage && (
+                  <div className="progress-log-form">
+                    <label>
+                      日期
+                      <input
+                        type="date"
+                        value={logForms[task.id]?.record_date ?? ''}
+                        onChange={(event) =>
+                          setLogForm(task.id, {
+                            record_date: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      时长（小时）
+                      <input
+                        type="number"
+                        min={0}
+                        value={logForms[task.id]?.actual_hours ?? ''}
+                        onChange={(event) =>
+                          setLogForm(task.id, {
+                            actual_hours: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      备注
+                      <input
+                        value={logForms[task.id]?.note ?? ''}
+                        onChange={(event) =>
+                          setLogForm(task.id, { note: event.target.value })
+                        }
+                      />
+                    </label>
+                    <button type="button" onClick={() => handleAddLog(task)}>
+                      添加日志
+                    </button>
+                  </div>
                 )}
+              </div>
+
+              <section
+                aria-label={`Evidence 版本：${task.l3_code}`}
+                className="evidence-section evidence-versions"
+              >
+                <h3>Evidence</h3>
+                <ul className="evidence-list">
+                  {(taskEvidences[task.id] ?? []).map((evidence) => (
+                    <li key={evidence.id} className="evidence-item">
+                      <div className="evidence-header">
+                        <span className="evidence-version">
+                          版本 {evidence.version_number}
+                        </span>
+                        <span className="evidence-status">
+                          {evidence.status}
+                        </span>
+                        {evidence.submitted_at && (
+                          <span className="evidence-submitted">
+                            提交于 {formatDateTime(evidence.submitted_at)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="evidence-content">{evidence.content}</p>
+                      {evidence.evidence_link && (
+                        <p className="evidence-link">
+                          链接：
+                          <a
+                            href={evidence.evidence_link}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {evidence.evidence_link}
+                          </a>
+                        </p>
+                      )}
+                      {(() => {
+                        const review = (
+                          taskEvidenceReviews[task.id] ?? []
+                        ).find((r) => r.evidence_id === evidence.id)
+                        if (!review?.conclusion) return null
+                        return (
+                          <div className="evidence-review-result">
+                            <p>Review 结论：{review.conclusion}</p>
+                            {review.feedback && <p>反馈：{review.feedback}</p>}
+                            {review.reviewed_at && (
+                              <p>
+                                Review 时间：
+                                {formatDateTime(review.reviewed_at)}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })()}
+                      {canManage && evidence.status === '草稿' && (
+                        <div className="evidence-actions">
+                          <button
+                            type="button"
+                            onClick={() => startEditEvidence(task, evidence)}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitEvidence(task, evidence)}
+                          >
+                            提交
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {canManage &&
+                  !(taskEvidences[task.id] ?? []).some(
+                    (evidence) => evidence.status === '草稿',
+                  ) && (
+                    <>
+                      {evidenceForms[task.id] ? (
+                        <div className="evidence-form">
+                          <label>
+                            提交内容
+                            <input
+                              value={evidenceForms[task.id]?.content ?? ''}
+                              onChange={(event) =>
+                                setEvidenceForm(task.id, {
+                                  content: event.target.value,
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            证据链接
+                            <input
+                              value={
+                                evidenceForms[task.id]?.evidence_link ?? ''
+                              }
+                              onChange={(event) =>
+                                setEvidenceForm(task.id, {
+                                  evidence_link: event.target.value,
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEvidence(task)}
+                          >
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => cancelEvidenceForm(task.id)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startCreateEvidence(task)}
+                        >
+                          新增版本
+                        </button>
+                      )}
+                    </>
+                  )}
+              </section>
             </section>
-          </section>
           </li>
         ))}
       </ul>

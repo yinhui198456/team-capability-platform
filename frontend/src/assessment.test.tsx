@@ -156,9 +156,7 @@ describe('AssessmentPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('region', { name: 'Gap 分析入口' }),
-      ).toBeTruthy()
+      expect(screen.getByRole('region', { name: 'Gap 分析入口' })).toBeTruthy()
     })
 
     const handoffLink = screen.getByRole('link', { name: '查看 Gap 分析' })

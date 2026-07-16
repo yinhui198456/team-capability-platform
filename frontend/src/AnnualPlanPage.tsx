@@ -84,7 +84,9 @@ export function AnnualPlanPage() {
 
       <section aria-label="年度计划总览" className="plan-overview">
         {plan === null && (
-          <p className="muted">尚无年度成长计划。存在成长目标时可生成计划项。</p>
+          <p className="muted">
+            尚无年度成长计划。存在成长目标时可生成计划项。
+          </p>
         )}
 
         {plan !== null && (
@@ -120,7 +122,9 @@ export function AnnualPlanPage() {
               <span className="plan-item-levels">
                 当前 {item.current_level} → 目标 {item.target_level}
               </span>
-              <span className="plan-item-priority">优先级：{item.priority}</span>
+              <span className="plan-item-priority">
+                优先级：{item.priority}
+              </span>
               <span className="plan-item-hours">
                 预计耗时：{item.estimated_hours ?? '未设置'}
               </span>
