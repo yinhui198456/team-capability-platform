@@ -3,9 +3,11 @@ from fastapi import APIRouter, HTTPException, Response, status
 from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
+    archive_team_annual_plan,
     create_evidence_draft,
     create_growth_goal,
     create_learning_task,
+    create_or_publish_team_annual_plan,
     create_progress_log,
     delete_growth_goal,
     delete_progress_log,
@@ -16,6 +18,7 @@ from .repository import (
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
+    get_team_annual_plan_by_year,
     list_eligible_gaps,
     list_evidence_reviews_for_task,
     list_evidences,
@@ -29,6 +32,7 @@ from .repository import (
     update_evidence_draft,
     update_learning_task,
     update_progress_log,
+    update_team_annual_plan,
 )
 
 planning_router = APIRouter(prefix="/api/planning")
@@ -44,6 +48,14 @@ def _require_member(user: CurrentUser) -> None:
 
 def _require_buddy(user: CurrentUser) -> None:
     if "Buddy" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+
+def _require_leader(user: CurrentUser) -> None:
+    if "Leader" not in user["roles"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
@@ -525,3 +537,96 @@ def get_profiles(
             detail="member not found",
         )
     return result
+
+
+@planning_router.get("/team-annual-plan")
+def get_team_annual_plan(
+    user: CurrentUser, connection: Connection, year: int
+) -> dict[str, object]:
+    _require_leader(user)
+    result = get_team_annual_plan_by_year(connection, year)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="team annual plan not found",
+        )
+    return result
+
+
+@planning_router.post("/team-annual-plan")
+def post_team_annual_plan(
+    user: CurrentUser,
+    connection: Connection,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_leader(user)
+    try:
+        return create_or_publish_team_annual_plan(connection, int(user["id"]), body)
+    except ValueError as exc:
+        msg = str(exc)
+        if "already exists" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=msg,
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=msg,
+        ) from exc
+
+
+@planning_router.put("/team-annual-plan")
+def put_team_annual_plan(
+    user: CurrentUser,
+    connection: Connection,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_leader(user)
+    try:
+        year = int(body["year"])  # type: ignore[arg-type]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="year is required",
+        ) from exc
+    try:
+        return update_team_annual_plan(connection, year, body)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        if "invalid" in str(exc) or "duplicate" in str(exc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.post("/team-annual-plan/archive")
+def post_archive_team_annual_plan(
+    user: CurrentUser,
+    connection: Connection,
+    body: dict[str, object],
+) -> dict[str, bool]:
+    _require_leader(user)
+    try:
+        year = int(body["year"])  # type: ignore[arg-type]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="year is required",
+        ) from exc
+    try:
+        archive_team_annual_plan(connection, year)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True}

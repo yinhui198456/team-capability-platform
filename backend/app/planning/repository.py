@@ -4,6 +4,7 @@ import psycopg
 
 from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 from ..assessment.repository import get_gap
+from ..catalog.repository import DOMAIN_CODES
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 
 
@@ -1497,3 +1498,202 @@ def get_capability_profile(
             "evidence_count_by_status": evidence_count_by_status,
         },
     }
+
+
+_ALLOWED_TEAM_PLAN_STATUSES = {"已发布", "已归档"}
+
+
+def _team_annual_plan_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "code": row[1],
+        "year": row[2],
+        "publisher_id": row[3],
+        "resource_arrangement": row[4],
+        "description": row[5],
+        "published_at": row[6],
+        "status": row[7],
+        "created_at": row[8],
+        "updated_at": row[9],
+    }
+
+
+def _fetch_team_plan_focus_domains(
+    connection: psycopg.Connection, plan_id: int
+) -> list[str]:
+    rows = connection.execute(
+        """
+        SELECT l1_code FROM team_annual_capability_plan_domain
+        WHERE plan_id = %s
+        ORDER BY l1_code
+        """,
+        (plan_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def _validate_focus_domains(connection: psycopg.Connection, codes: list[str]) -> None:
+    if not codes:
+        return
+    if len(codes) != len(set(codes)):
+        raise ValueError("duplicate focus domain codes")
+    rows = connection.execute(
+        """
+        SELECT code FROM capability_node
+        WHERE node_type = 'L1'
+          AND enabled = TRUE
+          AND code = ANY(%s)
+          AND code = ANY(%s)
+        """,
+        (list(set(codes)), list(DOMAIN_CODES)),
+    ).fetchall()
+    valid = {row[0] for row in rows}
+    invalid = set(codes) - valid
+    if invalid:
+        raise ValueError(f"invalid focus domain codes: {sorted(invalid)}")
+
+
+def get_team_annual_plan_by_year(
+    connection: psycopg.Connection, year: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT id, code, year, publisher_id, resource_arrangement,
+               description, published_at, status, created_at, updated_at
+        FROM team_annual_capability_plan
+        WHERE year = %s
+        """,
+        (year,),
+    ).fetchone()
+    if row is None:
+        return None
+    plan = _team_annual_plan_row(row)
+    plan["focus_domains"] = _fetch_team_plan_focus_domains(connection, int(plan["id"]))
+    return plan
+
+
+def create_or_publish_team_annual_plan(
+    connection: psycopg.Connection,
+    publisher_id: int,
+    data: dict[str, object],
+) -> dict[str, object]:
+    try:
+        year = int(data["year"])  # type: ignore[arg-type]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("year is required") from exc
+    focus_domain_codes = list(
+        dict.fromkeys(data.get("focus_domain_codes", []))  # type: ignore[arg-type]
+    )
+    resource_arrangement = data.get("resource_arrangement")
+    description = data.get("description")
+    code = f"TACP-{year}"
+    _validate_focus_domains(connection, focus_domain_codes)
+    with connection.transaction():
+        existing = connection.execute(
+            """
+            SELECT id FROM team_annual_capability_plan
+            WHERE year = %s
+            FOR UPDATE
+            """,
+            (year,),
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(f"team annual plan for year {year} already exists")
+        row = connection.execute(
+            """
+            INSERT INTO team_annual_capability_plan (
+                code, year, publisher_id, resource_arrangement,
+                description, published_at, status
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW(), '已发布')
+            RETURNING id, code, year, publisher_id, resource_arrangement,
+                      description, published_at, status, created_at, updated_at
+            """,
+            (code, year, publisher_id, resource_arrangement, description),
+        ).fetchone()
+        assert row is not None
+        plan_id = row[0]
+        for l1_code in focus_domain_codes:
+            connection.execute(
+                """
+                INSERT INTO team_annual_capability_plan_domain (plan_id, l1_code)
+                VALUES (%s, %s)
+                """,
+                (plan_id, l1_code),
+            )
+    plan = _team_annual_plan_row(row)
+    plan["focus_domains"] = focus_domain_codes
+    return plan
+
+
+def update_team_annual_plan(
+    connection: psycopg.Connection,
+    year: int,
+    data: dict[str, object],
+) -> dict[str, object]:
+    focus_domain_codes = list(
+        dict.fromkeys(data.get("focus_domain_codes", []))  # type: ignore[arg-type]
+    )
+    resource_arrangement = data.get("resource_arrangement")
+    description = data.get("description")
+    _validate_focus_domains(connection, focus_domain_codes)
+    with connection.transaction():
+        existing = connection.execute(
+            """
+            SELECT id, status FROM team_annual_capability_plan
+            WHERE year = %s
+            FOR UPDATE
+            """,
+            (year,),
+        ).fetchone()
+        if existing is None:
+            raise KeyError("team annual plan not found")
+        plan_id, plan_status = existing
+        if plan_status != "已发布":
+            raise ValueError("team annual plan is not published")
+        row = connection.execute(
+            """
+            UPDATE team_annual_capability_plan
+            SET resource_arrangement = %s,
+                description = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, code, year, publisher_id, resource_arrangement,
+                      description, published_at, status, created_at, updated_at
+            """,
+            (resource_arrangement, description, plan_id),
+        ).fetchone()
+        assert row is not None
+        connection.execute(
+            "DELETE FROM team_annual_capability_plan_domain WHERE plan_id = %s",
+            (plan_id,),
+        )
+        for l1_code in focus_domain_codes:
+            connection.execute(
+                """
+                INSERT INTO team_annual_capability_plan_domain (plan_id, l1_code)
+                VALUES (%s, %s)
+                """,
+                (plan_id, l1_code),
+            )
+    plan = _team_annual_plan_row(row)
+    plan["focus_domains"] = focus_domain_codes
+    return plan
+
+
+def archive_team_annual_plan(
+    connection: psycopg.Connection,
+    year: int,
+) -> None:
+    with connection.transaction():
+        row = connection.execute(
+            """
+            UPDATE team_annual_capability_plan
+            SET status = '已归档', updated_at = NOW()
+            WHERE year = %s
+            RETURNING id
+            """,
+            (year,),
+        ).fetchone()
+        if row is None:
+            raise KeyError("team annual plan not found")
