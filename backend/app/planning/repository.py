@@ -688,7 +688,7 @@ def update_progress_log(
 ) -> dict[str, object]:
     result = _get_progress_log_for_member(connection, member_id, log_id)
     if result is None:
-        raise ValueError("progress log not found")
+        raise KeyError("progress log not found")
     log, task_owner_id = result
     if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
         raise PermissionError("progress log does not belong to member")
@@ -728,7 +728,7 @@ def delete_progress_log(
 ) -> None:
     result = _get_progress_log_for_member(connection, member_id, log_id)
     if result is None:
-        raise ValueError("progress log not found")
+        raise KeyError("progress log not found")
     log, task_owner_id = result
     if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
         raise PermissionError("progress log does not belong to member")
