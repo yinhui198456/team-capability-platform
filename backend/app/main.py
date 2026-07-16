@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .access.api import router as access_router
 from .access.schema import create_access_schema
 from .access.seed import seed_demo_accounts
-from .assessment import assessment_router, create_assessment_schema
+from .assessment import assessment_router, create_assessment_schema, gap_router
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
 from .settings import settings
@@ -34,6 +34,7 @@ app = FastAPI(
 app.include_router(catalog_router)
 app.include_router(access_router)
 app.include_router(assessment_router)
+app.include_router(gap_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

@@ -7,11 +7,14 @@ from .repository import (
     create_assessment_draft,
     get_assessment,
     get_assessment_reviews,
+    get_gap,
     get_pending_reviews_for_buddy,
+    list_gaps,
     list_member_assessments,
     save_assessment_draft,
     submit_assessment,
     submit_assessment_review,
+    update_gap,
 )
 
 
@@ -288,3 +291,88 @@ def submit_review(
 
 
 # ponytail: archive remains a repository function only; not exposed via API.
+
+
+class UpdateGapRequest(BaseModel):
+    priority: str = Field(pattern=r"^(高|中|低)$")
+    plan_candidate: bool
+
+
+gap_router = APIRouter(prefix="/api/gaps")
+
+
+@gap_router.get("")
+def list_gaps_endpoint(
+    assessment_id: int | None = None,
+    *,
+    user: CurrentUser,
+    connection: Connection,
+) -> list[dict[str, object]]:
+    roles: list[str] = user["roles"]
+
+    if "Admin" in roles or "Leader" in roles:
+        return list_gaps(connection, assessment_id=assessment_id)
+
+    if "Buddy" in roles:
+        from ..access.repository import get_assigned_members
+
+        assigned = get_assigned_members(connection, int(user["id"]))
+        member_ids = [int(member["id"]) for member in assigned]
+        if "Member" in roles:
+            member_ids.append(int(user["id"]))
+        gaps: list[dict[str, object]] = []
+        for member_id in member_ids:
+            gaps.extend(
+                list_gaps(
+                    connection,
+                    member_id=member_id,
+                    assessment_id=assessment_id,
+                )
+            )
+        return gaps
+
+    # Member only
+    return list_gaps(connection, member_id=int(user["id"]), assessment_id=assessment_id)
+
+
+@gap_router.put("/{gap_id}")
+def update_gap_endpoint(
+    gap_id: int,
+    request: UpdateGapRequest,
+    *,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, bool]:
+    if "Member" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+    gap = get_gap(connection, gap_id)
+    if gap is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="gap not found",
+        )
+
+    if not policies.can_member_update_gap(connection, user, gap):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+    try:
+        update_gap(
+            connection,
+            gap_id,
+            int(user["id"]),
+            request.priority,
+            request.plan_candidate,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True}

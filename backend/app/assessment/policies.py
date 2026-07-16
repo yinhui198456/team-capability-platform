@@ -54,3 +54,27 @@ def can_view_assessment(
     if can_buddy_view(connection, user, assessment):
         return True
     return can_member_view(user, assessment)
+
+
+def can_member_update_gap(
+    connection: psycopg.Connection,
+    user: dict[str, object],
+    gap: dict[str, object],
+) -> bool:
+    assessment = {
+        "id": gap["assessment_id"],
+        "member_id": gap["member_id"],
+    }
+    return can_member_edit(user, assessment)
+
+
+def can_view_gap(
+    connection: psycopg.Connection,
+    user: dict[str, object],
+    gap: dict[str, object],
+) -> bool:
+    assessment = {
+        "id": gap["assessment_id"],
+        "member_id": gap["member_id"],
+    }
+    return can_view_assessment(connection, user, assessment)
