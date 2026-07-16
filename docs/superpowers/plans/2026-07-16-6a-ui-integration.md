@@ -126,7 +126,7 @@ def test_member_dashboard_rejects_non_member(connection):
 Run:
 
 ```bash
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" backend sh -c \
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/workspace/capability-model:ro" backend sh -c \
   'pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_member_dashboard.py'
 ```
 
@@ -161,7 +161,7 @@ Expected: PASS.
 Run:
 
 ```bash
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" backend sh -c \
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/workspace/capability-model:ro" backend sh -c \
   'pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && PYTHONPATH=/workspace/backend pytest -q tests/test_progress_log.py tests/test_capability_profile.py tests/test_member_dashboard.py'
 git add backend/app/planning/api.py backend/app/planning/repository.py backend/tests/test_member_dashboard.py
 git commit -m "feat: add member dashboard aggregation"
@@ -353,7 +353,7 @@ git commit -m "feat: add buddy review center"
 Run:
 
 ```bash
-docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" backend sh -c \
+docker compose run --rm -v "$PWD/backend:/workspace/backend:ro" -v "$PWD/capability-model:/workspace/capability-model:ro" backend sh -c \
   'pip install -q -r /workspace/backend/requirements-dev.txt && cd /workspace/backend && ruff check . && black --check . && PYTHONPATH=/workspace/backend pytest -q tests/'
 cd frontend && npm run test && npm run lint && npm run build && npm run format:check
 cd .. && git diff --check
