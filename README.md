@@ -621,9 +621,12 @@ MVP
 
 # 7. 开发环境与工程初始化
 
-当前仓库已完成工程初始化及迭代 2 的只读目录能力，技术基线为 React + TypeScript + Ant Design Pro/ProComponents、FastAPI、PostgreSQL 和 Docker Compose。
+当前仓库已完成工程初始化、迭代 2 的只读目录能力以及迭代 3A 的本地会话与演示账号基础，技术基线为 React + TypeScript + Ant Design Pro/ProComponents、FastAPI、PostgreSQL 和 Docker Compose。
 
-迭代 2 仅交付能力模型与学习资源目录的匿名只读展示：启动时由后端镜像内固定 Excel 源导入六个 MVP 域及其目录资料。数据库仅包含四张 catalog 表：`capability_model`、`capability_node`、`learning_resource`、`capability_node_resource`。
+- 迭代 2 交付能力模型与学习资源目录的匿名只读展示：启动时由后端镜像内固定 Excel 源导入六个 MVP 域及其目录资料。
+- 迭代 3A 交付本地 HttpOnly Cookie 会话、`/login` 登录页、五个本地 UAT 演示账号及 N:M 有效角色与 Buddy 关系基础。
+
+数据库当前包含 catalog 表（`capability_model`、`capability_node`、`learning_resource`、`capability_node_resource`）以及 3A 引入的访问控制表（`tcp_user`、`tcp_role`、`tcp_user_role`、`tcp_session`、`buddy_relationship`）。
 
 ## 7.1 前置环境
 
@@ -641,11 +644,24 @@ docker compose up --build
 
 服务地址：
 
+- 登录页（本地 UAT）：<http://localhost:18081/login>
 - 能力模型只读页：<http://localhost:18081/capability/model>
 - 学习资源只读页：<http://localhost:18081/operations/resources>
 - FastAPI 健康检查：<http://localhost:18001/health>
 - FastAPI 数据库就绪检查：<http://localhost:18001/ready>
 - PostgreSQL：`localhost:5432`，数据库 `tcp`，用户 `tcp`，开发密码 `tcp_dev_only`
+
+本地 UAT 演示账号（密码均为 `123456`，仅在本地开发/UAT 环境有效）：
+
+| 账号 | 角色 |
+|---|---|
+| `admin` | Admin、Leader、Member |
+| `leader` | Leader、Member |
+| `buddy` | Buddy、Member |
+| `member` | Member |
+| `member2` | Member |
+
+说明：`member` 与 `member2` 的主 Buddy 均为 `buddy`。所有演示密码仅在 `tcp_user` 为空时由种子数据写入，且存储前已哈希；生产环境不应保留或使用这些账号。
 
 停止服务：
 
@@ -693,6 +709,11 @@ pytest
 
 ## 7.5 当前交付边界
 
-已交付的匿名只读页面为 `/capability/model` 和 `/operations/resources`，对应只读 API 为 `GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`；健康检查仍为 `/health` 与 `/ready`。
+已交付能力：
 
-当前不含任何写入或导入 HTTP 接口、登录账号、Assessment、Gap、Goal、Plan、Task、Evidence、Review 或其他业务功能。业务对象、权限、路由、状态和原型绑定以 `docs/01_Product.md` 至 `docs/05_Development.md` 为准，后续能力仍须按门禁实施。
+- 匿名只读页面 `/capability/model`、`/operations/resources` 与对应只读 API `GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`。
+- 本地会话与认证：`/login` 页面、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`；使用 HttpOnly Cookie，无 localStorage/token。
+- 五个本地 UAT 演示账号（密码均为 `123456`）及其 N:M 角色、Buddy 关系，仅在本地开发/UAT 有效。
+- 健康检查 `/health` 与 `/ready`。
+
+当前不含 Assessment、Assessment Review、Gap、Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Evidence、Buddy Review、Capability Profile、Admin 管理页、SSO、注册、密码重置或任何其他业务写入功能。业务对象、权限、路由、状态和原型绑定以 `docs/01_Product.md` 至 `docs/05_Development.md` 为准，后续能力仍须按门禁实施。
