@@ -2,15 +2,20 @@ import { useEffect, useState } from 'react'
 
 import { me, type User } from './access'
 import {
+  createEvidence,
   createLearningTask,
   createProgressLog,
   deleteProgressLog,
   getAnnualPlan,
   getMonthlyHours,
+  listEvidences,
   listLearningTasks,
   listProgressLogs,
+  submitEvidence,
+  updateEvidence,
   updateLearningTask,
   type AnnualPlan,
+  type Evidence,
   type LearningTask,
   type LearningTaskStatus,
   type PlanItem,
@@ -33,12 +38,29 @@ type LogFormState = {
   note: string
 }
 
+type EvidenceFormState = {
+  evidence_id: number | null
+  content: string
+  evidence_link: string
+}
+
 function emptyLogForm(): LogFormState {
   return { record_date: '', actual_hours: '', note: '' }
 }
 
+function emptyEvidenceForm(): EvidenceFormState {
+  return { evidence_id: null, content: '', evidence_link: '' }
+}
+
 function sumHours(logs: ProgressLog[]): number {
   return logs.reduce((sum, log) => sum + log.actual_hours, 0)
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN')
 }
 
 export function LearningTaskPage() {
@@ -46,10 +68,16 @@ export function LearningTaskPage() {
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<LearningTask[]>([])
   const [taskLogs, setTaskLogs] = useState<Record<number, ProgressLog[]>>({})
+  const [taskEvidences, setTaskEvidences] = useState<
+    Record<number, Evidence[]>
+  >({})
   const [monthlyHours, setMonthlyHours] = useState<
     { month: number; total_hours: number }[]
   >([])
   const [logForms, setLogForms] = useState<Record<number, LogFormState>>({})
+  const [evidenceForms, setEvidenceForms] = useState<
+    Record<number, EvidenceFormState>
+  >({})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -76,6 +104,14 @@ export function LearningTaskPage() {
       )
       setLogForms(initialForms)
       setTaskLogs(Object.fromEntries(logsEntries))
+
+      const evidenceEntries = await Promise.all(
+        taskList.map(async (task) => {
+          const evidences = await listEvidences(task.id).catch(() => [])
+          return [task.id, evidences] as [number, Evidence[]]
+        }),
+      )
+      setTaskEvidences(Object.fromEntries(evidenceEntries))
 
       const summary = await getMonthlyHours(2026).catch(() => [])
       setMonthlyHours(summary)
@@ -166,6 +202,64 @@ export function LearningTaskPage() {
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除日志失败')
+    }
+  }
+
+  function setEvidenceForm(taskId: number, patch: Partial<EvidenceFormState>) {
+    setEvidenceForms((prev) => ({
+      ...prev,
+      [taskId]: { ...(prev[taskId] ?? emptyEvidenceForm()), ...patch },
+    }))
+  }
+
+  function startCreateEvidence(task: LearningTask) {
+    setEvidenceForm(task.id, emptyEvidenceForm())
+  }
+
+  function startEditEvidence(task: LearningTask, evidence: Evidence) {
+    setEvidenceForm(task.id, {
+      evidence_id: evidence.id,
+      content: evidence.content ?? '',
+      evidence_link: evidence.evidence_link ?? '',
+    })
+  }
+
+  function cancelEvidenceForm(taskId: number) {
+    setEvidenceForms((prev) => {
+      const next = { ...prev }
+      delete next[taskId]
+      return next
+    })
+  }
+
+  async function handleSaveEvidence(task: LearningTask) {
+    setError('')
+    const form = evidenceForms[task.id] ?? emptyEvidenceForm()
+    try {
+      if (form.evidence_id == null) {
+        await createEvidence(task.id, form.content, form.evidence_link)
+      } else {
+        await updateEvidence(form.evidence_id, {
+          content: form.content,
+          evidence_link: form.evidence_link,
+        })
+      }
+      cancelEvidenceForm(task.id)
+      const evidences = await listEvidences(task.id)
+      setTaskEvidences((prev) => ({ ...prev, [task.id]: evidences }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存 Evidence 失败')
+    }
+  }
+
+  async function handleSubmitEvidence(task: LearningTask, evidence: Evidence) {
+    setError('')
+    try {
+      await submitEvidence(evidence.id)
+      const evidences = await listEvidences(task.id)
+      setTaskEvidences((prev) => ({ ...prev, [task.id]: evidences }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '提交 Evidence 失败')
     }
   }
 
@@ -352,6 +446,108 @@ export function LearningTaskPage() {
                   </button>
                 </div>
               )}
+            </div>
+
+            <div className="evidence-section">
+              <h3>Evidence</h3>
+              <ul className="evidence-list">
+                {(taskEvidences[task.id] ?? []).map((evidence) => (
+                  <li key={evidence.id} className="evidence-item">
+                    <div className="evidence-header">
+                      <span className="evidence-version">
+                        版本 {evidence.version_number}
+                      </span>
+                      <span className="evidence-status">{evidence.status}</span>
+                      {evidence.submitted_at && (
+                        <span className="evidence-submitted">
+                          提交于 {formatDateTime(evidence.submitted_at)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="evidence-content">{evidence.content}</p>
+                    {evidence.evidence_link && (
+                      <p className="evidence-link">
+                        链接：
+                        <a
+                          href={evidence.evidence_link}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {evidence.evidence_link}
+                        </a>
+                      </p>
+                    )}
+                    {canManage && evidence.status === '草稿' && (
+                      <div className="evidence-actions">
+                        <button
+                          type="button"
+                          onClick={() => startEditEvidence(task, evidence)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSubmitEvidence(task, evidence)}
+                        >
+                          提交
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {canManage &&
+                !(taskEvidences[task.id] ?? []).some(
+                  (evidence) => evidence.status === '草稿',
+                ) && (
+                  <>
+                    {evidenceForms[task.id] ? (
+                      <div className="evidence-form">
+                        <label>
+                          提交内容
+                          <input
+                            value={evidenceForms[task.id]?.content ?? ''}
+                            onChange={(event) =>
+                              setEvidenceForm(task.id, {
+                                content: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          证据链接
+                          <input
+                            value={evidenceForms[task.id]?.evidence_link ?? ''}
+                            onChange={(event) =>
+                              setEvidenceForm(task.id, {
+                                evidence_link: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEvidence(task)}
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancelEvidenceForm(task.id)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startCreateEvidence(task)}
+                      >
+                        新增版本
+                      </button>
+                    )}
+                  </>
+                )}
             </div>
           </li>
         ))}

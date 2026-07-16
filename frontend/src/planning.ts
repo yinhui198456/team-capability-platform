@@ -86,6 +86,26 @@ export type AnnualPlan = {
   items: PlanItem[]
 }
 
+export type EvidenceStatus =
+  '草稿' | '待 Review' | '通过' | '需补充' | '驳回' | '已归档'
+
+export type Evidence = {
+  id: number
+  learning_task_id: number
+  l3_code: string
+  version_number: number
+  content: string | null
+  evidence_link: string | null
+  status: EvidenceStatus
+  submitted_at: string | null
+  created_at: string
+}
+
+export type EvidenceUpdate = Partial<{
+  content: string | null
+  evidence_link: string | null
+}>
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -278,4 +298,48 @@ export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
     `/api/planning/progress-logs/monthly?year=${year}`,
     { method: 'GET' },
   )
+}
+
+export async function createEvidence(
+  task_id: number,
+  content: string,
+  evidence_link: string,
+): Promise<Evidence> {
+  return request<Evidence>(
+    `/api/planning/learning-tasks/${task_id}/evidences`,
+    { method: 'POST' },
+    { content, evidence_link },
+  )
+}
+
+export async function updateEvidence(
+  evidence_id: number,
+  fields: EvidenceUpdate,
+): Promise<Evidence> {
+  return request<Evidence>(
+    `/api/planning/evidences/${evidence_id}`,
+    { method: 'PUT' },
+    fields,
+  )
+}
+
+export async function submitEvidence(evidence_id: number): Promise<Evidence> {
+  return request<Evidence>(
+    `/api/planning/evidences/${evidence_id}/submit`,
+    { method: 'POST' },
+    {},
+  )
+}
+
+export async function listEvidences(task_id: number): Promise<Evidence[]> {
+  return request<Evidence[]>(
+    `/api/planning/learning-tasks/${task_id}/evidences`,
+    { method: 'GET' },
+  )
+}
+
+export async function getEvidence(evidence_id: number): Promise<Evidence> {
+  return request<Evidence>(`/api/planning/evidences/${evidence_id}`, {
+    method: 'GET',
+  })
 }
