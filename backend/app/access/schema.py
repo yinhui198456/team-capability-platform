@@ -58,8 +58,33 @@ def create_access_schema(connection: psycopg.Connection) -> None:
     )
     connection.execute(
         """
+        CREATE TABLE IF NOT EXISTS tcp_system_config (
+            code TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            value TEXT NOT NULL,
+            value_type TEXT NOT NULL DEFAULT 'text',
+            description TEXT NOT NULL DEFAULT '',
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    connection.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_session_token_hash
         ON tcp_session(token_hash)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO tcp_system_config (code, name, value, value_type, description)
+        VALUES
+            ('assessment_window', '年度评估窗口', '全年', 'text', '年度评估开放时间'),
+            ('homepage_todo_rule', '首页待办展示规则', '全部待办', 'text',
+             '首页待办筛选规则'),
+            ('default_plan_cycle', '默认计划周期', '12', 'integer',
+             '年度成长计划默认月数')
+        ON CONFLICT (code) DO NOTHING
         """
     )
     connection.execute(

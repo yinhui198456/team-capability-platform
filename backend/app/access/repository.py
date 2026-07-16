@@ -249,3 +249,97 @@ def is_member_assigned_to_buddy(
         (member_id, buddy_id),
     ).fetchone()
     return row is not None
+
+
+_ROLE_CODES = {"Member", "Buddy", "Leader", "Admin"}
+
+
+def list_users(connection: psycopg.Connection) -> list[dict[str, object]]:
+    rows = connection.execute("SELECT id FROM tcp_user ORDER BY username").fetchall()
+    return [user for row in rows if (user := get_user_with_roles(connection, row[0]))]
+
+
+def create_user_admin(
+    connection: psycopg.Connection,
+    username: str,
+    full_name: str,
+    password: str,
+    is_active: bool,
+    roles: list[str],
+) -> dict[str, object]:
+    if not roles or not set(roles).issubset(_ROLE_CODES):
+        raise ValueError("roles must be selected from the fixed role list")
+    if get_user_by_username(connection, username) is not None:
+        raise ValueError("username already exists")
+
+    user_id = create_user(connection, username, full_name, password, is_active)
+    return update_user_admin(connection, user_id, full_name, is_active, roles)
+
+
+def update_user_admin(
+    connection: psycopg.Connection,
+    user_id: int,
+    full_name: str,
+    is_active: bool,
+    roles: list[str],
+) -> dict[str, object]:
+    if not roles or not set(roles).issubset(_ROLE_CODES):
+        raise ValueError("roles must be selected from the fixed role list")
+    with connection.transaction():
+        updated = connection.execute(
+            """UPDATE tcp_user SET full_name = %s, is_active = %s
+            WHERE id = %s RETURNING id""",
+            (full_name, is_active, user_id),
+        ).fetchone()
+        if updated is None:
+            raise KeyError("user not found")
+        connection.execute("DELETE FROM tcp_user_role WHERE user_id = %s", (user_id,))
+        for role_code in roles:
+            connection.execute(
+                """INSERT INTO tcp_user_role (user_id, role_id)
+                SELECT %s, id FROM tcp_role WHERE code = %s""",
+                (user_id, role_code),
+            )
+    user = get_user_with_roles(connection, user_id)
+    assert user is not None
+    return user
+
+
+def list_system_configs(connection: psycopg.Connection) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """SELECT code, name, value, value_type, description, enabled
+        FROM tcp_system_config ORDER BY code"""
+    ).fetchall()
+    return [
+        {
+            "code": row[0],
+            "name": row[1],
+            "value": row[2],
+            "value_type": row[3],
+            "description": row[4],
+            "enabled": row[5],
+        }
+        for row in rows
+    ]
+
+
+def update_system_config(
+    connection: psycopg.Connection, code: str, value: str, enabled: bool
+) -> dict[str, object]:
+    row = connection.execute(
+        """UPDATE tcp_system_config
+        SET value = %s, enabled = %s, updated_at = NOW()
+        WHERE code = %s
+        RETURNING code, name, value, value_type, description, enabled""",
+        (value, enabled, code),
+    ).fetchone()
+    if row is None:
+        raise KeyError("system config not found")
+    return {
+        "code": row[0],
+        "name": row[1],
+        "value": row[2],
+        "value_type": row[3],
+        "description": row[4],
+        "enabled": row[5],
+    }

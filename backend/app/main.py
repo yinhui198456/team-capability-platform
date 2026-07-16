@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .access.api import router as access_router
+from .access.api import system_router
 from .access.schema import create_access_schema
 from .access.seed import seed_demo_accounts
 from .assessment import assessment_router, create_assessment_schema, gap_router
@@ -35,6 +36,7 @@ app = FastAPI(
 )
 app.include_router(catalog_router)
 app.include_router(access_router)
+app.include_router(system_router)
 app.include_router(assessment_router)
 app.include_router(gap_router)
 app.include_router(planning_router)
@@ -42,7 +44,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["*"],
 )
 
