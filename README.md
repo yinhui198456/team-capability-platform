@@ -671,6 +671,26 @@ docker compose down
 
 Compose 创建 PostgreSQL 命名卷；后端仅在 catalog 为空时导入镜像内固定 Excel 源，不提供 HTTP 导入入口。
 
+## 7.2.1 运行回归与重启检查
+
+服务启动后，在项目根目录执行：
+
+```bash
+bash scripts/e2e-smoke.sh
+```
+
+该检查验证就绪状态、匿名目录、Cookie 登录/登出及 member 的成长档案聚合。若要验证后端和前端容器重启后的数据保留与就绪状态：
+
+```bash
+TCP_E2E_RESTART=1 bash scripts/e2e-smoke.sh
+```
+
+运行日志查看：
+
+```bash
+docker compose logs --tail=100 backend frontend
+```
+
 ## 7.3 本地运行
 
 前端：

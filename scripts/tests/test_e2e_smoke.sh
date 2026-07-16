@@ -13,5 +13,6 @@ for endpoint in \
   '/api/planning/profiles'; do
   grep -Fq "$endpoint" "$script"
 done
+grep -Fq 'TCP_E2E_RESTART' "$script"
 
 echo "PASS: e2e smoke covers readiness, anonymous catalog, session, and profile"

@@ -12,6 +12,24 @@ assert_json() {
   python3 -c "import json, sys; payload = json.load(sys.stdin); assert $condition"
 }
 
+wait_for_http() {
+  local url="$1"
+  for _ in {1..30}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for $url" >&2
+  return 1
+}
+
+if [[ "${TCP_E2E_RESTART:-0}" == "1" ]]; then
+  docker compose restart backend frontend
+fi
+
+wait_for_http "$backend_url/ready"
+wait_for_http "$base_url/api/capability-model"
 curl -fsS "$backend_url/ready" | assert_json "payload['status'] == 'ready'"
 curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']) == 6"
 
