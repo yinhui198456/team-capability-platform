@@ -15,6 +15,7 @@ import { MemberDashboardPage } from './MemberDashboardPage'
 import { ProfilePage } from './ProfilePage'
 import { TeamAnnualPlanPage } from './TeamAnnualPlanPage'
 import { TeamAnalyticsPage } from './TeamAnalyticsPage'
+import { SystemAdminPage } from './SystemAdminPage'
 import {
   allL3,
   archiveLearningResource,
@@ -749,6 +750,7 @@ export function App() {
     pathname !== '/operations/resources' &&
     pathname !== '/operations/analytics' &&
     pathname !== '/operations/team-annual-plan' &&
+    pathname !== '/system/users' &&
     pathname !== '/capability/assessment' &&
     pathname !== '/capability/assessment/history' &&
     pathname !== '/capability/gap' &&
@@ -873,6 +875,12 @@ export function App() {
         >
           团队年度能力规划
         </a>
+        <a
+          className={pathname === '/system/users' ? 'active' : ''}
+          href="/system/users"
+        >
+          系统管理
+        </a>
       </nav>
       {pathname === '/operations/resources' ? (
         <LearningResourcesPage />
@@ -880,6 +888,8 @@ export function App() {
         <TeamAnalyticsPage />
       ) : pathname === '/operations/team-annual-plan' ? (
         <TeamAnnualPlanPage />
+      ) : pathname === '/system/users' ? (
+        <SystemAdminPage />
       ) : pathname === '/capability/assessment' ? (
         <AssessmentPage />
       ) : pathname === '/capability/assessment/history' ? (
