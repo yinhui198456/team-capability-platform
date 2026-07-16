@@ -2,7 +2,7 @@ from typing import Any
 
 import psycopg
 
-from ..access.repository import get_primary_buddy
+from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 
 
 def _now(connection: psycopg.Connection) -> Any:
@@ -139,8 +139,8 @@ def save_assessment_draft(
         if row is None:
             raise ValueError("assessment not found")
         status, owner_id = row
-        if status != "草稿":
-            raise ValueError("assessment is not in draft status")
+        if status not in ("草稿", "建议调整"):
+            raise ValueError("assessment is not editable")
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
 
@@ -186,8 +186,8 @@ def submit_assessment(
         if row is None:
             raise ValueError("assessment not found")
         status, owner_id = row
-        if status != "草稿":
-            raise ValueError("assessment is not in draft status")
+        if status not in ("草稿", "建议调整"):
+            raise ValueError("assessment is not submittable")
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
 
@@ -282,3 +282,96 @@ def get_assessment_reviews(
         }
         for row in rows
     ]
+
+
+def get_pending_reviews_for_buddy(
+    connection: psycopg.Connection, buddy_id: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT ar.id, ar.assessment_id, ar.sequence, ar.buddy_id, ar.status,
+               a.member_id, a.year, a.version, a.status AS assessment_status,
+               a.submitted_at
+        FROM assessment_review ar
+        JOIN assessment a ON a.id = ar.assessment_id
+        WHERE ar.buddy_id = %s AND ar.status = '待复核'
+        ORDER BY a.submitted_at ASC NULLS LAST
+        """,
+        (buddy_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "assessment_id": row[1],
+            "sequence": row[2],
+            "buddy_id": row[3],
+            "status": row[4],
+            "member_id": row[5],
+            "year": row[6],
+            "version": row[7],
+            "assessment_status": row[8],
+            "submitted_at": row[9],
+        }
+        for row in rows
+    ]
+
+
+def submit_assessment_review(
+    connection: psycopg.Connection,
+    review_id: int,
+    buddy_id: int,
+    conclusion: str,
+    feedback: str | None,
+) -> None:
+    if conclusion not in ("认可", "建议调整"):
+        raise ValueError("invalid conclusion")
+
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT ar.assessment_id, ar.buddy_id, ar.status, a.member_id
+            FROM assessment_review ar
+            JOIN assessment a ON a.id = ar.assessment_id
+            WHERE ar.id = %s
+            """,
+            (review_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("review not found")
+        assessment_id, review_buddy_id, review_status, member_id = row
+        if review_status != "待复核":
+            raise ValueError("review is not pending")
+        if int(review_buddy_id) != buddy_id:
+            raise ValueError("review is not assigned to this buddy")
+        if not is_member_assigned_to_buddy(connection, int(member_id), buddy_id):
+            raise ValueError("buddy is not assigned to member")
+
+        reviewed_at = _now(connection)
+        connection.execute(
+            """
+            UPDATE assessment_review
+            SET conclusion = %s, feedback = %s, reviewed_at = %s, status = '已闭环'
+            WHERE id = %s
+            """,
+            (conclusion, feedback, reviewed_at, review_id),
+        )
+
+        if conclusion == "认可":
+            connection.execute(
+                """
+                UPDATE assessment
+                SET status = '已复核'
+                WHERE id = %s
+                """,
+                (assessment_id,),
+            )
+            archive_assessment(connection, assessment_id, int(member_id))
+        else:
+            connection.execute(
+                """
+                UPDATE assessment
+                SET status = '建议调整'
+                WHERE id = %s
+                """,
+                (assessment_id,),
+            )

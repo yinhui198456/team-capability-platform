@@ -21,7 +21,16 @@ def can_buddy_view(
     )
 
 
-def can_leader_view(user: dict[str, object], assessment: dict[str, object]) -> bool:
+def can_buddy_review(
+    connection: psycopg.Connection,
+    user: dict[str, object],
+    assessment: dict[str, object],
+) -> bool:
+    if "Buddy" not in user["roles"]:
+        return False
+    return is_member_assigned_to_buddy(
+        connection, int(assessment["member_id"]), int(user["id"])
+    )
     return "Leader" in user["roles"]
 
 
