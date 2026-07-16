@@ -19,6 +19,7 @@ describe('LearningTaskPage', () => {
     vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
     vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([])
     vi.spyOn(planningApi, 'listEvidences').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([])
     vi.spyOn(planningApi, 'getMonthlyHours').mockResolvedValue([])
   })
 
@@ -559,6 +560,71 @@ describe('LearningTaskPage', () => {
     await waitFor(() => {
       expect(screen.getByText('版本 1')).toBeTruthy()
     })
+  })
+
+  it('displays evidence review conclusion and feedback', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      {
+        id: 100,
+        plan_item_id: 2,
+        l3_code: 'P01-L2A-L3B',
+        status: '进行中',
+        actual_start_date: null,
+        actual_end_date: null,
+        actual_hours: 0,
+        completion_quality: null,
+        review_conclusion: null,
+        next_action: null,
+        plan_item_current_level: 1,
+        plan_item_target_level: 3,
+        plan_item_priority: '中',
+        plan_item_learning_material: null,
+        plan_item_learning_task_content: null,
+        plan_item_expected_output: null,
+        plan_item_estimated_hours: '10',
+      },
+    ])
+    vi.spyOn(planningApi, 'listEvidences').mockResolvedValue([
+      {
+        id: 10,
+        learning_task_id: 100,
+        l3_code: 'P01-L2A-L3B',
+        version_number: 1,
+        content: '完成 P01 实践项目',
+        evidence_link: 'http://example.com/demo',
+        status: '已归档',
+        submitted_at: '2026-07-16T10:05:00Z',
+        created_at: '2026-07-16T10:00:00Z',
+      },
+    ])
+    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([
+      {
+        id: 20,
+        evidence_id: 10,
+        version_number: 1,
+        status: '通过',
+        conclusion: '通过',
+        feedback: '符合预期',
+        reviewed_at: '2026-07-16T11:00:00Z',
+        created_at: '2026-07-16T10:10:00Z',
+      },
+    ])
+
+    window.history.pushState({}, '', '/growth/tasks')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Review 结论：通过/)).toBeTruthy()
+    })
+
+    expect(screen.getByText(/反馈：符合预期/)).toBeTruthy()
+    expect(screen.getByText(/Review 时间/)).toBeTruthy()
   })
 
   it('submits a draft evidence', async () => {
