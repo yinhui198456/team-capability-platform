@@ -12,6 +12,7 @@ from .access.seed import seed_demo_accounts
 from .assessment import assessment_router, create_assessment_schema, gap_router
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
+from .planning import planning_router
 from .settings import settings
 
 
@@ -35,6 +36,7 @@ app.include_router(catalog_router)
 app.include_router(access_router)
 app.include_router(assessment_router)
 app.include_router(gap_router)
+app.include_router(planning_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
