@@ -574,3 +574,186 @@ def update_learning_task(
     ).fetchone()
     assert updated is not None
     return _learning_task_row(updated)
+
+
+_PROGRESS_LOG_UPDATABLE_FIELDS = {"record_date", "actual_hours", "note"}
+
+
+def _progress_log_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "task_id": row[1],
+        "record_date": row[2],
+        "actual_hours": row[3],
+        "note": row[4],
+        "recorder_id": row[5],
+    }
+
+
+def _assert_task_ownership(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> None:
+    owned = connection.execute(
+        """
+        SELECT lt.id
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s AND agp.member_id = %s
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if owned is None:
+        raise PermissionError("learning task does not belong to member")
+
+
+def _validate_actual_hours(value: object) -> int:
+    try:
+        hours = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("actual_hours must be a non-negative integer") from exc
+    if hours < 0:
+        raise ValueError("actual_hours must be a non-negative integer")
+    return hours
+
+
+def create_progress_log(
+    connection: psycopg.Connection,
+    member_id: int,
+    task_id: int,
+    record_date: str,
+    actual_hours: object,
+    note: object,
+) -> dict[str, object]:
+    _assert_task_ownership(connection, member_id, task_id)
+    hours = _validate_actual_hours(actual_hours)
+
+    row = connection.execute(
+        """
+        INSERT INTO learning_progress_log (
+            task_id, record_date, actual_hours, note, recorder_id
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id, task_id, record_date, actual_hours, note, recorder_id
+        """,
+        (task_id, record_date, hours, note, member_id),
+    ).fetchone()
+    assert row is not None
+    return _progress_log_row(row)
+
+
+def list_progress_logs(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> list[dict[str, object]]:
+    _assert_task_ownership(connection, member_id, task_id)
+    rows = connection.execute(
+        """
+        SELECT id, task_id, record_date, actual_hours, note, recorder_id
+        FROM learning_progress_log
+        WHERE task_id = %s
+        ORDER BY record_date DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    return [_progress_log_row(row) for row in rows]
+
+
+def _get_progress_log_for_member(
+    connection: psycopg.Connection, member_id: int, log_id: int
+) -> tuple[dict[str, object], int] | None:
+    row = connection.execute(
+        """
+        SELECT lpl.id, lpl.task_id, lpl.record_date, lpl.actual_hours,
+               lpl.note, lpl.recorder_id, agp.member_id
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lpl.id = %s
+        """,
+        (log_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    log = _progress_log_row(row[:6])
+    task_owner_id = int(row[6])
+    return log, task_owner_id
+
+
+def update_progress_log(
+    connection: psycopg.Connection,
+    member_id: int,
+    log_id: int,
+    fields: dict[str, object],
+) -> dict[str, object]:
+    result = _get_progress_log_for_member(connection, member_id, log_id)
+    if result is None:
+        raise ValueError("progress log not found")
+    log, task_owner_id = result
+    if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
+        raise PermissionError("progress log does not belong to member")
+
+    updates: dict[str, object] = {}
+    for key, value in fields.items():
+        if key not in _PROGRESS_LOG_UPDATABLE_FIELDS:
+            raise ValueError(f"field '{key}' is not updatable")
+        updates[key] = value
+
+    if "actual_hours" in updates:
+        updates["actual_hours"] = _validate_actual_hours(updates["actual_hours"])
+
+    if not updates:
+        return log
+
+    columns = list(updates.keys())
+    set_clause = ", ".join(f"{col} = %s" for col in columns)
+    values = [updates[col] for col in columns]
+    values.append(log_id)
+
+    updated = connection.execute(
+        f"""
+        UPDATE learning_progress_log
+        SET {set_clause}
+        WHERE id = %s
+        RETURNING id, task_id, record_date, actual_hours, note, recorder_id
+        """,
+        values,
+    ).fetchone()
+    assert updated is not None
+    return _progress_log_row(updated)
+
+
+def delete_progress_log(
+    connection: psycopg.Connection, member_id: int, log_id: int
+) -> None:
+    result = _get_progress_log_for_member(connection, member_id, log_id)
+    if result is None:
+        raise ValueError("progress log not found")
+    log, task_owner_id = result
+    if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
+        raise PermissionError("progress log does not belong to member")
+    connection.execute("DELETE FROM learning_progress_log WHERE id = %s", (log_id,))
+
+
+def get_monthly_hours(
+    connection: psycopg.Connection, member_id: int, year: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT EXTRACT(MONTH FROM lpl.record_date)::INT AS month,
+               SUM(lpl.actual_hours) AS total_hours
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+          AND EXTRACT(YEAR FROM lpl.record_date) = %s
+        GROUP BY month
+        ORDER BY month
+        """,
+        (member_id, year),
+    ).fetchall()
+    return [
+        {"month": row[0], "total_hours": int(row[1]) if row[1] is not None else 0}
+        for row in rows
+    ]

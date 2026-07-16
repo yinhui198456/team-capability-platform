@@ -5,15 +5,20 @@ from .gate import check_annual_plan_gate
 from .repository import (
     create_growth_goal,
     create_learning_task,
+    create_progress_log,
     delete_growth_goal,
+    delete_progress_log,
     generate_plan_items,
     get_annual_plan_with_items,
     get_learning_task,
+    get_monthly_hours,
     list_eligible_gaps,
     list_growth_goals,
     list_learning_tasks,
     list_plan_items,
+    list_progress_logs,
     update_learning_task,
+    update_progress_log,
 )
 
 planning_router = APIRouter(prefix="/api/planning")
@@ -196,3 +201,103 @@ def put_learning_task(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+
+@planning_router.post("/learning-tasks/{task_id}/progress-logs")
+def post_progress_log(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        record_date = str(body["record_date"])
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="record_date is required",
+        ) from exc
+    try:
+        return create_progress_log(
+            connection,
+            int(user["id"]),
+            task_id,
+            record_date,
+            body.get("actual_hours"),
+            body.get("note"),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/learning-tasks/{task_id}/progress-logs")
+def get_progress_logs(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    try:
+        return list_progress_logs(connection, int(user["id"]), task_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/progress-logs/monthly")
+def get_monthly_hours_summary(
+    user: CurrentUser, connection: Connection, year: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    return get_monthly_hours(connection, int(user["id"]), year)
+
+
+@planning_router.put("/progress-logs/{log_id}")
+def put_progress_log(
+    user: CurrentUser,
+    connection: Connection,
+    log_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return update_progress_log(connection, int(user["id"]), log_id, body)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.delete("/progress-logs/{log_id}")
+def remove_progress_log(
+    user: CurrentUser, connection: Connection, log_id: int
+) -> Response:
+    _require_member(user)
+    try:
+        delete_progress_log(connection, int(user["id"]), log_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
