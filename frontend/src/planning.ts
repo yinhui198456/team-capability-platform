@@ -3,6 +3,27 @@ export type AnnualPlanEligibility = {
   reason: string | null
 }
 
+export type EligibleGap = {
+  id: number
+  assessment_id: number
+  l3_code: string
+  current_level: number
+  target_level: number
+  gap_value: number
+  priority: '高' | '中' | '低'
+  plan_candidate: boolean
+}
+
+export type GrowthGoal = {
+  id: number
+  gap_id: number
+  annual_growth_plan_id: number
+  l3_code: string
+  year: number
+  target_level: number
+  priority: '高' | '中' | '低'
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -41,4 +62,28 @@ export async function annualPlanDryRun(): Promise<{ ok: boolean }> {
     },
     {},
   )
+}
+
+export async function getEligibleGaps(): Promise<EligibleGap[]> {
+  return request<EligibleGap[]>('/api/planning/eligible-gaps', {
+    method: 'GET',
+  })
+}
+
+export async function createGrowthGoal(gap_id: number): Promise<GrowthGoal> {
+  return request<GrowthGoal>(
+    '/api/planning/growth-goals',
+    { method: 'POST' },
+    { gap_id },
+  )
+}
+
+export async function listGrowthGoals(): Promise<GrowthGoal[]> {
+  return request<GrowthGoal[]>('/api/planning/growth-goals', { method: 'GET' })
+}
+
+export async function deleteGrowthGoal(goal_id: number): Promise<void> {
+  await request<void>(`/api/planning/growth-goals/${goal_id}`, {
+    method: 'DELETE',
+  })
 }

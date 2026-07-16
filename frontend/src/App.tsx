@@ -4,6 +4,7 @@ import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentPage } from './AssessmentPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
 import { GapPage } from './GapPage'
+import { GrowthGoalPage } from './GrowthGoalPage'
 import { LoginPage } from './LoginPage'
 import {
   allL3,
@@ -262,6 +263,7 @@ export function App() {
     pathname !== '/capability/assessment' &&
     pathname !== '/capability/assessment/history' &&
     pathname !== '/capability/gap' &&
+    pathname !== '/growth/goals' &&
     pathname !== '/mentoring/assessment-review'
   ) {
     return (
@@ -301,6 +303,12 @@ export function App() {
           Gap 分析
         </a>
         <a
+          className={pathname === '/growth/goals' ? 'active' : ''}
+          href="/growth/goals"
+        >
+          成长目标
+        </a>
+        <a
           className={
             pathname === '/mentoring/assessment-review' ? 'active' : ''
           }
@@ -323,6 +331,8 @@ export function App() {
         <AssessmentHistoryPage />
       ) : pathname === '/capability/gap' ? (
         <GapPage />
+      ) : pathname === '/growth/goals' ? (
+        <GrowthGoalPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
       ) : (
