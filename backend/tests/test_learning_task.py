@@ -88,6 +88,7 @@ def _ensure_l3_node(
             code, name, version, source_workbook, source_sheet, source_row
         )
         VALUES ('test-model', 'Test Model', '1.0', 'test.xlsx', 'sheet', 1)
+        ON CONFLICT (code) DO UPDATE SET code = capability_model.code
         RETURNING id
         """
     ).fetchone()
@@ -100,6 +101,7 @@ def _ensure_l3_node(
             source_workbook, source_sheet, source_row
         )
         VALUES (%s, 'L1', 'P01', 'Domain', 1, 'test.xlsx', 'sheet', 2)
+        ON CONFLICT (model_id, code) DO UPDATE SET code = capability_node.code
         RETURNING id
         """,
         (model_id,),
@@ -112,6 +114,7 @@ def _ensure_l3_node(
             source_workbook, source_sheet, source_row
         )
         VALUES (%s, %s, 'L2', 'P01-L2A', 'Item', 1, 'test.xlsx', 'sheet', 3)
+        ON CONFLICT (model_id, code) DO UPDATE SET code = capability_node.code
         RETURNING id
         """,
         (model_id, l1[0]),
@@ -125,13 +128,17 @@ def _ensure_l3_node(
             source_workbook, source_sheet, source_row
         )
         VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'test.xlsx', 'sheet', 4)
+        ON CONFLICT (model_id, code) DO UPDATE SET
+            materials_text = EXCLUDED.materials_text,
+            expected_output = EXCLUDED.expected_output,
+            estimated_hours = EXCLUDED.estimated_hours
         """,
         (model_id, l2[0], l3_code, materials_text, expected_output, estimated_hours),
     )
 
 
 @pytest.fixture
-def planning_schema(connection: psycopg.Connection) -> psycopg.Connection:
+def learning_task_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
     _reset_planning_schema(connection)
@@ -295,32 +302,20 @@ def _approve_assessment(
     assert status == 200
 
 
-def test_generate_without_submitted_assessment_returns_409(
-    planning_schema: psycopg.Connection,
-) -> None:
-    _create_test_user(planning_schema, "member_no_assess", ["Member"])
-    cookies = _login(planning_schema, "member_no_assess")
+def _seed_plan_items(
+    connection: psycopg.Connection,
+) -> tuple[dict[str, str], dict[str, object]]:
+    member_id = _create_test_user(connection, "member_task", ["Member"])
+    buddy_id = _create_test_user(connection, "buddy_task", ["Buddy"])
+    create_buddy_relationship(connection, member_id, buddy_id)
+    _ensure_l3_node(connection, "P01-L2A-L3A")
+    _ensure_l3_node(connection, "P01-L2A-L3B")
+    connection.commit()
 
-    status, body, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
-    )
-    assert status == 409
-    assert body == {"detail": "暂无已提交的能力评估"}
+    assessment_id = _create_and_submit_assessment(connection, "member_task")
+    _approve_assessment(connection, assessment_id, "buddy_task")
 
-
-def test_generate_creates_plan_items_and_is_idempotent(
-    planning_schema: psycopg.Connection,
-) -> None:
-    member_id = _create_test_user(planning_schema, "member_plan", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_plan", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
-    _ensure_l3_node(planning_schema, "P01-L2A-L3A")
-    planning_schema.commit()
-
-    assessment_id = _create_and_submit_assessment(planning_schema, "member_plan")
-    _approve_assessment(planning_schema, assessment_id, "buddy_plan")
-
-    member_cookies = _login(planning_schema, "member_plan")
+    member_cookies = _login(connection, "member_task")
 
     status, gaps, _ = _request(
         "GET", "/api/planning/eligible-gaps", cookies=member_cookies
@@ -341,65 +336,201 @@ def test_generate_creates_plan_items_and_is_idempotent(
     )
     assert status == 200
     assert result["created"] == 2
-    items = result["items"]
-    assert len(items) == 2
-    items_by_code = {item["l3_code"]: item for item in items}
-    assert "P01-L2A-L3A" in items_by_code
-    assert "P01-L2A-L3B" in items_by_code
-    item = items_by_code["P01-L2A-L3A"]
-    assert item["current_level"] == 2
-    assert item["target_level"] == 4
-    assert item["priority"] == "中"
-    assert item["learning_material"] == "test materials"
-    assert item["expected_output"] == "test output"
-    assert item["estimated_hours"] == "10"
-    assert item["status"] == "未开始"
-    assert item["target_month"] is None
+    return member_cookies, result
 
-    status, plan, _ = _request(
-        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
+
+def test_create_learning_task_success_and_duplicate_returns_409(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    cookies, result = _seed_plan_items(learning_task_schema)
+    item = result["items"][0]
+    item_id = int(item["id"])
+
+    status, task, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=cookies,
     )
     assert status == 200
-    assert plan is not None
-    assert plan["year"] == 2026
-    assert plan["status"] == "制定中"
-    assert len(plan["items"]) == 2
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 0
-
-
-def test_plan_items_list_and_annual_plan_are_member_only(
-    planning_schema: psycopg.Connection,
-) -> None:
-    _create_test_user(planning_schema, "buddy_only_plan", ["Buddy"])
-    cookies = _login(planning_schema, "buddy_only_plan")
-
-    status, _, _ = _request(
-        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
-    )
-    assert status == 403
-
-    status, _, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
-    )
-    assert status == 403
-
-    status, _, _ = _request("GET", "/api/planning/plan-items", cookies=cookies)
-    assert status == 403
-
-
-def test_annual_plan_returns_null_when_missing(
-    planning_schema: psycopg.Connection,
-) -> None:
-    _create_test_user(planning_schema, "member_empty_plan", ["Member"])
-    cookies = _login(planning_schema, "member_empty_plan")
+    assert task is not None
+    assert task["plan_item_id"] == item_id
+    assert task["l3_code"] == item["l3_code"]
+    assert task["status"] == "未开始"
+    assert task["actual_hours"] == 0
 
     status, body, _ = _request(
-        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=cookies,
+    )
+    assert status == 409
+    assert body == {"detail": "learning task already exists for this plan item"}
+
+
+def test_create_learning_task_for_other_member_plan_item_returns_403(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    member_cookies, result = _seed_plan_items(learning_task_schema)
+    item = result["items"][0]
+    item_id = int(item["id"])
+
+    _create_test_user(learning_task_schema, "other_member_task", ["Member"])
+    learning_task_schema.commit()
+    other_cookies = _login(learning_task_schema, "other_member_task")
+
+    status, body, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=other_cookies,
+    )
+    assert status == 403
+    assert body == {"detail": "plan item does not belong to member"}
+
+
+def test_list_and_get_learning_tasks(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    cookies, result = _seed_plan_items(learning_task_schema)
+    item = result["items"][0]
+    item_id = int(item["id"])
+
+    status, task, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=cookies,
     )
     assert status == 200
-    assert body is None
+    task_id = int(task["id"])
+
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    assert len(tasks) == 1
+    assert tasks[0]["id"] == task_id
+    assert tasks[0]["plan_item_target_level"] == item["target_level"]
+
+    status, fetched, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
+    )
+    assert status == 200
+    assert fetched["id"] == task_id
+
+
+def test_update_learning_task_success(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    cookies, result = _seed_plan_items(learning_task_schema)
+    item_id = int(result["items"][0]["id"])
+
+    status, task, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=cookies,
+    )
+    assert status == 200
+    task_id = int(task["id"])
+
+    status, updated, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {
+            "status": "进行中",
+            "actual_hours": 5,
+            "actual_start_date": "2026-07-01",
+            "next_action": "继续学习",
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert updated["status"] == "进行中"
+    assert updated["actual_hours"] == 5
+    assert updated["actual_start_date"] == "2026-07-01"
+    assert updated["next_action"] == "继续学习"
+
+
+def test_update_learning_task_forbidden_for_other_member(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    member_cookies, result = _seed_plan_items(learning_task_schema)
+    item_id = int(result["items"][0]["id"])
+
+    status, task, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=member_cookies,
+    )
+    assert status == 200
+    task_id = int(task["id"])
+
+    _create_test_user(learning_task_schema, "other_member_task", ["Member"])
+    learning_task_schema.commit()
+    other_cookies = _login(learning_task_schema, "other_member_task")
+
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"status": "进行中", "actual_hours": 5},
+        cookies=other_cookies,
+    )
+    assert status == 403
+    assert body == {"detail": "learning task does not belong to member"}
+
+
+def test_update_learning_task_invalid_status_or_hours(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    cookies, result = _seed_plan_items(learning_task_schema)
+    item_id = int(result["items"][0]["id"])
+
+    status, task, _ = _request(
+        "POST",
+        f"/api/planning/plan-items/{item_id}/learning-task",
+        {},
+        cookies=cookies,
+    )
+    assert status == 200
+    task_id = int(task["id"])
+
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"status": "无效状态"},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body == {"detail": "invalid status"}
+
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"actual_hours": -1},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body == {"detail": "actual_hours must be a non-negative integer"}
+
+
+def test_learning_task_endpoints_require_member_role(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(learning_task_schema, "buddy_task_only", ["Buddy"])
+    learning_task_schema.commit()
+    cookies = _login(learning_task_schema, "buddy_task_only")
+
+    status, _, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 403
+
+    status, _, _ = _request(
+        "POST", "/api/planning/plan-items/1/learning-task", {}, cookies=cookies
+    )
+    assert status == 403
+
+    status, _, _ = _request(
+        "PUT", "/api/planning/learning-tasks/1", {"status": "进行中"}, cookies=cookies
+    )
+    assert status == 403
