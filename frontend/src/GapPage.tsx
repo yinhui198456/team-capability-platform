@@ -3,6 +3,11 @@ import { useEffect, useState } from 'react'
 import { listAssessments } from './assessment'
 import { me, type User } from './access'
 import { Gap, listGaps, updateGap } from './gap'
+import {
+  AnnualPlanEligibility,
+  annualPlanDryRun,
+  getAnnualPlanEligibility,
+} from './planning'
 
 const PRIORITIES: Gap['priority'][] = ['高', '中', '低']
 
@@ -11,6 +16,10 @@ export function GapPage() {
   const [gaps, setGaps] = useState<Gap[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [eligibility, setEligibility] = useState<AnnualPlanEligibility | null>(
+    null,
+  )
+  const [dryRunMessage, setDryRunMessage] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -41,6 +50,13 @@ export function GapPage() {
         } else {
           const list = await listGaps()
           if (!cancelled) setGaps(list)
+        }
+
+        try {
+          const eligibilityResult = await getAnnualPlanEligibility()
+          if (!cancelled) setEligibility(eligibilityResult)
+        } catch {
+          // ponytail: eligibility failure must not hide gaps or break page.
         }
       } catch (err) {
         if (!cancelled) {
@@ -78,16 +94,40 @@ export function GapPage() {
 
   const canEdit = user?.roles.includes('Member') ?? false
 
+  async function handleDryRun() {
+    setDryRunMessage('')
+    setError('')
+    try {
+      await annualPlanDryRun()
+      setDryRunMessage('可生成年度计划')
+    } catch (err) {
+      setDryRunMessage(err instanceof Error ? err.message : '模拟生成失败')
+    }
+  }
+
   if (loading) return <p className="muted">加载中…</p>
 
   return (
     <section className="page">
       <h1>Gap 分析</h1>
+      {eligibility?.eligible === false && (
+        <p className="warning" role="alert">
+          年度计划生成受限：{eligibility.reason}
+        </p>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
+      {dryRunMessage && (
+        <p className="info" role="status">
+          {dryRunMessage}
+        </p>
+      )}
+      <button type="button" onClick={handleDryRun}>
+        模拟生成年度计划
+      </button>
       {gaps.length === 0 && <p className="muted">暂无 Gap 记录。</p>}
       <ul className="gap-list">
         {gaps.map((gap) => (
