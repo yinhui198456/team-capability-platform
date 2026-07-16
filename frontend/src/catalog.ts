@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+
+import { me, type User } from './access'
 
 const DOMAIN_CODES = new Set(['P01', 'P02', 'P03', 'C01', 'C02', 'C03'])
 
@@ -12,6 +14,11 @@ export type ResourceSummary = {
 export type L3Node = {
   code: string
   name: string
+  p4_description: string | null
+  p5_description: string | null
+  p6_description: string | null
+  p7_description: string | null
+  p8_description: string | null
   recommended_start_level: string | null
   materials_text: string
   expected_output: string | null
@@ -20,7 +27,16 @@ export type L3Node = {
   unmatched_materials: string[]
 }
 
-export type L2Node = { code: string; name: string; children: L3Node[] }
+export type L2Node = {
+  code: string
+  name: string
+  p4_description: string | null
+  p5_description: string | null
+  p6_description: string | null
+  p7_description: string | null
+  p8_description: string | null
+  children: L3Node[]
+}
 
 export type Domain = {
   code: string
@@ -72,9 +88,29 @@ async function get<T>(path: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function write<T>(
+  path: string,
+  method: string,
+  body: object,
+): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
+    throw new Error(payload.detail ?? '请求失败')
+  }
+  return response.json() as Promise<T>
+}
+
 export function useCatalog<T>(path: string | null) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
+  const [version, setVersion] = useState(0)
+  const refresh = useCallback(() => setVersion((v) => v + 1), [])
 
   useEffect(() => {
     let active = true
@@ -92,9 +128,36 @@ export function useCatalog<T>(path: string | null) {
     return () => {
       active = false
     }
-  }, [path])
+  }, [path, version])
 
-  return { data, error }
+  return { data, error, refresh }
+}
+
+export function useMe() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    me().then(
+      (value) => {
+        if (!active) return
+        setUser(value)
+        setLoading(false)
+      },
+      () => {
+        if (!active) return
+        setUser(null)
+        setLoading(false)
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [])
+
+  return { user, loading, isLeader: user?.roles.includes('Leader') ?? false }
 }
 
 export function enabledDomains(model: CapabilityModel | null) {
@@ -114,4 +177,39 @@ export function resourcePath(name: string, status: string, l3Code: string) {
   if (l3Code) parameters.set('l3_code', l3Code)
   const query = parameters.toString()
   return `/api/learning-resources${query ? `?${query}` : ''}`
+}
+
+export async function updateCapabilityNode(
+  nodeCode: string,
+  body: object,
+): Promise<object> {
+  return write<object>(`/api/capability-model/nodes/${nodeCode}`, 'PUT', body)
+}
+
+export async function createLearningResource(body: object): Promise<object> {
+  return write<object>('/api/learning-resources', 'POST', body)
+}
+
+export async function updateLearningResource(
+  materialCode: string,
+  body: object,
+): Promise<object> {
+  return write<object>(`/api/learning-resources/${materialCode}`, 'PUT', body)
+}
+
+export async function archiveLearningResource(
+  materialCode: string,
+): Promise<object> {
+  const response = await fetch(
+    `/api/learning-resources/${materialCode}/archive`,
+    {
+      method: 'POST',
+      credentials: 'include',
+    },
+  )
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
+    throw new Error(payload.detail ?? '请求失败')
+  }
+  return response.json()
 }
