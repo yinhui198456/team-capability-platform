@@ -235,3 +235,17 @@ def get_assigned_members(
         }
         for row in rows
     ]
+
+
+def is_member_assigned_to_buddy(
+    connection: psycopg.Connection, member_id: int, buddy_id: int
+) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1 FROM buddy_relationship
+        WHERE member_id = %s AND buddy_id = %s
+          AND is_primary = TRUE AND effective_to IS NULL
+        """,
+        (member_id, buddy_id),
+    ).fetchone()
+    return row is not None
