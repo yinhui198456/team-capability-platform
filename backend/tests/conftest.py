@@ -32,6 +32,7 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
 
 def _clear_assessment(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS learning_progress_log")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
