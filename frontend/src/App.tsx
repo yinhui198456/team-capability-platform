@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentPage } from './AssessmentPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
+import { GapPage } from './GapPage'
 import { LoginPage } from './LoginPage'
 import {
   allL3,
@@ -260,6 +261,7 @@ export function App() {
     pathname !== '/operations/resources' &&
     pathname !== '/capability/assessment' &&
     pathname !== '/capability/assessment/history' &&
+    pathname !== '/capability/gap' &&
     pathname !== '/mentoring/assessment-review'
   ) {
     return (
@@ -293,6 +295,12 @@ export function App() {
           评估历史
         </a>
         <a
+          className={pathname === '/capability/gap' ? 'active' : ''}
+          href="/capability/gap"
+        >
+          Gap 分析
+        </a>
+        <a
           className={
             pathname === '/mentoring/assessment-review' ? 'active' : ''
           }
@@ -313,6 +321,8 @@ export function App() {
         <AssessmentPage />
       ) : pathname === '/capability/assessment/history' ? (
         <AssessmentHistoryPage />
+      ) : pathname === '/capability/gap' ? (
+        <GapPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
       ) : (
