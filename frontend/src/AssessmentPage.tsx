@@ -122,7 +122,8 @@ export function AssessmentPage() {
     )
   }
 
-  const isDraft = assessment.status === '草稿'
+  const isEditable =
+    assessment.status === '草稿' || assessment.status === '建议调整'
 
   return (
     <section className="page">
@@ -149,7 +150,7 @@ export function AssessmentPage() {
               onChange={(event) =>
                 updateDetail(index, { l3_code: event.target.value })
               }
-              disabled={!isDraft}
+              disabled={!isEditable}
             />
           </label>
           <label>
@@ -161,7 +162,7 @@ export function AssessmentPage() {
                   current_level: Number(event.target.value),
                 })
               }
-              disabled={!isDraft}
+              disabled={!isEditable}
             >
               {[1, 2, 3, 4, 5].map((level) => (
                 <option key={level} value={level}>
@@ -179,7 +180,7 @@ export function AssessmentPage() {
                   target_level: Number(event.target.value),
                 })
               }
-              disabled={!isDraft}
+              disabled={!isEditable}
             >
               {[1, 2, 3, 4, 5].map((level) => (
                 <option key={level} value={level}>
@@ -195,7 +196,7 @@ export function AssessmentPage() {
               onChange={(event) =>
                 updateDetail(index, { evidence_note: event.target.value })
               }
-              disabled={!isDraft}
+              disabled={!isEditable}
             />
           </label>
           <label className="checkbox">
@@ -205,14 +206,16 @@ export function AssessmentPage() {
               onChange={(event) =>
                 updateDetail(index, { plan_candidate: event.target.checked })
               }
-              disabled={!isDraft}
+              disabled={!isEditable}
             />
             纳入计划候选
           </label>
-          {isDraft && <button onClick={() => removeDetail(index)}>删除</button>}
+          {isEditable && (
+            <button onClick={() => removeDetail(index)}>删除</button>
+          )}
         </article>
       ))}
-      {isDraft && (
+      {isEditable && (
         <>
           <button onClick={addDetail}>添加 L3</button>
           <div className="actions">
