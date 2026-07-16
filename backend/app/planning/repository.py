@@ -1,7 +1,29 @@
+from typing import Any
+
 import psycopg
 
 from ..assessment.repository import get_gap
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
+
+
+def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "annual_growth_plan_id": row[1],
+        "growth_goal_id": row[2],
+        "l3_code": row[3],
+        "current_level": row[4],
+        "target_level": row[5],
+        "priority": row[6],
+        "learning_material": row[7],
+        "learning_task_content": row[8],
+        "expected_output": row[9],
+        "estimated_hours": row[10],
+        "plan_start_date": row[11],
+        "plan_end_date": row[12],
+        "target_month": row[13],
+        "status": row[14],
+    }
 
 
 def get_or_create_annual_plan(
@@ -191,3 +213,150 @@ def delete_growth_goal(
             raise PermissionError("growth goal does not belong to member")
 
         connection.execute("DELETE FROM growth_goal WHERE id = %s", (goal_id,))
+
+
+def get_annual_plan_with_items(
+    connection: psycopg.Connection, member_id: int, year: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT id, member_id, year, plan_cycle, status, start_date, end_date, created_at
+        FROM annual_growth_plan
+        WHERE member_id = %s AND year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    if row is None:
+        return None
+    items = connection.execute(
+        """
+        SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
+               pi.current_level, pi.target_level, pi.priority, pi.learning_material,
+               pi.learning_task_content, pi.expected_output, pi.estimated_hours,
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        ORDER BY pi.l3_code
+        """,
+        (member_id, year),
+    ).fetchall()
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "year": row[2],
+        "plan_cycle": row[3],
+        "status": row[4],
+        "start_date": row[5],
+        "end_date": row[6],
+        "created_at": row[7],
+        "items": [_plan_item_row(item) for item in items],
+    }
+
+
+def _get_l3_defaults(
+    connection: psycopg.Connection, l3_code: str
+) -> dict[str, str | None]:
+    row = connection.execute(
+        """
+        SELECT materials_text, expected_output, estimated_hours
+        FROM capability_node
+        WHERE code = %s AND node_type = 'L3'
+        LIMIT 1
+        """,
+        (l3_code,),
+    ).fetchone()
+    if row is None:
+        return {"learning_material": None, "expected_output": None, "estimated_hours": None}
+    return {
+        "learning_material": row[0],
+        "expected_output": row[1],
+        "estimated_hours": row[2],
+    }
+
+
+def generate_plan_items(
+    connection: psycopg.Connection, member_id: int
+) -> list[dict[str, object]]:
+    gate = check_annual_plan_gate(connection, member_id)
+    if not gate["eligible"]:
+        raise ValueError(gate["reason"] or "annual plan gate not passed")
+
+    latest = get_latest_submitted_assessment(connection, member_id)
+    assert latest is not None
+    year = int(latest["year"])
+
+    annual_plan = get_or_create_annual_plan(connection, member_id, year)
+    annual_plan_id = int(annual_plan["id"])
+
+    rows = connection.execute(
+        """
+        SELECT gg.id, gg.l3_code, gg.target_level, gg.priority, gap.current_level
+        FROM growth_goal gg
+        JOIN annual_growth_plan agp ON agp.id = gg.annual_growth_plan_id
+        JOIN gap ON gap.id = gg.gap_id
+        WHERE agp.member_id = %s AND agp.year = %s
+          AND NOT EXISTS (
+              SELECT 1 FROM plan_item pi
+              WHERE pi.growth_goal_id = gg.id
+          )
+        ORDER BY gg.l3_code
+        """,
+        (member_id, year),
+    ).fetchall()
+
+    created: list[dict[str, object]] = []
+    for row in rows:
+        goal_id = row[0]
+        l3_code = row[1]
+        target_level = row[2]
+        priority = row[3]
+        current_level = row[4]
+        defaults = _get_l3_defaults(connection, l3_code)
+        inserted = connection.execute(
+            """
+            INSERT INTO plan_item (
+                annual_growth_plan_id, growth_goal_id, l3_code, current_level,
+                target_level, priority, learning_material, expected_output,
+                estimated_hours, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, '未开始')
+            RETURNING id, annual_growth_plan_id, growth_goal_id, l3_code,
+                      current_level, target_level, priority, learning_material,
+                      learning_task_content, expected_output, estimated_hours,
+                      plan_start_date, plan_end_date, target_month, status
+            """,
+            (
+                annual_plan_id,
+                goal_id,
+                l3_code,
+                current_level,
+                target_level,
+                priority,
+                defaults["learning_material"],
+                defaults["expected_output"],
+                defaults["estimated_hours"],
+            ),
+        ).fetchone()
+        assert inserted is not None
+        created.append(_plan_item_row(inserted))
+    return created
+
+
+def list_plan_items(
+    connection: psycopg.Connection, member_id: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
+               pi.current_level, pi.target_level, pi.priority, pi.learning_material,
+               pi.learning_task_content, pi.expected_output, pi.estimated_hours,
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+        ORDER BY pi.l3_code
+        """,
+        (member_id,),
+    ).fetchall()
+    return [_plan_item_row(row) for row in rows]
