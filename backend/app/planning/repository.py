@@ -2,9 +2,13 @@ from typing import Any
 
 import psycopg
 
-from ..access.repository import get_primary_buddy
+from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 from ..assessment.repository import get_gap
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
+
+
+def _now(connection: psycopg.Connection) -> Any:
+    return connection.execute("SELECT NOW()").fetchone()[0]
 
 
 def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -969,3 +973,180 @@ def get_evidence(
     if row is None:
         return None
     return _evidence_row(row)
+
+
+def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "evidence_id": row[1],
+        "buddy_id": row[2],
+        "status": row[3],
+        "conclusion": row[4],
+        "feedback": row[5],
+        "reviewed_at": row[6],
+        "created_at": row[7],
+    }
+
+
+def list_pending_evidence_reviews_for_buddy(
+    connection: psycopg.Connection, buddy_id: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT er.id, er.evidence_id, e.submitted_at,
+               agp.member_id, u.username, e.learning_task_id,
+               e.l3_code, e.version_number, e.content, e.evidence_link
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        JOIN tcp_user u ON u.id = agp.member_id
+        WHERE er.buddy_id = %s AND er.status = '待 Review'
+        ORDER BY e.submitted_at ASC NULLS LAST
+        """,
+        (buddy_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "evidence_id": row[1],
+            "submitted_at": row[2],
+            "member_id": row[3],
+            "username": row[4],
+            "learning_task_id": row[5],
+            "l3_code": row[6],
+            "version_number": row[7],
+            "content": row[8],
+            "evidence_link": row[9],
+        }
+        for row in rows
+    ]
+
+
+def get_evidence_review_for_buddy(
+    connection: psycopg.Connection, review_id: int, buddy_id: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT er.id, er.evidence_id, er.buddy_id, er.status, er.conclusion,
+               er.feedback, er.reviewed_at, er.created_at,
+               e.learning_task_id, e.l3_code, e.version_number,
+               e.content, e.evidence_link, agp.member_id
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE er.id = %s
+        """,
+        (review_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    if int(row[2]) != buddy_id:
+        return None
+    member_id = int(row[13])
+    if not is_member_assigned_to_buddy(connection, member_id, buddy_id):
+        return None
+    return {
+        "id": row[0],
+        "evidence_id": row[1],
+        "buddy_id": row[2],
+        "status": row[3],
+        "conclusion": row[4],
+        "feedback": row[5],
+        "reviewed_at": row[6],
+        "created_at": row[7],
+        "learning_task_id": row[8],
+        "l3_code": row[9],
+        "version_number": row[10],
+        "content": row[11],
+        "evidence_link": row[12],
+        "member_id": member_id,
+    }
+
+
+def submit_evidence_review(
+    connection: psycopg.Connection,
+    review_id: int,
+    buddy_id: int,
+    conclusion: str,
+    feedback: object,
+) -> dict[str, object]:
+    if conclusion not in ("通过", "需补充", "驳回"):
+        raise ValueError("invalid conclusion")
+
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT er.evidence_id, er.buddy_id, er.status, agp.member_id
+            FROM evidence_review er
+            JOIN evidence e ON e.id = er.evidence_id
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE er.id = %s
+            """,
+            (review_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("review not found")
+        evidence_id, review_buddy_id, review_status, member_id = row
+        if int(review_buddy_id) != buddy_id:
+            raise ValueError("review is not assigned to this buddy")
+        if review_status != "待 Review":
+            raise ValueError("review is not pending")
+        if not is_member_assigned_to_buddy(connection, int(member_id), buddy_id):
+            raise ValueError("buddy is not assigned to member")
+
+        reviewed_at = _now(connection)
+        updated = connection.execute(
+            """
+            UPDATE evidence_review
+            SET status = %s, conclusion = %s, feedback = %s, reviewed_at = %s
+            WHERE id = %s
+            RETURNING id, evidence_id, buddy_id, status, conclusion,
+                      feedback, reviewed_at, created_at
+            """,
+            (conclusion, conclusion, feedback, reviewed_at, review_id),
+        ).fetchone()
+        assert updated is not None
+
+        evidence_status = "已归档" if conclusion == "通过" else conclusion
+        connection.execute(
+            "UPDATE evidence SET status = %s WHERE id = %s",
+            (evidence_status, evidence_id),
+        )
+
+    return _evidence_review_row(updated)
+
+
+def list_evidence_reviews_for_task(
+    connection: psycopg.Connection, member_id: int, learning_task_id: int
+) -> list[dict[str, object]]:
+    _assert_task_ownership(connection, member_id, learning_task_id)
+    rows = connection.execute(
+        """
+        SELECT er.id, er.evidence_id, er.status, er.conclusion,
+               er.feedback, er.reviewed_at, er.created_at, e.version_number
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        WHERE e.learning_task_id = %s
+        ORDER BY e.version_number DESC
+        """,
+        (learning_task_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "evidence_id": row[1],
+            "status": row[2],
+            "conclusion": row[3],
+            "feedback": row[4],
+            "reviewed_at": row[5],
+            "created_at": row[6],
+            "version_number": row[7],
+        }
+        for row in rows
+    ]
