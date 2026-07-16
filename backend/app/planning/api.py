@@ -11,6 +11,7 @@ from .repository import (
     delete_progress_log,
     generate_plan_items,
     get_annual_plan_with_items,
+    get_capability_profile,
     get_evidence,
     get_learning_task,
     get_monthly_hours,
@@ -486,3 +487,32 @@ def get_task_evidence_reviews(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+
+
+@planning_router.get("/profiles")
+def get_profiles(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    member_id: int | None = None,
+) -> dict[str, object]:
+    target_member_id = int(member_id) if member_id is not None else int(user["id"])
+    try:
+        result = get_capability_profile(
+            connection,
+            int(user["id"]),
+            user["roles"],
+            target_member_id,
+            year,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="member not found",
+        )
+    return result
