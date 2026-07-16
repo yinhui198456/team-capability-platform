@@ -31,7 +31,7 @@
 | 2 | 能力模型只读展示与 Excel 导入边界；学习资源只读 | 已完成 | 门禁：六域和 L3 层级可追溯 | 后端 `backend/app/catalog/importer.py` 从固定 Excel 导入六个 MVP 域（P01/P02/P03/C01/C02/C03）；`backend/app/catalog/repository.py` 提供只读查询；`backend/app/catalog/api.py` 暴露 `GET /api/capability-model`、`GET /api/learning-resources`；前端 `frontend/src/App.tsx` + `frontend/src/catalog.ts` 实现 `/capability/model` 与 `/operations/resources` 匿名只读页；测试覆盖导入、API、E2E、数据库隔离；关键 commit 范围 `c43e0d4..9550bff` |
 | 3 | **3A**：MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 已完成 | 3A 进入门禁：迭代 2 验收通过；3A 验收门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 经 Codex 审核通过且用户 UAT 确认；3B 验收门禁：自评历史、Review 闭环、阻塞/解除场景通过，且该切片 UAT 通过 | **3A 已完成**；**3B 全部子任务完成并通过测试**（后端 127 passed，前端 32 passed），用户确认 3B UAT 通过。关键 commit：3B-1 `b67dd6d..7171f4b`，3B-2 `235a882..306cca0`，3B-3 `611d3c7..2c77a98`，3B-4 `754020d..8d23b68`；验收记录 `docs/acceptance/ITERATION_3B_TECHNICAL_ACCEPTANCE.md`。 |
 | 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 进行中 | 进入门禁：迭代 3 验收通过；验收门禁：1:1 任务关系和时长聚合场景通过，且该切片 UAT 通过 | **迭代 3 已完成，用户确认 3B UAT 通过**；4-1 已完成（后端 132 passed，前端 40 passed），4-2 已完成（后端 136 passed，前端 46 passed），4-3 已完成（后端 143 passed，前端 54 passed，容器 smoke 通过），4-4 已完成（后端 150 passed，前端 64 passed，lint/build/format:check 通过）；当前执行 4-5 用户 UAT；原型绑定 UI-03 的 Goal/计划/任务/日志子流程。 |
-| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 待开始 | 进入门禁：迭代 4 验收通过；验收门禁：旧版本不回流、Review 历史闭环，且该切片 UAT 通过 | 依赖迭代 4 完成；原型绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案 |
+| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 进行中 | 进入门禁：迭代 4 验收通过；验收门禁：旧版本不回流、Review 历史闭环，且该切片 UAT 通过 | **用户已明确授权 override 迭代 5 进入门禁**：4-5 UAT 稍后执行，当前先行启动 5-1 Evidence 草稿/提交/版本；原型绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案 |
 | 6 | **6A**：UI-01 我的成长看板，以及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；**6B**：UI-05 团队能力分析、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收 | 待开始 | 6A 进入门禁：迭代 5 验收通过；6A 验收门禁：UI-01 与 UI-02～UI-04 视觉交互整合通过；6B 进入门禁：6A 通过；6B 验收门禁：五张原型截图与集成 UAT 通过 | 依赖迭代 5 完成；6A 完成后进入 6B；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过 |
 | 7 | 种子数据、端到端回归、容器重启、日志与文档硬化 | 待开始 | 进入门禁：迭代 6 验收通过；验收门禁：端到端场景全通过，完成最终 UAT/发布决策 | 依赖迭代 6 完成 |
 
@@ -39,9 +39,10 @@
 
 ## 3. 当前快照
 
-- **当前迭代**：迭代 4 状态为“进行中”。**迭代 3 已完成，用户确认 3B UAT 通过**；4-1/4-2/4-3/4-4 均已完成并通过验证；当前执行 4-5 迭代 4 用户 UAT。迭代 4 业务代码、API 或页面均按子任务授权实施，不跨子任务预装范围。
+- **当前迭代**：迭代 4 状态为“进行中”，迭代 5 状态为“进行中”。**迭代 3 已完成，用户确认 3B UAT 通过**；4-1/4-2/4-3/4-4 均已完成并通过验证；4-5 UAT 用户选择稍后验收并已授权 override 迭代 5 进入门禁，当前启动 5-1。迭代 4/5 业务代码、API 或页面均按子任务授权实施，不跨子任务预装范围。
 - **迭代 3 子阶段**：3A、3B 全部完成，3B-5 用户切片 UAT 已通过。
-- **迭代 4 子阶段**：4-1 Growth Goal 与 Gap 纳入已完成；4-2 年度成长计划与 Plan Item 生成已完成；4-3 Learning Task 1:1 与执行管理已完成；4-4 Learning Progress Log 与时长聚合已完成；4-5 迭代 4 UAT 进行中。
+- **迭代 4 子阶段**：4-1 Growth Goal 与 Gap 纳入已完成；4-2 年度成长计划与 Plan Item 生成已完成；4-3 Learning Task 1:1 与执行管理已完成；4-4 Learning Progress Log 与时长聚合已完成；4-5 迭代 4 UAT 进行中（用户授权延后验收）。
+- **迭代 5 子阶段**：5-1 Evidence 草稿、提交与版本进行中；5-2 Buddy Evidence Review 与反馈历史待开始；5-3 Capability Profile 成长档案聚合待开始；5-4 迭代 5 UAT 待开始。
 - **迭代 6 子阶段**：6A 负责 UI-01 及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；6B 负责 UI-05、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收；6B 依赖 6A；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过。
 - **UAT 节奏**：迭代 3 起，每个业务纵向切片在 Codex 验收通过后进入用户 UAT；UAT 反馈只修复当前已授权切片范围，不新增业务规则。
 - **迭代 3A 完成边界**：在迭代 2 匿名只读目录基础上，新增本地 HttpOnly Cookie 会话、`/login` 登录页、五个本地 UAT 演示账号（密码均为 `123456`）、N:M 有效角色与 Buddy 关系基础。不含 Assessment、Gap、Goal、Plan、Task、Evidence、Review、Admin 管理页、SSO、注册、密码重置。
@@ -68,7 +69,7 @@
 
 ## 5. 下一个授权动作
 
-**用户已确认 3B UAT 通过，当前授权启动迭代 4；4-1、4-2、4-3、4-4 已完成并通过本窗口审核，正在执行 4-5 用户 UAT。**
+**用户已确认 3B UAT 通过，当前授权启动迭代 4；4-1、4-2、4-3、4-4 已完成并通过本窗口审核；4-5 UAT 用户选择延后验收，并已明确授权 override 迭代 5 进入门禁，当前启动 5-1。**
 
 当前状态：
 
@@ -78,7 +79,12 @@
   - 4-2 年度成长计划与 Plan Item 生成（已完成）
   - 4-3 Learning Task 1:1 与执行管理（已完成）
   - 4-4 Learning Progress Log 与时长聚合（已完成）
-  - 4-5 迭代 4 UAT（进行中，待用户确认）
+  - 4-5 迭代 4 UAT（进行中，待用户确认，延后验收）
+- **迭代 5 进行中**：
+  - 5-1 Evidence 草稿、提交与版本（进行中）
+  - 5-2 Buddy Evidence Review 与反馈历史（待开始）
+  - 5-3 Capability Profile 成长档案聚合（待开始）
+  - 5-4 迭代 5 UAT（待开始）
 
 ---
 
