@@ -1150,3 +1150,272 @@ def list_evidence_reviews_for_task(
         }
         for row in rows
     ]
+
+
+def _assert_profile_view_permission(
+    connection: psycopg.Connection,
+    viewer_id: int,
+    viewer_roles: list[str],
+    member_id: int,
+) -> None:
+    if "Admin" in viewer_roles or "Leader" in viewer_roles:
+        return
+    if viewer_id == member_id and "Member" in viewer_roles:
+        return
+    if "Buddy" in viewer_roles and is_member_assigned_to_buddy(
+        connection, member_id, viewer_id
+    ):
+        return
+    raise PermissionError("insufficient permissions to view capability profile")
+
+
+def _profile_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "year": row[2],
+        "status": row[3],
+        "created_at": row[4],
+        "updated_at": row[5],
+    }
+
+
+def _assessment_review_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "assessment_id": row[1],
+        "sequence": row[2],
+        "buddy_id": row[3],
+        "conclusion": row[4],
+        "feedback": row[5],
+        "reviewed_at": row[6],
+        "status": row[7],
+    }
+
+
+def _annual_plan_with_items_for_member(
+    connection: psycopg.Connection, member_id: int, year: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT id, member_id, year, plan_cycle, status, start_date, end_date, created_at
+        FROM annual_growth_plan
+        WHERE member_id = %s AND year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    if row is None:
+        return None
+    items = connection.execute(
+        """
+        SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
+               pi.current_level, pi.target_level, pi.priority, pi.learning_material,
+               pi.learning_task_content, pi.expected_output, pi.estimated_hours,
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        ORDER BY pi.l3_code
+        """,
+        (member_id, year),
+    ).fetchall()
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "year": row[2],
+        "plan_cycle": row[3],
+        "status": row[4],
+        "start_date": row[5],
+        "end_date": row[6],
+        "created_at": row[7],
+        "items": [_plan_item_row(item) for item in items],
+    }
+
+
+def _learning_task_with_logs_and_evidences(
+    connection: psycopg.Connection, plan_item_id: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
+               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
+               lt.completion_quality, lt.review_conclusion, lt.next_action
+        FROM learning_task lt
+        WHERE lt.plan_item_id = %s
+        """,
+        (plan_item_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    task_id = row[0]
+    logs = connection.execute(
+        """
+        SELECT id, task_id, record_date, actual_hours, note, recorder_id
+        FROM learning_progress_log
+        WHERE task_id = %s
+        ORDER BY record_date DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    evidences = connection.execute(
+        """
+        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
+               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at,
+               er.id, er.status, er.conclusion, er.feedback, er.reviewed_at
+        FROM evidence e
+        LEFT JOIN evidence_review er ON er.evidence_id = e.id
+        WHERE e.learning_task_id = %s
+        ORDER BY e.version_number DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    return {
+        **_learning_task_row(row),
+        "progress_logs": [_progress_log_row(log) for log in logs],
+        "evidences": [
+            {
+                **_evidence_row(evidence[:9]),
+                "review": (
+                    {
+                        "id": evidence[9],
+                        "status": evidence[10],
+                        "conclusion": evidence[11],
+                        "feedback": evidence[12],
+                        "reviewed_at": evidence[13],
+                    }
+                    if evidence[9] is not None
+                    else None
+                ),
+            }
+            for evidence in evidences
+        ],
+    }
+
+
+def get_capability_profile(
+    connection: psycopg.Connection,
+    viewer_id: int,
+    viewer_roles: list[str],
+    member_id: int,
+    year: int,
+) -> dict[str, object] | None:
+    member_row = connection.execute(
+        "SELECT id, username, full_name FROM tcp_user WHERE id = %s",
+        (member_id,),
+    ).fetchone()
+    if member_row is None:
+        return None
+
+    _assert_profile_view_permission(connection, viewer_id, viewer_roles, member_id)
+
+    row = connection.execute(
+        """
+        SELECT id, member_id, year, status, created_at, updated_at
+        FROM capability_profile
+        WHERE member_id = %s AND year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    if row is None:
+        row = connection.execute(
+            """
+            INSERT INTO capability_profile (member_id, year, status)
+            VALUES (%s, %s, '已生成')
+            RETURNING id, member_id, year, status, created_at, updated_at
+            """,
+            (member_id, year),
+        ).fetchone()
+        assert row is not None
+    profile = _profile_row(row)
+
+    assessment_rows = connection.execute(
+        """
+        SELECT id, member_id, year, version, assessment_type, status,
+               created_at, submitted_at, archived_at
+        FROM assessment
+        WHERE member_id = %s AND year = %s
+        ORDER BY created_at DESC
+        """,
+        (member_id, year),
+    ).fetchall()
+    assessments: list[dict[str, object]] = []
+    for assessment_row in assessment_rows:
+        assessment_id = assessment_row[0]
+        review_rows = connection.execute(
+            """
+            SELECT id, assessment_id, sequence, buddy_id, conclusion,
+                   feedback, reviewed_at, status
+            FROM assessment_review
+            WHERE assessment_id = %s
+            ORDER BY sequence
+            """,
+            (assessment_id,),
+        ).fetchall()
+        assessments.append(
+            {
+                "id": assessment_row[0],
+                "member_id": assessment_row[1],
+                "year": assessment_row[2],
+                "version": assessment_row[3],
+                "assessment_type": assessment_row[4],
+                "status": assessment_row[5],
+                "created_at": assessment_row[6],
+                "submitted_at": assessment_row[7],
+                "archived_at": assessment_row[8],
+                "reviews": [
+                    _assessment_review_row(review_row) for review_row in review_rows
+                ],
+            }
+        )
+
+    annual_plan = _annual_plan_with_items_for_member(connection, member_id, year)
+    if annual_plan is not None:
+        enriched_items = []
+        for item in annual_plan["items"]:
+            task = _learning_task_with_logs_and_evidences(connection, int(item["id"]))
+            enriched_items.append({**item, "learning_task": task})
+        annual_plan["items"] = enriched_items
+
+    total_hours_row = connection.execute(
+        """
+        SELECT COALESCE(SUM(lpl.actual_hours), 0)
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    total_learning_hours = int(total_hours_row[0]) if total_hours_row else 0
+
+    evidence_status_rows = connection.execute(
+        """
+        SELECT e.status, COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        GROUP BY e.status
+        """,
+        (member_id, year),
+    ).fetchall()
+    evidence_count_by_status = {
+        str(status_row[0]): int(status_row[1]) for status_row in evidence_status_rows
+    }
+
+    return {
+        **profile,
+        "member": {
+            "id": member_row[0],
+            "username": member_row[1],
+            "full_name": member_row[2],
+        },
+        "assessments": assessments,
+        "annual_plan": annual_plan,
+        "statistics": {
+            "total_learning_hours": total_learning_hours,
+            "evidence_count_by_status": evidence_count_by_status,
+        },
+    }
