@@ -5,8 +5,11 @@ from .gate import check_annual_plan_gate
 from .repository import (
     create_growth_goal,
     delete_growth_goal,
+    generate_plan_items,
+    get_annual_plan_with_items,
     list_eligible_gaps,
     list_growth_goals,
+    list_plan_items,
 )
 
 planning_router = APIRouter(prefix="/api/planning")
@@ -95,3 +98,34 @@ def remove_growth_goal(
             detail=str(exc),
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@planning_router.get("/annual-plan")
+def get_annual_plan(
+    user: CurrentUser, connection: Connection, year: int
+) -> dict[str, object] | None:
+    _require_member(user)
+    return get_annual_plan_with_items(connection, int(user["id"]), year)
+
+
+@planning_router.post("/annual-plan/generate")
+def post_generate_plan_items(
+    user: CurrentUser, connection: Connection
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        items = generate_plan_items(connection, int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return {"created": len(items), "items": items}
+
+
+@planning_router.get("/plan-items")
+def get_plan_items(
+    user: CurrentUser, connection: Connection
+) -> list[dict[str, object]]:
+    _require_member(user)
+    return list_plan_items(connection, int(user["id"]))
