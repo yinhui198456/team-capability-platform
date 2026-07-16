@@ -1,0 +1,236 @@
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
+
+from ..access.policies import Connection, CurrentUser, require_any_role
+from . import policies
+from .repository import (
+    archive_assessment,
+    create_assessment_draft,
+    get_assessment,
+    get_assessment_reviews,
+    list_member_assessments,
+    save_assessment_draft,
+    submit_assessment,
+)
+
+
+class CreateAssessmentRequest(BaseModel):
+    year: int
+    assessment_type: str = Field(default="年度")
+
+
+class DetailItem(BaseModel):
+    l3_code: str
+    current_level: int = Field(ge=1, le=5)
+    target_level: int = Field(ge=1, le=5)
+    evidence_note: str | None = None
+    plan_candidate: bool = False
+
+
+class SaveDraftRequest(BaseModel):
+    details: list[DetailItem]
+
+
+assessment_router = APIRouter(prefix="/api/assessments")
+
+
+@assessment_router.post("/")
+def create_assessment(
+    request: CreateAssessmentRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, int]:
+    if "Member" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    assessment_id = create_assessment_draft(
+        connection,
+        int(user["id"]),
+        request.year,
+        request.assessment_type,
+    )
+    return {"id": assessment_id}
+
+
+@assessment_router.get("/")
+def list_assessments(
+    user: CurrentUser,
+    connection: Connection,
+) -> list[dict[str, object]]:
+    roles: list[str] = user["roles"]
+
+    if "Admin" in roles or "Leader" in roles:
+        # ponytail: MVP single-team leader view returns all assessments.
+        rows = connection.execute(
+            """
+            SELECT id, member_id, year, version, assessment_type, status,
+                   created_at, submitted_at, archived_at
+            FROM assessment
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "member_id": row[1],
+                "year": row[2],
+                "version": row[3],
+                "assessment_type": row[4],
+                "status": row[5],
+                "created_at": row[6],
+                "submitted_at": row[7],
+                "archived_at": row[8],
+            }
+            for row in rows
+        ]
+
+    if "Buddy" in roles:
+        from ..access.repository import get_assigned_members
+
+        assigned = get_assigned_members(connection, int(user["id"]))
+        member_ids = [int(member["id"]) for member in assigned]
+        # Buddy is often also a Member; include own assessments too if Member.
+        if "Member" in roles:
+            member_ids.append(int(user["id"]))
+        if not member_ids:
+            return []
+        rows = connection.execute(
+            f"""
+            SELECT id, member_id, year, version, assessment_type, status,
+                   created_at, submitted_at, archived_at
+            FROM assessment
+            WHERE member_id = ANY(%s)
+            ORDER BY created_at DESC
+            """,
+            (member_ids,),
+        ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "member_id": row[1],
+                "year": row[2],
+                "version": row[3],
+                "assessment_type": row[4],
+                "status": row[5],
+                "created_at": row[6],
+                "submitted_at": row[7],
+                "archived_at": row[8],
+            }
+            for row in rows
+        ]
+
+    # Member only
+    return list_member_assessments(connection, int(user["id"]))
+
+
+@assessment_router.get("/{assessment_id}")
+def get_assessment_detail(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if not policies.can_view_assessment(connection, user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return assessment
+
+
+@assessment_router.put("/{assessment_id}/draft")
+def save_draft(
+    assessment_id: int,
+    request: SaveDraftRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, bool]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if not policies.can_member_edit(user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    details: list[dict[str, object]] = [
+        {
+            "l3_code": item.l3_code,
+            "current_level": item.current_level,
+            "target_level": item.target_level,
+            "evidence_note": item.evidence_note,
+            "plan_candidate": item.plan_candidate,
+        }
+        for item in request.details
+    ]
+    try:
+        save_assessment_draft(connection, assessment_id, int(user["id"]), details)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True}
+
+
+@assessment_router.post("/{assessment_id}/submit")
+def submit(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+    _: Any = require_any_role("Member"),
+) -> dict[str, bool]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if user["id"] != assessment["member_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    try:
+        submit_assessment(connection, assessment_id, int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True}
+
+
+@assessment_router.get("/{assessment_id}/history")
+def get_history(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+) -> list[dict[str, object]]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if not policies.can_view_assessment(connection, user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return get_assessment_reviews(connection, assessment_id)
+
+
+# ponytail: archive remains a repository function only; not exposed via API.

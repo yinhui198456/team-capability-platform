@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .access.api import router as access_router
 from .access.schema import create_access_schema
 from .access.seed import seed_demo_accounts
+from .assessment import assessment_router, create_assessment_schema
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized
 from .settings import settings
@@ -19,6 +20,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     with psycopg.connect(settings.database_url) as connection:
         ensure_catalog_initialized(connection, Path("/app/capability-model"))
         create_access_schema(connection)
+        create_assessment_schema(connection)
         seed_demo_accounts(connection)
     yield
 
@@ -26,6 +28,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="TCP Backend", version="0.1.0", lifespan=lifespan)
 app.include_router(catalog_router)
 app.include_router(access_router)
+app.include_router(assessment_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
