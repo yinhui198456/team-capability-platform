@@ -8,7 +8,8 @@ def can_member_view(user: dict[str, object], assessment: dict[str, object]) -> b
 
 
 def can_member_edit(user: dict[str, object], assessment: dict[str, object]) -> bool:
-    return user["id"] == assessment["member_id"] and assessment["status"] == "草稿"
+    # ponytail: status validation (draft or needs-adjustment) lives in repository.
+    return user["id"] == assessment["member_id"]
 
 
 def can_buddy_view(
@@ -31,6 +32,9 @@ def can_buddy_review(
     return is_member_assigned_to_buddy(
         connection, int(assessment["member_id"]), int(user["id"])
     )
+
+
+def can_leader_view(user: dict[str, object], assessment: dict[str, object]) -> bool:
     return "Leader" in user["roles"]
 
 

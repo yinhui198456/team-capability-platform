@@ -8,7 +8,6 @@ import pytest
 from app.access.repository import assign_role, create_buddy_relationship, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    create_assessment_draft,
     get_assessment,
     get_assessment_reviews,
 )
@@ -153,9 +152,7 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(
-    connection: psycopg.Connection, username: str
-) -> int:
+def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
     cookies = _login(connection, username)
     status, body, _ = _request(
         "POST", "/api/assessments", {"year": 2026}, cookies=cookies
@@ -229,18 +226,12 @@ def test_buddy_approve_archives_assessment(
 def test_buddy_request_adjustment_and_resubmit(
     assessment_schema: psycopg.Connection,
 ) -> None:
-    member_id = _create_test_user(
-        assessment_schema, "member_adjust", ["Member"]
-    )
-    buddy_id = _create_test_user(
-        assessment_schema, "buddy_adjust", ["Buddy"]
-    )
+    member_id = _create_test_user(assessment_schema, "member_adjust", ["Member"])
+    buddy_id = _create_test_user(assessment_schema, "buddy_adjust", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
-        assessment_schema, "member_adjust"
-    )
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_adjust")
 
     buddy_cookies = _login(assessment_schema, "buddy_adjust")
     status, pending, _ = _request(
@@ -320,15 +311,11 @@ def test_non_assigned_buddy_cannot_review(
 ) -> None:
     member_id = _create_test_user(assessment_schema, "member_other", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_assigned", ["Buddy"])
-    other_buddy_id = _create_test_user(
-        assessment_schema, "buddy_other", ["Buddy"]
-    )
+    _create_test_user(assessment_schema, "buddy_other", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
-        assessment_schema, "member_other"
-    )
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_other")
 
     assigned_cookies = _login(assessment_schema, "buddy_assigned")
     status, pending, _ = _request(
@@ -354,9 +341,7 @@ def test_member_cannot_submit_review(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
-        assessment_schema, "member_review"
-    )
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_review")
 
     buddy_cookies = _login(assessment_schema, "buddy_review")
     status, pending, _ = _request(
@@ -413,9 +398,7 @@ def test_invalid_conclusion_rejected(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
-        assessment_schema, "member_invalid"
-    )
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_invalid")
 
     buddy_cookies = _login(assessment_schema, "buddy_invalid")
     status, pending, _ = _request(

@@ -294,4 +294,4 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
         {"details": []},
         cookies=cookies,
     )
-    assert status == 403
+    assert status == 400
