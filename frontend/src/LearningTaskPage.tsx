@@ -3,13 +3,18 @@ import { useEffect, useState } from 'react'
 import { me, type User } from './access'
 import {
   createLearningTask,
+  createProgressLog,
+  deleteProgressLog,
   getAnnualPlan,
+  getMonthlyHours,
   listLearningTasks,
+  listProgressLogs,
   updateLearningTask,
   type AnnualPlan,
   type LearningTask,
   type LearningTaskStatus,
   type PlanItem,
+  type ProgressLog,
 } from './planning'
 
 const LEARNING_TASK_STATUSES: LearningTaskStatus[] = [
@@ -22,10 +27,29 @@ const LEARNING_TASK_STATUSES: LearningTaskStatus[] = [
   '取消',
 ]
 
+type LogFormState = {
+  record_date: string
+  actual_hours: string
+  note: string
+}
+
+function emptyLogForm(): LogFormState {
+  return { record_date: '', actual_hours: '', note: '' }
+}
+
+function sumHours(logs: ProgressLog[]): number {
+  return logs.reduce((sum, log) => sum + log.actual_hours, 0)
+}
+
 export function LearningTaskPage() {
   const [user, setUser] = useState<User | null>(null)
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<LearningTask[]>([])
+  const [taskLogs, setTaskLogs] = useState<Record<number, ProgressLog[]>>({})
+  const [monthlyHours, setMonthlyHours] = useState<
+    { month: number; total_hours: number }[]
+  >([])
+  const [logForms, setLogForms] = useState<Record<number, LogFormState>>({})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -41,6 +65,20 @@ export function LearningTaskPage() {
       ])
       setPlan(planResult)
       setTasks(taskList)
+
+      const initialForms: Record<number, LogFormState> = {}
+      const logsEntries = await Promise.all(
+        taskList.map(async (task) => {
+          initialForms[task.id] = emptyLogForm()
+          const logs = await listProgressLogs(task.id).catch(() => [])
+          return [task.id, logs] as [number, ProgressLog[]]
+        }),
+      )
+      setLogForms(initialForms)
+      setTaskLogs(Object.fromEntries(logsEntries))
+
+      const summary = await getMonthlyHours(2026).catch(() => [])
+      setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
     } finally {
@@ -88,6 +126,46 @@ export function LearningTaskPage() {
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新失败')
+    }
+  }
+
+  function setLogForm(taskId: number, patch: Partial<LogFormState>) {
+    setLogForms((prev) => ({
+      ...prev,
+      [taskId]: { ...(prev[taskId] ?? emptyLogForm()), ...patch },
+    }))
+  }
+
+  async function handleAddLog(task: LearningTask) {
+    setError('')
+    const form = logForms[task.id] ?? emptyLogForm()
+    const hours = Number(form.actual_hours)
+    if (!form.record_date || Number.isNaN(hours) || hours < 0) {
+      setError('请填写有效的日期和时长')
+      return
+    }
+    try {
+      await createProgressLog(task.id, form.record_date, hours, form.note)
+      setLogForms((prev) => ({ ...prev, [task.id]: emptyLogForm() }))
+      const logs = await listProgressLogs(task.id)
+      setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
+      const summary = await getMonthlyHours(2026)
+      setMonthlyHours(summary)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '添加日志失败')
+    }
+  }
+
+  async function handleDeleteLog(task: LearningTask, logId: number) {
+    setError('')
+    try {
+      await deleteProgressLog(logId)
+      const logs = await listProgressLogs(task.id)
+      setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
+      const summary = await getMonthlyHours(2026)
+      setMonthlyHours(summary)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除日志失败')
     }
   }
 
@@ -208,6 +286,86 @@ export function LearningTaskPage() {
                 />
               </label>
             </div>
+
+            <div className="progress-log-section">
+              <h3>学习日志</h3>
+              <p className="muted">
+                总时长：{sumHours(taskLogs[task.id] ?? [])} 小时
+              </p>
+              <ul className="progress-log-list">
+                {(taskLogs[task.id] ?? []).map((log) => (
+                  <li key={log.id} className="progress-log-item">
+                    <span className="progress-log-date">{log.record_date}</span>
+                    <span className="progress-log-hours">
+                      {log.actual_hours} 小时
+                    </span>
+                    {log.note && (
+                      <span className="progress-log-note">{log.note}</span>
+                    )}
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLog(task, log.id)}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {canManage && (
+                <div className="progress-log-form">
+                  <label>
+                    日期
+                    <input
+                      type="date"
+                      value={logForms[task.id]?.record_date ?? ''}
+                      onChange={(event) =>
+                        setLogForm(task.id, { record_date: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    时长（小时）
+                    <input
+                      type="number"
+                      min={0}
+                      value={logForms[task.id]?.actual_hours ?? ''}
+                      onChange={(event) =>
+                        setLogForm(task.id, {
+                          actual_hours: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    备注
+                    <input
+                      value={logForms[task.id]?.note ?? ''}
+                      onChange={(event) =>
+                        setLogForm(task.id, { note: event.target.value })
+                      }
+                    />
+                  </label>
+                  <button type="button" onClick={() => handleAddLog(task)}>
+                    添加日志
+                  </button>
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <h2>月度时长</h2>
+      {monthlyHours.length === 0 && (
+        <p className="muted">2026 年暂无学习时长记录。</p>
+      )}
+      <ul className="monthly-hours-list">
+        {monthlyHours.map((item) => (
+          <li key={item.month} className="monthly-hours-item">
+            <span className="month">{item.month} 月</span>
+            <span className="total-hours">{item.total_hours} 小时</span>
           </li>
         ))}
       </ul>

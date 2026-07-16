@@ -193,6 +193,26 @@ export async function getLearningTask(task_id: number): Promise<LearningTask> {
   })
 }
 
+export type ProgressLog = {
+  id: number
+  task_id: number
+  record_date: string
+  actual_hours: number
+  note: string | null
+  recorder_id: number
+}
+
+export type ProgressLogUpdate = Partial<{
+  record_date: string
+  actual_hours: number
+  note: string | null
+}>
+
+export type MonthlyHours = {
+  month: number
+  total_hours: number
+}
+
 export type LearningTaskUpdate = Partial<{
   status: LearningTaskStatus
   actual_start_date: string | null
@@ -211,5 +231,51 @@ export async function updateLearningTask(
     `/api/planning/learning-tasks/${task_id}`,
     { method: 'PUT' },
     fields,
+  )
+}
+
+export async function createProgressLog(
+  task_id: number,
+  record_date: string,
+  actual_hours: number,
+  note: string,
+): Promise<ProgressLog> {
+  return request<ProgressLog>(
+    `/api/planning/learning-tasks/${task_id}/progress-logs`,
+    { method: 'POST' },
+    { record_date, actual_hours, note },
+  )
+}
+
+export async function listProgressLogs(
+  task_id: number,
+): Promise<ProgressLog[]> {
+  return request<ProgressLog[]>(
+    `/api/planning/learning-tasks/${task_id}/progress-logs`,
+    { method: 'GET' },
+  )
+}
+
+export async function updateProgressLog(
+  log_id: number,
+  fields: ProgressLogUpdate,
+): Promise<ProgressLog> {
+  return request<ProgressLog>(
+    `/api/planning/progress-logs/${log_id}`,
+    { method: 'PUT' },
+    fields,
+  )
+}
+
+export async function deleteProgressLog(log_id: number): Promise<void> {
+  await request<void>(`/api/planning/progress-logs/${log_id}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
+  return request<MonthlyHours[]>(
+    `/api/planning/progress-logs/monthly?year=${year}`,
+    { method: 'GET' },
   )
 }

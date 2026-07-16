@@ -8,6 +8,7 @@ import { GapPage } from './GapPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
 import { LearningTaskPage } from './LearningTaskPage'
 import { LoginPage } from './LoginPage'
+import { MonthlyReviewPage } from './MonthlyReviewPage'
 import {
   allL3,
   enabledDomains,
@@ -268,6 +269,7 @@ export function App() {
     pathname !== '/growth/goals' &&
     pathname !== '/growth/annual-plan' &&
     pathname !== '/growth/tasks' &&
+    pathname !== '/growth/review/monthly' &&
     pathname !== '/mentoring/assessment-review'
   ) {
     return (
@@ -325,6 +327,12 @@ export function App() {
           学习任务
         </a>
         <a
+          className={pathname === '/growth/review/monthly' ? 'active' : ''}
+          href="/growth/review/monthly"
+        >
+          月度复盘
+        </a>
+        <a
           className={
             pathname === '/mentoring/assessment-review' ? 'active' : ''
           }
@@ -353,6 +361,8 @@ export function App() {
         <AnnualPlanPage />
       ) : pathname === '/growth/tasks' ? (
         <LearningTaskPage />
+      ) : pathname === '/growth/review/monthly' ? (
+        <MonthlyReviewPage />
       ) : pathname === '/mentoring/assessment-review' ? (
         <AssessmentReviewPage />
       ) : (
