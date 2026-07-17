@@ -7,6 +7,7 @@ export type EligibleGap = {
   id: number
   assessment_id: number
   l3_code: string
+  l3_name?: string | null
   current_level: number
   target_level: number
   gap_value: number
@@ -58,6 +59,7 @@ export type LearningTask = {
   id: number
   plan_item_id: number
   l3_code: string
+  l3_name?: string | null
   status: LearningTaskStatus
   actual_start_date: string | null
   actual_end_date: string | null

@@ -177,10 +177,11 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             "通过",
             "演示 Evidence 通过",
         )
+        # 保持任务为进行中，使 UI-01 Member Dashboard 的“当前学习任务”表格有示例数据。
         update_learning_task(
             connection,
             member_id,
             task_id,
-            {"status": "已完成", "actual_hours": 4, "review_conclusion": "通过"},
+            {"status": "进行中", "actual_hours": 4, "review_conclusion": None},
         )
         get_capability_profile(connection, member_id, ["Member"], member_id, year)
