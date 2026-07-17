@@ -442,6 +442,15 @@ def test_submit_review_approved_archives_evidence(
     assert status == 200
     assert len(history) == 1
     assert history[0]["conclusion"] == "通过"
+
+    status, buddy_history, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}/evidence-reviews",
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert len(buddy_history) == 1
+    assert buddy_history[0]["conclusion"] == "通过"
     assert history[0]["feedback"] == "符合预期"
     assert history[0]["reviewed_at"] is not None
 
@@ -503,7 +512,7 @@ def test_submit_review_dismissed_sets_evidence_status(
 def test_non_assigned_buddy_cannot_submit_review(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
-    _, buddy_cookies, _, _ = _seed_submitted_evidence(
+    _, buddy_cookies, task_id, _ = _seed_submitted_evidence(
         evidence_review_schema, "member_owned", "buddy_assigned"
     )
 
@@ -520,6 +529,13 @@ def test_non_assigned_buddy_cannot_submit_review(
         "POST",
         f"/api/planning/evidence-reviews/{review_id}",
         {"conclusion": "通过", "feedback": "越权"},
+        cookies=other_buddy_cookies,
+    )
+    assert status in (403, 404)
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}/evidence-reviews",
         cookies=other_buddy_cookies,
     )
     assert status in (403, 404)

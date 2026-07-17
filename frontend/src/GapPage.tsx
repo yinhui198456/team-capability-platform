@@ -93,6 +93,10 @@ export function GapPage() {
   }
 
   const canEdit = user?.roles.includes('Member') ?? false
+  const highPriorityCount = gaps.filter((gap) => gap.priority === '高').length
+  const candidateCount = gaps.filter((gap) => gap.plan_candidate).length
+  const totalGap = gaps.reduce((sum, gap) => sum + gap.gap_value, 0)
+  const averageGap = gaps.length === 0 ? 0 : totalGap / gaps.length
 
   async function handleDryRun() {
     setDryRunMessage('')
@@ -108,8 +112,17 @@ export function GapPage() {
   if (loading) return <p className="muted">加载中…</p>
 
   return (
-    <section className="page">
-      <h1>Gap 分析</h1>
+    <section className="page gap-analysis-page">
+      <header className="page-heading gap-heading">
+        <div>
+          <p className="eyebrow">能力管理 / 自评差距</p>
+          <h1>Gap 分析</h1>
+          <p className="muted">以已提交的年度自评为基线，确认优先级与计划候选项。</p>
+        </div>
+        <button type="button" onClick={handleDryRun}>
+          模拟生成年度计划
+        </button>
+      </header>
       {eligibility?.eligible === false && (
         <p className="warning" role="alert">
           年度计划生成受限：{eligibility.reason}
@@ -125,51 +138,34 @@ export function GapPage() {
           {dryRunMessage}
         </p>
       )}
-      <button type="button" onClick={handleDryRun}>
-        模拟生成年度计划
-      </button>
-      <section aria-label="Gap 概览" className="gap-overview">
-        {gaps.length === 0 && <p className="muted">暂无 Gap 记录。</p>}
-        <ul className="gap-list">
-          {gaps.map((gap) => (
-            <li key={gap.id} className="gap-item">
-              <span className="gap-l3">{gap.l3_code}</span>
-              <span className="gap-levels">
-                当前 {gap.current_level} → 目标 {gap.target_level}（Gap{' '}
-                {gap.gap_value}）
-              </span>
-              <label className="gap-priority">
-                优先级
-                <select
-                  value={gap.priority}
-                  onChange={(event) =>
-                    handleChange(gap, {
-                      priority: event.target.value as Gap['priority'],
-                    })
-                  }
-                  disabled={!canEdit}
-                >
-                  {PRIORITIES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox gap-candidate">
-                <input
-                  type="checkbox"
-                  checked={gap.plan_candidate}
-                  onChange={(event) =>
-                    handleChange(gap, { plan_candidate: event.target.checked })
-                  }
-                  disabled={!canEdit}
-                />
-                纳入计划候选
-              </label>
-            </li>
-          ))}
-        </ul>
+      <section className="gap-analysis-layout">
+        <section aria-label="Gap 概览" className="gap-overview">
+          <div className="card-heading"><h2>能力差距明细</h2><p className="muted">候选不等于正式计划；仍需完成 Buddy Review。</p></div>
+          {gaps.length === 0 && <p className="muted">暂无 Gap 记录。</p>}
+          <ul className="gap-list">
+            {gaps.map((gap) => (
+              <li key={gap.id} className="gap-item">
+                <span className="gap-l3">{gap.l3_code}</span>
+                <span className="gap-levels">当前 {gap.current_level} → 目标 {gap.target_level}（Gap {gap.gap_value}）</span>
+                <label className="gap-priority">优先级<select value={gap.priority} onChange={(event) => handleChange(gap, { priority: event.target.value as Gap['priority'] })} disabled={!canEdit}>{PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+                <label className="checkbox gap-candidate"><input type="checkbox" checked={gap.plan_candidate} onChange={(event) => handleChange(gap, { plan_candidate: event.target.checked })} disabled={!canEdit} />纳入计划候选</label>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <aside className="gap-sidebar" aria-label="Gap 统计与计划门禁">
+          <h2>Gap 统计</h2>
+          <dl className="gap-stats">
+            <div><dt>能力项</dt><dd>{gaps.length}</dd></div>
+            <div><dt>平均 Gap</dt><dd>{averageGap.toFixed(1)}</dd></div>
+            <div><dt>高优先级</dt><dd>{highPriorityCount}</dd></div>
+            <div><dt>计划候选</dt><dd>{candidateCount}</dd></div>
+          </dl>
+          <section className="gap-gate-summary">
+            <h3>计划门禁</h3>
+            <p>{eligibility?.eligible ? 'Review 已闭环，可生成年度计划。' : eligibility?.reason ?? '正在读取年度计划资格。'}</p>
+          </section>
+        </aside>
       </section>
     </section>
   )

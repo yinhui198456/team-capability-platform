@@ -149,7 +149,9 @@ describe('ProfilePage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('成长档案')).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
     })
 
     expect(screen.getByText(/Member（member）/)).toBeTruthy()
@@ -195,7 +197,9 @@ describe('ProfilePage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('成长档案')).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
     })
 
     expect(screen.getByText(/暂无成长档案数据/)).toBeTruthy()

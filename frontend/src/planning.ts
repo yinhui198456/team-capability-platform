@@ -72,14 +72,26 @@ export type LearningTask = {
   plan_item_learning_task_content: string | null
   plan_item_expected_output: string | null
   plan_item_estimated_hours: string | null
+  plan_item_target_month?: number | null
 }
 
 export type MemberDashboard = {
   year: number
   summary: {
-    total_learning_hours: number
+    annual_actual_hours: number
+    annual_planned_hours: number
+    current_month_actual_hours: number
+    current_month_planned_hours: number
     completed_task_count: number
     pending_evidence_count: number
+  }
+  plan_progress: {
+    total: number
+    未开始: number
+    进行中: number
+    '待 Evidence Review': number
+    已完成: number
+    延期: number
   }
   domain_radar: { domain_code: string; score: number }[]
   gaps: EligibleGap[]

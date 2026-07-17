@@ -45,7 +45,7 @@ describe('GapPage gate', () => {
       expect(screen.getByText(/年度计划生成受限/)).toBeTruthy()
     })
 
-    expect(screen.getByText(/暂无已提交的能力评估/)).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('暂无已提交的能力评估')
   })
 
   it('dry run button shows success message when eligible', async () => {

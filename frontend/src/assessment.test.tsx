@@ -77,7 +77,7 @@ describe('AssessmentPage', () => {
       }),
     ])
 
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
     await waitFor(() => {
       expect(screen.getByText('已提交，等待 Buddy 复核')).toBeTruthy()
     })
@@ -116,10 +116,10 @@ describe('AssessmentPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '提交' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
     await waitFor(() => {
       expect(screen.getByText('已提交，等待 Buddy 复核')).toBeTruthy()
     })
@@ -161,7 +161,52 @@ describe('AssessmentPage', () => {
 
     const handoffLink = screen.getByRole('link', { name: '查看 Gap 分析' })
     expect(handoffLink.getAttribute('href')).toBe('/capability/gap')
-    expect(screen.getByRole('button', { name: '提交' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
+  })
+
+  it('renders the UI-02 assessment header and L3 table structure', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '草稿',
+        created_at: '2026-01-01T00:00:00Z',
+        submitted_at: null,
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7,
+      member_id: 1,
+      year: 2026,
+      version: 1,
+      assessment_type: '年度',
+      status: '草稿',
+      created_at: '2026-01-01T00:00:00Z',
+      submitted_at: null,
+      archived_at: null,
+      details: [
+        {
+          l3_code: 'P01-L2A-L3A',
+          current_level: 2,
+          target_level: 4,
+          evidence_note: '完成数据口径梳理',
+          plan_candidate: true,
+        },
+      ],
+    })
+
+    window.history.pushState({}, '', '/capability/assessment')
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText('评估进度')).toBeTruthy())
+    expect(screen.getByText('最新 Review')).toBeTruthy()
+    expect(screen.getByRole('table', { name: 'L3 自评表' })).toBeTruthy()
+    expect(screen.getByText('P01 · 数据基础设施')).toBeTruthy()
+    expect(screen.getByDisplayValue('完成数据口径梳理')).toBeTruthy()
   })
 })
 

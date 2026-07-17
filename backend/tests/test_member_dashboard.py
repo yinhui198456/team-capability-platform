@@ -1,6 +1,17 @@
 import psycopg
+import pytest
+from test_capability_profile import (
+    _build_full_profile,
+    _request,
+)
+from test_capability_profile import (
+    profile_schema as _initialize_profile_schema,
+)
 
-from test_capability_profile import _build_full_profile, _request, profile_schema
+
+@pytest.fixture
+def profile_schema(connection: psycopg.Connection) -> psycopg.Connection:
+    return _initialize_profile_schema.__wrapped__(connection)
 
 
 def test_member_dashboard_aggregates_only_current_member_data(
@@ -16,9 +27,20 @@ def test_member_dashboard_aggregates_only_current_member_data(
     assert body is not None
     assert body["year"] == 2026
     assert body["summary"] == {
-        "total_learning_hours": 5,
+        "annual_actual_hours": 5,
+        "annual_planned_hours": 10,
+        "current_month_actual_hours": 0,
+        "current_month_planned_hours": 0,
         "completed_task_count": 0,
         "pending_evidence_count": 0,
+    }
+    assert body["plan_progress"] == {
+        "total": 1,
+        "未开始": 1,
+        "进行中": 0,
+        "待 Evidence Review": 0,
+        "已完成": 0,
+        "延期": 0,
     }
     assert body["domain_radar"][0] == {"domain_code": "P01", "score": 2}
     assert len(body["gaps"]) == 1

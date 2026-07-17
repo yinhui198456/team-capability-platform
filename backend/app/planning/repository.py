@@ -455,7 +455,7 @@ def list_learning_tasks(
                lt.completion_quality, lt.review_conclusion, lt.next_action,
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours
+               pi.expected_output, pi.estimated_hours, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -474,6 +474,7 @@ def list_learning_tasks(
             "plan_item_learning_task_content": row[14],
             "plan_item_expected_output": row[15],
             "plan_item_estimated_hours": row[16],
+            "plan_item_target_month": row[17],
         }
         for row in rows
     ]
@@ -489,7 +490,7 @@ def get_learning_task(
                lt.completion_quality, lt.review_conclusion, lt.next_action,
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours
+               pi.expected_output, pi.estimated_hours, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -508,6 +509,7 @@ def get_learning_task(
         "plan_item_learning_task_content": row[14],
         "plan_item_expected_output": row[15],
         "plan_item_estimated_hours": row[16],
+        "plan_item_target_month": row[17],
     }
 
 
@@ -769,6 +771,7 @@ def get_member_dashboard(
     connection: psycopg.Connection, member_id: int, year: int
 ) -> dict[str, object]:
     """Return the Member-only, read-only aggregation used by UI-01."""
+    current_month = _now(connection).month
     total_hours_row = connection.execute(
         """
         SELECT COALESCE(SUM(lpl.actual_hours), 0)
@@ -779,6 +782,37 @@ def get_member_dashboard(
         WHERE agp.member_id = %s AND agp.year = %s
         """,
         (member_id, year),
+    ).fetchone()
+    current_month_hours_row = connection.execute(
+        """
+        SELECT COALESCE(SUM(lpl.actual_hours), 0)
+        FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+          AND agp.year = %s
+          AND EXTRACT(MONTH FROM lpl.record_date) = %s
+        """,
+        (member_id, year, current_month),
+    ).fetchone()
+    plan_hours_row = connection.execute(
+        """
+        SELECT
+            COALESCE(SUM(
+                CASE WHEN pi.estimated_hours ~ '^[0-9]+(\\.[0-9]+)?$'
+                THEN pi.estimated_hours::DOUBLE PRECISION ELSE 0 END
+            ), 0),
+            COALESCE(SUM(
+                CASE WHEN pi.target_month = %s
+                      AND pi.estimated_hours ~ '^[0-9]+(\\.[0-9]+)?$'
+                THEN pi.estimated_hours::DOUBLE PRECISION ELSE 0 END
+            ), 0)
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        """,
+        (current_month, member_id, year),
     ).fetchone()
     completed_row = connection.execute(
         """
@@ -819,6 +853,29 @@ def get_member_dashboard(
         (member_id, year),
     ).fetchall()
     scores = {str(row[0]): int(row[1]) for row in score_rows}
+    progress_rows = connection.execute(
+        """
+        SELECT pi.status, COUNT(*)
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+        GROUP BY pi.status
+        """,
+        (member_id, year),
+    ).fetchall()
+    progress = {str(row[0]): int(row[1]) for row in progress_rows}
+    waiting_review_row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+          AND agp.year = %s
+          AND lt.status = '待 Evidence Review'
+        """,
+        (member_id, year),
+    ).fetchone()
     current_tasks = [
         task
         for task in list_learning_tasks(connection, member_id)
@@ -828,11 +885,28 @@ def get_member_dashboard(
     return {
         "year": year,
         "summary": {
-            "total_learning_hours": int(total_hours_row[0]) if total_hours_row else 0,
+            "annual_actual_hours": int(total_hours_row[0]) if total_hours_row else 0,
+            "annual_planned_hours": float(plan_hours_row[0]) if plan_hours_row else 0,
+            "current_month_actual_hours": (
+                int(current_month_hours_row[0]) if current_month_hours_row else 0
+            ),
+            "current_month_planned_hours": (
+                float(plan_hours_row[1]) if plan_hours_row else 0
+            ),
             "completed_task_count": int(completed_row[0]) if completed_row else 0,
             "pending_evidence_count": (
                 int(pending_evidence_row[0]) if pending_evidence_row else 0
             ),
+        },
+        "plan_progress": {
+            "total": sum(progress.values()),
+            "未开始": progress.get("未开始", 0),
+            "进行中": progress.get("进行中", 0),
+            "待 Evidence Review": (
+                int(waiting_review_row[0]) if waiting_review_row else 0
+            ),
+            "已完成": progress.get("已完成", 0),
+            "延期": progress.get("延期", 0),
         },
         "domain_radar": [
             {"domain_code": code, "score": scores.get(code, 0)}
@@ -1205,6 +1279,32 @@ def list_evidence_reviews_for_task(
     connection: psycopg.Connection, member_id: int, learning_task_id: int
 ) -> list[dict[str, object]]:
     _assert_task_ownership(connection, member_id, learning_task_id)
+    return _list_evidence_reviews_for_task(connection, learning_task_id)
+
+
+def list_evidence_reviews_for_buddy_task(
+    connection: psycopg.Connection, buddy_id: int, learning_task_id: int
+) -> list[dict[str, object]]:
+    row = connection.execute(
+        """
+        SELECT agp.member_id
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s
+        """,
+        (learning_task_id,),
+    ).fetchone()
+    if row is None or not is_member_assigned_to_buddy(
+        connection, int(row[0]), buddy_id
+    ):
+        raise PermissionError("learning task does not belong to assigned member")
+    return _list_evidence_reviews_for_task(connection, learning_task_id)
+
+
+def _list_evidence_reviews_for_task(
+    connection: psycopg.Connection, learning_task_id: int
+) -> list[dict[str, object]]:
     rows = connection.execute(
         """
         SELECT er.id, er.evidence_id, er.status, er.conclusion,

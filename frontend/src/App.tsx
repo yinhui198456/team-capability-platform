@@ -737,186 +737,207 @@ function LearningResourcesPage() {
   )
 }
 
+type WorkspaceRole = 'Member' | 'Buddy' | 'Leader' | 'Admin'
+
+type NavigationSection = {
+  label: string
+  items: Array<{ label: string; href: string; roles?: WorkspaceRole[] }>
+}
+
+const navigationSections: NavigationSection[] = [
+  {
+    label: '能力管理',
+    items: [{ label: '能力模型', href: '/capability/model' }],
+  },
+  {
+    label: '成长管理',
+    items: [
+      { label: '我的成长', href: '/dashboard/member', roles: ['Member'] },
+      { label: '能力自评', href: '/capability/assessment', roles: ['Member'] },
+      {
+        label: '评估历史',
+        href: '/capability/assessment/history',
+        roles: ['Member'],
+      },
+      { label: 'Gap 分析', href: '/capability/gap', roles: ['Member'] },
+      { label: '成长目标', href: '/growth/goals', roles: ['Member'] },
+      { label: '年度成长计划', href: '/growth/annual-plan', roles: ['Member'] },
+      { label: '学习任务', href: '/growth/tasks', roles: ['Member'] },
+      { label: '成长档案', href: '/growth/profile', roles: ['Member'] },
+      { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member'] },
+    ],
+  },
+  {
+    label: '导师指导',
+    items: [
+      { label: 'Buddy 审核中心', href: '/mentoring/dashboard', roles: ['Buddy'] },
+      {
+        label: '自评复核',
+        href: '/mentoring/assessment-review',
+        roles: ['Buddy'],
+      },
+      {
+        label: 'Evidence Review',
+        href: '/mentoring/evidence-review',
+        roles: ['Buddy'],
+      },
+    ],
+  },
+  {
+    label: '团队运营',
+    items: [
+      { label: '学习资源', href: '/operations/resources', roles: ['Leader'] },
+      {
+        label: '团队能力分析',
+        href: '/operations/analytics',
+        roles: ['Leader'],
+      },
+      {
+        label: '团队年度能力规划',
+        href: '/operations/team-annual-plan',
+        roles: ['Leader'],
+      },
+    ],
+  },
+  {
+    label: '系统管理',
+    items: [{ label: '系统管理', href: '/system/users', roles: ['Admin'] }],
+  },
+]
+
+function canAccess(
+  item: NavigationSection['items'][number],
+  roles: string[],
+) {
+  return !item.roles || item.roles.some((role) => roles.includes(role))
+}
+
+function scopeLabel(roles: string[]) {
+  if (roles.includes('Admin')) return '全量'
+  if (roles.includes('Leader')) return '团队'
+  if (roles.includes('Buddy')) return '负责成员'
+  if (roles.includes('Member')) return '本人'
+  return '公共目录'
+}
+
+function WorkspacePage({ pathname }: { pathname: string }) {
+  const { user } = useMe()
+  const roles = user?.roles ?? []
+  const visibleSections = navigationSections.filter((section) =>
+    section.items.some((item) => canAccess(item, roles)),
+  )
+  const activeSection =
+    visibleSections.find((section) =>
+      section.items.some((item) => item.href === pathname),
+    ) ?? visibleSections[0]
+
+  const content =
+    pathname === '/operations/resources' ? (
+      <LearningResourcesPage />
+    ) : pathname === '/operations/analytics' ? (
+      <TeamAnalyticsPage />
+    ) : pathname === '/operations/team-annual-plan' ? (
+      <TeamAnnualPlanPage />
+    ) : pathname === '/system/users' ? (
+      <SystemAdminPage />
+    ) : pathname === '/capability/assessment' ? (
+      <AssessmentPage />
+    ) : pathname === '/capability/assessment/history' ? (
+      <AssessmentHistoryPage />
+    ) : pathname === '/capability/gap' ? (
+      <GapPage />
+    ) : pathname === '/growth/goals' ? (
+      <GrowthGoalPage />
+    ) : pathname === '/growth/annual-plan' ? (
+      <AnnualPlanPage />
+    ) : pathname === '/growth/tasks' ? (
+      <LearningTaskPage />
+    ) : pathname === '/growth/profile' ? (
+      <ProfilePage />
+    ) : pathname === '/growth/review/monthly' ? (
+      <MonthlyReviewPage />
+    ) : pathname === '/mentoring/assessment-review' ? (
+      <AssessmentReviewPage />
+    ) : pathname === '/mentoring/dashboard' ? (
+      <BuddyReviewCenter />
+    ) : pathname === '/mentoring/evidence-review' ? (
+      <EvidenceReviewPage />
+    ) : pathname === '/dashboard/member' ? (
+      <MemberDashboardPage />
+    ) : (
+      <CapabilityModelPage />
+    )
+
+  return (
+    <main className="workspace-shell">
+      <header className="workspace-topbar">
+        <a className="workspace-brand" href="/dashboard/member">
+          Team Capability Platform
+        </a>
+        <nav aria-label="顶部主导航" className="workspace-topnav">
+          {visibleSections.map((section) => (
+            <a
+              className={section === activeSection ? 'active' : ''}
+              href={section.items[0].href}
+              key={section.label}
+            >
+              {section.label}
+            </a>
+          ))}
+        </nav>
+        <p className="workspace-scope">数据范围：{scopeLabel(roles)}</p>
+      </header>
+      <div className="workspace-layout">
+        <aside className="workspace-sidebar">
+          <p className="workspace-section-label">{activeSection?.label}</p>
+          <nav aria-label="侧边导航" className="workspace-sidenav">
+            {activeSection?.items
+              .filter((item) => canAccess(item, roles))
+              .map((item) => (
+                <a
+                  className={item.href === pathname ? 'active' : ''}
+                  href={item.href}
+                  key={item.href}
+                >
+                  {item.label}
+                </a>
+              ))}
+          </nav>
+        </aside>
+        <section className="workspace-content">{content}</section>
+      </div>
+    </main>
+  )
+}
+
 export function App() {
   const pathname = window.location.pathname
 
-  if (pathname === '/login') {
-    return <LoginPage />
-  }
+  if (pathname === '/login') return <LoginPage />
 
   if (
-    pathname !== '/capability/model' &&
-    pathname !== '/dashboard/member' &&
-    pathname !== '/operations/resources' &&
-    pathname !== '/operations/analytics' &&
-    pathname !== '/operations/team-annual-plan' &&
-    pathname !== '/system/users' &&
-    pathname !== '/capability/assessment' &&
-    pathname !== '/capability/assessment/history' &&
-    pathname !== '/capability/gap' &&
-    pathname !== '/growth/goals' &&
-    pathname !== '/growth/annual-plan' &&
-    pathname !== '/growth/tasks' &&
-    pathname !== '/growth/profile' &&
-    pathname !== '/growth/review/monthly' &&
-    pathname !== '/mentoring/assessment-review' &&
-    pathname !== '/mentoring/dashboard' &&
-    pathname !== '/mentoring/evidence-review'
+    ![
+      '/capability/model',
+      '/dashboard/member',
+      '/operations/resources',
+      '/operations/analytics',
+      '/operations/team-annual-plan',
+      '/system/users',
+      '/capability/assessment',
+      '/capability/assessment/history',
+      '/capability/gap',
+      '/growth/goals',
+      '/growth/annual-plan',
+      '/growth/tasks',
+      '/growth/profile',
+      '/growth/review/monthly',
+      '/mentoring/assessment-review',
+      '/mentoring/dashboard',
+      '/mentoring/evidence-review',
+    ].includes(pathname)
   ) {
-    return (
-      <main className="catalog-shell">
-        <p>页面不存在</p>
-      </main>
-    )
+    return <main className="catalog-shell">页面不存在</main>
   }
 
-  return (
-    <main className="catalog-shell">
-      <nav aria-label="目录导航">
-        <a
-          className={pathname === '/dashboard/member' ? 'active' : ''}
-          href="/dashboard/member"
-        >
-          我的成长
-        </a>
-        <a
-          className={pathname === '/mentoring/dashboard' ? 'active' : ''}
-          href="/mentoring/dashboard"
-        >
-          Buddy 审核中心
-        </a>
-        <a
-          className={pathname === '/capability/model' ? 'active' : ''}
-          href="/capability/model"
-        >
-          能力模型
-        </a>
-        <a
-          className={pathname === '/capability/assessment' ? 'active' : ''}
-          href="/capability/assessment"
-        >
-          能力自评
-        </a>
-        <a
-          className={
-            pathname === '/capability/assessment/history' ? 'active' : ''
-          }
-          href="/capability/assessment/history"
-        >
-          评估历史
-        </a>
-        <a
-          className={pathname === '/capability/gap' ? 'active' : ''}
-          href="/capability/gap"
-        >
-          Gap 分析
-        </a>
-        <a
-          className={pathname === '/growth/goals' ? 'active' : ''}
-          href="/growth/goals"
-        >
-          成长目标
-        </a>
-        <a
-          className={pathname === '/growth/annual-plan' ? 'active' : ''}
-          href="/growth/annual-plan"
-        >
-          年度成长计划
-        </a>
-        <a
-          className={pathname === '/growth/tasks' ? 'active' : ''}
-          href="/growth/tasks"
-        >
-          学习任务
-        </a>
-        <a
-          className={pathname === '/growth/profile' ? 'active' : ''}
-          href="/growth/profile"
-        >
-          成长档案
-        </a>
-        <a
-          className={pathname === '/growth/review/monthly' ? 'active' : ''}
-          href="/growth/review/monthly"
-        >
-          月度复盘
-        </a>
-        <a
-          className={
-            pathname === '/mentoring/assessment-review' ? 'active' : ''
-          }
-          href="/mentoring/assessment-review"
-        >
-          自评复核
-        </a>
-        <a
-          className={pathname === '/mentoring/evidence-review' ? 'active' : ''}
-          href="/mentoring/evidence-review"
-        >
-          Evidence Review
-        </a>
-        <a
-          className={pathname === '/operations/resources' ? 'active' : ''}
-          href="/operations/resources"
-        >
-          学习资源
-        </a>
-        <a
-          className={pathname === '/operations/analytics' ? 'active' : ''}
-          href="/operations/analytics"
-        >
-          团队能力分析
-        </a>
-        <a
-          className={
-            pathname === '/operations/team-annual-plan' ? 'active' : ''
-          }
-          href="/operations/team-annual-plan"
-        >
-          团队年度能力规划
-        </a>
-        <a
-          className={pathname === '/system/users' ? 'active' : ''}
-          href="/system/users"
-        >
-          系统管理
-        </a>
-      </nav>
-      {pathname === '/operations/resources' ? (
-        <LearningResourcesPage />
-      ) : pathname === '/operations/analytics' ? (
-        <TeamAnalyticsPage />
-      ) : pathname === '/operations/team-annual-plan' ? (
-        <TeamAnnualPlanPage />
-      ) : pathname === '/system/users' ? (
-        <SystemAdminPage />
-      ) : pathname === '/capability/assessment' ? (
-        <AssessmentPage />
-      ) : pathname === '/capability/assessment/history' ? (
-        <AssessmentHistoryPage />
-      ) : pathname === '/capability/gap' ? (
-        <GapPage />
-      ) : pathname === '/growth/goals' ? (
-        <GrowthGoalPage />
-      ) : pathname === '/growth/annual-plan' ? (
-        <AnnualPlanPage />
-      ) : pathname === '/growth/tasks' ? (
-        <LearningTaskPage />
-      ) : pathname === '/growth/profile' ? (
-        <ProfilePage />
-      ) : pathname === '/growth/review/monthly' ? (
-        <MonthlyReviewPage />
-      ) : pathname === '/mentoring/assessment-review' ? (
-        <AssessmentReviewPage />
-      ) : pathname === '/mentoring/dashboard' ? (
-        <BuddyReviewCenter />
-      ) : pathname === '/mentoring/evidence-review' ? (
-        <EvidenceReviewPage />
-      ) : pathname === '/dashboard/member' ? (
-        <MemberDashboardPage />
-      ) : (
-        <CapabilityModelPage />
-      )}
-    </main>
-  )
+  return <WorkspacePage pathname={pathname} />
 }

@@ -23,9 +23,20 @@ describe('MemberDashboardPage', () => {
     vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
       year: 2026,
       summary: {
-        total_learning_hours: 5,
+        annual_actual_hours: 5,
+        annual_planned_hours: 20,
+        current_month_actual_hours: 2,
+        current_month_planned_hours: 8,
         completed_task_count: 1,
         pending_evidence_count: 2,
+      },
+      plan_progress: {
+        total: 4,
+        未开始: 1,
+        进行中: 1,
+        '待 Evidence Review': 1,
+        已完成: 0,
+        延期: 1,
       },
       domain_radar: [
         { domain_code: 'P01', score: 2 },
@@ -63,9 +74,10 @@ describe('MemberDashboardPage', () => {
           plan_item_target_level: 4,
           plan_item_priority: '高',
           plan_item_learning_material: null,
-          plan_item_learning_task_content: null,
+          plan_item_learning_task_content: '数据建模规范与实践',
           plan_item_expected_output: null,
           plan_item_estimated_hours: '10',
+          plan_item_target_month: 6,
         },
       ],
     })
@@ -76,9 +88,32 @@ describe('MemberDashboardPage', () => {
     await waitFor(() => {
       expect(screen.getByText('我的成长总览')).toBeTruthy()
     })
-    expect(screen.getByText('5 小时')).toBeTruthy()
+    await waitFor(() => {
+      expect(
+        screen.getByRole('navigation', { name: '顶部主导航' }),
+      ).toBeTruthy()
+      expect(
+        screen.getByRole('navigation', { name: '侧边导航' }),
+      ).toBeTruthy()
+      expect(screen.getByText('数据范围：本人')).toBeTruthy()
+    })
+    expect(screen.getByRole('link', { name: '成长管理' })).toBeTruthy()
+    expect(
+      screen.queryByRole('link', { name: '团队能力分析' }),
+    ).toBeNull()
+    expect(screen.getByText('全年累计时长')).toBeTruthy()
+    expect(screen.getByText('全年计划时长')).toBeTruthy()
+    expect(screen.getByText('当月累计时长')).toBeTruthy()
+    expect(screen.getByText('当月计划时长')).toBeTruthy()
+    expect(screen.getAllByText('5 小时').length).toBeGreaterThan(0)
+    expect(screen.getByText('20 小时')).toBeTruthy()
+    expect(screen.getByText('年度计划进度')).toBeTruthy()
+    expect(screen.getByLabelText('六大领域能力雷达').querySelector('svg')).toBeTruthy()
+    expect(screen.getByText('计划月份')).toBeTruthy()
+    expect(screen.getByText('6 月')).toBeTruthy()
+    expect(screen.getByText('数据建模规范与实践')).toBeTruthy()
     expect(screen.getAllByText('P01-L2A-L3A')).toHaveLength(2)
-    expect(screen.getByText('待补充 Evidence')).toBeTruthy()
+    expect(screen.getByText('待提交 Evidence')).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入能力自评' })).toHaveProperty(
       'href',
       expect.stringContaining('/capability/assessment'),

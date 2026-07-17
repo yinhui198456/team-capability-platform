@@ -90,12 +90,15 @@ describe('LearningTaskPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('学习任务')).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '学习任务', level: 1 }),
+      ).toBeTruthy()
     })
 
     expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     expect(screen.getByText('创建学习任务')).toBeTruthy()
     expect(screen.getByText(/P01-L2A-L3B/)).toBeTruthy()
+    expect(screen.getByRole('region', { name: '学习任务摘要' })).toBeTruthy()
   })
 
   it('calls createLearningTask and refreshes on create', async () => {

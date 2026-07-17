@@ -17,6 +17,7 @@ describe('AnnualPlanPage', () => {
   beforeEach(() => {
     vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
     vi.spyOn(planningApi, 'listPlanItems').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -69,12 +70,14 @@ describe('AnnualPlanPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('年度成长计划')).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '年度成长计划', level: 1 }),
+      ).toBeTruthy()
     })
 
-    expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
-    expect(screen.getByText(/预计耗时：10/)).toBeTruthy()
-    expect(screen.getByText(/状态：未开始/)).toBeTruthy()
+    expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/预计 10 小时/)).toBeTruthy()
+    expect(screen.getAllByText('未开始').length).toBeGreaterThan(0)
   })
 
   it('calls generatePlanItems and refreshes list on generate', async () => {
@@ -209,8 +212,38 @@ describe('AnnualPlanPage', () => {
       expect(screen.getByRole('region', { name: '年度计划总览' })).toBeTruthy()
     })
 
-    expect(screen.getByText(/年度：2026/)).toBeTruthy()
-    expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
+    expect(screen.getByText(/2026 \/ 12 个月/)).toBeTruthy()
+    expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThan(0)
+  })
+
+  it('renders the UI-03 plan timeline, status summary, and item detail workspace', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlanEligibility').mockResolvedValue({
+      eligible: true,
+      reason: null,
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 10, member_id: 1, year: 2026, plan_cycle: 12, status: '制定中', start_date: '2026-01-01', end_date: '2026-12-31', created_at: '2026-01-01T00:00:00Z',
+      items: [{ id: 1, annual_growth_plan_id: 10, growth_goal_id: 5, l3_code: 'P01-L2A-L3A', current_level: 2, target_level: 4, priority: '高', learning_material: '课程 A', learning_task_content: '完成数据管道练习', expected_output: '可复用脚本', estimated_hours: '10', plan_start_date: '2026-03-01', plan_end_date: '2026-03-31', target_month: 3, status: '进行中' }],
+    })
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      { id: 100, plan_item_id: 1, l3_code: 'P01-L2A-L3A', status: '进行中', actual_start_date: '2026-03-01', actual_end_date: null, actual_hours: 4, completion_quality: null, review_conclusion: null, next_action: '补充日志', plan_item_current_level: 2, plan_item_target_level: 4, plan_item_priority: '高', plan_item_learning_material: '课程 A', plan_item_learning_task_content: '完成数据管道练习', plan_item_expected_output: '可复用脚本', plan_item_estimated_hours: '10', plan_item_target_month: 3 },
+    ])
+
+    window.history.pushState({}, '', '/growth/annual-plan')
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('region', { name: '月度时间轴' })).toBeTruthy())
+    expect(screen.getByText('计划项状态')).toBeTruthy()
+    expect(screen.getByText('实际时长')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /P01-L2A-L3A/ }))
+    expect(screen.getByRole('complementary', { name: '计划项详情' })).toBeTruthy()
+    expect(screen.getByText('完成数据管道练习')).toBeTruthy()
   })
 })
 

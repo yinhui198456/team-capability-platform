@@ -414,12 +414,14 @@ def test_list_and_get_learning_tasks(
     assert len(tasks) == 1
     assert tasks[0]["id"] == task_id
     assert tasks[0]["plan_item_target_level"] == item["target_level"]
+    assert tasks[0]["plan_item_target_month"] is None
 
     status, fetched, _ = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
     )
     assert status == 200
     assert fetched["id"] == task_id
+    assert fetched["plan_item_target_month"] is None
 
 
 def test_update_learning_task_success(

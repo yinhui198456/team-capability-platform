@@ -288,9 +288,29 @@ export function LearningTaskPage() {
 
   if (loading) return <p className="muted">加载中…</p>
 
+  const loggedHours = Object.values(taskLogs)
+    .flat()
+    .reduce((sum, log) => sum + log.actual_hours, 0)
+  const pendingEvidence = Object.values(taskEvidences)
+    .flat()
+    .filter((evidence) => evidence.status === '待 Review').length
+
   return (
-    <section className="page">
-      <h1>学习任务</h1>
+    <section className="page learning-task-page">
+      <header className="page-heading learning-task-page-heading">
+        <div>
+          <p className="eyebrow">成长管理 / 执行与 Evidence</p>
+          <h1>学习任务</h1>
+          <p className="muted">每个计划项对应一个学习任务；执行日志与 Evidence 版本在此形成闭环。</p>
+        </div>
+        <a className="primary-link" href="/growth/annual-plan">返回年度计划</a>
+      </header>
+      <section className="task-summary" aria-label="学习任务摘要">
+        <div><span>任务总数</span><strong>{tasks.length}</strong></div>
+        <div><span>进行中</span><strong>{tasks.filter((task) => task.status === '进行中').length}</strong></div>
+        <div><span>累计日志时长</span><strong>{loggedHours} 小时</strong></div>
+        <div><span>待 Review Evidence</span><strong>{pendingEvidence}</strong></div>
+      </section>
       {error && (
         <p className="error" role="alert">
           {error}

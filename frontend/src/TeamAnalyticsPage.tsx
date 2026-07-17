@@ -40,8 +40,23 @@ function TrendTable({
         : [trend.planned_count, trend.actual_count],
     ),
   )
+  const cumulative = (trend: TeamAnalytics['monthly_trends'][number]) =>
+    hours ? trend.cumulative_actual_hours : trend.cumulative_actual_rate * 100
+  const cumulativePlan = (trend: TeamAnalytics['monthly_trends'][number]) =>
+    hours ? trend.cumulative_planned_hours : trend.cumulative_planned_rate * 100
+  const maxCumulative = Math.max(
+    1,
+    ...trends.flatMap((trend) => [cumulative(trend), cumulativePlan(trend)]),
+  )
+  const points = (value: (trend: TeamAnalytics['monthly_trends'][number]) => number) =>
+    trends.map((trend, index) => `${(index / Math.max(1, trends.length - 1)) * 100},${100 - (value(trend) / maxCumulative) * 90}`).join(' ')
   return (
-    <table className="analytics-table">
+    <>
+      <figure className="trend-chart" aria-label={hours ? '学习时长组合图' : '计划完成组合图'}>
+        <div className="trend-bars">{trends.map((trend) => <div key={trend.month}><i style={{ height: `${((hours ? trend.planned_hours : trend.planned_count) / maxValue) * 100}%` }} /><i className="actual" style={{ height: `${((hours ? trend.actual_hours : trend.actual_count) / maxValue) * 100}%` }} /><span>{trend.month}</span></div>)}</div>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points={points(cumulativePlan)} /><polyline className="actual" points={points(cumulative)} /></svg>
+      </figure>
+      <table className="analytics-table">
       <thead>
         <tr>
           <th>月份</th>
@@ -78,7 +93,8 @@ function TrendTable({
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+    </>
   )
 }
 

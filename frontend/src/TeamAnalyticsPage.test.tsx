@@ -99,6 +99,8 @@ describe('TeamAnalyticsPage', () => {
     await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
     expect(screen.getAllByText('50%')).not.toHaveLength(0)
     expect(screen.getByText('成员能力达成率')).toBeTruthy()
+    expect(screen.getByRole('figure', { name: '计划完成组合图' })).toBeTruthy()
+    expect(screen.getByRole('figure', { name: '学习时长组合图' })).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('能力域'), {
       target: { value: 'P01' },

@@ -32,7 +32,9 @@ describe('MonthlyReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('月度复盘')).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '月度复盘', level: 1 }),
+      ).toBeTruthy()
     })
 
     expect(screen.getByText('6 月')).toBeTruthy()

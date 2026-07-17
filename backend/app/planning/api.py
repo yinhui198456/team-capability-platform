@@ -23,6 +23,7 @@ from .repository import (
     get_team_analytics,
     get_team_annual_plan_by_year,
     list_eligible_gaps,
+    list_evidence_reviews_for_buddy_task,
     list_evidence_reviews_for_task,
     list_evidences,
     list_growth_goals,
@@ -504,9 +505,17 @@ def post_evidence_review(
 def get_task_evidence_reviews(
     user: CurrentUser, connection: Connection, task_id: int
 ) -> list[dict[str, object]]:
-    _require_member(user)
     try:
-        return list_evidence_reviews_for_task(connection, int(user["id"]), task_id)
+        if "Member" in user["roles"]:
+            return list_evidence_reviews_for_task(connection, int(user["id"]), task_id)
+        if "Buddy" in user["roles"]:
+            return list_evidence_reviews_for_buddy_task(
+                connection, int(user["id"]), task_id
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

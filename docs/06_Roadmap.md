@@ -30,20 +30,21 @@
 | 1 | 前后端壳工程、Compose、质量工具、健康入口、空页面路由 | 已完成 | 门禁：容器可启动；无业务页面实现 | 后端 `backend/app/main.py` 提供 `/health`、`/ready`；`compose.yaml` 编排 PostgreSQL / FastAPI / Nginx 前端；质量工具配置齐全（Ruff、Black、ESLint、Prettier）；关键 commit `bbcfaef`（chore: initialize TCP engineering scaffold） |
 | 2 | 能力模型只读展示与 Excel 导入边界；学习资源只读 | 已完成 | 门禁：六域和 L3 层级可追溯 | 后端 `backend/app/catalog/importer.py` 从固定 Excel 导入六个 MVP 域（P01/P02/P03/C01/C02/C03）；`backend/app/catalog/repository.py` 提供只读查询；`backend/app/catalog/api.py` 暴露 `GET /api/capability-model`、`GET /api/learning-resources`；前端 `frontend/src/App.tsx` + `frontend/src/catalog.ts` 实现 `/capability/model` 与 `/operations/resources` 匿名只读页；测试覆盖导入、API、E2E、数据库隔离；关键 commit 范围 `c43e0d4..9550bff` |
 | 3 | **3A**：MVP 本地会话、演示账号/有效角色、Buddy 关系与后端权限基础，仅满足单团队 UAT 运行条件，不含 Admin 管理页；**3B**：Assessment、Assessment Review、Gap 与年度计划生成门禁，绑定 UI-02 及 UI-04 自评复核子流程 | 已完成 | 3A 进入门禁：迭代 2 验收通过；3A 验收门禁：本地会话、演示账号/角色、Buddy 关系、权限基础可运行；3B 进入门禁：3A 经 Codex 审核通过且用户 UAT 确认；3B 验收门禁：自评历史、Review 闭环、阻塞/解除场景通过，且该切片 UAT 通过 | **3A 已完成**；**3B 全部子任务完成并通过测试**（后端 127 passed，前端 32 passed），用户确认 3B UAT 通过。关键 commit：3B-1 `b67dd6d..7171f4b`，3B-2 `235a882..306cca0`，3B-3 `611d3c7..2c77a98`，3B-4 `754020d..8d23b68`；验收记录 `docs/acceptance/ITERATION_3B_TECHNICAL_ACCEPTANCE.md`。 |
-| 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 进行中 | 进入门禁：迭代 3 验收通过；验收门禁：1:1 任务关系和时长聚合场景通过，且该切片 UAT 通过 | **迭代 3 已完成，用户确认 3B UAT 通过**；4-1 已完成（后端 132 passed，前端 40 passed），4-2 已完成（后端 136 passed，前端 46 passed），4-3 已完成（后端 143 passed，前端 54 passed，容器 smoke 通过），4-4 已完成（后端 150 passed，前端 64 passed，lint/build/format:check 通过）；当前执行 4-5 用户 UAT；原型绑定 UI-03 的 Goal/计划/任务/日志子流程。 |
-| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 进行中 | 进入门禁：迭代 4 验收通过；验收门禁：旧版本不回流、Review 历史闭环，且该切片 UAT 通过 | **用户已明确授权 override 迭代 5 进入门禁**：4-5 UAT 稍后执行；5-1 Evidence 草稿/提交/版本已完成（后端 160 passed，前端 71 passed），5-2 Buddy Evidence Review 与反馈历史已完成（后端 170 passed，前端 77 passed）；当前执行 5-3 Capability Profile 成长档案聚合；原型绑定 UI-03 的 Evidence 区、UI-04 的 Evidence Review 区及成长档案 |
-| 6 | **6A**：UI-01 我的成长看板，以及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；**6B**：UI-05 团队能力分析、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收 | 待开始 | 6A 进入门禁：迭代 5 验收通过；6A 验收门禁：UI-01 与 UI-02～UI-04 视觉交互整合通过；6B 进入门禁：6A 通过；6B 验收门禁：五张原型截图与集成 UAT 通过 | 依赖迭代 5 完成；6A 完成后进入 6B；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过 |
-| 7 | 种子数据、端到端回归、容器重启、日志与文档硬化 | 待开始 | 进入门禁：迭代 6 验收通过；验收门禁：端到端场景全通过，完成最终 UAT/发布决策 | 依赖迭代 6 完成 |
+| 4 | Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Learning Progress Log | 待用户确认 | 进入门禁：迭代 3 验收通过；验收门禁：1:1 任务关系和时长聚合场景通过，且该切片 UAT 通过 | 4-1～4-4 实现和技术验收完成；4-5 用户 UAT 待执行。原型绑定 UI-03 的 Goal/计划/任务/日志子流程。 |
+| 5 | Evidence 版本、Evidence Review、成长档案聚合 | 待用户确认 | 进入门禁：迭代 4 验收通过；验收门禁：旧版本不回流、Review 历史闭环，且该切片 UAT 通过 | 5-1～5-3 实现和技术验收完成；5-4 用户 UAT 待执行。4-5 延后不阻塞已获授权的实现。 |
+| 6 | **6A**：UI-01 我的成长看板，以及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；**6B**：UI-05 团队能力分析、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收 | 待用户确认 | UI-01～UI-05、角色权限和真实容器浏览器复验均已通过；验收门禁仍包括用户集成 UAT | `docs/acceptance/ITERATION_6_TECHNICAL_ACCEPTANCE.md` 已归档 Codex 技术验收；6A-4、6B-5 用户 UAT 待执行。 |
+| 7 | 种子数据、端到端回归、容器重启、日志与文档硬化 | 待用户确认 | 验收门禁：端到端场景全通过，完成最终 UAT/发布决策 | 7-1～7-3 已完成；`bash scripts/e2e-smoke.sh` 已通过；7-4 最终 UAT 与发布决策待执行。 |
 
 ---
 
 ## 3. 当前快照
 
-- **当前迭代**：迭代 4 状态为“进行中”，迭代 5 状态为“进行中”。**迭代 3 已完成，用户确认 3B UAT 通过**；4-1/4-2/4-3/4-4 均已完成并通过验证；4-5 UAT 用户选择稍后验收并已授权 override 迭代 5 进入门禁，5-1/5-2 已完成，当前执行 5-3。迭代 4/5 业务代码、API 或页面均按子任务授权实施，不跨子任务预装范围。
+- **当前状态**：当前无 Codex 实施任务处于执行中。迭代 4～7 的父级卡均为“待用户确认”；Git Project 仅以其记录任务状态、阶段、实施方和 UAT 门禁。
 - **迭代 3 子阶段**：3A、3B 全部完成，3B-5 用户切片 UAT 已通过。
-- **迭代 4 子阶段**：4-1 Growth Goal 与 Gap 纳入已完成；4-2 年度成长计划与 Plan Item 生成已完成；4-3 Learning Task 1:1 与执行管理已完成；4-4 Learning Progress Log 与时长聚合已完成；4-5 迭代 4 UAT 进行中（用户授权延后验收）。
-- **迭代 5 子阶段**：5-1 Evidence 草稿、提交与版本已完成；5-2 Buddy Evidence Review 与反馈历史已完成；5-3 Capability Profile 成长档案聚合进行中；5-4 迭代 5 UAT 待开始。
-- **迭代 6 子阶段**：6A 负责 UI-01 及 UI-02～UI-04 的成员/Buddy 视觉与交互整合；6B 负责 UI-05、Leader 能力模型/学习资源维护与团队年度能力规划、Admin 用户/角色/系统设置管理，以及有效角色权限验收；6B 依赖 6A；只有 6A/6B 均完成后五张原型截图和集成 UAT 才通过。
+- **迭代 4 子阶段**：4-1～4-4 已完成；4-5 用户 UAT 待执行。
+- **迭代 5 子阶段**：5-1～5-3 已完成；5-4 用户 UAT 待执行（检查清单见 `docs/acceptance/ITERATION_5_TECHNICAL_ACCEPTANCE.md`）。
+- **迭代 6 子阶段**：6A/6B 的实施、角色权限和 UI-01～UI-05 真实容器浏览器复验已通过；6A-4、6B-5 用户集成 UAT 待执行（技术证据见 `docs/acceptance/ITERATION_6_TECHNICAL_ACCEPTANCE.md`）。
+- **迭代 7 子阶段**：7-1～7-3 已完成；7-4 最终 UAT 与发布决策待执行。
 - **UAT 节奏**：迭代 3 起，每个业务纵向切片在 Codex 验收通过后进入用户 UAT；UAT 反馈只修复当前已授权切片范围，不新增业务规则。
 - **迭代 3A 完成边界**：在迭代 2 匿名只读目录基础上，新增本地 HttpOnly Cookie 会话、`/login` 登录页、五个本地 UAT 演示账号（密码均为 `123456`）、N:M 有效角色与 Buddy 关系基础。不含 Assessment、Gap、Goal、Plan、Task、Evidence、Review、Admin 管理页、SSO、注册、密码重置。
 - **可验证入口**：
@@ -54,7 +55,7 @@
   - 只读 API：`GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`
   - 健康检查：`/health`、`/ready`
   - 后端与前端测试：按 `docs/acceptance/ITERATION_3A_TECHNICAL_ACCEPTANCE.md` 中记录的命令执行
-- **下一决策点**：4-4 已完成并同步 GitHub Project；进入 4-5 用户 UAT，需用户按 `docs/acceptance/ITERATION_4_TECHNICAL_ACCEPTANCE.md` 执行并给出结论。
+- **下一决策点**：用户依次完成 4-5、5-4、6A-4、6B-5 的 UAT；随后执行 7-4 最终 UAT 与发布决策。
 
 ---
 
@@ -69,22 +70,7 @@
 
 ## 5. 下一个授权动作
 
-**用户已确认 3B UAT 通过，当前授权启动迭代 4；4-1、4-2、4-3、4-4 已完成并通过本窗口审核；4-5 UAT 用户选择延后验收，并已明确授权 override 迭代 5 进入门禁，当前启动 5-1。**
-
-当前状态：
-
-- **迭代 3 已完成**：3A、3B 全部子任务及用户切片 UAT 已通过。
-- **迭代 4 进行中**：
-  - 4-1 Growth Goal 与 Gap 纳入（已完成）
-  - 4-2 年度成长计划与 Plan Item 生成（已完成）
-  - 4-3 Learning Task 1:1 与执行管理（已完成）
-  - 4-4 Learning Progress Log 与时长聚合（已完成）
-  - 4-5 迭代 4 UAT（进行中，待用户确认，延后验收）
-- **迭代 5 进行中**：
-  - 5-1 Evidence 草稿、提交与版本（已完成）
-  - 5-2 Buddy Evidence Review 与反馈历史（已完成）
-  - 5-3 Capability Profile 成长档案聚合（进行中）
-  - 5-4 迭代 5 UAT（待开始）
+当前无需继续实施代码。下一动作是用户依次完成 4-5、5-4、6A-4、6B-5 的 UAT，并在 7-4 给出最终 UAT 与发布决策。Codex 的真实容器浏览器复验不替代这些写入型业务验证。
 
 ---
 
@@ -100,7 +86,7 @@
 
 ## 7. 后续迭代子任务（Git Project 对应卡片）
 
-以下为已排期、尚未启动的子任务。每张卡片均按“CC 实施与测试 → Codex 审核 → 用户 UAT”闭环推进；`UAT` 卡由用户执行确认。除 3A 外，不因本表创建而解除任一迭代门禁。
+下表保留任务合同、责任与初始门禁；实际完成状态以第 3 节和 Git Project 为准。每张卡片均按“CC 实施与测试 → Codex 审核 → 用户 UAT”闭环推进；`UAT` 卡由用户执行确认。对 5～7 的已完成实施，用户曾明确授权在前序 UAT 延后时继续开发；该例外只解除实施排期，不表示任何 UAT 已通过。
 
 | 顺序 | 子任务 | 准入与门禁 | 实施方 | 输出与验收 |
 |---|---|---|---|---|
@@ -132,4 +118,4 @@
 | 7-3 | 容器重启、日志与交付文档硬化 | 7-2 通过 | CC | 重启后数据/就绪检查、运行与验收文档；不引入复杂监控运维 |
 | 7-4 | 最终 UAT 与发布决策 | 7-3 经 Codex 审核通过 | 用户 | 全链路 UAT 结论及是否发布的明确决定 |
 
-卡片的默认实施方法为：CC 依据冻结基线与对应迭代计划执行 TDD、容器化测试、质量检查和小粒度提交；Codex 审核业务边界、回归证据与看板状态；用户仅在 UAT/发布决策卡给出结论。每张非 UAT 卡的状态初始为“Todo / 待开始”，不得越过表中前置条件。
+卡片的默认实施方法为：CC 依据冻结基线与对应迭代计划执行 TDD、容器化测试、质量检查和小粒度提交；Codex 审核业务边界、回归证据与看板状态；用户仅在 UAT/发布决策卡给出结论。每张非 UAT 卡的状态初始为“Todo / 待开始”，除本节已记录的用户明确授权例外外，不得越过表中前置条件。

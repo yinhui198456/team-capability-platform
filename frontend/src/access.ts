@@ -3,6 +3,12 @@ export type User = {
   username: string
   full_name: string
   roles: string[]
+  assigned_members?: Array<{
+    id: number
+    username: string
+    full_name: string
+    is_active: boolean
+  }>
 }
 
 async function post<T>(path: string, body: object): Promise<T> {
