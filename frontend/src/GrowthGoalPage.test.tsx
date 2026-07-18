@@ -56,7 +56,7 @@ describe('GrowthGoalPage', () => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })
 
-    expect(screen.getByText('纳入目标')).toBeTruthy()
+    expect(screen.getByText('创建成长目标')).toBeTruthy()
   })
 
   it('calls createGrowthGoal and refreshes list on create', async () => {
@@ -99,10 +99,10 @@ describe('GrowthGoalPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('纳入目标')).toBeTruthy()
+      expect(screen.getByText('创建成长目标')).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByText('纳入目标'))
+    fireEvent.click(screen.getByText('创建成长目标'))
 
     await waitFor(() => {
       expect(createGrowthGoal).toHaveBeenCalledWith(10)
@@ -141,9 +141,9 @@ describe('GrowthGoalPage', () => {
     })
 
     expect(screen.getByText(/暂无已提交的能力评估/)).toBeTruthy()
-    expect((screen.getByText('纳入目标') as HTMLButtonElement).disabled).toBe(
-      true,
-    )
+    expect(
+      (screen.getByText('创建成长目标') as HTMLButtonElement).disabled,
+    ).toBe(true)
   })
 
   it('calls deleteGrowthGoal when remove is clicked', async () => {
@@ -180,7 +180,7 @@ describe('GrowthGoalPage', () => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByText('移除'))
+    fireEvent.click(screen.getByText('删除'))
 
     await waitFor(() => {
       expect(deleteGrowthGoal).toHaveBeenCalledWith(1)

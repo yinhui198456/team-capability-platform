@@ -150,6 +150,8 @@ async function request<T>(
     const payload = await response.json().catch(() => ({ detail: '请求失败' }))
     throw new Error(payload.detail ?? '请求失败')
   }
+  // ponytail: 204 No Content has no body — skip .json()
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 

@@ -3,10 +3,9 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { AnnualPlanPage } from './AnnualPlanPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
-import { AssessmentPage } from './AssessmentPage'
+import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
-import { GapPage } from './GapPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
 import { LearningTaskPage } from './LearningTaskPage'
 import { LoginPage } from './LoginPage'
@@ -747,30 +746,43 @@ type NavigationSection = {
 const navigationSections: NavigationSection[] = [
   {
     label: '能力管理',
-    items: [{ label: '能力模型', href: '/capability/model' }],
-  },
-  {
-    label: '成长管理',
     items: [
-      { label: '我的成长', href: '/dashboard/member', roles: ['Member'] },
-      { label: '能力自评', href: '/capability/assessment', roles: ['Member'] },
+      { label: '能力模型', href: '/capability/model' },
+      {
+        label: '① 能力自评与 Gap',
+        href: '/capability/assessment',
+        roles: ['Member'],
+      },
       {
         label: '评估历史',
         href: '/capability/assessment/history',
         roles: ['Member'],
       },
-      { label: 'Gap 分析', href: '/capability/gap', roles: ['Member'] },
-      { label: '成长目标', href: '/growth/goals', roles: ['Member'] },
-      { label: '年度成长计划', href: '/growth/annual-plan', roles: ['Member'] },
-      { label: '学习任务', href: '/growth/tasks', roles: ['Member'] },
-      { label: '成长档案', href: '/growth/profile', roles: ['Member'] },
+    ],
+  },
+  {
+    label: '成长管理',
+    items: [
+      { label: '我的成长', href: '/dashboard/member', roles: ['Member'] },
+      { label: '② 成长目标', href: '/growth/goals', roles: ['Member'] },
+      {
+        label: '③ 年度成长计划',
+        href: '/growth/annual-plan',
+        roles: ['Member'],
+      },
+      { label: '④ 学习任务', href: '/growth/tasks', roles: ['Member'] },
+      { label: '⑤ 成长档案', href: '/growth/profile', roles: ['Member'] },
       { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member'] },
     ],
   },
   {
     label: '导师指导',
     items: [
-      { label: 'Buddy 审核中心', href: '/mentoring/dashboard', roles: ['Buddy'] },
+      {
+        label: 'Buddy 审核中心',
+        href: '/mentoring/dashboard',
+        roles: ['Buddy'],
+      },
       {
         label: '自评复核',
         href: '/mentoring/assessment-review',
@@ -805,10 +817,7 @@ const navigationSections: NavigationSection[] = [
   },
 ]
 
-function canAccess(
-  item: NavigationSection['items'][number],
-  roles: string[],
-) {
+function canAccess(item: NavigationSection['items'][number], roles: string[]) {
   return !item.roles || item.roles.some((role) => roles.includes(role))
 }
 
@@ -841,11 +850,11 @@ function WorkspacePage({ pathname }: { pathname: string }) {
     ) : pathname === '/system/users' ? (
       <SystemAdminPage />
     ) : pathname === '/capability/assessment' ? (
-      <AssessmentPage />
+      <AssessmentGapPage />
     ) : pathname === '/capability/assessment/history' ? (
       <AssessmentHistoryPage />
     ) : pathname === '/capability/gap' ? (
-      <GapPage />
+      <AssessmentGapPage />
     ) : pathname === '/growth/goals' ? (
       <GrowthGoalPage />
     ) : pathname === '/growth/annual-plan' ? (

@@ -95,7 +95,14 @@ export function GrowthGoalPage() {
 
   return (
     <section className="page">
-      <h1>成长目标</h1>
+      <header className="page-heading">
+        <p className="eyebrow">成长管理 / 第 4 步</p>
+        <h1>成长目标</h1>
+        <p className="muted">
+          从已完成 Buddy Review 的 Gap 中选择纳入年度成长计划的目标。上一步：
+          <a href="/capability/gap">Gap 分析</a>
+        </p>
+      </header>
       {eligibility?.eligible === false && (
         <p className="warning" role="alert">
           年度计划生成受限：{eligibility.reason}
@@ -125,7 +132,7 @@ export function GrowthGoalPage() {
               onClick={() => handleCreate(gap)}
               disabled={!canCreate}
             >
-              纳入目标
+              创建成长目标
             </button>
           </li>
         ))}
@@ -144,7 +151,7 @@ export function GrowthGoalPage() {
               onClick={() => handleRemove(goal.id)}
               disabled={!user?.roles.includes('Member')}
             >
-              移除
+              删除
             </button>
           </li>
         ))}

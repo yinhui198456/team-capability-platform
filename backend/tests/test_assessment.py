@@ -56,6 +56,7 @@ def _create_test_user(
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
+    # Catalog tables are already recreated by the global connection fixture.
     return connection
 
 
@@ -171,13 +172,20 @@ def test_create_draft_save_details_submit_review(
     assert body is not None
     assessment_id = body["id"]
 
+    # Auto-populated: all enabled L3s are pre-filled (in test DB without catalog,
+    # this may be 0 rows — both cases are valid).
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["status"] == "草稿"
+
+    # Save with a single real L3 code.
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
                 {
-                    "l3_code": "P01-L2A-L3A",
+                    "l3_code": "C01.01.01",
                     "current_level": 2,
                     "target_level": 4,
                     "evidence_note": "测试中",

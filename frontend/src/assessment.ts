@@ -9,16 +9,29 @@ export type Assessment = {
   submitted_at: string | null
   archived_at: string | null
   details?: AssessmentDetail[]
+  gap_summary?: GapSummary
 }
 
 export type AssessmentDetail = {
   id?: number
   l3_code: string
+  l3_name?: string
   current_level: number
   target_level: number
   gap_value?: number
   evidence_note?: string
   plan_candidate?: boolean
+  recommended_start_level?: string
+  l1_code?: string
+  l1_name?: string
+}
+
+export type GapSummary = {
+  total_gaps: number
+  avg_gap: number
+  high_priority: number
+  medium_priority: number
+  low_priority: number
 }
 
 export type AssessmentReview = {

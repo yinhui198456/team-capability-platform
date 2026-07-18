@@ -12,7 +12,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as assessmentApi from './assessment'
 
-describe('AssessmentPage', () => {
+function mockDraftAssessment(
+  overrides: Partial<assessmentApi.Assessment> = {},
+) {
+  return {
+    id: 7,
+    member_id: 1,
+    year: 2026,
+    version: 1,
+    assessment_type: '年度',
+    status: '草稿',
+    created_at: '2026-01-01T00:00:00Z',
+    submitted_at: null,
+    archived_at: null,
+    details: [
+      {
+        id: 1,
+        l3_code: 'P01.01.01',
+        l3_name: '数据管道基础',
+        l1_code: 'P01',
+        l1_name: '数据基础设施',
+        current_level: 1,
+        target_level: 1,
+        gap_value: 0,
+        evidence_note: '',
+        plan_candidate: false,
+        recommended_start_level: 'P4',
+      },
+    ],
+    ...overrides,
+  }
+}
+
+describe('AssessmentGapPage', () => {
   beforeEach(() => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
   })
@@ -22,22 +54,22 @@ describe('AssessmentPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('creates draft and saves details on submit', async () => {
-    vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({ id: 7 })
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '草稿',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: null,
-      archived_at: null,
-      details: [],
+  it('renders create button when no draft exists', async () => {
+    window.history.pushState({}, '', '/capability/assessment')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: '创建年度自评草稿' }),
+      ).toBeTruthy()
     })
-    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
-    vi.spyOn(assessmentApi, 'submitAssessment').mockResolvedValue({ ok: true })
+  })
+
+  it('creates draft and shows domain groups with pre-populated L3s', async () => {
+    vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({ id: 7 })
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraftAssessment(),
+    )
 
     window.history.pushState({}, '', '/capability/assessment')
     render(<App />)
@@ -49,42 +81,16 @@ describe('AssessmentPage', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '创建年度自评草稿' }))
+    expect(assessmentApi.createAssessment).toHaveBeenCalledWith(2026)
 
     await waitFor(() => {
-      expect(assessmentApi.createAssessment).toHaveBeenCalledWith(2026)
+      expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
     })
-
-    fireEvent.click(screen.getByRole('button', { name: '添加 L3' }))
-    fireEvent.change(screen.getAllByLabelText('L3 编码')[0], {
-      target: { value: 'P01-L2A-L3A' },
-    })
-    fireEvent.change(screen.getAllByLabelText('当前掌握度')[0], {
-      target: { value: '2' },
-    })
-    fireEvent.change(screen.getAllByLabelText('目标掌握度')[0], {
-      target: { value: '4' },
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
-    await waitFor(() => {
-      expect(screen.getByText('草稿已保存')).toBeTruthy()
-    })
-    expect(assessmentApi.saveDraft).toHaveBeenCalledWith(7, [
-      expect.objectContaining({
-        l3_code: 'P01-L2A-L3A',
-        current_level: 2,
-        target_level: 4,
-      }),
-    ])
-
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => {
-      expect(screen.getByText('已提交，等待 Buddy 复核')).toBeTruthy()
-    })
-    expect(assessmentApi.submitAssessment).toHaveBeenCalledWith(7)
+    expect(screen.getByText(/P01.01.01/)).toBeTruthy()
+    expect(screen.getByText(/P01 · 数据基础设施/)).toBeTruthy()
   })
 
-  it('shows waiting review message after submit', async () => {
+  it('saves draft and submits with gap sidebar appearing', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -98,34 +104,80 @@ describe('AssessmentPage', () => {
         archived_at: null,
       },
     ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '草稿',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: null,
-      archived_at: null,
-      details: [],
-    })
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraftAssessment(),
+    )
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
     vi.spyOn(assessmentApi, 'submitAssessment').mockResolvedValue({ ok: true })
 
     window.history.pushState({}, '', '/capability/assessment')
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
     })
+
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => {
+      expect(screen.getByText('草稿已保存')).toBeTruthy()
+    })
+
+    // After submit, getAssessment returns submitted status with gap_summary.
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraftAssessment({
+        status: '待复核',
+        submitted_at: '2026-07-01T00:00:00Z',
+        details: [
+          {
+            id: 1,
+            l3_code: 'P01.01.01',
+            l3_name: '数据管道基础',
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            current_level: 2,
+            target_level: 4,
+            gap_value: 2,
+            evidence_note: '完成梳理',
+            plan_candidate: true,
+            recommended_start_level: 'P4',
+          },
+          {
+            id: 2,
+            l3_code: 'P01.01.02',
+            l3_name: '文件规范',
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            current_level: 1,
+            target_level: 1,
+            gap_value: 0,
+            evidence_note: '',
+            plan_candidate: false,
+            recommended_start_level: 'P4',
+          },
+        ],
+        gap_summary: {
+          total_gaps: 1,
+          avg_gap: 2.0,
+          high_priority: 0,
+          medium_priority: 1,
+          low_priority: 0,
+        },
+      }),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
     await waitFor(() => {
-      expect(screen.getByText('已提交，等待 Buddy 复核')).toBeTruthy()
+      expect(screen.getByText(/Gap 即时生成/)).toBeTruthy()
     })
+
+    // Gap sidebar should appear after submit.
+    await waitFor(() => {
+      expect(screen.getByText('Gap 分析')).toBeTruthy()
+    })
+    expect(screen.getByText('Gap 总数')).toBeTruthy()
   })
 
-  it('shows the assessment-to-Gap handoff landmark for a draft', async () => {
+  it('shows gate warning when not yet reviewed', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -139,74 +191,16 @@ describe('AssessmentPage', () => {
         archived_at: null,
       },
     ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '草稿',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: null,
-      archived_at: null,
-      details: [],
-    })
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraftAssessment(),
+    )
 
     window.history.pushState({}, '', '/capability/assessment')
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('region', { name: 'Gap 分析入口' })).toBeTruthy()
+      expect(screen.getByText('Review 闭环前不可正式纳入计划')).toBeTruthy()
     })
-
-    const handoffLink = screen.getByRole('link', { name: '查看 Gap 分析' })
-    expect(handoffLink.getAttribute('href')).toBe('/capability/gap')
-    expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
-  })
-
-  it('renders the UI-02 assessment header and L3 table structure', async () => {
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
-      {
-        id: 7,
-        member_id: 1,
-        year: 2026,
-        version: 1,
-        assessment_type: '年度',
-        status: '草稿',
-        created_at: '2026-01-01T00:00:00Z',
-        submitted_at: null,
-        archived_at: null,
-      },
-    ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '草稿',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: null,
-      archived_at: null,
-      details: [
-        {
-          l3_code: 'P01-L2A-L3A',
-          current_level: 2,
-          target_level: 4,
-          evidence_note: '完成数据口径梳理',
-          plan_candidate: true,
-        },
-      ],
-    })
-
-    window.history.pushState({}, '', '/capability/assessment')
-    render(<App />)
-
-    await waitFor(() => expect(screen.getByText('评估进度')).toBeTruthy())
-    expect(screen.getByText('最新 Review')).toBeTruthy()
-    expect(screen.getByRole('table', { name: 'L3 自评表' })).toBeTruthy()
-    expect(screen.getByText('P01 · 数据基础设施')).toBeTruthy()
-    expect(screen.getByDisplayValue('完成数据口径梳理')).toBeTruthy()
   })
 })
 
@@ -243,7 +237,7 @@ describe('AssessmentHistoryPage', () => {
       details: [
         {
           id: 1,
-          l3_code: 'P01-L2A-L3A',
+          l3_code: 'P01.01.01',
           current_level: 2,
           target_level: 4,
           gap_value: 2,
@@ -262,7 +256,7 @@ describe('AssessmentHistoryPage', () => {
 
     fireEvent.click(screen.getByText(/2026 · 版本 1 · 待复核/))
     await waitFor(() => {
-      expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
+      expect(screen.getByText(/P01.01.01/)).toBeTruthy()
     })
   })
 })

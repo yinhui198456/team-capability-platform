@@ -32,6 +32,23 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
+def _get_l3_names(
+    connection: psycopg.Connection, l3_codes: list[str]
+) -> dict[str, str | None]:
+    if not l3_codes:
+        return {}
+    # capability_node uses dots while task/gap codes use dashes.
+    code_map = {code.replace("-", "."): code for code in l3_codes}
+    rows = connection.execute(
+        """
+        SELECT code, name FROM capability_node
+        WHERE node_type = 'L3' AND code = ANY(%s)
+        """,
+        (list(code_map.keys()),),
+    ).fetchall()
+    return {code_map[str(row[0])]: row[1] for row in rows}
+
+
 _ALLOWED_TASK_STATUSES = {
     "未开始",
     "进行中",
@@ -881,6 +898,15 @@ def get_member_dashboard(
         for task in list_learning_tasks(connection, member_id)
         if task["status"] not in {"已完成", "取消"}
     ]
+    gaps = list_eligible_gaps(connection, member_id)
+    l3_codes = list(
+        {gap["l3_code"] for gap in gaps} | {task["l3_code"] for task in current_tasks}
+    )
+    l3_names = _get_l3_names(connection, l3_codes)
+    for gap in gaps:
+        gap["l3_name"] = l3_names.get(gap["l3_code"])
+    for task in current_tasks:
+        task["l3_name"] = l3_names.get(task["l3_code"])
 
     return {
         "year": year,
@@ -912,7 +938,7 @@ def get_member_dashboard(
             {"domain_code": code, "score": scores.get(code, 0)}
             for code in ("P01", "P02", "P03", "C01", "C02", "C03")
         ],
-        "gaps": list_eligible_gaps(connection, member_id),
+        "gaps": gaps,
         "current_tasks": current_tasks,
     }
 

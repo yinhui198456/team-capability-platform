@@ -63,6 +63,7 @@ describe('MemberDashboardPage', () => {
           id: 1,
           plan_item_id: 1,
           l3_code: 'P01-L2A-L3A',
+          l3_name: '数据建模与设计',
           status: '进行中',
           actual_start_date: null,
           actual_end_date: null,
@@ -92,27 +93,25 @@ describe('MemberDashboardPage', () => {
       expect(
         screen.getByRole('navigation', { name: '顶部主导航' }),
       ).toBeTruthy()
-      expect(
-        screen.getByRole('navigation', { name: '侧边导航' }),
-      ).toBeTruthy()
+      expect(screen.getByRole('navigation', { name: '侧边导航' })).toBeTruthy()
       expect(screen.getByText('数据范围：本人')).toBeTruthy()
     })
     expect(screen.getByRole('link', { name: '成长管理' })).toBeTruthy()
-    expect(
-      screen.queryByRole('link', { name: '团队能力分析' }),
-    ).toBeNull()
+    expect(screen.queryByRole('link', { name: '团队能力分析' })).toBeNull()
     expect(screen.getByText('全年累计时长')).toBeTruthy()
     expect(screen.getByText('全年计划时长')).toBeTruthy()
     expect(screen.getByText('当月累计时长')).toBeTruthy()
     expect(screen.getByText('当月计划时长')).toBeTruthy()
-    expect(screen.getAllByText('5 小时').length).toBeGreaterThan(0)
-    expect(screen.getByText('20 小时')).toBeTruthy()
+    expect(document.body.textContent).toContain('5 h')
+    expect(document.body.textContent).toContain('20 h')
     expect(screen.getByText('年度计划进度')).toBeTruthy()
-    expect(screen.getByLabelText('六大领域能力雷达').querySelector('svg')).toBeTruthy()
+    expect(
+      screen.getByLabelText('六大领域能力雷达').querySelector('svg'),
+    ).toBeTruthy()
     expect(screen.getByText('计划月份')).toBeTruthy()
     expect(screen.getByText('6 月')).toBeTruthy()
     expect(screen.getByText('数据建模规范与实践')).toBeTruthy()
-    expect(screen.getAllByText('P01-L2A-L3A')).toHaveLength(2)
+    expect(screen.getByText('数据建模与设计')).toBeTruthy()
     expect(screen.getByText('待提交 Evidence')).toBeTruthy()
     expect(screen.getByRole('link', { name: '进入能力自评' })).toHaveProperty(
       'href',

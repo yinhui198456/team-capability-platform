@@ -301,15 +301,33 @@ export function LearningTaskPage() {
         <div>
           <p className="eyebrow">成长管理 / 执行与 Evidence</p>
           <h1>学习任务</h1>
-          <p className="muted">每个计划项对应一个学习任务；执行日志与 Evidence 版本在此形成闭环。</p>
+          <p className="muted">
+            每个计划项对应一个学习任务；执行日志与 Evidence 版本在此形成闭环。
+          </p>
         </div>
-        <a className="primary-link" href="/growth/annual-plan">返回年度计划</a>
+        <a className="primary-link" href="/growth/annual-plan">
+          返回年度计划
+        </a>
       </header>
       <section className="task-summary" aria-label="学习任务摘要">
-        <div><span>任务总数</span><strong>{tasks.length}</strong></div>
-        <div><span>进行中</span><strong>{tasks.filter((task) => task.status === '进行中').length}</strong></div>
-        <div><span>累计日志时长</span><strong>{loggedHours} 小时</strong></div>
-        <div><span>待 Review Evidence</span><strong>{pendingEvidence}</strong></div>
+        <div>
+          <span>任务总数</span>
+          <strong>{tasks.length}</strong>
+        </div>
+        <div>
+          <span>进行中</span>
+          <strong>
+            {tasks.filter((task) => task.status === '进行中').length}
+          </strong>
+        </div>
+        <div>
+          <span>累计日志时长</span>
+          <strong>{loggedHours} 小时</strong>
+        </div>
+        <div>
+          <span>待 Review Evidence</span>
+          <strong>{pendingEvidence}</strong>
+        </div>
       </section>
       {error && (
         <p className="error" role="alert">
@@ -318,7 +336,20 @@ export function LearningTaskPage() {
       )}
 
       <h2>待创建学习任务的计划项</h2>
-      {itemsWithoutTask.length === 0 && (
+      {!plan && (
+        <p className="warning">
+          尚未生成年度成长计划。请先前往{' '}
+          <a href="/growth/annual-plan">年度成长计划</a>{' '}
+          生成计划项，再回到本页创建学习任务。
+        </p>
+      )}
+      {plan && planItems.length === 0 && (
+        <p className="warning">
+          年度成长计划尚无计划项。请前往{' '}
+          <a href="/growth/annual-plan">年度成长计划</a> 点击"生成计划项"。
+        </p>
+      )}
+      {plan && planItems.length > 0 && itemsWithoutTask.length === 0 && (
         <p className="muted">所有计划项均已创建学习任务。</p>
       )}
       <ul className="plan-item-list">

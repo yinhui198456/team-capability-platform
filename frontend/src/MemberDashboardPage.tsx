@@ -4,12 +4,21 @@ import { me } from './access'
 import { getMemberDashboard, type MemberDashboard } from './planning'
 
 const domainNames: Record<string, string> = {
-  P01: '专业领域一',
-  P02: '专业领域二',
-  P03: '专业领域三',
-  C01: '通用能力一',
-  C02: '通用能力二',
-  C03: '通用能力三',
+  P01: 'Data Infra',
+  P02: 'AI Infra / Agent',
+  P03: 'Coding',
+  C01: '基本办公',
+  C02: '沟通协作',
+  C03: '学习创新',
+}
+
+const domainColors: Record<string, string> = {
+  P01: '#175cd3',
+  P02: '#0e9384',
+  P03: '#f79009',
+  C01: '#7a5af8',
+  C02: '#ec4899',
+  C03: '#17b26a',
 }
 
 const radarCenter = 112
@@ -28,6 +37,55 @@ function pointsFor(scores: number[]) {
   return scores
     .map((score, index) => radarPoint(index, score).join(','))
     .join(' ')
+}
+
+function DomainBadge({ code }: { code: string }) {
+  const color = domainColors[code] ?? '#475467'
+  return (
+    <span
+      className="domain-badge"
+      style={{ '--domain-color': color } as React.CSSProperties}
+    >
+      <span className="domain-dot" style={{ background: color }} />
+      {code} {domainNames[code] ?? code}
+    </span>
+  )
+}
+
+function formatHours(
+  value: number | string | null | undefined,
+): React.ReactNode {
+  if (value === null || value === undefined || value === '') return '—'
+  const num = typeof value === 'string' ? Number(value) : value
+  if (Number.isNaN(num)) return '—'
+  return (
+    <span className="hours-value">
+      <span className="hours-number">{num}</span>
+      <span className="hours-unit"> h</span>
+    </span>
+  )
+}
+
+function TodoItem({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: number
+  tone?: 'default' | 'danger'
+}) {
+  return (
+    <div className={`todo-item todo-item-${tone ?? 'default'}`}>
+      <span className="todo-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <strong className="todo-value">{value}</strong>
+      <span className="todo-label">{label}</span>
+    </div>
+  )
 }
 
 function Radar({
@@ -60,9 +118,16 @@ function Radar({
           />
         ))}
         {data.map((domain, index) => {
-          const [x, y] = radarPoint(index, 5.75)
+          const [x, y] = radarPoint(index, 5.9)
+          const color = domainColors[domain.domain_code] ?? '#475467'
           return (
-            <text className="radar-label" key={domain.domain_code} x={x} y={y}>
+            <text
+              className="radar-label"
+              key={domain.domain_code}
+              x={x}
+              y={y}
+              fill={color}
+            >
               {domain.domain_code}
             </text>
           )
@@ -100,13 +165,15 @@ export function MemberDashboardPage() {
 
   const filteredGaps =
     dashboard?.gaps.filter(
-      (gap) => selectedDomain === '全部' || gap.l3_code.startsWith(selectedDomain),
+      (gap) =>
+        selectedDomain === '全部' || gap.l3_code.startsWith(selectedDomain),
     ) ?? []
   const completed = dashboard?.plan_progress.已完成 ?? 0
   const total = dashboard?.plan_progress.total ?? 0
   const completionRate = total === 0 ? 0 : Math.round((completed / total) * 100)
   const overdueTasks =
-    dashboard?.current_tasks.filter((task) => task.status === '延期').length ?? 0
+    dashboard?.current_tasks.filter((task) => task.status === '延期').length ??
+    0
 
   return (
     <section className="page dashboard-page">
@@ -137,7 +204,11 @@ export function MemberDashboardPage() {
                 <div
                   aria-label={`年度计划完成率 ${completionRate}%`}
                   className="progress-ring"
-                  style={{ '--progress': `${completionRate * 3.6}deg` } as React.CSSProperties}
+                  style={
+                    {
+                      '--progress': `${completionRate * 3.6}deg`,
+                    } as React.CSSProperties
+                  }
                 >
                   <strong>{completionRate}%</strong>
                   <span>整体进度</span>
@@ -149,7 +220,9 @@ export function MemberDashboardPage() {
                   </div>
                   <div>
                     <dt>已完成</dt>
-                    <dd className="status-complete">{dashboard.plan_progress.已完成}</dd>
+                    <dd className="status-complete">
+                      {dashboard.plan_progress.已完成}
+                    </dd>
                   </div>
                   <div>
                     <dt>进行中</dt>
@@ -161,7 +234,9 @@ export function MemberDashboardPage() {
                   </div>
                   <div>
                     <dt>延期</dt>
-                    <dd className="status-overdue">{dashboard.plan_progress.延期}</dd>
+                    <dd className="status-overdue">
+                      {dashboard.plan_progress.延期}
+                    </dd>
                   </div>
                 </dl>
               </div>
@@ -172,43 +247,102 @@ export function MemberDashboardPage() {
               <div className="metric-grid" aria-label="学习时长摘要">
                 <div>
                   <span>全年累计时长</span>
-                  <strong>{dashboard.summary.annual_actual_hours} 小时</strong>
+                  <strong>
+                    {formatHours(dashboard.summary.annual_actual_hours)}
+                  </strong>
                 </div>
                 <div>
                   <span>全年计划时长</span>
-                  <strong>{dashboard.summary.annual_planned_hours} 小时</strong>
+                  <strong>
+                    {formatHours(dashboard.summary.annual_planned_hours)}
+                  </strong>
                 </div>
                 <div>
                   <span>当月累计时长</span>
-                  <strong>{dashboard.summary.current_month_actual_hours} 小时</strong>
+                  <strong>
+                    {formatHours(dashboard.summary.current_month_actual_hours)}
+                  </strong>
                 </div>
                 <div>
                   <span>当月计划时长</span>
-                  <strong>{dashboard.summary.current_month_planned_hours} 小时</strong>
+                  <strong>
+                    {formatHours(dashboard.summary.current_month_planned_hours)}
+                  </strong>
                 </div>
               </div>
               <a href="/growth/review/monthly">查看月度复盘</a>
             </article>
             <article className="dashboard-card todo-card">
               <h2>待办事项</h2>
-              <dl className="todo-list">
-                <div>
-                  <dt>待提交 Evidence</dt>
-                  <dd>{dashboard.summary.pending_evidence_count}</dd>
-                </div>
-                <div>
-                  <dt>待 Buddy 复核</dt>
-                  <dd>{dashboard.plan_progress['待 Evidence Review']}</dd>
-                </div>
-                <div>
-                  <dt>已完成任务</dt>
-                  <dd>{dashboard.summary.completed_task_count}</dd>
-                </div>
-                <div>
-                  <dt>学习任务延期</dt>
-                  <dd className="status-overdue">{overdueTasks}</dd>
-                </div>
-              </dl>
+              <div className="todo-grid">
+                <TodoItem
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="12" y1="18" x2="12" y2="18" />
+                      <line x1="9" y1="15" x2="15" y2="15" />
+                    </svg>
+                  }
+                  label="待提交 Evidence"
+                  value={dashboard.summary.pending_evidence_count}
+                />
+                <TodoItem
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                  }
+                  label="待 Buddy 复核"
+                  value={dashboard.plan_progress['待 Evidence Review']}
+                />
+                <TodoItem
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                  }
+                  label="计划到期"
+                  value={dashboard.plan_progress.延期}
+                  tone="danger"
+                />
+                <TodoItem
+                  icon={
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                      <line x1="12" y1="9" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                  }
+                  label="学习任务延期"
+                  value={overdueTasks}
+                  tone="danger"
+                />
+              </div>
             </article>
           </div>
           <section className="dashboard-card ability-analysis">
@@ -217,19 +351,22 @@ export function MemberDashboardPage() {
               <span className="muted">选择能力域查看对应 Gap</span>
             </div>
             <div className="domain-filter" aria-label="能力域筛选">
-              {['全部', ...dashboard.domain_radar.map((domain) => domain.domain_code)].map(
-                (domain) => (
-                  <button
-                    aria-pressed={selectedDomain === domain}
-                    className={selectedDomain === domain ? 'active' : ''}
-                    key={domain}
-                    onClick={() => setSelectedDomain(domain)}
-                    type="button"
-                  >
-                    {domain === '全部' ? domain : `${domain} ${domainNames[domain]}`}
-                  </button>
-                ),
-              )}
+              {[
+                '全部',
+                ...dashboard.domain_radar.map((domain) => domain.domain_code),
+              ].map((domain) => (
+                <button
+                  aria-pressed={selectedDomain === domain}
+                  className={selectedDomain === domain ? 'active' : ''}
+                  key={domain}
+                  onClick={() => setSelectedDomain(domain)}
+                  type="button"
+                >
+                  {domain === '全部'
+                    ? domain
+                    : `${domain} ${domainNames[domain]}`}
+                </button>
+              ))}
             </div>
             <div className="dashboard-grid ability-analysis-grid">
               <article>
@@ -252,15 +389,23 @@ export function MemberDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredGaps.slice(0, 6).map((gap) => (
-                        <tr key={gap.id}>
-                          <td>{gap.l3_code}</td>
-                          <td>{gap.current_level}</td>
-                          <td>{gap.target_level}</td>
-                          <td className="gap-value">{gap.gap_value}</td>
-                          <td>{gap.priority}</td>
-                        </tr>
-                      ))}
+                      {filteredGaps.slice(0, 6).map((gap) => {
+                        const domainCode = gap.l3_code.slice(0, 3)
+                        return (
+                          <tr key={gap.id}>
+                            <td>
+                              <DomainBadge code={domainCode} />
+                              <span className="gap-l3-name">
+                                {gap.l3_name ?? gap.l3_code}
+                              </span>
+                            </td>
+                            <td>{gap.current_level}</td>
+                            <td>{gap.target_level}</td>
+                            <td className="gap-value">{gap.gap_value}</td>
+                            <td>{gap.priority}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -290,22 +435,37 @@ export function MemberDashboardPage() {
                 </thead>
                 <tbody>
                   {dashboard.current_tasks.map((task) => {
-                    const estimated = Number(task.plan_item_estimated_hours ?? 0)
+                    const estimated = Number(
+                      task.plan_item_estimated_hours ?? 0,
+                    )
                     const progress =
-                      estimated > 0 ? Math.round((task.actual_hours / estimated) * 100) : 0
+                      estimated > 0
+                        ? Math.round((task.actual_hours / estimated) * 100)
+                        : 0
+                    const domainCode = task.l3_code.slice(0, 3)
+                    const taskName =
+                      task.plan_item_learning_task_content?.trim() ||
+                      task.l3_name ||
+                      task.l3_code
                     return (
                       <tr key={task.id}>
-                        <td>{task.plan_item_learning_task_content ?? task.l3_code}</td>
-                        <td>{task.l3_code}</td>
+                        <td className="task-name-cell">{taskName}</td>
+                        <td>
+                          <DomainBadge code={domainCode} />
+                          <span className="task-l3-name">
+                            {task.l3_name ?? task.l3_code}
+                          </span>
+                        </td>
                         <td>
                           {task.plan_item_target_month
                             ? `${task.plan_item_target_month} 月`
                             : '未排期'}
                         </td>
-                        <td>{task.plan_item_estimated_hours ?? '—'} 小时</td>
-                        <td>{task.actual_hours} 小时</td>
+                        <td>{formatHours(task.plan_item_estimated_hours)}</td>
+                        <td>{formatHours(task.actual_hours)}</td>
                         <td>
-                          <progress max={100} value={Math.min(progress, 100)} /> {progress}%
+                          <progress max={100} value={Math.min(progress, 100)} />{' '}
+                          {progress}%
                         </td>
                         <td>
                           <span
