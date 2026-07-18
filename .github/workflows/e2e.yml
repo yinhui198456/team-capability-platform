@@ -6,26 +6,21 @@ on:
   pull_request:
     branches: [master, main]
   workflow_dispatch:
-    inputs:
-      update-snapshots:
-        description: 'Update Playwright visual baselines and commit them'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: tcp-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      PLAYWRIGHT_NO_WEBSERVER: "1"
+      TCP_E2E_ISOLATED: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Start Docker Compose stack
         run: |
-          docker compose down -v
+          docker compose down -v --remove-orphans
           docker compose up -d --build
 
       - name: Wait for backend readiness
@@ -57,21 +52,8 @@ jobs:
         run: npx playwright install chromium
 
       - name: Run E2E tests
-        if: github.event.inputs.update-snapshots != 'true'
         working-directory: frontend
-        run: PLAYWRIGHT_NO_WEBSERVER=1 npm run test:e2e
-
-      - name: Update visual baselines
-        if: github.event.inputs.update-snapshots == 'true'
-        working-directory: frontend
-        run: PLAYWRIGHT_NO_WEBSERVER=1 npm run test:e2e:update-snapshots
-
-      - name: Commit updated baselines
-        if: github.event.inputs.update-snapshots == 'true'
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: 'chore: update Playwright visual baselines'
-          file_pattern: 'frontend/tests/e2e/**/*.spec.ts-snapshots/*'
+        run: npm run test:e2e
 
       - name: Upload test results on failure
         if: failure()
@@ -82,3 +64,7 @@ jobs:
             frontend/test-results/
             frontend/playwright-report/
           retention-days: 7
+
+      - name: Stop Docker Compose stack
+        if: always()
+        run: docker compose down -v --remove-orphans
