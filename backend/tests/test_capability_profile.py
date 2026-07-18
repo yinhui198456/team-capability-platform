@@ -331,14 +331,11 @@ def _build_full_profile(
     assert result["created"] == 1
     plan_item_id = result["items"][0]["id"]
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{plan_item_id}/learning-task",
-        {},
-        cookies=member_cookies,
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
-    task_id = task["id"]
+    task_id = next(task["id"] for task in tasks if task["plan_item_id"] == plan_item_id)
 
     status, _, _ = _request(
         "POST",

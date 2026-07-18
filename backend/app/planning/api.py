@@ -35,6 +35,7 @@ from .repository import (
     submit_evidence_review,
     update_evidence_draft,
     update_learning_task,
+    update_plan_item,
     update_progress_log,
     update_team_annual_plan,
     validate_team_analytics_domain_filter,
@@ -181,6 +182,28 @@ def get_plan_items(
 ) -> list[dict[str, object]]:
     _require_member(user)
     return list_plan_items(connection, int(user["id"]))
+
+
+@planning_router.put("/plan-items/{plan_item_id}")
+def put_plan_item(
+    user: CurrentUser,
+    connection: Connection,
+    plan_item_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return update_plan_item(connection, int(user["id"]), plan_item_id, body)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @planning_router.post("/plan-items/{plan_item_id}/learning-task")

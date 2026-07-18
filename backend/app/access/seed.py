@@ -106,7 +106,6 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
     from ..planning.repository import (
         create_evidence_draft,
         create_growth_goal,
-        create_learning_task,
         create_progress_log,
         generate_plan_items,
         get_capability_profile,
@@ -149,8 +148,10 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
         update_gap(connection, gap_id, member_id, "高", True)
         create_growth_goal(connection, member_id, gap_id)
         plan_item = generate_plan_items(connection, member_id)[0]
-        task = create_learning_task(connection, member_id, int(plan_item["id"]))
-        task_id = int(task["id"])
+        task_id = connection.execute(
+            "SELECT id FROM learning_task WHERE plan_item_id = %s",
+            (plan_item["id"],),
+        ).fetchone()[0]
         create_progress_log(
             connection,
             member_id,
@@ -182,6 +183,6 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             connection,
             member_id,
             task_id,
-            {"status": "进行中", "actual_hours": 4, "review_conclusion": None},
+            {"status": "进行中"},
         )
         get_capability_profile(connection, member_id, ["Member"], member_id, year)

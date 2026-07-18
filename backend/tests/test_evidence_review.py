@@ -341,14 +341,11 @@ def _seed_submitted_evidence(
     assert result["created"] == 1
 
     item_id = int(result["items"][0]["id"])
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=member_cookies,
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
-    task_id = int(task["id"])
+    task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
     status, evidence, _ = _request(
         "POST",
@@ -434,6 +431,12 @@ def test_submit_review_approved_archives_evidence(
     assert status == 200
     assert evidence["status"] == "已归档"
 
+    status, task, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}", cookies=member_cookies
+    )
+    assert status == 200
+    assert task["status"] == "已完成"
+
     status, history, _ = _request(
         "GET",
         f"/api/planning/learning-tasks/{task_id}/evidence-reviews",
@@ -455,10 +458,10 @@ def test_submit_review_approved_archives_evidence(
     assert history[0]["reviewed_at"] is not None
 
 
-def test_submit_review_rejected_sets_evidence_status(
+def test_submit_review_rejected_sets_evidence_status_and_reopens_task(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
-    member_cookies, buddy_cookies, _, evidence_id = _seed_submitted_evidence(
+    member_cookies, buddy_cookies, task_id, evidence_id = _seed_submitted_evidence(
         evidence_review_schema
     )
 
@@ -480,6 +483,12 @@ def test_submit_review_rejected_sets_evidence_status(
     )
     assert status == 200
     assert evidence["status"] == "需补充"
+
+    status, task, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}", cookies=member_cookies
+    )
+    assert status == 200
+    assert task["status"] == "进行中"
 
 
 def test_submit_review_dismissed_sets_evidence_status(

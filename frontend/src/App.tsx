@@ -7,7 +7,6 @@ import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentReviewPage } from './AssessmentReviewPage'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
-import { LearningTaskPage } from './LearningTaskPage'
 import { LoginPage } from './LoginPage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { MemberDashboardPage } from './MemberDashboardPage'
@@ -770,7 +769,6 @@ const navigationSections: NavigationSection[] = [
         href: '/growth/annual-plan',
         roles: ['Member'],
       },
-      { label: '④ 学习任务', href: '/growth/tasks', roles: ['Member'] },
       { label: '⑤ 成长档案', href: '/growth/profile', roles: ['Member'] },
       { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member'] },
     ],
@@ -860,7 +858,7 @@ function WorkspacePage({ pathname }: { pathname: string }) {
     ) : pathname === '/growth/annual-plan' ? (
       <AnnualPlanPage />
     ) : pathname === '/growth/tasks' ? (
-      <LearningTaskPage />
+      <AnnualPlanPage />
     ) : pathname === '/growth/profile' ? (
       <ProfilePage />
     ) : pathname === '/growth/review/monthly' ? (
@@ -923,6 +921,11 @@ export function App() {
   const pathname = window.location.pathname
 
   if (pathname === '/login') return <LoginPage />
+
+  if (pathname === '/growth/tasks') {
+    window.history.replaceState({}, '', '/growth/annual-plan')
+    return <WorkspacePage pathname="/growth/annual-plan" />
+  }
 
   if (
     ![

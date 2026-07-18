@@ -339,13 +339,11 @@ def _seed_learning_task(
     assert result["created"] == 1
 
     item_id = int(result["items"][0]["id"])
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=member_cookies,
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
+    task = next(task for task in tasks if task["plan_item_id"] == item_id)
     return member_cookies, task
 
 
@@ -417,6 +415,12 @@ def test_submit_evidence_creates_review(evidence_schema: psycopg.Connection) -> 
     assert status == 200
     assert submitted["status"] == "待 Review"
     assert submitted["submitted_at"] is not None
+
+    status, task_after_submit, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
+    )
+    assert status == 200
+    assert task_after_submit["status"] == "待 Evidence Review"
 
     status, reviews, _ = _request(
         "GET",
@@ -668,14 +672,11 @@ def test_submit_evidence_without_buddy_returns_422(
     assert result["created"] == 1
 
     item_id = int(result["items"][0]["id"])
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=member_cookies,
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
-    task_id = int(task["id"])
+    task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
     status, evidence, _ = _request(
         "POST",

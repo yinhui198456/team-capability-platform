@@ -219,13 +219,21 @@ export async function listPlanItems(): Promise<PlanItem[]> {
   return request<PlanItem[]>('/api/planning/plan-items', { method: 'GET' })
 }
 
-export async function createLearningTask(
+export type PlanItemUpdate = Partial<{
+  plan_start_date: string | null
+  plan_end_date: string | null
+  target_month: number | null
+  status: '进行中' | '暂停' | '取消'
+}>
+
+export async function updatePlanItem(
   plan_item_id: number,
-): Promise<LearningTask> {
-  return request<LearningTask>(
-    `/api/planning/plan-items/${plan_item_id}/learning-task`,
-    { method: 'POST' },
-    {},
+  fields: PlanItemUpdate,
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/api/planning/plan-items/${plan_item_id}`,
+    { method: 'PUT' },
+    fields,
   )
 }
 
@@ -262,10 +270,9 @@ export type MonthlyHours = {
 }
 
 export type LearningTaskUpdate = Partial<{
-  status: LearningTaskStatus
+  status: '未开始' | '进行中' | '延期' | '暂停' | '取消'
   actual_start_date: string | null
   actual_end_date: string | null
-  actual_hours: number
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
