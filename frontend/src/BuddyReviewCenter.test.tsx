@@ -1,6 +1,12 @@
 /// @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
@@ -15,7 +21,14 @@ describe('BuddyReviewCenter', () => {
     vi.restoreAllMocks()
   })
 
-  it('summarizes assessment and Evidence review queues', async () => {
+  function mockBuddyData(
+    options: {
+      includeEvidence?: boolean
+      evidenceHistory?: Awaited<
+        ReturnType<typeof planningApi.listEvidenceReviewsForTask>
+      >
+    } = {},
+  ) {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 3,
       username: 'buddy',
@@ -39,21 +52,25 @@ describe('BuddyReviewCenter', () => {
         submitted_at: null,
       },
     ])
-    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([
-      {
-        id: 2,
-        evidence_id: 3,
-        version_number: 1,
-        status: '待 Review',
-        conclusion: null,
-        feedback: null,
-        reviewed_at: null,
-        member_id: 4,
-        username: 'member',
-        l3_code: 'P01-L2A-L3A',
-        content: '数据建模 Evidence',
-      },
-    ])
+    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue(
+      options.includeEvidence === false
+        ? []
+        : [
+            {
+              id: 2,
+              evidence_id: 3,
+              version_number: 1,
+              status: '待 Review',
+              conclusion: null,
+              feedback: null,
+              reviewed_at: null,
+              member_id: 4,
+              username: 'member',
+              l3_code: 'P01-L2A-L3A',
+              content: '数据建模 Evidence',
+            },
+          ],
+    )
     vi.spyOn(assessmentApi, 'getAssessmentHistory').mockResolvedValue([
       {
         id: 10,
@@ -85,14 +102,32 @@ describe('BuddyReviewCenter', () => {
         },
       ],
     })
-    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue(
+      options.evidenceHistory ?? [],
+    )
+  }
+
+  it('summarizes assessment and Evidence review queues', async () => {
+    mockBuddyData({
+      evidenceHistory: [
+        {
+          id: 12,
+          evidence_id: 3,
+          version_number: 1,
+          status: '通过',
+          conclusion: '通过',
+          feedback: 'Evidence 历史反馈',
+          reviewed_at: '2026-07-02T09:00:00',
+        },
+      ],
+    })
 
     window.history.pushState({}, '', '/mentoring/dashboard')
     render(<App />)
 
     await waitFor(() =>
       expect(
-        screen.getByRole('heading', { level: 1, name: 'Buddy 审核中心' }),
+        screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
       ).toBeTruthy(),
     )
     expect(screen.getByText('待复核自评')).toBeTruthy()
@@ -104,12 +139,111 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByRole('heading', { name: '复核工作区' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/上一版反馈/)).toBeTruthy())
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
-    await waitFor(() => expect(screen.getByText('数据建模 Evidence')).toBeTruthy())
+    await waitFor(() =>
+      expect(screen.getByText('数据建模 Evidence')).toBeTruthy(),
+    )
     expect(
-      screen.getByRole('link', { name: '进入 Evidence Review 并填写反馈' }),
-    ).toHaveProperty(
-      'href',
-      expect.stringContaining('/mentoring/evidence-review'),
+      screen.getByRole('heading', { name: 'Evidence 版本 1' }),
+    ).toBeTruthy()
+    await waitFor(() =>
+      expect(screen.getByText(/Evidence 历史反馈/)).toBeTruthy(),
     )
   })
+
+  it('submits an assessment conclusion in the unified workspace', async () => {
+    mockBuddyData({ includeEvidence: false })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockResolvedValue({ ok: true })
+
+    window.history.pushState({}, '', '/mentoring/dashboard')
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '依据充分' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('已认可，反馈已归入历史。')).toBeTruthy(),
+    )
+    expect(submitReview).toHaveBeenCalledWith(2, 1, {
+      conclusion: '认可',
+      feedback: '依据充分',
+    })
+  })
+
+  it('submits an Evidence Review in the unified workspace', async () => {
+    mockBuddyData()
+    const submitEvidenceReview = vi
+      .spyOn(planningApi, 'submitEvidenceReview')
+      .mockResolvedValue({ ok: true })
+
+    window.history.pushState({}, '', '/mentoring/dashboard')
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
+    await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('通过'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '输出可验证' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交 Review 反馈' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Evidence 已通过，反馈已归入历史。'),
+      ).toBeTruthy(),
+    )
+    expect(submitEvidenceReview).toHaveBeenCalledWith(2, '通过', '输出可验证')
+  })
+
+  it('does not expose a queue item outside the Buddy assignment', async () => {
+    mockBuddyData({ includeEvidence: false })
+    vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([
+      {
+        id: 9,
+        evidence_id: 9,
+        version_number: 1,
+        status: '待 Review',
+        conclusion: null,
+        feedback: null,
+        reviewed_at: null,
+        member_id: 99,
+        username: '非负责成员',
+        learning_task_id: 9,
+        l3_code: 'P01-L2A-L3A',
+      },
+    ])
+
+    window.history.pushState({}, '', '/mentoring/dashboard')
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByText('当前范围暂无待复核项。')).toBeTruthy(),
+    )
+    expect(screen.queryByText('非负责成员')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /待 Review Evidence/ }).textContent,
+    ).toContain('0')
+  })
+
+  it.each(['/mentoring/assessment-review', '/mentoring/evidence-review'])(
+    'redirects %s to the unified center',
+    async (path) => {
+      mockBuddyData({ includeEvidence: false })
+      window.history.pushState({}, '', path)
+      render(<App />)
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
+        ).toBeTruthy(),
+      )
+      expect(window.location.pathname).toBe('/mentoring/dashboard')
+    },
+  )
 })

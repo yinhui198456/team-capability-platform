@@ -10,12 +10,24 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
+import * as accessApi from './access'
 import * as assessmentApi from './assessment'
+import * as planningApi from './planning'
 import * as reviewApi from './assessmentReview'
 
 describe('AssessmentReviewPage', () => {
   beforeEach(() => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 2,
+      username: 'buddy',
+      full_name: 'Buddy',
+      roles: ['Buddy'],
+      assigned_members: [
+        { id: 1, username: 'member', full_name: '成员一', is_active: true },
+      ],
+    })
+    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -23,7 +35,7 @@ describe('AssessmentReviewPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders pending review queue', async () => {
+  it('redirects the legacy route to the unified review center', async () => {
     vi.spyOn(reviewApi, 'listPendingReviews').mockResolvedValue([
       {
         id: 10,
@@ -65,8 +77,11 @@ describe('AssessmentReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText(/成员 1 · 2026 · 版本 1/)).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: 'Buddy 复核中心' }),
+      ).toBeTruthy()
     })
+    expect(window.location.pathname).toBe('/mentoring/dashboard')
   })
 
   it('submits approval with correct api call', async () => {
@@ -104,12 +119,6 @@ describe('AssessmentReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText(/成员 1 · 2026 · 版本 1/)).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByText(/成员 1 · 2026 · 版本 1/))
-
-    await waitFor(() => {
       expect(screen.getByLabelText('认可')).toBeTruthy()
     })
 
@@ -117,10 +126,10 @@ describe('AssessmentReviewPage', () => {
     fireEvent.change(screen.getByLabelText('反馈'), {
       target: { value: '符合预期' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '提交复核' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
 
     await waitFor(() => {
-      expect(screen.getByText('已认可并归档')).toBeTruthy()
+      expect(screen.getByText('已认可，反馈已归入历史。')).toBeTruthy()
     })
     expect(submitReview).toHaveBeenCalledWith(7, 10, {
       conclusion: '认可',
@@ -163,12 +172,6 @@ describe('AssessmentReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText(/成员 1 · 2026 · 版本 1/)).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByText(/成员 1 · 2026 · 版本 1/))
-
-    await waitFor(() => {
       expect(screen.getByLabelText('建议调整')).toBeTruthy()
     })
 
@@ -176,10 +179,10 @@ describe('AssessmentReviewPage', () => {
     fireEvent.change(screen.getByLabelText('反馈'), {
       target: { value: '请补充依据' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '提交复核' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
 
     await waitFor(() => {
-      expect(screen.getByText('已建议调整，等待成员修改')).toBeTruthy()
+      expect(screen.getByText('已建议调整，反馈已归入历史。')).toBeTruthy()
     })
     expect(submitReview).toHaveBeenCalledWith(8, 11, {
       conclusion: '建议调整',

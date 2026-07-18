@@ -4,8 +4,6 @@ import { AnnualPlanPage } from './AnnualPlanPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
-import { AssessmentReviewPage } from './AssessmentReviewPage'
-import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
 import { LoginPage } from './LoginPage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
@@ -777,18 +775,8 @@ const navigationSections: NavigationSection[] = [
     label: '导师指导',
     items: [
       {
-        label: 'Buddy 审核中心',
+        label: 'Buddy 复核中心',
         href: '/mentoring/dashboard',
-        roles: ['Buddy'],
-      },
-      {
-        label: '自评复核',
-        href: '/mentoring/assessment-review',
-        roles: ['Buddy'],
-      },
-      {
-        label: 'Evidence Review',
-        href: '/mentoring/evidence-review',
         roles: ['Buddy'],
       },
     ],
@@ -863,12 +851,8 @@ function WorkspacePage({ pathname }: { pathname: string }) {
       <ProfilePage />
     ) : pathname === '/growth/review/monthly' ? (
       <MonthlyReviewPage />
-    ) : pathname === '/mentoring/assessment-review' ? (
-      <AssessmentReviewPage />
     ) : pathname === '/mentoring/dashboard' ? (
       <BuddyReviewCenter />
-    ) : pathname === '/mentoring/evidence-review' ? (
-      <EvidenceReviewPage />
     ) : pathname === '/dashboard/member' ? (
       <MemberDashboardPage />
     ) : (
@@ -925,6 +909,14 @@ export function App() {
   if (pathname === '/growth/tasks') {
     window.history.replaceState({}, '', '/growth/annual-plan')
     return <WorkspacePage pathname="/growth/annual-plan" />
+  }
+
+  if (
+    pathname === '/mentoring/assessment-review' ||
+    pathname === '/mentoring/evidence-review'
+  ) {
+    window.history.replaceState({}, '', '/mentoring/dashboard')
+    return <WorkspacePage pathname="/mentoring/dashboard" />
   }
 
   if (

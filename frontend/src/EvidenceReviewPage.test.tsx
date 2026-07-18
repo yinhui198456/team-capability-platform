@@ -11,11 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import * as accessApi from './access'
+import * as assessmentReviewApi from './assessmentReview'
 import * as planningApi from './planning'
 
 describe('EvidenceReviewPage', () => {
   beforeEach(() => {
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+    vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -29,6 +31,9 @@ describe('EvidenceReviewPage', () => {
       username: 'buddy',
       full_name: 'Buddy',
       roles: ['Buddy'],
+      assigned_members: [
+        { id: 1, username: 'member', full_name: '成员一', is_active: true },
+      ],
     })
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([
       {
@@ -53,7 +58,9 @@ describe('EvidenceReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText(/member · P01-L2A-L3A · 版本 1/)).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: 'Evidence 版本 1' }),
+      ).toBeTruthy()
     })
   })
 
@@ -63,6 +70,9 @@ describe('EvidenceReviewPage', () => {
       username: 'buddy',
       full_name: 'Buddy',
       roles: ['Buddy'],
+      assigned_members: [
+        { id: 1, username: 'member', full_name: '成员一', is_active: true },
+      ],
     })
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([
       {
@@ -90,12 +100,6 @@ describe('EvidenceReviewPage', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText(/member · P01-L2A-L3A · 版本 1/)).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByText(/member · P01-L2A-L3A · 版本 1/))
-
-    await waitFor(() => {
       expect(screen.getByLabelText('通过')).toBeTruthy()
     })
 
@@ -103,10 +107,10 @@ describe('EvidenceReviewPage', () => {
     fireEvent.change(screen.getByLabelText('反馈'), {
       target: { value: '符合预期' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '提交 Review' }))
+    fireEvent.click(screen.getByRole('button', { name: '提交 Review 反馈' }))
 
     await waitFor(() => {
-      expect(screen.getByText('已通过并归档')).toBeTruthy()
+      expect(screen.getByText('Evidence 已通过，反馈已归入历史。')).toBeTruthy()
     })
     expect(submitEvidenceReview).toHaveBeenCalledWith(20, '通过', '符合预期')
   })
