@@ -221,3 +221,42 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | Evidence 文件引用 | 单实例本地持久卷 | S3 兼容对象存储（延后评估） | 当前不引入外部对象存储；扩展部署规模时再评估迁移影响 |
 
 本阶段仍不替用户决定 SSO/IAM、外部通知、多团队、移动端或复杂监控，也不创建物理数据库表、API 实现或业务页面代码。
+
+## 9. E2E 与视觉回归测试
+
+为减少人工对照原型图的测试时间，前端引入 Playwright 作为 E2E 与视觉回归层，与现有 vitest 单元测试互补。
+
+### 9.1 目录与命令
+
+- 配置：`frontend/playwright.config.ts`
+- 测试目录：`frontend/tests/e2e/`
+  - `fixtures/` — 登录等共享辅助。
+  - `smoke/` — 环境健康与核心接口烟雾测试。
+  - `visual/` — UI-01 ~ UI-05 原型页视觉回归测试。
+- 常用命令：
+  - `npm run test:e2e:install` — 安装 Chromium 浏览器。
+  - `npm run test:e2e` — 默认对 http://localhost:18081 运行全部 E2E 测试，并自动启动 Docker Compose。
+  - `PLAYWRIGHT_NO_WEBSERVER=1 npm run test:e2e` — 复用已启动的本地容器。
+  - `PLAYWRIGHT_BASE_URL=http://localhost:5173 PLAYWRIGHT_NO_WEBSERVER=1 npm run test:e2e` — 对 Vite dev server 运行。
+  - `npm run test:e2e:update-snapshots` — 更新视觉回归基线截图。
+  - `npm run test:e2e:ui` / `npm run test:e2e:debug` — UI 模式与调试模式。
+
+### 9.2 测试策略
+
+| 层级 | 工具 | 覆盖目标 |
+|---|---|---|
+| 单元测试 | vitest | 组件渲染、API mock、权限分支 |
+| 烟雾测试 | Playwright | 容器启动、登录、6 个能力域、核心页面可达 |
+| 视觉回归 | Playwright screenshots | UI-01 ~ UI-05 原型页布局、字号、颜色、图标 |
+| 功能 E2E | Playwright | Member/Buddy/Leader/Admin 核心只读与写入路径 |
+
+### 9.3 基线管理
+
+- 视觉基线截图纳入版本管理，路径约定为 `frontend/tests/e2e/visual/**/__snapshots__/`。
+- 更新 UI 后通过 `npm run test:e2e:update-snapshots` 重新生成基线，并在 PR 中单独说明截图变更原因。
+- CI 失败时上传 `test-results/` 与 `playwright-report/` artifact，便于排查像素差异。
+
+### 9.4 数据隔离
+
+- E2E 测试复用 Docker Compose 的演示种子数据，不单独创建测试数据库。
+- 写入型测试按角色使用固定演示账号，避免跨测试状态污染；必要时在测试前后通过 API 重置目标对象状态。

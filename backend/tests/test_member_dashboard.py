@@ -31,22 +31,21 @@ def test_member_dashboard_aggregates_only_current_member_data(
         "annual_planned_hours": 10,
         "current_month_actual_hours": 0,
         "current_month_planned_hours": 0,
-        "completed_task_count": 0,
+        "completed_task_count": 1,
         "pending_evidence_count": 0,
     }
     assert body["plan_progress"] == {
         "total": 1,
-        "未开始": 1,
+        "未开始": 0,
         "进行中": 0,
         "待 Evidence Review": 0,
-        "已完成": 0,
+        "已完成": 1,
         "延期": 0,
     }
     assert body["domain_radar"][0] == {"domain_code": "P01", "score": 2}
     assert len(body["gaps"]) == 1
     assert body["gaps"][0]["l3_code"] == "P01-L2A-L3A"
-    assert len(body["current_tasks"]) == 1
-    assert body["current_tasks"][0]["l3_code"] == "P01-L2A-L3A"
+    assert body["current_tasks"] == []
 
 
 def test_member_dashboard_rejects_non_members(

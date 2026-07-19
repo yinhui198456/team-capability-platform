@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 
 import { me, type User } from './access'
+import { useYear } from './YearContext'
 import {
   createEvidence,
-  createLearningTask,
   createProgressLog,
   deleteProgressLog,
   getAnnualPlan,
@@ -19,16 +19,13 @@ import {
   type Evidence,
   type EvidenceReview,
   type LearningTask,
-  type LearningTaskStatus,
-  type PlanItem,
+  type LearningTaskUpdate,
   type ProgressLog,
 } from './planning'
 
-const LEARNING_TASK_STATUSES: LearningTaskStatus[] = [
+const LEARNING_TASK_STATUSES: NonNullable<LearningTaskUpdate['status']>[] = [
   '未开始',
   '进行中',
-  '待 Evidence Review',
-  '已完成',
   '延期',
   '暂停',
   '取消',
@@ -65,7 +62,16 @@ function formatDateTime(value: string | null): string {
   return date.toLocaleString('zh-CN')
 }
 
-export function LearningTaskPage() {
+type LearningTaskPageProps = {
+  embedded?: boolean
+  planItemId?: number
+}
+
+export function LearningTaskPage({
+  embedded = false,
+  planItemId,
+}: LearningTaskPageProps) {
+  const year = useYear()
   const [user, setUser] = useState<User | null>(null)
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<LearningTask[]>([])
@@ -93,7 +99,7 @@ export function LearningTaskPage() {
       setUser(currentUser)
 
       const [planResult, taskList] = await Promise.all([
-        getAnnualPlan(2026).catch(() => null),
+        getAnnualPlan(year).catch(() => null),
         listLearningTasks().catch(() => []),
       ])
       setPlan(planResult)
@@ -128,7 +134,7 @@ export function LearningTaskPage() {
       )
       setTaskEvidenceReviews(Object.fromEntries(reviewEntries))
 
-      const summary = await getMonthlyHours(2026).catch(() => [])
+      const summary = await getMonthlyHours(year).catch(() => [])
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
@@ -141,36 +147,10 @@ export function LearningTaskPage() {
     load()
   }, [])
 
-  const taskByPlanItemId = new Map(
-    tasks.map((task) => [task.plan_item_id, task]),
-  )
-  const planItems = plan?.items ?? []
-  const itemsWithoutTask = planItems.filter(
-    (item) => !taskByPlanItemId.has(item.id),
-  )
-
   const canManage = user?.roles.includes('Member') ?? false
+  const planItems = plan?.items ?? []
 
-  async function handleCreate(item: PlanItem) {
-    setError('')
-    try {
-      await createLearningTask(item.id)
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建失败')
-    }
-  }
-
-  async function handleUpdate(
-    task: LearningTask,
-    fields: {
-      status?: LearningTaskStatus
-      actual_start_date?: string | null
-      actual_end_date?: string | null
-      actual_hours?: number
-      next_action?: string | null
-    },
-  ) {
+  async function handleUpdate(task: LearningTask, fields: LearningTaskUpdate) {
     setError('')
     try {
       await updateLearningTask(task.id, fields)
@@ -200,7 +180,7 @@ export function LearningTaskPage() {
       setLogForms((prev) => ({ ...prev, [task.id]: emptyLogForm() }))
       const logs = await listProgressLogs(task.id)
       setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
-      const summary = await getMonthlyHours(2026)
+      const summary = await getMonthlyHours(year)
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '添加日志失败')
@@ -213,7 +193,7 @@ export function LearningTaskPage() {
       await deleteProgressLog(logId)
       const logs = await listProgressLogs(task.id)
       setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
-      const summary = await getMonthlyHours(2026)
+      const summary = await getMonthlyHours(year)
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除日志失败')
@@ -288,28 +268,58 @@ export function LearningTaskPage() {
 
   if (loading) return <p className="muted">加载中…</p>
 
-  const loggedHours = Object.values(taskLogs)
-    .flat()
+  const visibleTasks = planItemId
+    ? tasks.filter((task) => task.plan_item_id === planItemId)
+    : tasks
+  const visibleTaskIds = new Set(visibleTasks.map((task) => task.id))
+  const loggedHours = Object.entries(taskLogs)
+    .filter(([taskId]) => visibleTaskIds.has(Number(taskId)))
+    .flatMap(([, logs]) => logs)
     .reduce((sum, log) => sum + log.actual_hours, 0)
-  const pendingEvidence = Object.values(taskEvidences)
-    .flat()
+  const pendingEvidence = Object.entries(taskEvidences)
+    .filter(([taskId]) => visibleTaskIds.has(Number(taskId)))
+    .flatMap(([, evidences]) => evidences)
     .filter((evidence) => evidence.status === '待 Review').length
-
   return (
-    <section className="page learning-task-page">
-      <header className="page-heading learning-task-page-heading">
-        <div>
-          <p className="eyebrow">成长管理 / 执行与 Evidence</p>
-          <h1>学习任务</h1>
-          <p className="muted">每个计划项对应一个学习任务；执行日志与 Evidence 版本在此形成闭环。</p>
-        </div>
-        <a className="primary-link" href="/growth/annual-plan">返回年度计划</a>
-      </header>
+    <section
+      aria-label={embedded ? '学习任务' : undefined}
+      className={
+        embedded ? 'learning-task-workspace' : 'page learning-task-page'
+      }
+    >
+      {!embedded && (
+        <header className="page-heading learning-task-page-heading">
+          <div>
+            <p className="eyebrow">成长管理 / 执行与 Evidence</p>
+            <h1>学习任务</h1>
+            <p className="muted">
+              每个计划项对应一个学习任务；执行日志与 Evidence 版本在此形成闭环。
+            </p>
+          </div>
+          <a className="primary-link" href="/growth/annual-plan">
+            返回年度计划
+          </a>
+        </header>
+      )}
       <section className="task-summary" aria-label="学习任务摘要">
-        <div><span>任务总数</span><strong>{tasks.length}</strong></div>
-        <div><span>进行中</span><strong>{tasks.filter((task) => task.status === '进行中').length}</strong></div>
-        <div><span>累计日志时长</span><strong>{loggedHours} 小时</strong></div>
-        <div><span>待 Review Evidence</span><strong>{pendingEvidence}</strong></div>
+        <div>
+          <span>任务总数</span>
+          <strong>{visibleTasks.length}</strong>
+        </div>
+        <div>
+          <span>进行中</span>
+          <strong>
+            {visibleTasks.filter((task) => task.status === '进行中').length}
+          </strong>
+        </div>
+        <div>
+          <span>累计日志时长</span>
+          <strong>{loggedHours} 小时</strong>
+        </div>
+        <div>
+          <span>待 Review Evidence</span>
+          <strong>{pendingEvidence}</strong>
+        </div>
       </section>
       {error && (
         <p className="error" role="alert">
@@ -317,31 +327,23 @@ export function LearningTaskPage() {
         </p>
       )}
 
-      <h2>待创建学习任务的计划项</h2>
-      {itemsWithoutTask.length === 0 && (
-        <p className="muted">所有计划项均已创建学习任务。</p>
+      {!embedded && !plan && (
+        <p className="warning">
+          尚未生成年度成长计划。请先前往{' '}
+          <a href="/growth/annual-plan">年度成长计划</a>{' '}
+          生成计划项后即可开始记录学习执行。
+        </p>
       )}
-      <ul className="plan-item-list">
-        {itemsWithoutTask.map((item) => (
-          <li key={item.id} className="plan-item">
-            <span className="plan-item-l3">{item.l3_code}</span>
-            <span className="plan-item-levels">
-              当前 {item.current_level} → 目标 {item.target_level}
-            </span>
-            <span className="plan-item-priority">优先级：{item.priority}</span>
-            {canManage && (
-              <button type="button" onClick={() => handleCreate(item)}>
-                创建学习任务
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <h2>我的学习任务</h2>
-      {tasks.length === 0 && <p className="muted">暂无学习任务。</p>}
+      {!embedded && plan && planItems.length === 0 && (
+        <p className="warning">
+          年度成长计划尚无计划项。请前往{' '}
+          <a href="/growth/annual-plan">年度成长计划</a> 点击"生成计划项"。
+        </p>
+      )}
+      <h2>{embedded ? '学习任务与执行记录' : '我的学习任务'}</h2>
+      {visibleTasks.length === 0 && <p className="muted">暂无学习任务。</p>}
       <ul className="learning-task-list">
-        {tasks.map((task) => (
+        {visibleTasks.map((task) => (
           <li key={task.id} className="learning-task-item">
             <section
               aria-label={`学习任务详情：${task.l3_code}`}
@@ -364,7 +366,9 @@ export function LearningTaskPage() {
                     value={task.status}
                     onChange={(event) =>
                       handleUpdate(task, {
-                        status: event.target.value as LearningTaskStatus,
+                        status: event.target.value as NonNullable<
+                          LearningTaskUpdate['status']
+                        >,
                       })
                     }
                     disabled={!canManage}
@@ -403,20 +407,6 @@ export function LearningTaskPage() {
                   />
                 </label>
                 <label>
-                  实际耗时（小时）
-                  <input
-                    type="number"
-                    min={0}
-                    value={task.actual_hours}
-                    onChange={(event) =>
-                      handleUpdate(task, {
-                        actual_hours: Number(event.target.value),
-                      })
-                    }
-                    disabled={!canManage}
-                  />
-                </label>
-                <label>
                   下步动作
                   <input
                     value={task.next_action ?? ''}
@@ -428,7 +418,10 @@ export function LearningTaskPage() {
                 </label>
               </div>
 
-              <div className="progress-log-section">
+              <section
+                aria-label="学习执行日志"
+                className="progress-log-section"
+              >
                 <h3>学习日志</h3>
                 <p className="muted">
                   总时长：{sumHours(taskLogs[task.id] ?? [])} 小时
@@ -497,10 +490,10 @@ export function LearningTaskPage() {
                     </button>
                   </div>
                 )}
-              </div>
+              </section>
 
               <section
-                aria-label={`Evidence 版本：${task.l3_code}`}
+                aria-label="Evidence 版本"
                 className="evidence-section evidence-versions"
               >
                 <h3>Evidence</h3>
@@ -630,18 +623,20 @@ export function LearningTaskPage() {
         ))}
       </ul>
 
-      <h2>月度时长</h2>
-      {monthlyHours.length === 0 && (
-        <p className="muted">2026 年暂无学习时长记录。</p>
+      {!embedded && <h2>月度时长</h2>}
+      {!embedded && monthlyHours.length === 0 && (
+        <p className="muted">{year} 年暂无学习时长记录。</p>
       )}
-      <ul className="monthly-hours-list">
-        {monthlyHours.map((item) => (
-          <li key={item.month} className="monthly-hours-item">
-            <span className="month">{item.month} 月</span>
-            <span className="total-hours">{item.total_hours} 小时</span>
-          </li>
-        ))}
-      </ul>
+      {!embedded && (
+        <ul className="monthly-hours-list">
+          {monthlyHours.map((item) => (
+            <li key={item.month} className="monthly-hours-item">
+              <span className="month">{item.month} 月</span>
+              <span className="total-hours">{item.total_hours} 小时</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }

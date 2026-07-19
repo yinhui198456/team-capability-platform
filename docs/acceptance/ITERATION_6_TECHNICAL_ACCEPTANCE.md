@@ -42,3 +42,45 @@ docker compose up -d --build
 bash scripts/e2e-smoke.sh
 TCP_UIUX_PASSWORD=<approved-local-uat-password> python3 scripts/uiux-smoke.py
 ```
+
+## 6. 6A-5 UI-01 Member 看板原型对齐修复
+
+> 用户 UAT 反馈编号 6A-5，问题项：UI-01 Member 看板原型与主线未对齐。
+
+### 6.1 问题摘要
+
+- 学习时长单位应为 `h` 而非 `小时`，且字号需与原型一致。
+- 雷达图/能力域筛选缺少颜色与中文描述。
+- 待办事项排版、字号、图标与原型不符。
+- 任务表格中任务名称、所属能力域/L3 未显示中文，且缺少带颜色的域徽章。
+
+### 6.2 修复内容
+
+- 后端 `backend/app/planning/repository.py`
+  - 新增 `_get_l3_names` 辅助函数，通过 `capability_node` 表为 `gaps` 和 `current_tasks` 补充 `l3_name`。
+- 前端类型 `frontend/src/planning.ts`
+  - 为 `EligibleGap` 和 `LearningTask` 增加可选字段 `l3_name?: string | null`。
+- 前端页面 `frontend/src/MemberDashboardPage.tsx`
+  - 统一能力域中文名与颜色映射（P01 Data Infra、P02 AI Infra / Agent、P03 Coding、C01 基本办公、C02 沟通协作、C03 学习创新）。
+  - 新增 `DomainBadge`、`formatHours`、`TodoItem` 组件。
+  - 学习时长显示改为 `数字 + h` 样式。
+  - 待办事项改为 4 列图标卡片：待提交 Evidence、待 Buddy 复核、计划到期、学习任务延期。
+  - 雷达标签、能力域筛选、Gap 表格、任务表格均使用中文域徽章与 L3 中文名。
+- 样式 `frontend/src/styles.css`
+  - 补充 `.hours-value`、`.hours-number`、`.hours-unit`、`.todo-grid`、`.todo-item`、`.domain-badge`、`.gap-l3-name`、`.task-l3-name`、`.task-name-cell` 等样式。
+- 单测 `frontend/src/MemberDashboardPage.test.tsx`
+  - 更新 mock 与断言，覆盖中文 L3 名、`h` 单位、待办卡片文案。
+
+### 6.3 修复后验证
+
+- 关联 Issue：[#14](https://github.com/yinhui198456/team-capability-platform/issues/14)。
+- 前端单测：17 个测试文件、106 个测试通过。
+- 前端 lint：无错误。
+- 前端 build：`tsc -b && vite build` 成功。
+- 后端定向测试：容器中 `test_assessment.py`、`test_growth_goal.py`、`test_learning_task.py`、`test_member_dashboard.py`、`test_planning.py` 共 23 项通过。
+- 后端 Ruff 与 Black：通过。
+- 容器级 e2e-smoke 与视觉浏览器复验：尚未执行；仍需在部署环境中补充执行并完成用户 UAT。
+
+### 6.4 剩余门禁
+
+本修复完成后，UI-01 的 6A-5 问题已关闭，但仍需用户在实际容器环境中完成最终 UAT 签核。

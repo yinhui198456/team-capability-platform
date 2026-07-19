@@ -1,3 +1,5 @@
+import { request } from './shared/api'
+
 export type Gap = {
   id: number
   assessment_id: number
@@ -13,27 +15,6 @@ export type Gap = {
 export type UpdateGapPayload = {
   priority: '高' | '中' | '低'
   plan_candidate: boolean
-}
-
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  body?: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: body ? JSON.stringify(body) : options.body,
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
 }
 
 export async function listGaps(assessmentId?: number): Promise<Gap[]> {

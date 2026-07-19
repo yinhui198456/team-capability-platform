@@ -43,7 +43,7 @@
 - **迭代 3 子阶段**：3A、3B 全部完成，3B-5 用户切片 UAT 已通过。
 - **迭代 4 子阶段**：4-1～4-4 已完成；4-5 用户 UAT 待执行。
 - **迭代 5 子阶段**：5-1～5-3 已完成；5-4 用户 UAT 待执行（检查清单见 `docs/acceptance/ITERATION_5_TECHNICAL_ACCEPTANCE.md`）。
-- **迭代 6 子阶段**：6A/6B 的实施、角色权限和 UI-01～UI-05 真实容器浏览器复验已通过；6A-4、6B-5 用户集成 UAT 待执行（技术证据见 `docs/acceptance/ITERATION_6_TECHNICAL_ACCEPTANCE.md`）。
+- **迭代 6 子阶段**：6A/6B 的实施、角色权限和 UI-01～UI-05 真实容器浏览器复验已通过；6A-4、6B-5 用户集成 UAT 待执行。6C 的设计合规发现已归入 [#11](https://github.com/yinhui198456/team-capability-platform/issues/11)（年度计划与学习任务合体）和 [#12](https://github.com/yinhui198456/team-capability-platform/issues/12)（Buddy 复核中心合体），并已加入 GitHub Project，待 CC 执行。
 - **迭代 7 子阶段**：7-1～7-3 已完成；7-4 最终 UAT 与发布决策待执行。
 - **UAT 节奏**：迭代 3 起，每个业务纵向切片在 Codex 验收通过后进入用户 UAT；UAT 反馈只修复当前已授权切片范围，不新增业务规则。
 - **迭代 3A 完成边界**：在迭代 2 匿名只读目录基础上，新增本地 HttpOnly Cookie 会话、`/login` 登录页、五个本地 UAT 演示账号（密码均为 `123456`）、N:M 有效角色与 Buddy 关系基础。不含 Assessment、Gap、Goal、Plan、Task、Evidence、Review、Admin 管理页、SSO、注册、密码重置。

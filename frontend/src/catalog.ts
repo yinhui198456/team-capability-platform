@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { request } from './shared/api'
 import { me, type User } from './access'
 
 const DOMAIN_CODES = new Set(['P01', 'P02', 'P03', 'C01', 'C02', 'C03'])
@@ -82,29 +83,7 @@ export type ResourceDetail = {
   }>
 }
 
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(path)
-  if (!response.ok) throw new Error('目录数据暂不可用')
-  return response.json() as Promise<T>
-}
 
-async function write<T>(
-  path: string,
-  method: string,
-  body: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
-}
 
 export function useCatalog<T>(path: string | null) {
   const [data, setData] = useState<T | null>(null)
@@ -121,7 +100,7 @@ export function useCatalog<T>(path: string | null) {
         active = false
       }
     }
-    get<T>(path).then(
+    request<T>(path).then(
       (value) => active && setData(value),
       () => active && setError('目录数据暂不可用，请稍后重试。'),
     )
@@ -183,33 +162,25 @@ export async function updateCapabilityNode(
   nodeCode: string,
   body: object,
 ): Promise<object> {
-  return write<object>(`/api/capability-model/nodes/${nodeCode}`, 'PUT', body)
+  return request<object>(`/api/capability-model/nodes/${nodeCode}`, { method: 'PUT' }, body)
 }
 
 export async function createLearningResource(body: object): Promise<object> {
-  return write<object>('/api/learning-resources', 'POST', body)
+  return request<object>('/api/learning-resources', { method: 'POST' }, body)
 }
 
 export async function updateLearningResource(
   materialCode: string,
   body: object,
 ): Promise<object> {
-  return write<object>(`/api/learning-resources/${materialCode}`, 'PUT', body)
+  return request<object>(`/api/learning-resources/${materialCode}`, { method: 'PUT' }, body)
 }
 
 export async function archiveLearningResource(
   materialCode: string,
 ): Promise<object> {
-  const response = await fetch(
+  return request<object>(
     `/api/learning-resources/${materialCode}/archive`,
-    {
-      method: 'POST',
-      credentials: 'include',
-    },
+    { method: 'POST' },
   )
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json()
 }

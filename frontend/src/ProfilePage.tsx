@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { me } from './access'
+import { useYear } from './YearContext'
 import {
   getCapabilityProfile,
   type CapabilityProfile,
@@ -65,6 +66,7 @@ function PlanItemDetail({ item }: { item: CapabilityProfilePlanItem }) {
 }
 
 export function ProfilePage() {
+  const year = useYear()
   const [profile, setProfile] = useState<CapabilityProfile | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -74,7 +76,7 @@ export function ProfilePage() {
       setError('')
       try {
         await me()
-        const profileResult = await getCapabilityProfile(2026).catch(() => null)
+        const profileResult = await getCapabilityProfile(year).catch(() => null)
         setProfile(profileResult)
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')

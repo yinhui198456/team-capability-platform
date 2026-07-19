@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('GrowthGoalPage', () => {
   beforeEach(() => {
@@ -49,14 +50,16 @@ describe('GrowthGoalPage', () => {
     ])
     vi.spyOn(planningApi, 'listGrowthGoals').mockResolvedValue([])
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })
 
-    expect(screen.getByText('纳入目标')).toBeTruthy()
+    expect(screen.getByText('创建成长目标')).toBeTruthy()
   })
 
   it('calls createGrowthGoal and refreshes list on create', async () => {
@@ -95,14 +98,16 @@ describe('GrowthGoalPage', () => {
         priority: '中',
       })
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
-      expect(screen.getByText('纳入目标')).toBeTruthy()
+      expect(screen.getByText('创建成长目标')).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByText('纳入目标'))
+    fireEvent.click(screen.getByText('创建成长目标'))
 
     await waitFor(() => {
       expect(createGrowthGoal).toHaveBeenCalledWith(10)
@@ -133,17 +138,19 @@ describe('GrowthGoalPage', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/年度计划生成受限/)).toBeTruthy()
     })
 
     expect(screen.getByText(/暂无已提交的能力评估/)).toBeTruthy()
-    expect((screen.getByText('纳入目标') as HTMLButtonElement).disabled).toBe(
-      true,
-    )
+    expect(
+      (screen.getByText('创建成长目标') as HTMLButtonElement).disabled,
+    ).toBe(true)
   })
 
   it('calls deleteGrowthGoal when remove is clicked', async () => {
@@ -173,14 +180,16 @@ describe('GrowthGoalPage', () => {
       .spyOn(planningApi, 'deleteGrowthGoal')
       .mockResolvedValue(undefined)
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByText('移除'))
+    fireEvent.click(screen.getByText('删除'))
 
     await waitFor(() => {
       expect(deleteGrowthGoal).toHaveBeenCalledWith(1)

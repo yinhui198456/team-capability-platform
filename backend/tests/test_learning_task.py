@@ -342,20 +342,16 @@ def _seed_plan_items(
     return member_cookies, result
 
 
-def test_create_learning_task_success_and_duplicate_returns_409(
+def test_generated_plan_item_already_has_a_unique_learning_task(
     learning_task_schema: psycopg.Connection,
 ) -> None:
     cookies, result = _seed_plan_items(learning_task_schema)
     item = result["items"][0]
     item_id = int(item["id"])
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=cookies,
-    )
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
+    task = next(task for task in tasks if task["plan_item_id"] == item_id)
     assert task is not None
     assert task["plan_item_id"] == item_id
     assert task["l3_code"] == item["l3_code"]
@@ -400,21 +396,13 @@ def test_list_and_get_learning_tasks(
     item = result["items"][0]
     item_id = int(item["id"])
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=cookies,
-    )
-    assert status == 200
-    task_id = int(task["id"])
-
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    assert len(tasks) == 1
-    assert tasks[0]["id"] == task_id
-    assert tasks[0]["plan_item_target_level"] == item["target_level"]
-    assert tasks[0]["plan_item_target_month"] is None
+    assert len(tasks) == 2
+    task = next(task for task in tasks if task["plan_item_id"] == item_id)
+    task_id = int(task["id"])
+    assert task["plan_item_target_level"] == item["target_level"]
+    assert task["plan_item_target_month"] is None
 
     status, fetched, _ = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
@@ -430,21 +418,15 @@ def test_update_learning_task_success(
     cookies, result = _seed_plan_items(learning_task_schema)
     item_id = int(result["items"][0]["id"])
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=cookies,
-    )
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    task_id = int(task["id"])
+    task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
     status, updated, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
         {
             "status": "进行中",
-            "actual_hours": 5,
             "actual_start_date": "2026-07-01",
             "next_action": "继续学习",
         },
@@ -452,7 +434,6 @@ def test_update_learning_task_success(
     )
     assert status == 200
     assert updated["status"] == "进行中"
-    assert updated["actual_hours"] == 5
     assert updated["actual_start_date"] == "2026-07-01"
     assert updated["next_action"] == "继续学习"
 
@@ -463,14 +444,11 @@ def test_update_learning_task_forbidden_for_other_member(
     member_cookies, result = _seed_plan_items(learning_task_schema)
     item_id = int(result["items"][0]["id"])
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=member_cookies,
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
-    task_id = int(task["id"])
+    task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
     _create_test_user(learning_task_schema, "other_member_task", ["Member"])
     learning_task_schema.commit()
@@ -479,7 +457,7 @@ def test_update_learning_task_forbidden_for_other_member(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "进行中", "actual_hours": 5},
+        {"status": "进行中"},
         cookies=other_cookies,
     )
     assert status == 403
@@ -492,14 +470,9 @@ def test_update_learning_task_invalid_status_or_hours(
     cookies, result = _seed_plan_items(learning_task_schema)
     item_id = int(result["items"][0]["id"])
 
-    status, task, _ = _request(
-        "POST",
-        f"/api/planning/plan-items/{item_id}/learning-task",
-        {},
-        cookies=cookies,
-    )
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    task_id = int(task["id"])
+    task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
     status, body, _ = _request(
         "PUT",
@@ -513,11 +486,11 @@ def test_update_learning_task_invalid_status_or_hours(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"actual_hours": -1},
+        {"status": "待 Evidence Review"},
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "actual_hours must be a non-negative integer"}
+    assert body == {"detail": "task status is managed by Evidence Review"}
 
 
 def test_learning_task_endpoints_require_member_role(

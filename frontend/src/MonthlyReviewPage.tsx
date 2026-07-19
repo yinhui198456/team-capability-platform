@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 
+import { useYear } from './YearContext'
 import { getMonthlyHours, type MonthlyHours } from './planning'
 
 export function MonthlyReviewPage() {
+  const year = useYear()
   const [summary, setSummary] = useState<MonthlyHours[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setError('')
-    getMonthlyHours(2026)
+    getMonthlyHours(year)
       .then(setSummary)
       .catch((err) => setError(err instanceof Error ? err.message : '加载失败'))
       .finally(() => setLoading(false))
@@ -26,7 +28,7 @@ export function MonthlyReviewPage() {
         </p>
       )}
       {summary.length === 0 && (
-        <p className="muted">2026 年暂无学习时长记录。</p>
+        <p className="muted">{year} 年暂无学习时长记录。</p>
       )}
       <ul className="monthly-hours-list">
         {summary.map((item) => (

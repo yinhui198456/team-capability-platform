@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('ProfilePage', () => {
   beforeEach(() => {
@@ -145,9 +146,11 @@ describe('ProfilePage', () => {
       roles: ['Member'],
     })
 
-    window.history.pushState({}, '', '/growth/profile')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '成长档案', level: 1 }),
@@ -171,9 +174,11 @@ describe('ProfilePage', () => {
       roles: ['Member'],
     })
 
-    window.history.pushState({}, '', '/growth/profile')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('region', { name: /学习任务详情/ })).toBeTruthy()
     })
@@ -193,9 +198,11 @@ describe('ProfilePage', () => {
       new Error('暂无成长档案数据'),
     )
 
-    window.history.pushState({}, '', '/growth/profile')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '成长档案', level: 1 }),

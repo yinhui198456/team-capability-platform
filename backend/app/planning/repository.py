@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -32,6 +33,23 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
+def _get_l3_names(
+    connection: psycopg.Connection, l3_codes: list[str]
+) -> dict[str, str | None]:
+    if not l3_codes:
+        return {}
+    # capability_node uses dots while task/gap codes use dashes.
+    code_map = {code.replace("-", "."): code for code in l3_codes}
+    rows = connection.execute(
+        """
+        SELECT code, name FROM capability_node
+        WHERE node_type = 'L3' AND code = ANY(%s)
+        """,
+        (list(code_map.keys()),),
+    ).fetchall()
+    return {code_map[str(row[0])]: row[1] for row in rows}
+
+
 _ALLOWED_TASK_STATUSES = {
     "未开始",
     "进行中",
@@ -42,15 +60,31 @@ _ALLOWED_TASK_STATUSES = {
     "取消",
 }
 
+_MEMBER_MANAGED_TASK_STATUSES = {
+    "未开始",
+    "进行中",
+    "延期",
+    "暂停",
+    "取消",
+}
+
+_MEMBER_MANAGED_PLAN_ITEM_STATUSES = {"进行中", "暂停", "取消"}
+
 
 _UPDATABLE_TASK_FIELDS = {
     "status",
     "actual_start_date",
     "actual_end_date",
-    "actual_hours",
     "completion_quality",
     "review_conclusion",
     "next_action",
+}
+
+_UPDATABLE_PLAN_ITEM_FIELDS = {
+    "plan_start_date",
+    "plan_end_date",
+    "target_month",
+    "status",
 }
 
 
@@ -371,7 +405,26 @@ def generate_plan_items(
             ),
         ).fetchone()
         assert inserted is not None
-        created.append(_plan_item_row(inserted))
+        item = _plan_item_row(inserted)
+        _insert_learning_task(connection, int(item["id"]), l3_code)
+        created.append(item)
+
+    # Existing plans created before the 1:1 task invariant are repaired on the
+    # next generation attempt. The unique constraint keeps this idempotent.
+    missing_tasks = connection.execute(
+        """
+        SELECT pi.id, pi.l3_code
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s AND agp.year = %s
+          AND NOT EXISTS (
+              SELECT 1 FROM learning_task lt WHERE lt.plan_item_id = pi.id
+          )
+        """,
+        (member_id, year),
+    ).fetchall()
+    for plan_item_id, l3_code in missing_tasks:
+        _insert_learning_task(connection, int(plan_item_id), str(l3_code))
     return created
 
 
@@ -431,6 +484,12 @@ def create_learning_task(
     if existing is not None:
         raise ValueError("learning task already exists for this plan item")
 
+    return _insert_learning_task(connection, plan_item_id, str(row[1]))
+
+
+def _insert_learning_task(
+    connection: psycopg.Connection, plan_item_id: int, l3_code: str
+) -> dict[str, object]:
     inserted = connection.execute(
         """
         INSERT INTO learning_task (plan_item_id, l3_code, status)
@@ -439,10 +498,85 @@ def create_learning_task(
                   actual_start_date, actual_end_date, actual_hours,
                   completion_quality, review_conclusion, next_action
         """,
-        (plan_item_id, row[1]),
+        (plan_item_id, l3_code),
     ).fetchone()
     assert inserted is not None
     return _learning_task_row(inserted)
+
+
+def update_plan_item(
+    connection: psycopg.Connection,
+    member_id: int,
+    plan_item_id: int,
+    fields: dict[str, object],
+) -> dict[str, object]:
+    owned = connection.execute(
+        """
+        SELECT pi.id
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE pi.id = %s AND agp.member_id = %s
+        """,
+        (plan_item_id, member_id),
+    ).fetchone()
+    if owned is None:
+        raise PermissionError("plan item does not belong to member")
+
+    updates: dict[str, object] = {}
+    for key, value in fields.items():
+        if key not in _UPDATABLE_PLAN_ITEM_FIELDS:
+            raise ValueError(f"field '{key}' is not updatable")
+        updates[key] = value
+
+    if "status" in updates:
+        if updates["status"] not in _MEMBER_MANAGED_PLAN_ITEM_STATUSES:
+            raise ValueError("plan item status is not member-manageable")
+    if "target_month" in updates and updates["target_month"] is not None:
+        try:
+            target_month = int(updates["target_month"])  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("target_month must be between 1 and 12") from exc
+        if not 1 <= target_month <= 12:
+            raise ValueError("target_month must be between 1 and 12")
+        updates["target_month"] = target_month
+
+    for key in ("plan_start_date", "plan_end_date"):
+        value = updates.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{key} must be an ISO date")
+        if isinstance(value, str):
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"{key} must be an ISO date") from exc
+
+    if not updates:
+        rows = list_plan_items(connection, member_id)
+        return next(item for item in rows if item["id"] == plan_item_id)
+
+    columns = list(updates.keys())
+    set_clause = ", ".join(f"{column} = %s" for column in columns)
+    values = [updates[column] for column in columns] + [plan_item_id]
+    with connection.transaction():
+        updated = connection.execute(
+            f"""
+            UPDATE plan_item
+            SET {set_clause}
+            WHERE id = %s
+            RETURNING id, annual_growth_plan_id, growth_goal_id, l3_code,
+                      current_level, target_level, priority, learning_material,
+                      learning_task_content, expected_output, estimated_hours,
+                      plan_start_date, plan_end_date, target_month, status
+            """,
+            values,
+        ).fetchone()
+        assert updated is not None
+        if "status" in updates:
+            connection.execute(
+                "UPDATE learning_task SET status = %s WHERE plan_item_id = %s",
+                (updates["status"], plan_item_id),
+            )
+    return _plan_item_row(updated)
 
 
 def list_learning_tasks(
@@ -538,17 +672,11 @@ def update_learning_task(
             raise ValueError(f"field '{key}' is not updatable")
         updates[key] = value
 
-    if "status" in updates and updates["status"] not in _ALLOWED_TASK_STATUSES:
-        raise ValueError("invalid status")
-
-    if "actual_hours" in updates:
-        try:
-            hours = int(updates["actual_hours"])  # type: ignore[arg-type]
-        except (TypeError, ValueError) as exc:
-            raise ValueError("actual_hours must be a non-negative integer") from exc
-        if hours < 0:
-            raise ValueError("actual_hours must be a non-negative integer")
-        updates["actual_hours"] = hours
+    if "status" in updates:
+        if updates["status"] not in _ALLOWED_TASK_STATUSES:
+            raise ValueError("invalid status")
+        if updates["status"] not in _MEMBER_MANAGED_TASK_STATUSES:
+            raise ValueError("task status is managed by Evidence Review")
 
     if not updates:
         row = connection.execute(
@@ -569,17 +697,27 @@ def update_learning_task(
     values = [updates[col] for col in columns]
     values.append(task_id)
 
-    updated = connection.execute(
-        f"""
-        UPDATE learning_task
-        SET {set_clause}
-        WHERE id = %s
-        RETURNING id, plan_item_id, l3_code, status,
-                  actual_start_date, actual_end_date, actual_hours,
-                  completion_quality, review_conclusion, next_action
-        """,
-        values,
-    ).fetchone()
+    with connection.transaction():
+        updated = connection.execute(
+            f"""
+            UPDATE learning_task
+            SET {set_clause}
+            WHERE id = %s
+            RETURNING id, plan_item_id, l3_code, status,
+                      actual_start_date, actual_end_date, actual_hours,
+                      completion_quality, review_conclusion, next_action
+            """,
+            values,
+        ).fetchone()
+        if "status" in updates:
+            connection.execute(
+                """
+                UPDATE plan_item
+                SET status = %s
+                WHERE id = (SELECT plan_item_id FROM learning_task WHERE id = %s)
+                """,
+                (updates["status"], task_id),
+            )
     assert updated is not None
     return _learning_task_row(updated)
 
@@ -881,6 +1019,15 @@ def get_member_dashboard(
         for task in list_learning_tasks(connection, member_id)
         if task["status"] not in {"已完成", "取消"}
     ]
+    gaps = list_eligible_gaps(connection, member_id)
+    l3_codes = list(
+        {gap["l3_code"] for gap in gaps} | {task["l3_code"] for task in current_tasks}
+    )
+    l3_names = _get_l3_names(connection, l3_codes)
+    for gap in gaps:
+        gap["l3_name"] = l3_names.get(gap["l3_code"])
+    for task in current_tasks:
+        task["l3_name"] = l3_names.get(task["l3_code"])
 
     return {
         "year": year,
@@ -912,7 +1059,7 @@ def get_member_dashboard(
             {"domain_code": code, "score": scores.get(code, 0)}
             for code in ("P01", "P02", "P03", "C01", "C02", "C03")
         ],
-        "gaps": list_eligible_gaps(connection, member_id),
+        "gaps": gaps,
         "current_tasks": current_tasks,
     }
 
@@ -1087,6 +1234,24 @@ def submit_evidence(
             """,
             (evidence_id, int(buddy["id"])),
         )
+        connection.execute(
+            """
+            UPDATE learning_task
+            SET status = '待 Evidence Review'
+            WHERE id = %s
+            """,
+            (int(submitted["learning_task_id"]),),
+        )
+        connection.execute(
+            """
+            UPDATE plan_item
+            SET status = '进行中'
+            WHERE id = (
+                SELECT plan_item_id FROM learning_task WHERE id = %s
+            )
+            """,
+            (int(submitted["learning_task_id"]),),
+        )
 
     return submitted
 
@@ -1233,7 +1398,8 @@ def submit_evidence_review(
     with connection.transaction():
         row = connection.execute(
             """
-            SELECT er.evidence_id, er.buddy_id, er.status, agp.member_id
+            SELECT er.evidence_id, er.buddy_id, er.status, agp.member_id,
+                   e.learning_task_id
             FROM evidence_review er
             JOIN evidence e ON e.id = er.evidence_id
             JOIN learning_task lt ON lt.id = e.learning_task_id
@@ -1245,7 +1411,7 @@ def submit_evidence_review(
         ).fetchone()
         if row is None:
             raise ValueError("review not found")
-        evidence_id, review_buddy_id, review_status, member_id = row
+        evidence_id, review_buddy_id, review_status, member_id, task_id = row
         if int(review_buddy_id) != buddy_id:
             raise ValueError("review is not assigned to this buddy")
         if review_status != "待 Review":
@@ -1270,6 +1436,19 @@ def submit_evidence_review(
         connection.execute(
             "UPDATE evidence SET status = %s WHERE id = %s",
             (evidence_status, evidence_id),
+        )
+        task_status = "已完成" if conclusion == "通过" else "进行中"
+        connection.execute(
+            "UPDATE learning_task SET status = %s WHERE id = %s",
+            (task_status, task_id),
+        )
+        connection.execute(
+            """
+            UPDATE plan_item
+            SET status = %s
+            WHERE id = (SELECT plan_item_id FROM learning_task WHERE id = %s)
+            """,
+            (task_status, task_id),
         )
 
     return _evidence_review_row(updated)

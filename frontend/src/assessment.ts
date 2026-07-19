@@ -1,3 +1,5 @@
+import { request } from './shared/api'
+
 export type Assessment = {
   id: number
   member_id: number
@@ -9,16 +11,29 @@ export type Assessment = {
   submitted_at: string | null
   archived_at: string | null
   details?: AssessmentDetail[]
+  gap_summary?: GapSummary
 }
 
 export type AssessmentDetail = {
   id?: number
   l3_code: string
+  l3_name?: string
   current_level: number
   target_level: number
   gap_value?: number
   evidence_note?: string
   plan_candidate?: boolean
+  recommended_start_level?: string
+  l1_code?: string
+  l1_name?: string
+}
+
+export type GapSummary = {
+  total_gaps: number
+  avg_gap: number
+  high_priority: number
+  medium_priority: number
+  low_priority: number
 }
 
 export type AssessmentReview = {
@@ -30,27 +45,6 @@ export type AssessmentReview = {
   feedback: string | null
   reviewed_at: string | null
   status: string
-}
-
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  body?: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: body ? JSON.stringify(body) : options.body,
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
 }
 
 export async function createAssessment(

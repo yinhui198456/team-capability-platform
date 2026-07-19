@@ -1,3 +1,5 @@
+import { request } from './shared/api'
+
 export type PendingReview = {
   id: number
   assessment_id: number
@@ -14,27 +16,6 @@ export type PendingReview = {
 export type SubmitReviewPayload = {
   conclusion: '认可' | '建议调整'
   feedback?: string
-}
-
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  body?: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: body ? JSON.stringify(body) : options.body,
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
 }
 
 export async function listPendingReviews(): Promise<PendingReview[]> {

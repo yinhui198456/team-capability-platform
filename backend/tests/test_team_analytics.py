@@ -24,7 +24,6 @@ from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.repository import (
     create_growth_goal,
-    create_learning_task,
     create_progress_log,
     generate_plan_items,
     list_eligible_gaps,
@@ -339,8 +338,14 @@ def _build_two_member_team(
     # Member A: P01 completed in March, P02 in progress scheduled for May.
     p01_item_a = item_by_code_a["P01-L2A-L3A"]
     p02_item_a = item_by_code_a["P02-L2B-L3A"]
-    p01_task_a = create_learning_task(connection, member_a_id, int(p01_item_a["id"]))
-    p02_task_a = create_learning_task(connection, member_a_id, int(p02_item_a["id"]))
+    p01_task_a = connection.execute(
+        "SELECT id FROM learning_task WHERE plan_item_id = %s", (p01_item_a["id"],)
+    ).fetchone()
+    p02_task_a = connection.execute(
+        "SELECT id FROM learning_task WHERE plan_item_id = %s", (p02_item_a["id"],)
+    ).fetchone()
+    assert p01_task_a is not None
+    assert p02_task_a is not None
     connection.execute(
         """
         UPDATE plan_item
@@ -363,7 +368,7 @@ def _build_two_member_team(
         SET status = '已完成', actual_end_date = %s
         WHERE id = %s
         """,
-        ("2026-03-10", p01_task_a["id"]),
+        ("2026-03-10", p01_task_a[0]),
     )
     connection.execute(
         """
@@ -374,26 +379,25 @@ def _build_two_member_team(
         (p01_item_a["id"],),
     )
     create_progress_log(
-        connection, member_a_id, int(p01_task_a["id"]), "2026-03-10", 5, "日志"
+        connection, member_a_id, int(p01_task_a[0]), "2026-03-10", 5, "日志"
     )
     connection.execute(
         """
         INSERT INTO evidence (learning_task_id, l3_code, version_number, status)
         VALUES (%s, %s, 1, '已归档')
         """,
-        (p01_task_a["id"], "P01-L2A-L3A"),
+        (p01_task_a[0], "P01-L2A-L3A"),
     )
     connection.execute(
         """
         INSERT INTO evidence (learning_task_id, l3_code, version_number, status)
         VALUES (%s, %s, 1, '驳回')
         """,
-        (p02_task_a["id"], "P02-L2B-L3A"),
+        (p02_task_a[0], "P02-L2B-L3A"),
     )
 
     # Member B: P01 not started, scheduled for March.
     p01_item_b = item_by_code_b["P01-L2A-L3A"]
-    create_learning_task(connection, member_b_id, int(p01_item_b["id"]))
     connection.execute(
         """
         UPDATE plan_item

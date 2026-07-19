@@ -340,16 +340,13 @@ def _seed_plan_with_tasks(
     assert status == 200
     assert result["created"] == 2
 
-    tasks: list[dict[str, object]] = []
-    for item in result["items"]:
-        status, task, _ = _request(
-            "POST",
-            f"/api/planning/plan-items/{item['id']}/learning-task",
-            {},
-            cookies=member_cookies,
-        )
-        assert status == 200
-        tasks.append(task)
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
+    )
+    assert status == 200
+    assert {task["plan_item_id"] for task in tasks} == {
+        item["id"] for item in result["items"]
+    }
 
     return member_cookies, tasks
 

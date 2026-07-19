@@ -356,6 +356,13 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert item["status"] == "未开始"
     assert item["target_month"] is None
 
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
+    )
+    assert status == 200
+    assert {task["plan_item_id"] for task in tasks} == {item["id"] for item in items}
+    assert {task["status"] for task in tasks} == {"未开始"}
+
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
@@ -370,6 +377,61 @@ def test_generate_creates_plan_items_and_is_idempotent(
     )
     assert status == 200
     assert result["created"] == 0
+
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
+    )
+    assert status == 200
+    assert len(tasks) == 2
+
+
+def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
+    planning_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(planning_schema, "member_adjust_plan", ["Member"])
+    buddy_id = _create_test_user(planning_schema, "buddy_adjust_plan", ["Buddy"])
+    create_buddy_relationship(planning_schema, member_id, buddy_id)
+    _ensure_l3_node(planning_schema, "P01-L2A-L3A")
+    planning_schema.commit()
+
+    assessment_id = _create_and_submit_assessment(planning_schema, "member_adjust_plan")
+    _approve_assessment(planning_schema, assessment_id, "buddy_adjust_plan")
+    cookies = _login(planning_schema, "member_adjust_plan")
+    status, gaps, _ = _request("GET", "/api/planning/eligible-gaps", cookies=cookies)
+    assert status == 200
+    status, _, _ = _request(
+        "POST", "/api/planning/growth-goals", {"gap_id": gaps[0]["id"]}, cookies=cookies
+    )
+    assert status == 200
+    status, generated, _ = _request(
+        "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
+    )
+    assert status == 200
+    item_id = int(generated["items"][0]["id"])
+
+    status, item, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-01",
+            "plan_end_date": "2026-05-31",
+            "target_month": 5,
+            "status": "暂停",
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert item["plan_start_date"] == "2026-04-01"
+    assert item["plan_end_date"] == "2026-05-31"
+    assert item["target_month"] == 5
+    assert item["status"] == "暂停"
+
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    assert (
+        next(task for task in tasks if task["plan_item_id"] == item_id)["status"]
+        == "暂停"
+    )
 
 
 def test_plan_items_list_and_annual_plan_are_member_only(

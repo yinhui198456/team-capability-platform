@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 const analytics: planningApi.TeamAnalytics = {
   year: 2026,
@@ -93,9 +94,11 @@ describe('TeamAnalyticsPage', () => {
     const getTeamAnalytics = vi
       .spyOn(planningApi, 'getTeamAnalytics')
       .mockResolvedValue(analytics)
-    window.history.pushState({}, '', '/operations/analytics')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
     expect(screen.getAllByText('50%')).not.toHaveLength(0)
     expect(screen.getByText('成员能力达成率')).toBeTruthy()
@@ -121,9 +124,11 @@ describe('TeamAnalyticsPage', () => {
       roles: ['Member'],
     })
     const getTeamAnalytics = vi.spyOn(planningApi, 'getTeamAnalytics')
-    window.history.pushState({}, '', '/operations/analytics')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => expect(screen.getByText(/无权限/)).toBeTruthy())
     expect(getTeamAnalytics).not.toHaveBeenCalled()
   })

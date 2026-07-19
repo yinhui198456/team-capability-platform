@@ -1,3 +1,5 @@
+import { request } from './shared/api'
+
 export type User = {
   id: number
   username: string
@@ -11,43 +13,14 @@ export type User = {
   }>
 }
 
-async function post<T>(path: string, body: object): Promise<T> {
-  const response = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
-}
-
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
-    method: 'GET',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
-}
-
 export async function login(username: string, password: string): Promise<User> {
-  return post<User>('/api/auth/login', { username, password })
+  return request<User>('/api/auth/login', { method: 'POST' }, { username, password })
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/api/auth/logout', {
-    method: 'POST',
-    credentials: 'include',
-  })
+  await request<void>('/api/auth/logout', { method: 'POST' }, {})
 }
 
 export async function me(): Promise<User> {
-  return get<User>('/api/auth/me')
+  return request<User>('/api/auth/me', { method: 'GET' })
 }

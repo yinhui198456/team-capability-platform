@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('MonthlyReviewPage', () => {
   beforeEach(() => {
@@ -28,9 +29,11 @@ describe('MonthlyReviewPage', () => {
       roles: ['Member'],
     })
 
-    window.history.pushState({}, '', '/growth/review/monthly')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/review/monthly']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '月度复盘', level: 1 }),
@@ -52,9 +55,11 @@ describe('MonthlyReviewPage', () => {
     })
     vi.spyOn(planningApi, 'getMonthlyHours').mockResolvedValue([])
 
-    window.history.pushState({}, '', '/growth/review/monthly')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/review/monthly']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('2026 年暂无学习时长记录。')).toBeTruthy()
     })

@@ -35,6 +35,7 @@ from .repository import (
     submit_evidence_review,
     update_evidence_draft,
     update_learning_task,
+    update_plan_item,
     update_progress_log,
     update_team_annual_plan,
     validate_team_analytics_domain_filter,
@@ -65,6 +66,28 @@ def _require_leader(user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+
+
+@planning_router.get("/available-years")
+def get_available_years(
+    user: CurrentUser, connection: Connection
+) -> dict[str, object]:
+    """Returns years with data for the current user, plus the active year."""
+    _require_member(user)
+    member_id = int(user["id"])
+    # Collect distinct years from assessment and annual_growth_plan
+    rows = connection.execute(
+        """
+        SELECT DISTINCT year FROM assessment WHERE member_id = %s
+        UNION
+        SELECT DISTINCT year FROM annual_growth_plan WHERE member_id = %s
+        ORDER BY year
+        """,
+        (member_id, member_id),
+    ).fetchall()
+    available = [r[0] for r in rows] if rows else [int(__import__('datetime').datetime.now().year)]
+    active = max(available) if available else int(__import__('datetime').datetime.now().year)
+    return {"available_years": available, "active_year": active}
 
 
 @planning_router.get("/member-dashboard")
@@ -181,6 +204,28 @@ def get_plan_items(
 ) -> list[dict[str, object]]:
     _require_member(user)
     return list_plan_items(connection, int(user["id"]))
+
+
+@planning_router.put("/plan-items/{plan_item_id}")
+def put_plan_item(
+    user: CurrentUser,
+    connection: Connection,
+    plan_item_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return update_plan_item(connection, int(user["id"]), plan_item_id, body)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @planning_router.post("/plan-items/{plan_item_id}/learning-task")

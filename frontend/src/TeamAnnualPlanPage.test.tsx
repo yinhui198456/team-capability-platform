@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 const mockModel = {
   code: 'tcp-model',
@@ -129,9 +130,11 @@ describe('TeamAnnualPlanPage', () => {
       publishedPlan(),
     )
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '团队年度能力规划' }),
@@ -160,9 +163,11 @@ describe('TeamAnnualPlanPage', () => {
       .spyOn(planningApi, 'publishTeamAnnualPlan')
       .mockResolvedValue(publishedPlan())
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('发布')).toBeTruthy()
     })
@@ -204,9 +209,11 @@ describe('TeamAnnualPlanPage', () => {
         description: 'updated description',
       })
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('更新')).toBeTruthy()
     })
@@ -241,9 +248,11 @@ describe('TeamAnnualPlanPage', () => {
       .spyOn(planningApi, 'archiveTeamAnnualPlan')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('归档')).toBeTruthy()
     })
@@ -271,9 +280,11 @@ describe('TeamAnnualPlanPage', () => {
     })
     const getTeamAnnualPlan = vi.spyOn(planningApi, 'getTeamAnnualPlan')
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/无权限/)).toBeTruthy()
     })
@@ -296,9 +307,11 @@ describe('TeamAnnualPlanPage', () => {
       new Error('year already exists'),
     )
 
-    window.history.pushState({}, '', '/operations/team-annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('发布')).toBeTruthy()
     })

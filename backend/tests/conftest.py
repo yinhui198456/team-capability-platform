@@ -75,4 +75,9 @@ def connection() -> Iterator[psycopg.Connection]:
     with psycopg.connect(TEST_DATABASE_URL) as test_connection:
         _clear_catalog(test_connection)
         _clear_assessment(test_connection)
+        # Recreate empty catalog tables so assessment JOINs don't fail.
+        from app.catalog.schema import create_catalog_schema
+
+        create_catalog_schema(test_connection)
+        test_connection.commit()
         yield test_connection

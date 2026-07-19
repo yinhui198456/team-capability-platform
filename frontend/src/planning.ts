@@ -1,3 +1,14 @@
+import { request, getOrNull } from './shared/api'
+
+export type AvailableYears = {
+  available_years: number[]
+  active_year: number
+}
+
+export async function getAvailableYears(): Promise<AvailableYears> {
+  return request<AvailableYears>('/api/planning/available-years', { method: 'GET' })
+}
+
 export type AnnualPlanEligibility = {
   eligible: boolean
   reason: string | null
@@ -7,6 +18,7 @@ export type EligibleGap = {
   id: number
   assessment_id: number
   l3_code: string
+  l3_name?: string | null
   current_level: number
   target_level: number
   gap_value: number
@@ -58,6 +70,7 @@ export type LearningTask = {
   id: number
   plan_item_id: number
   l3_code: string
+  l3_name?: string | null
   status: LearningTaskStatus
   actual_start_date: string | null
   actual_end_date: string | null
@@ -130,27 +143,6 @@ export type EvidenceUpdate = Partial<{
   evidence_link: string | null
 }>
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  body?: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: body ? JSON.stringify(body) : options.body,
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
-}
-
 export async function getAnnualPlanEligibility(): Promise<AnnualPlanEligibility> {
   return request<AnnualPlanEligibility>(
     '/api/planning/annual-plan-eligibility',
@@ -195,9 +187,7 @@ export async function deleteGrowthGoal(goal_id: number): Promise<void> {
 }
 
 export async function getAnnualPlan(year: number): Promise<AnnualPlan | null> {
-  return request<AnnualPlan | null>(`/api/planning/annual-plan?year=${year}`, {
-    method: 'GET',
-  })
+  return getOrNull<AnnualPlan>(`/api/planning/annual-plan?year=${year}`)
 }
 
 export async function generatePlanItems(): Promise<{
@@ -215,13 +205,21 @@ export async function listPlanItems(): Promise<PlanItem[]> {
   return request<PlanItem[]>('/api/planning/plan-items', { method: 'GET' })
 }
 
-export async function createLearningTask(
+export type PlanItemUpdate = Partial<{
+  plan_start_date: string | null
+  plan_end_date: string | null
+  target_month: number | null
+  status: '进行中' | '暂停' | '取消'
+}>
+
+export async function updatePlanItem(
   plan_item_id: number,
-): Promise<LearningTask> {
-  return request<LearningTask>(
-    `/api/planning/plan-items/${plan_item_id}/learning-task`,
-    { method: 'POST' },
-    {},
+  fields: PlanItemUpdate,
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/api/planning/plan-items/${plan_item_id}`,
+    { method: 'PUT' },
+    fields,
   )
 }
 
@@ -258,10 +256,9 @@ export type MonthlyHours = {
 }
 
 export type LearningTaskUpdate = Partial<{
-  status: LearningTaskStatus
+  status: '未开始' | '进行中' | '延期' | '暂停' | '取消'
   actual_start_date: string | null
   actual_end_date: string | null
-  actual_hours: number
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
@@ -530,16 +527,9 @@ export type TeamAnnualPlanSave = {
 export async function getTeamAnnualPlan(
   year: number,
 ): Promise<TeamAnnualCapabilityPlan | null> {
-  const response = await fetch(`/api/planning/team-annual-plan?year=${year}`, {
-    method: 'GET',
-    credentials: 'include',
-  })
-  if (response.status === 404) return null
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<TeamAnnualCapabilityPlan>
+  return getOrNull<TeamAnnualCapabilityPlan>(
+    `/api/planning/team-annual-plan?year=${year}`,
+  )
 }
 
 export async function publishTeamAnnualPlan(
@@ -637,4 +627,12 @@ export async function getTeamAnalytics(query: {
   return request<TeamAnalytics>(`/api/planning/team-analytics?${parameters}`, {
     method: 'GET',
   })
+}
+
+export async function createLearningTask(plan_item_id: number): Promise<LearningTask> {
+  return request<LearningTask>(
+    `/api/planning/plan-items/${plan_item_id}/learning-task`,
+    { method: 'POST' },
+    {},
+  )
 }

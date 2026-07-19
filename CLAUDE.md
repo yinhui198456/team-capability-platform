@@ -6,6 +6,8 @@
 
 本项目是一个面向企业研发团队的能力运营平台（Team Capability Platform，简称 TCP）。
 
+**GitHub 仓库：** https://github.com/yinhui198456/team-capability-platform
+
 产品定位：
 
 - 不是 LMS

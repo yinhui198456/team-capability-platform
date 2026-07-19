@@ -35,8 +35,37 @@ def create_assessment_draft(
             """,
             (member_id, year, version, assessment_type),
         ).fetchone()
-    assert row is not None
-    return row[0]
+        assert row is not None
+        assessment_id = row[0]
+
+        # Pre-populate detail rows from capability model. Use a savepoint
+        # so that missing catalog tables (e.g. test DB) don't abort the
+        # outer transaction.
+        try:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO assessment_detail (
+                        assessment_id, l3_code, current_level, target_level,
+                        gap_value, evidence_note, plan_candidate
+                    )
+                    SELECT
+                        %s,
+                        c.code,
+                        1,
+                        1,
+                        0,
+                        NULL,
+                        FALSE
+                    FROM capability_node c
+                    WHERE c.node_type = 'L3' AND c.enabled = TRUE
+                    """,
+                    (assessment_id,),
+                )
+        except psycopg.errors.UndefinedTable:
+            pass  # capability_node doesn't exist (e.g. test DB without catalog)
+
+    return assessment_id
 
 
 def get_assessment(
@@ -55,6 +84,7 @@ def get_assessment(
         return None
 
     details = _get_assessment_details(connection, assessment_id)
+    gap_summary = _get_gap_summary(connection, assessment_id)
     return {
         "id": row[0],
         "member_id": row[1],
@@ -66,6 +96,7 @@ def get_assessment(
         "submitted_at": row[7],
         "archived_at": row[8],
         "details": details,
+        "gap_summary": gap_summary,
     }
 
 
@@ -74,11 +105,17 @@ def _get_assessment_details(
 ) -> list[dict[str, object]]:
     rows = connection.execute(
         """
-        SELECT id, l3_code, current_level, target_level, gap_value,
-               evidence_note, plan_candidate
-        FROM assessment_detail
-        WHERE assessment_id = %s
-        ORDER BY l3_code
+        SELECT ad.id, ad.l3_code, ad.current_level, ad.target_level, ad.gap_value,
+               ad.evidence_note, ad.plan_candidate,
+               c.name AS l3_name,
+               c.recommended_start_level,
+               l1.code AS l1_code, l1.name AS l1_name
+        FROM assessment_detail ad
+        LEFT JOIN capability_node c ON c.code = ad.l3_code AND c.node_type = 'L3'
+        LEFT JOIN capability_node l2 ON l2.id = c.parent_node_id
+        LEFT JOIN capability_node l1 ON l1.id = l2.parent_node_id
+        WHERE ad.assessment_id = %s
+        ORDER BY l1.code, c.code
         """,
         (assessment_id,),
     ).fetchall()
@@ -91,9 +128,47 @@ def _get_assessment_details(
             "gap_value": row[4],
             "evidence_note": row[5],
             "plan_candidate": row[6],
+            "l3_name": row[7],
+            "recommended_start_level": row[8],
+            "l1_code": row[9],
+            "l1_name": row[10],
         }
         for row in rows
     ]
+
+
+def _get_gap_summary(
+    connection: psycopg.Connection, assessment_id: int
+) -> dict[str, object]:
+    """Aggregate gap statistics for the assessment's Gap sidebar."""
+    gaps = [
+        max(int(row[0]) - int(row[1]), 0)
+        for row in connection.execute(
+            """
+            SELECT target_level, current_level
+            FROM assessment_detail
+            WHERE assessment_id = %s AND target_level > current_level
+            """,
+            (assessment_id,),
+        ).fetchall()
+    ]
+    total = len(gaps)
+    avg = round(sum(gaps) / total, 1) if total > 0 else 0
+    by_priority: dict[str, int] = {"高": 0, "中": 0, "低": 0}
+    for g in gaps:
+        if g >= 3:
+            by_priority["高"] += 1
+        elif g > 0:
+            by_priority["中"] += 1
+        else:
+            by_priority["低"] += 1
+    return {
+        "total_gaps": total,
+        "avg_gap": avg,
+        "high_priority": by_priority["高"],
+        "medium_priority": by_priority["中"],
+        "low_priority": by_priority["低"],
+    }
 
 
 def list_member_assessments(
