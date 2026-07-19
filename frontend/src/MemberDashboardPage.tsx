@@ -1,25 +1,28 @@
 import { useEffect, useState } from 'react'
 
-import { me } from './access'
 import { useYear } from './YearContext'
 import { getMemberDashboard, type MemberDashboard } from './planning'
-
-const domainNames: Record<string, string> = {
-  P01: 'Data Infra',
-  P02: 'AI Infra / Agent',
-  P03: 'Coding',
-  C01: '基本办公',
-  C02: '沟通协作',
-  C03: '学习创新',
-}
+import styles from './MemberDashboardPage.module.css'
 
 const domainColors: Record<string, string> = {
-  P01: '#175cd3',
-  P02: '#0e9384',
-  P03: '#f79009',
-  C01: '#7a5af8',
-  C02: '#ec4899',
-  C03: '#17b26a',
+  P01: 'var(--domain-P01)',
+  P02: 'var(--domain-P02)',
+  P03: 'var(--domain-P03)',
+  C01: 'var(--domain-C01)',
+  C02: 'var(--domain-C02)',
+  C03: 'var(--domain-C03)',
+}
+
+function domainLabel(code: string): string {
+  const labels: Record<string, string> = {
+    P01: '数据基础设施',
+    P02: 'AI Infra / Agent',
+    P03: '工程编码',
+    C01: '基本办公能力',
+    C02: '沟通协作',
+    C03: '学习创新',
+  }
+  return labels[code] ?? code
 }
 
 const radarCenter = 112
@@ -41,14 +44,11 @@ function pointsFor(scores: number[]) {
 }
 
 function DomainBadge({ code }: { code: string }) {
-  const color = domainColors[code] ?? '#475467'
+  const color = domainColors[code] ?? 'var(--color-gray-600)'
   return (
-    <span
-      className="domain-badge"
-      style={{ '--domain-color': color } as React.CSSProperties}
-    >
-      <span className="domain-dot" style={{ background: color }} />
-      {code} {domainNames[code] ?? code}
+    <span className={styles.domainBadge}>
+      <span className={styles.domainDot} style={{ background: color }} />
+      {code} {domainLabel(code)}
     </span>
   )
 }
@@ -67,24 +67,12 @@ function formatHours(
   )
 }
 
-function TodoItem({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: number
-  tone?: 'default' | 'danger'
-}) {
+function TodoItem({ label, value, tone }: { label: string; value: number; tone?: 'default' | 'danger' }) {
+  const cls = tone === 'danger' ? `${styles.todoItem} ${styles.todoDanger}` : styles.todoItem
   return (
-    <div className={`todo-item todo-item-${tone ?? 'default'}`}>
-      <span className="todo-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <strong className="todo-value">{value}</strong>
-      <span className="todo-label">{label}</span>
+    <div className={cls}>
+      <strong className={styles.todoValue}>{value}</strong>
+      <span className={styles.todoLabel}>{label}</span>
     </div>
   )
 }
@@ -156,7 +144,6 @@ export function MemberDashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        await me()
         setDashboard(await getMemberDashboard(year))
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
@@ -178,313 +165,121 @@ export function MemberDashboardPage() {
     0
 
   return (
-    <section className="page dashboard-page">
+    <section className="page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">Member 工作台 · {dashboard?.year ?? year}</p>
           <h1>我的成长总览</h1>
-          <p className="muted">
-            将自评、Gap、年度计划与 Evidence 进展放在同一工作区。
-          </p>
+          <p className="muted">将自评、Gap、年度计划与 Evidence 进展放在同一工作区。</p>
         </div>
-        <a className="primary-link" href="/capability/assessment">
-          进入能力自评
-        </a>
+        <a className="primary-link" href="/capability/assessment">进入能力自评</a>
       </header>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <p className="error" role="alert">{error}</p>}
       {!dashboard && !error && <p className="muted">正在加载成长数据…</p>}
-      {dashboard && (
-        <>
-          <div className="dashboard-overview">
-            <article className="dashboard-card plan-progress-card">
-              <h2>年度计划进度</h2>
-              <div className="plan-progress-content">
-                <div
-                  aria-label={`年度计划完成率 ${completionRate}%`}
-                  className="progress-ring"
-                  style={
-                    {
-                      '--progress': `${completionRate * 3.6}deg`,
-                    } as React.CSSProperties
-                  }
-                >
-                  <strong>{completionRate}%</strong>
-                  <span>整体进度</span>
-                </div>
-                <dl className="plan-status-list">
-                  <div>
-                    <dt>计划项</dt>
-                    <dd>{total}</dd>
-                  </div>
-                  <div>
-                    <dt>已完成</dt>
-                    <dd className="status-complete">
-                      {dashboard.plan_progress.已完成}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>进行中</dt>
-                    <dd>{dashboard.plan_progress.进行中}</dd>
-                  </div>
-                  <div>
-                    <dt>未开始</dt>
-                    <dd>{dashboard.plan_progress.未开始}</dd>
-                  </div>
-                  <div>
-                    <dt>延期</dt>
-                    <dd className="status-overdue">
-                      {dashboard.plan_progress.延期}
-                    </dd>
-                  </div>
-                </dl>
+      {dashboard && (<>
+        <div className={styles.overview}>
+          <article className={`card ${styles.progressCard}`}>
+            <h2>年度计划进度</h2>
+            <div className={styles.progressBody}>
+              <div className={styles.ring} style={{ '--progress': `${completionRate * 3.6}deg` } as React.CSSProperties}>
+                <strong className={styles.ringValue}>{completionRate}%</strong>
+                <span className={styles.ringLabel}>整体进度</span>
               </div>
-              <a href="/growth/annual-plan">查看年度计划</a>
-            </article>
-            <article className="dashboard-card learning-hours-card">
-              <h2>学习时长</h2>
-              <div className="metric-grid" aria-label="学习时长摘要">
-                <div>
-                  <span>全年累计时长</span>
-                  <strong>
-                    {formatHours(dashboard.summary.annual_actual_hours)}
-                  </strong>
-                </div>
-                <div>
-                  <span>全年计划时长</span>
-                  <strong>
-                    {formatHours(dashboard.summary.annual_planned_hours)}
-                  </strong>
-                </div>
-                <div>
-                  <span>当月累计时长</span>
-                  <strong>
-                    {formatHours(dashboard.summary.current_month_actual_hours)}
-                  </strong>
-                </div>
-                <div>
-                  <span>当月计划时长</span>
-                  <strong>
-                    {formatHours(dashboard.summary.current_month_planned_hours)}
-                  </strong>
-                </div>
-              </div>
-              <a href="/growth/review/monthly">查看月度复盘</a>
-            </article>
-            <article className="dashboard-card todo-card">
-              <h2>待办事项</h2>
-              <div className="todo-grid">
-                <TodoItem
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <line x1="12" y1="18" x2="12" y2="18" />
-                      <line x1="9" y1="15" x2="15" y2="15" />
-                    </svg>
-                  }
-                  label="待提交 Evidence"
-                  value={dashboard.summary.pending_evidence_count}
-                />
-                <TodoItem
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                      <circle cx="9" cy="7" r="4" />
-                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                    </svg>
-                  }
-                  label="待 Buddy 复核"
-                  value={dashboard.plan_progress['待 Evidence Review']}
-                />
-                <TodoItem
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                  }
-                  label="计划到期"
-                  value={dashboard.plan_progress.延期}
-                  tone="danger"
-                />
-                <TodoItem
-                  icon={
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <line x1="12" y1="9" x2="12" y2="13" />
-                      <line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
-                  }
-                  label="学习任务延期"
-                  value={overdueTasks}
-                  tone="danger"
-                />
-              </div>
+              <dl className={styles.statusList}>
+                <div className={styles.statusItem}><dt>计划项</dt><dd>{total}</dd></div>
+                <div className={styles.statusItem}><dt>已完成</dt><dd className="status-complete">{dashboard.plan_progress.已完成}</dd></div>
+                <div className={styles.statusItem}><dt>进行中</dt><dd>{dashboard.plan_progress.进行中}</dd></div>
+                <div className={styles.statusItem}><dt>未开始</dt><dd>{dashboard.plan_progress.未开始}</dd></div>
+                <div className={styles.statusItem}><dt>延期</dt><dd className={styles.overdue}>{dashboard.plan_progress.延期}</dd></div>
+              </dl>
+            </div>
+            <a href="/growth/annual-plan">查看年度计划</a>
+          </article>
+          <article className={`card ${styles.hoursCard}`}>
+            <h2>学习时长</h2>
+            <div className={styles.metricGrid}>
+              <div className={styles.metric}><span>全年累计时长</span><strong>{formatHours(dashboard.summary.annual_actual_hours)}</strong></div>
+              <div className={styles.metric}><span>全年计划时长</span><strong>{formatHours(dashboard.summary.annual_planned_hours)}</strong></div>
+              <div className={styles.metric}><span>当月累计时长</span><strong>{formatHours(dashboard.summary.current_month_actual_hours)}</strong></div>
+              <div className={styles.metric}><span>当月计划时长</span><strong>{formatHours(dashboard.summary.current_month_planned_hours)}</strong></div>
+            </div>
+            <a href="/growth/review/monthly">查看月度复盘</a>
+          </article>
+          <article className={`card ${styles.todoCard}`}>
+            <h2>待办事项</h2>
+            <div className={styles.todoGrid}>
+              <TodoItem label="待提交 Evidence" value={dashboard.summary.pending_evidence_count} />
+              <TodoItem label="待 Buddy 复核" value={dashboard.plan_progress['待 Evidence Review']} />
+              <TodoItem label="计划到期" value={dashboard.plan_progress.延期} tone="danger" />
+              <TodoItem label="学习任务延期" value={overdueTasks} tone="danger" />
+            </div>
+          </article>
+        </div>
+        <section className={`card ${styles.abilitySection}`}>
+          <div className={styles.abilityHead}>
+            <h2>能力分析</h2>
+            <span className="muted">选择能力域查看对应 Gap</span>
+          </div>
+          <div className={styles.domainFilter}>
+            {['全部', ...dashboard.domain_radar.map(d => d.domain_code)].map(domain => (
+              <button aria-pressed={selectedDomain === domain} className={selectedDomain === domain ? 'active' : ''} key={domain} onClick={() => setSelectedDomain(domain)} type="button">
+                {domain === '全部' ? domain : `${domain} ${domainLabel(domain)}`}
+              </button>
+            ))}
+          </div>
+          <div className={styles.abilityGrid}>
+            <article><h3>个人能力雷达图</h3><Radar data={dashboard.domain_radar} gaps={dashboard.gaps} /></article>
+            <article>
+              <h3>Gap 概览</h3>
+              {filteredGaps.length === 0 ? <p className="muted">当前范围暂无 Gap。</p> : (
+                <table className={styles.gapTable}>
+                  <thead><tr><th>能力域 / L3</th><th>当前</th><th>目标</th><th>Gap</th><th>优先级</th></tr></thead>
+                  <tbody>
+                    {filteredGaps.slice(0, 8).map(gap => {
+                      const dc = gap.l3_code.slice(0, 3)
+                      return (<tr key={gap.id}>
+                        <td><DomainBadge code={dc} /><span className={styles.l3Name}>{gap.l3_name ?? gap.l3_code}</span></td>
+                        <td>{gap.current_level}</td><td>{gap.target_level}</td>
+                        <td className={styles.gapValue}>{gap.gap_value}</td><td>{gap.priority}</td>
+                      </tr>)
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <a href="/capability/assessment">查看 Gap 分析</a>
             </article>
           </div>
-          <section className="dashboard-card ability-analysis">
-            <div className="card-heading">
-              <h2>能力分析</h2>
-              <span className="muted">选择能力域查看对应 Gap</span>
-            </div>
-            <div className="domain-filter" aria-label="能力域筛选">
-              {[
-                '全部',
-                ...dashboard.domain_radar.map((domain) => domain.domain_code),
-              ].map((domain) => (
-                <button
-                  aria-pressed={selectedDomain === domain}
-                  className={selectedDomain === domain ? 'active' : ''}
-                  key={domain}
-                  onClick={() => setSelectedDomain(domain)}
-                  type="button"
-                >
-                  {domain === '全部'
-                    ? domain
-                    : `${domain} ${domainNames[domain]}`}
-                </button>
-              ))}
-            </div>
-            <div className="dashboard-grid ability-analysis-grid">
-              <article>
-                <h3>个人能力雷达图</h3>
-                <Radar data={dashboard.domain_radar} gaps={dashboard.gaps} />
-              </article>
-              <article>
-                <h3>Gap 概览</h3>
-                {filteredGaps.length === 0 ? (
-                  <p className="muted">当前范围暂无 Gap。</p>
-                ) : (
-                  <table className="analytics-table gap-table">
-                    <thead>
-                      <tr>
-                        <th>能力域 / L3</th>
-                        <th>当前</th>
-                        <th>目标</th>
-                        <th>Gap</th>
-                        <th>优先级</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredGaps.slice(0, 6).map((gap) => {
-                        const domainCode = gap.l3_code.slice(0, 3)
-                        return (
-                          <tr key={gap.id}>
-                            <td>
-                              <DomainBadge code={domainCode} />
-                              <span className="gap-l3-name">
-                                {gap.l3_name ?? gap.l3_code}
-                              </span>
-                            </td>
-                            <td>{gap.current_level}</td>
-                            <td>{gap.target_level}</td>
-                            <td className="gap-value">{gap.gap_value}</td>
-                            <td>{gap.priority}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <a href="/capability/gap">查看 Gap 分析</a>
-              </article>
-            </div>
-          </section>
-          <article className="dashboard-card current-tasks-card">
-            <div className="card-heading">
-              <h2>当前学习任务</h2>
-              <a href="/growth/tasks">进入任务与 Evidence</a>
-            </div>
-            {dashboard.current_tasks.length === 0 ? (
-              <p className="muted">暂无进行中的学习任务。</p>
-            ) : (
-              <table className="analytics-table task-table">
-                <thead>
-                  <tr>
-                    <th>任务名称</th>
-                    <th>所属能力域 / L3</th>
-                    <th>计划月份</th>
-                    <th>预计时长</th>
-                    <th>实际时长</th>
-                    <th>进度</th>
-                    <th>状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.current_tasks.map((task) => {
-                    const estimated = Number(
-                      task.plan_item_estimated_hours ?? 0,
-                    )
-                    const progress =
-                      estimated > 0
-                        ? Math.round((task.actual_hours / estimated) * 100)
-                        : 0
-                    const domainCode = task.l3_code.slice(0, 3)
-                    const taskName =
-                      task.plan_item_learning_task_content?.trim() ||
-                      task.l3_name ||
-                      task.l3_code
-                    return (
-                      <tr key={task.id}>
-                        <td className="task-name-cell">{taskName}</td>
-                        <td>
-                          <DomainBadge code={domainCode} />
-                          <span className="task-l3-name">
-                            {task.l3_name ?? task.l3_code}
-                          </span>
-                        </td>
-                        <td>
-                          {task.plan_item_target_month
-                            ? `${task.plan_item_target_month} 月`
-                            : '未排期'}
-                        </td>
-                        <td>{formatHours(task.plan_item_estimated_hours)}</td>
-                        <td>{formatHours(task.actual_hours)}</td>
-                        <td>
-                          <progress max={100} value={Math.min(progress, 100)} />{' '}
-                          {progress}%
-                        </td>
-                        <td>
-                          <span
-                            className={`status-pill status-${task.status.replace(/ /g, '-')}`}
-                          >
-                            {task.status}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
-          </article>
-        </>
-      )}
+        </section>
+        <article className={`card ${styles.tasksSection}`}>
+          <div className={styles.tasksHead}>
+            <h2>当前学习任务</h2>
+            <a href="/growth/annual-plan">进入任务与 Evidence</a>
+          </div>
+          {dashboard.current_tasks.length === 0 ? <p className="muted">暂无进行中的学习任务。</p> : (
+            <table>
+              <thead><tr><th>任务名称</th><th>所属能力域 / L3</th><th>计划月份</th><th>预计时长</th><th>实际时长</th><th>进度</th><th>状态</th></tr></thead>
+              <tbody>
+                {dashboard.current_tasks.map(task => {
+                  const est = Number(task.plan_item_estimated_hours ?? 0)
+                  const prog = est > 0 ? Math.round((task.actual_hours / est) * 100) : 0
+                  const dc = task.l3_code.slice(0, 3)
+                  const name = task.plan_item_learning_task_content?.trim() || task.l3_name || task.l3_code
+                  const statusClass = task.status === '已完成' ? styles.statusComplete : task.status === '延期' ? styles.statusOverdue : task.status === '进行中' ? styles.statusInProgress : ''
+                  return (<tr key={task.id}>
+                    <td><span className={styles.taskName}>{name}</span></td>
+                    <td><DomainBadge code={dc} /><span className={styles.l3Name}>{task.l3_name ?? task.l3_code}</span></td>
+                    <td>{task.plan_item_target_month ? `${task.plan_item_target_month} 月` : '未排期'}</td>
+                    <td>{formatHours(task.plan_item_estimated_hours)}</td>
+                    <td>{formatHours(task.actual_hours)}</td>
+                    <td><progress max={100} value={Math.min(prog, 100)} /> {prog}%</td>
+                    <td><span className={`${styles.statusPill} ${statusClass}`}>{task.status}</span></td>
+                  </tr>)
+                })}
+              </tbody>
+            </table>
+          )}
+        </article>
+      </>)}
     </section>
   )
 }
