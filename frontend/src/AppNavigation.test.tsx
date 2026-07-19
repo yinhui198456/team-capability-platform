@@ -1,6 +1,6 @@
 /// @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { App } from './App'
@@ -39,133 +39,82 @@ describe('workspace role navigation', () => {
     'shows %s scope and capability-model navigation',
     async (role, scope, sidebarItem, href) => {
       vi.spyOn(accessApi, 'me').mockResolvedValue({
-        id: 1,
-        username: role.toLowerCase(),
-        full_name: role,
-        roles: [role],
+        id: 1, username: role.toLowerCase(), full_name: role, roles: [role],
       })
-      render(
-        <MemoryRouter initialEntries={['/capability/model']}>
-          <App />
-        </MemoryRouter>
-      )
-      await waitFor(() => {
-        expect(screen.getByText(`数据范围：${scope}`)).toBeTruthy()
-      })
-      expect(screen.getByRole('link', { name: sidebarItem })).toHaveProperty(
-        'href',
-        expect.stringContaining(href),
-      )
+      render(<MemoryRouter initialEntries={['/capability/model']}><App /></MemoryRouter>)
+      await waitFor(() => { expect(screen.getByText(`数据范围：${scope}`)).toBeTruthy() })
+      expect(screen.getByRole('link', { name: sidebarItem })).toHaveProperty('href', expect.stringContaining(href))
     },
   )
 })
 
 function stubApi() {
-  vi.spyOn(accessApi, 'me').mockResolvedValue({
-    id: 1, username: 'member', full_name: 'Member', roles: ['Member'],
-  })
+  vi.spyOn(accessApi, 'me').mockResolvedValue({ id: 1, username: 'member', full_name: 'Member', roles: ['Member'] })
 }
 
-describe('year parameter persistence', () => {
-  afterEach(() => {
-    cleanup()
-    vi.restoreAllMocks()
+function stubYear() {
+  vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2026], active_year: 2026 })
+}
+
+describe('r1.1 topbar — sidebar is sole navigation', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
+
+  it('topbar has no module nav, only brand + year + scope', async () => {
+    stubYear(); stubApi()
+    render(<MemoryRouter initialEntries={['/dashboard/member']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('Team Capability Platform')).toBeTruthy() })
+    expect(document.querySelector('.app-topbar-nav')).toBeNull()
+    expect(screen.getByRole('combobox', { name: '选择年度' })).toBeTruthy()
+    expect(screen.getByText('数据范围：本人')).toBeTruthy()
   })
+})
+
+describe('year parameter persistence', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   it('[2025,2026] ?year=2025 preserved in links', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2025, 2026], active_year: 2026 })
     stubApi()
-
-    render(
-      <MemoryRouter initialEntries={['/capability/model?year=2025']}>
-        <App />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    })
-
-    const links = screen.getAllByRole('link')
-    const yearLinks = links.filter((l) => l.getAttribute('href')?.includes('year=2025'))
+    render(<MemoryRouter initialEntries={['/capability/model?year=2025']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('数据范围：本人')).toBeTruthy() })
+    const yearLinks = screen.getAllByRole('link').filter(l => l.getAttribute('href')?.includes('year=2025'))
     expect(yearLinks.length).toBeGreaterThanOrEqual(2)
   })
 
   it('[2026 only] ?year=2025 falls back to 2026', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2026], active_year: 2026 })
     stubApi()
-
-    const { container } = render(
-      <MemoryRouter initialEntries={['/capability/model?year=2025']}>
-        <App />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    })
-
-    // The YearProvider resolves to 2026 (activeYear) since 2025 is invalid.
-    // The navigate() call fires asynchronously; we verify the context resolved correctly.
-    const yearDisplay = container.querySelector('.year-selector')
-    expect(yearDisplay).toBeTruthy()
-    expect((yearDisplay as HTMLSelectElement).value).toBe('2026')
+    const { container } = render(<MemoryRouter initialEntries={['/capability/model?year=2025']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('数据范围：本人')).toBeTruthy() })
+    const sel = container.querySelector('.year-selector') as HTMLSelectElement
+    expect(sel).toBeTruthy()
+    expect(sel.value).toBe('2026')
   })
 
   it('no ?year= uses activeYear', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2025, 2026], active_year: 2025 })
     stubApi()
-
-    render(
-      <MemoryRouter initialEntries={['/capability/model']}>
-        <App />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    })
-
-    const links = screen.getAllByRole('link')
-    const yearLinks = links.filter((l) => l.getAttribute('href')?.includes('year=2025'))
+    render(<MemoryRouter initialEntries={['/capability/model']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('数据范围：本人')).toBeTruthy() })
+    const yearLinks = screen.getAllByRole('link').filter(l => l.getAttribute('href')?.includes('year=2025'))
     expect(yearLinks.length).toBeGreaterThanOrEqual(2)
   })
 
   it('no activeYear uses latest available', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2024, 2025], active_year: 0 })
     stubApi()
-
-    render(
-      <MemoryRouter initialEntries={['/capability/model']}>
-        <App />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    })
-
-    // Latest available is 2025
-    const links = screen.getAllByRole('link')
-    const yearLinks = links.filter((l) => l.getAttribute('href')?.includes('year=2025'))
+    render(<MemoryRouter initialEntries={['/capability/model']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('数据范围：本人')).toBeTruthy() })
+    const yearLinks = screen.getAllByRole('link').filter(l => l.getAttribute('href')?.includes('year=2025'))
     expect(yearLinks.length).toBeGreaterThanOrEqual(2)
   })
 
   it('single year → selector disabled', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({ available_years: [2026], active_year: 2026 })
     stubApi()
-
-    render(
-      <MemoryRouter initialEntries={['/capability/model']}>
-        <App />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    })
-
-    const select = screen.getByRole('combobox', { name: '选择年度' })
-    expect((select as HTMLSelectElement).disabled).toBe(true)
+    render(<MemoryRouter initialEntries={['/capability/model']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('数据范围：本人')).toBeTruthy() })
+    const select = screen.getByRole('combobox', { name: '选择年度' }) as HTMLSelectElement
+    expect(select.disabled).toBe(true)
   })
 })
