@@ -1,5 +1,8 @@
 FROM node:22-alpine AS build
 
+ARG VITE_ENABLE_MOCK=false
+ENV VITE_ENABLE_MOCK=$VITE_ENABLE_MOCK
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

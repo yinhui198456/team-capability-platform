@@ -1,0 +1,73 @@
+// Mock fixture for Member Dashboard — enabled via VITE_ENABLE_MOCK=true
+// Production default: disabled.
+
+import type { MemberDashboard } from '../planning'
+
+export const mockMemberDashboard: MemberDashboard = {
+  year: 2026,
+  summary: {
+    annual_actual_hours: 68,
+    annual_planned_hours: 120,
+    current_month_actual_hours: 9.5,
+    current_month_planned_hours: 12,
+    completed_task_count: 3,
+    pending_evidence_count: 2,
+  },
+  plan_progress: {
+    total: 8,
+    未开始: 1,
+    进行中: 2,
+    '待 Evidence Review': 1,
+    已完成: 3,
+    延期: 2,
+  },
+  domain_radar: [
+    { domain_code: 'P01', score: 3.2 },
+    { domain_code: 'P02', score: 2.8 },
+    { domain_code: 'P03', score: 3.5 },
+    { domain_code: 'C01', score: 4.0 },
+    { domain_code: 'C02', score: 3.1 },
+    { domain_code: 'C03', score: 2.5 },
+  ],
+  gaps: [
+    { id: 1, l3_code: 'P01.01.01', l3_name: '数据管道基础', current_level: 2, target_level: 4, gap_value: 2, priority: '中', plan_candidate: true, assessment_id: 1 },
+    { id: 2, l3_code: 'P02.01.01', l3_name: '模型部署流程', current_level: 1, target_level: 3, gap_value: 2, priority: '中', plan_candidate: true, assessment_id: 1 },
+    { id: 3, l3_code: 'P03.02.01', l3_name: '代码审查规范', current_level: 3, target_level: 5, gap_value: 2, priority: '中', plan_candidate: true, assessment_id: 1 },
+    { id: 4, l3_code: 'C01.01.01', l3_name: '常用办公工具基础', current_level: 3, target_level: 5, gap_value: 2, priority: '中', plan_candidate: true, assessment_id: 1 },
+    { id: 5, l3_code: 'C02.01.01', l3_name: '技术方案写作', current_level: 1, target_level: 4, gap_value: 3, priority: '高', plan_candidate: true, assessment_id: 1 },
+    { id: 6, l3_code: 'C03.01.01', l3_name: '新技术调研方法', current_level: 2, target_level: 4, gap_value: 2, priority: '中', plan_candidate: true, assessment_id: 1 },
+    { id: 7, l3_code: 'P01.02.01', l3_name: '数据质量监控', current_level: 2, target_level: 5, gap_value: 3, priority: '高', plan_candidate: false, assessment_id: 1 },
+    { id: 8, l3_code: 'P02.02.01', l3_name: 'Agent 工具链搭建', current_level: 1, target_level: 3, gap_value: 2, priority: '中', plan_candidate: false, assessment_id: 1 },
+  ],
+  current_tasks: [
+    {
+      id: 1, plan_item_id: 1, l3_code: 'P01.01.01', l3_name: '数据管道基础', status: '进行中' as const,
+      actual_start_date: '2026-03-01', actual_end_date: null, actual_hours: 18,
+      completion_quality: null, review_conclusion: null, next_action: '完成数据口径梳理文档',
+      plan_item_current_level: 2, plan_item_target_level: 4, plan_item_priority: '中',
+      plan_item_learning_material: '数据工程指南', plan_item_learning_task_content: '搭建数据管道并完成文档',
+      plan_item_expected_output: '数据管道 + 口径文档', plan_item_estimated_hours: '24', plan_item_target_month: 3,
+    },
+    {
+      id: 2, plan_item_id: 2, l3_code: 'P02.01.01', l3_name: '模型部署流程', status: '延期' as const,
+      actual_start_date: '2026-02-01', actual_end_date: null, actual_hours: 8,
+      completion_quality: null, review_conclusion: null, next_action: null,
+      plan_item_current_level: 1, plan_item_target_level: 3, plan_item_priority: '中',
+      plan_item_learning_material: 'MLOps 实践', plan_item_learning_task_content: '实现模型部署 CI/CD 流程',
+      plan_item_expected_output: 'CI/CD pipeline', plan_item_estimated_hours: '32', plan_item_target_month: 4,
+    },
+    {
+      id: 3, plan_item_id: 3, l3_code: 'C02.01.01', l3_name: '技术方案写作', status: '延期' as const,
+      actual_start_date: '2026-01-01', actual_end_date: null, actual_hours: 5,
+      completion_quality: null, review_conclusion: null, next_action: null,
+      plan_item_current_level: 1, plan_item_target_level: 4, plan_item_priority: '高',
+      plan_item_learning_material: null, plan_item_learning_task_content: '完成 3 篇技术方案并被采纳',
+      plan_item_expected_output: '3 篇方案文档', plan_item_estimated_hours: '20', plan_item_target_month: 2,
+    },
+  ],
+}
+
+export function isMockEnabled(): boolean {
+  return (typeof import.meta !== 'undefined' &&
+    (import.meta as any).env?.VITE_ENABLE_MOCK === 'true')
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { useYear } from './YearContext'
 import { getMemberDashboard, type MemberDashboard } from './planning'
+import { mockMemberDashboard, isMockEnabled } from './__fixtures__/memberDashboard'
 import styles from './MemberDashboardPage.module.css'
 
 const domainColors: Record<string, string> = {
@@ -144,13 +145,17 @@ export function MemberDashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        setDashboard(await getMemberDashboard(year))
+        if (isMockEnabled()) {
+          setDashboard(mockMemberDashboard)
+        } else {
+          setDashboard(await getMemberDashboard(year))
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
       }
     }
     load()
-  }, [])
+  }, [year])
 
   const filteredGaps =
     dashboard?.gaps.filter(
