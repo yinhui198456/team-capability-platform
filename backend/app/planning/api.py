@@ -68,6 +68,28 @@ def _require_leader(user: CurrentUser) -> None:
         )
 
 
+@planning_router.get("/available-years")
+def get_available_years(
+    user: CurrentUser, connection: Connection
+) -> dict[str, object]:
+    """Returns years with data for the current user, plus the active year."""
+    _require_member(user)
+    member_id = int(user["id"])
+    # Collect distinct years from assessment and annual_growth_plan
+    rows = connection.execute(
+        """
+        SELECT DISTINCT year FROM assessment WHERE member_id = %s
+        UNION
+        SELECT DISTINCT year FROM annual_growth_plan WHERE member_id = %s
+        ORDER BY year
+        """,
+        (member_id, member_id),
+    ).fetchall()
+    available = [r[0] for r in rows] if rows else [int(__import__('datetime').datetime.now().year)]
+    active = max(available) if available else int(__import__('datetime').datetime.now().year)
+    return {"available_years": available, "active_year": active}
+
+
 @planning_router.get("/member-dashboard")
 def get_member_dashboard_view(
     user: CurrentUser, connection: Connection, year: int

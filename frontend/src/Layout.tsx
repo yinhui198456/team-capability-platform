@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useSearchParams, useNavigate } from 'react-router-dom'
 import { useMe } from './catalog'
-import { useYear } from './YearContext'
+import { useYear, useYearState } from './YearContext'
 
 type NavItem = {
   label: string
@@ -51,6 +51,8 @@ function YearSelector() {
   const year = useYear()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { availableYears } = useYearState()
+  const singleYear = availableYears.length <= 1
 
   function handleChange(value: string) {
     const next = new URLSearchParams(searchParams)
@@ -63,11 +65,13 @@ function YearSelector() {
       className="year-selector"
       value={year}
       onChange={(e) => handleChange(e.target.value)}
-      disabled
-      title="当前仅有 2026 年度数据"
+      disabled={singleYear}
+      title={singleYear ? '当前仅有一个年度数据' : '选择年度'}
       aria-label="选择年度"
     >
-      <option value={year}>{year} 年</option>
+      {availableYears.map((y) => (
+        <option key={y} value={y}>{y} 年</option>
+      ))}
     </select>
   )
 }
@@ -88,10 +92,11 @@ export function Layout() {
   const { user } = useMe()
   const roles = user?.roles ?? []
   const [searchParams] = useSearchParams()
-  const yearParam = searchParams.get('year')
+  const contextYear = useYear()
+  const yearForLinks = searchParams.get('year') ?? String(contextYear)
 
   function yHref(path: string): string {
-    return yearParam ? `${path}?year=${yearParam}` : path
+    return `${path}?year=${yearForLinks}`
   }
 
   const visibleSections = NAV_SECTIONS.filter((s) =>

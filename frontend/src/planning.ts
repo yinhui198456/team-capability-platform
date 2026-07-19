@@ -1,5 +1,14 @@
 import { request, getOrNull } from './shared/api'
 
+export type AvailableYears = {
+  available_years: number[]
+  active_year: number
+}
+
+export async function getAvailableYears(): Promise<AvailableYears> {
+  return request<AvailableYears>('/api/planning/available-years', { method: 'GET' })
+}
+
 export type AnnualPlanEligibility = {
   eligible: boolean
   reason: string | null
