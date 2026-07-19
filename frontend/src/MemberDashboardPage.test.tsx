@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('MemberDashboardPage', () => {
   afterEach(() => {
@@ -83,20 +84,20 @@ describe('MemberDashboardPage', () => {
       ],
     })
 
-    window.history.pushState({}, '', '/dashboard/member')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('我的成长总览')).toBeTruthy()
     })
     await waitFor(() => {
-      expect(
-        screen.getByRole('navigation', { name: '顶部主导航' }),
-      ).toBeTruthy()
-      expect(screen.getByRole('navigation', { name: '侧边导航' })).toBeTruthy()
+      // Scope label from Layout
       expect(screen.getByText('数据范围：本人')).toBeTruthy()
     })
-    expect(screen.getByRole('link', { name: '成长管理' })).toBeTruthy()
+    // Sidebar link existing in new Layout IA
+    expect(screen.getByRole('link', { name: '能力自评与 Gap' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '团队能力分析' })).toBeNull()
     expect(screen.getByText('全年累计时长')).toBeTruthy()
     expect(screen.getByText('全年计划时长')).toBeTruthy()

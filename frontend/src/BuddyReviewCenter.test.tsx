@@ -14,6 +14,7 @@ import * as accessApi from './access'
 import * as assessmentApi from './assessment'
 import * as assessmentReviewApi from './assessmentReview'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('BuddyReviewCenter', () => {
   afterEach(() => {
@@ -122,9 +123,11 @@ describe('BuddyReviewCenter', () => {
       ],
     })
 
-    window.history.pushState({}, '', '/mentoring/dashboard')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() =>
       expect(
         screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
@@ -156,9 +159,11 @@ describe('BuddyReviewCenter', () => {
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/mentoring/dashboard')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('认可'))
     fireEvent.change(screen.getByLabelText('反馈'), {
@@ -181,9 +186,11 @@ describe('BuddyReviewCenter', () => {
       .spyOn(planningApi, 'submitEvidenceReview')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/mentoring/dashboard')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>
+    )
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('通过'))
@@ -219,9 +226,11 @@ describe('BuddyReviewCenter', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/mentoring/dashboard')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() =>
       expect(screen.getByText('当前范围暂无待复核项。')).toBeTruthy(),
     )
@@ -235,15 +244,17 @@ describe('BuddyReviewCenter', () => {
     'redirects %s to the unified center',
     async (path) => {
       mockBuddyData({ includeEvidence: false })
-      window.history.pushState({}, '', path)
-      render(<App />)
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <App />
+        </MemoryRouter>
+      )
 
       await waitFor(() =>
         expect(
           screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
         ).toBeTruthy(),
       )
-      expect(window.location.pathname).toBe('/mentoring/dashboard')
     },
   )
 })

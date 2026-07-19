@@ -1,3 +1,5 @@
+import { request } from './shared/api'
+
 export type Assessment = {
   id: number
   member_id: number
@@ -43,27 +45,6 @@ export type AssessmentReview = {
   feedback: string | null
   reviewed_at: string | null
   status: string
-}
-
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  body?: object,
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: body ? JSON.stringify(body) : options.body,
-  })
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
-  }
-  return response.json() as Promise<T>
 }
 
 export async function createAssessment(

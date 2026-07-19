@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { me, type User } from './access'
+import { useYear } from './YearContext'
 import {
   createEvidence,
   createProgressLog,
@@ -70,6 +71,7 @@ export function LearningTaskPage({
   embedded = false,
   planItemId,
 }: LearningTaskPageProps) {
+  const year = useYear()
   const [user, setUser] = useState<User | null>(null)
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<LearningTask[]>([])
@@ -97,7 +99,7 @@ export function LearningTaskPage({
       setUser(currentUser)
 
       const [planResult, taskList] = await Promise.all([
-        getAnnualPlan(2026).catch(() => null),
+        getAnnualPlan(year).catch(() => null),
         listLearningTasks().catch(() => []),
       ])
       setPlan(planResult)
@@ -132,7 +134,7 @@ export function LearningTaskPage({
       )
       setTaskEvidenceReviews(Object.fromEntries(reviewEntries))
 
-      const summary = await getMonthlyHours(2026).catch(() => [])
+      const summary = await getMonthlyHours(year).catch(() => [])
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
@@ -178,7 +180,7 @@ export function LearningTaskPage({
       setLogForms((prev) => ({ ...prev, [task.id]: emptyLogForm() }))
       const logs = await listProgressLogs(task.id)
       setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
-      const summary = await getMonthlyHours(2026)
+      const summary = await getMonthlyHours(year)
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '添加日志失败')
@@ -191,7 +193,7 @@ export function LearningTaskPage({
       await deleteProgressLog(logId)
       const logs = await listProgressLogs(task.id)
       setTaskLogs((prev) => ({ ...prev, [task.id]: logs }))
-      const summary = await getMonthlyHours(2026)
+      const summary = await getMonthlyHours(year)
       setMonthlyHours(summary)
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除日志失败')
@@ -623,7 +625,7 @@ export function LearningTaskPage({
 
       {!embedded && <h2>月度时长</h2>}
       {!embedded && monthlyHours.length === 0 && (
-        <p className="muted">2026 年暂无学习时长记录。</p>
+        <p className="muted">{year} 年暂无学习时长记录。</p>
       )}
       {!embedded && (
         <ul className="monthly-hours-list">

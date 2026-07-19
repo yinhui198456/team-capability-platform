@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import * as accessApi from './access'
+import { MemoryRouter } from 'react-router-dom'
 
 afterEach(() => {
   cleanup()
@@ -59,11 +60,12 @@ it('renders the Admin system management workspace', async () => {
       })
     }),
   )
-  window.history.pushState({}, '', '/system/users')
-
-  render(<App />)
-
-  await waitFor(() => {
+  render(
+    <MemoryRouter initialEntries={['/system/users']}>
+      <App />
+    </MemoryRouter>
+  )
+    await waitFor(() => {
     expect(screen.getByRole('heading', { name: '系统管理' })).toBeTruthy()
   })
   expect(screen.getByText('用户管理')).toBeTruthy()

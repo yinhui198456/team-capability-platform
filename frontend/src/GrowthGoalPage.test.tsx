@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('GrowthGoalPage', () => {
   beforeEach(() => {
@@ -49,9 +50,11 @@ describe('GrowthGoalPage', () => {
     ])
     vi.spyOn(planningApi, 'listGrowthGoals').mockResolvedValue([])
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })
@@ -95,9 +98,11 @@ describe('GrowthGoalPage', () => {
         priority: '中',
       })
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('创建成长目标')).toBeTruthy()
     })
@@ -133,9 +138,11 @@ describe('GrowthGoalPage', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/年度计划生成受限/)).toBeTruthy()
     })
@@ -173,9 +180,11 @@ describe('GrowthGoalPage', () => {
       .spyOn(planningApi, 'deleteGrowthGoal')
       .mockResolvedValue(undefined)
 
-    window.history.pushState({}, '', '/growth/goals')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/goals']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
     })

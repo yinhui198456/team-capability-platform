@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { me } from './access'
+import { useYear } from './YearContext'
 import { getMemberDashboard, type MemberDashboard } from './planning'
 
 const domainNames: Record<string, string> = {
@@ -147,6 +148,7 @@ function Radar({
 }
 
 export function MemberDashboardPage() {
+  const year = useYear()
   const [dashboard, setDashboard] = useState<MemberDashboard | null>(null)
   const [error, setError] = useState('')
   const [selectedDomain, setSelectedDomain] = useState('全部')
@@ -155,7 +157,7 @@ export function MemberDashboardPage() {
     async function load() {
       try {
         await me()
-        setDashboard(await getMemberDashboard(2026))
+        setDashboard(await getMemberDashboard(year))
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
       }
@@ -179,7 +181,7 @@ export function MemberDashboardPage() {
     <section className="page dashboard-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Member 工作台 · {dashboard?.year ?? 2026}</p>
+          <p className="eyebrow">Member 工作台 · {dashboard?.year ?? year}</p>
           <h1>我的成长总览</h1>
           <p className="muted">
             将自评、Gap、年度计划与 Evidence 进展放在同一工作区。

@@ -13,6 +13,7 @@ import { App } from './App'
 import * as accessApi from './access'
 import * as assessmentReviewApi from './assessmentReview'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('EvidenceReviewPage', () => {
   beforeEach(() => {
@@ -54,9 +55,11 @@ describe('EvidenceReviewPage', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/mentoring/evidence-review')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: 'Evidence 版本 1' }),
@@ -96,9 +99,11 @@ describe('EvidenceReviewPage', () => {
       .spyOn(planningApi, 'submitEvidenceReview')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/mentoring/evidence-review')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByLabelText('通过')).toBeTruthy()
     })

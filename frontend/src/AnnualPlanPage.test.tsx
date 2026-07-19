@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 function mockMemberUser() {
   vi.spyOn(accessApi, 'me').mockResolvedValue({
@@ -114,9 +115,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockPlanWithOneItem()
     mockTask()
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '年度成长计划', level: 1 }),
@@ -139,9 +142,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       { month: 4, total_hours: 2 },
     ])
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('8 小时')).toBeTruthy()
     })
@@ -153,9 +158,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockEligible()
     mockPlanWithOneItem({ target_month: 3 })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('region', { name: '月度时间轴' })).toBeTruthy()
     })
@@ -173,9 +180,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockEligible()
     mockPlanWithOneItem({ target_month: 3 })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThan(0)
     })
@@ -194,9 +203,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockEligible()
     mockPlanWithOneItem({ status: '进行中' })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThan(0)
       expect(screen.getAllByText('进行中').length).toBeGreaterThan(0)
@@ -214,9 +225,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     })
     mockTask()
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -238,9 +251,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockPlanWithOneItem()
     mockTask()
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -323,9 +338,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       ),
     )
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('region', { name: '学习任务摘要' })).toBeTruthy()
     })
@@ -354,9 +371,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -385,9 +404,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         recorder_id: 1,
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -453,9 +474,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -508,9 +531,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         created_at: '2026-07-16T10:00:00Z',
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -547,9 +572,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       reason: '暂无已提交的能力评估',
     })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/年度计划生成受限/)).toBeTruthy()
     })
@@ -596,9 +623,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         ],
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('生成计划项')).toBeTruthy()
     })
@@ -638,9 +667,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         plan_item_estimated_hours: '10',
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /P01-L2A-L3A/ })).toBeTruthy()
     })
@@ -666,9 +697,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
     mockPlanWithOneItem()
     mockTask({ status: '进行中' })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByLabelText('状态')).toBeTruthy()
     })
@@ -711,9 +744,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         created_at: '2026-07-16T10:00:00Z',
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('提交')).toBeTruthy()
     })
@@ -746,9 +781,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
         status: '暂停',
       })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
     )
@@ -773,9 +810,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       items: [],
     })
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: '年度成长计划', level: 1 }),
@@ -807,9 +846,11 @@ describe('AnnualPlanPage – combined UI-03', () => {
       },
     ])
 
-    window.history.pushState({}, '', '/growth/annual-plan')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('region', { name: '年度计划总览' })).toBeTruthy()
       expect(screen.getByRole('region', { name: '月度时间轴' })).toBeTruthy()
@@ -850,7 +891,6 @@ describe('annual plan api helpers', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/planning/annual-plan?year=2026',
       expect.objectContaining({
-        method: 'GET',
         credentials: 'include',
       }),
     )

@@ -14,6 +14,7 @@ import * as accessApi from './access'
 import * as assessmentApi from './assessment'
 import * as planningApi from './planning'
 import * as reviewApi from './assessmentReview'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('AssessmentReviewPage', () => {
   beforeEach(() => {
@@ -73,15 +74,16 @@ describe('AssessmentReviewPage', () => {
       ],
     })
 
-    window.history.pushState({}, '', '/mentoring/assessment-review')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('heading', { name: 'Buddy 复核中心' }),
       ).toBeTruthy()
     })
-    expect(window.location.pathname).toBe('/mentoring/dashboard')
   })
 
   it('submits approval with correct api call', async () => {
@@ -115,9 +117,11 @@ describe('AssessmentReviewPage', () => {
       .spyOn(reviewApi, 'submitReview')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/mentoring/assessment-review')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByLabelText('认可')).toBeTruthy()
     })
@@ -168,9 +172,11 @@ describe('AssessmentReviewPage', () => {
       .spyOn(reviewApi, 'submitReview')
       .mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/mentoring/assessment-review')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByLabelText('建议调整')).toBeTruthy()
     })

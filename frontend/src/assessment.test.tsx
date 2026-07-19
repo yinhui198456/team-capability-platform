@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import * as assessmentApi from './assessment'
+import { MemoryRouter } from 'react-router-dom'
 
 function mockDraftAssessment(
   overrides: Partial<assessmentApi.Assessment> = {},
@@ -55,9 +56,11 @@ describe('AssessmentGapPage', () => {
   })
 
   it('renders create button when no draft exists', async () => {
-    window.history.pushState({}, '', '/capability/assessment')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('button', { name: '创建年度自评草稿' }),
@@ -71,9 +74,11 @@ describe('AssessmentGapPage', () => {
       mockDraftAssessment(),
     )
 
-    window.history.pushState({}, '', '/capability/assessment')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(
         screen.getByRole('button', { name: '创建年度自评草稿' }),
@@ -110,9 +115,11 @@ describe('AssessmentGapPage', () => {
     vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
     vi.spyOn(assessmentApi, 'submitAssessment').mockResolvedValue({ ok: true })
 
-    window.history.pushState({}, '', '/capability/assessment')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
     })
@@ -195,9 +202,11 @@ describe('AssessmentGapPage', () => {
       mockDraftAssessment(),
     )
 
-    window.history.pushState({}, '', '/capability/assessment')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText('Review 闭环前不可正式纳入计划')).toBeTruthy()
     })
@@ -247,9 +256,11 @@ describe('AssessmentHistoryPage', () => {
       ],
     })
 
-    window.history.pushState({}, '', '/capability/assessment/history')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment/history']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       expect(screen.getByText(/2026 · 版本 1 · 待复核/)).toBeTruthy()
     })

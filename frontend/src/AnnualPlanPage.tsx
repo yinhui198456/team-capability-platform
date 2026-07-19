@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { me, type User } from './access'
+import { useYear } from './YearContext'
 import { LearningTaskPage } from './LearningTaskPage'
 import {
   generatePlanItems,
@@ -24,6 +25,7 @@ function hours(value: string | null): number {
 }
 
 export function AnnualPlanPage() {
+  const year = useYear()
   const [user, setUser] = useState<User | null>(null)
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [items, setItems] = useState<PlanItem[]>([])
@@ -48,9 +50,9 @@ export function AnnualPlanPage() {
       const [eligibilityResult, planResult, taskList, hoursResult] =
         await Promise.all([
           getAnnualPlanEligibility().catch(() => null),
-          getAnnualPlan(2026).catch(() => null),
+          getAnnualPlan(year).catch(() => null),
           listLearningTasks().catch(() => []),
-          getMonthlyHours(2026).catch(() => []),
+          getMonthlyHours(year).catch(() => []),
         ])
       setEligibility(eligibilityResult)
       setPlan(planResult)
@@ -150,7 +152,7 @@ export function AnnualPlanPage() {
         <div>
           <span>年度 / 周期</span>
           <strong>
-            {plan ? `${plan.year} / ${plan.plan_cycle} 个月` : '2026 / 12 个月'}
+            {plan ? `${plan.year} / ${plan.plan_cycle} 个月` : `${year} / 12 个月`}
           </strong>
         </div>
         <div>

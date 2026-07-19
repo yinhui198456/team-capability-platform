@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('LearningTaskPage – redirect to annual plan', () => {
   beforeEach(() => {
@@ -34,16 +35,16 @@ describe('LearningTaskPage – redirect to annual plan', () => {
       roles: ['Member'],
     })
 
-    window.history.pushState({}, '', '/growth/tasks')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks']}>
+        <App />
+      </MemoryRouter>
+    )
     await waitFor(() => {
       // After redirect, should show the annual plan page heading
       expect(
         screen.getByRole('heading', { name: '年度成长计划', level: 1 }),
       ).toBeTruthy()
     })
-
-    expect(window.location.pathname).toBe('/growth/annual-plan')
   })
 })

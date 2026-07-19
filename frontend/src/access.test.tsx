@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import { login, logout, me } from './access'
+import { MemoryRouter } from 'react-router-dom'
 
 describe('access helpers', () => {
   beforeEach(() => {
@@ -56,18 +57,24 @@ describe('access helpers', () => {
 
   it('logout posts to /api/auth/logout with credentials include', async () => {
     await logout()
-    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-    })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/auth/logout',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      }),
+    )
   })
 
   it('me fetches /api/auth/me with credentials include', async () => {
     const user = await me()
-    expect(fetch).toHaveBeenCalledWith('/api/auth/me', {
-      method: 'GET',
-      credentials: 'include',
-    })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/auth/me',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
+      }),
+    )
     expect(user.username).toBe('leader')
   })
 })
@@ -100,9 +107,11 @@ describe('LoginPage', () => {
   })
 
   it('renders labelled username and password inputs', () => {
-    window.history.pushState({}, '', '/login')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>
+    )
     expect(screen.getByLabelText('用户名')).toBeTruthy()
     expect(screen.getByLabelText('密码')).toBeTruthy()
   })
@@ -119,9 +128,11 @@ describe('LoginPage', () => {
       ),
     )
 
-    window.history.pushState({}, '', '/login')
-    render(<App />)
-
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>
+    )
     fireEvent.change(screen.getByLabelText('用户名'), {
       target: { value: 'leader' },
     })
