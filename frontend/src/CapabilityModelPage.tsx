@@ -398,8 +398,8 @@ export function CapabilityModelPage() {
   return (
     <section className="page">
       <header>
-        <p className="eyebrow">匿名只读目录</p>
-        <h1>能力模型</h1>
+        <p className="eyebrow">查看团队能力等级与能力项标准</p>
+        <h1>能力地图</h1>
         {model && (
           <p className="muted">
             {model.code} · {model.version}

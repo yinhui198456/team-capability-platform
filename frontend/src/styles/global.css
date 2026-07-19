@@ -60,47 +60,37 @@ input, select, textarea, button {
   grid-area: topbar;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  justify-content: space-between;
   padding: 0 var(--space-6);
   background: var(--color-brand-900);
   color: var(--color-brand-100);
+  min-width: 0;
 }
 
 .app-topbar-brand {
   font-weight: 700;
   font-size: var(--text-lg);
   color: var(--color-white);
-  margin-right: var(--space-4);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .app-topbar-brand:hover {
   text-decoration: none;
   color: var(--color-white);
 }
 
-.app-topbar-nav {
+.app-topbar-right {
   display: flex;
-  gap: var(--space-1);
-  flex: 1;
-}
-.app-topbar-nav a {
-  color: var(--color-brand-100);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 500;
-}
-.app-topbar-nav a:hover,
-.app-topbar-nav a.active {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--color-white);
-  text-decoration: none;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 
 .app-topbar-scope {
   font-size: var(--text-xs);
   color: var(--color-brand-100);
   opacity: 0.8;
+  white-space: nowrap;
 }
 
 .year-selector {
@@ -112,6 +102,8 @@ input, select, textarea, button {
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
+  width: auto;
+  max-width: 140px;
 }
 .year-selector:disabled {
   opacity: 0.6;

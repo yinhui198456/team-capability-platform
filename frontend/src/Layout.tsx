@@ -105,20 +105,15 @@ export function Layout() {
 
   return (
     <div className="app-shell">
-      {/* Topbar */}
+      {/* Topbar — brand only, nav is sidebar-exclusive */}
       <header className="app-topbar">
-        <NavLink to={yHref("/dashboard/member")} className="app-topbar-brand">
+        <NavLink to={yHref('/dashboard/member')} className="app-topbar-brand">
           Team Capability Platform
         </NavLink>
-        <nav className="app-topbar-nav">
-          {visibleSections.map((s) => (
-            <NavLink to={yHref(s.items[0].href)} key={s.label}>
-              {s.label}
-            </NavLink>
-          ))}
-        </nav>
-        {roles.includes('Member') && <YearSelector />}
-        <span className="app-topbar-scope">数据范围：{scopeLabel(roles)}</span>
+        <div className="app-topbar-right">
+          {roles.includes('Member') && <YearSelector />}
+          <span className="app-topbar-scope">数据范围：{scopeLabel(roles)}</span>
+        </div>
       </header>
 
       {/* Sidebar */}
