@@ -7,29 +7,48 @@ import {
   type AssessmentReview,
 } from './assessment'
 import {
+  getAssessmentReviewSummary,
   listPendingReviews,
   submitReview,
   type PendingReview,
+  type ReviewSummary as AssessmentReviewSummary,
 } from './assessmentReview'
 import { useMe } from './catalog'
 import {
+  isMockEnabled,
+  mockAssessmentDetails,
+  mockAssessmentHistories,
+  mockAssessmentReviewSummary,
+  mockAssessmentReviews,
+  mockAssignedMembers,
+  mockEvidenceHistories,
+  mockEvidenceReviewSummary,
+  mockEvidenceReviews,
+} from './__fixtures__/buddyReviewMock'
+import {
+  getEvidenceReviewSummary,
   listEvidenceReviewsForTask,
   listPendingEvidenceReviews,
   submitEvidenceReview,
   type EvidenceReviewConclusion,
   type EvidenceReview,
+  type ReviewSummary as EvidenceReviewSummary,
 } from './planning'
+import { useYear } from './YearContext'
 
-type QueueFilter = '全部待复核' | '自评复核' | 'Evidence Review'
+type QueueFilter = '全部待处理' | '自评复核' | 'Evidence Review'
 
 type QueueItem =
   | { key: string; kind: 'assessment'; review: PendingReview; memberId: number }
   | { key: string; kind: 'evidence'; review: EvidenceReview; memberId: number }
 
-type HistoryItem = Pick<
-  AssessmentReview,
-  'id' | 'status' | 'conclusion' | 'feedback' | 'reviewed_at'
->
+type HistoryItem = {
+  id: number
+  status: string
+  conclusion: string | null
+  feedback: string | null
+  reviewed_at: string | null
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '未记录'
@@ -37,14 +56,30 @@ function formatDateTime(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
+function feedbackRequired(
+  kind: QueueItem['kind'],
+  conclusion: string,
+): boolean {
+  if (kind === 'assessment') {
+    return conclusion === '建议调整'
+  }
+  return conclusion === '需补充' || conclusion === '驳回'
+}
+
 export function BuddyReviewCenter() {
   const { user } = useMe()
+  const year = useYear()
   const [assessmentReviews, setAssessmentReviews] = useState<PendingReview[]>(
     [],
   )
   const [evidenceReviews, setEvidenceReviews] = useState<EvidenceReview[]>([])
+  const [summary, setSummary] = useState({
+    assessmentPending: 0,
+    evidencePending: 0,
+    completedThisYear: 0,
+  })
   const [memberId, setMemberId] = useState<number | null>(null)
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>('全部待复核')
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>('全部待处理')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [assessmentDetails, setAssessmentDetails] = useState<
     AssessmentDetail[]
@@ -58,31 +93,17 @@ export function BuddyReviewCenter() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let active = true
-    async function load() {
-      try {
-        const [assessments, evidences] = await Promise.all([
-          listPendingReviews(),
-          listPendingEvidenceReviews(),
-        ])
-        if (!active) return
-        setAssessmentReviews(assessments)
-        setEvidenceReviews(evidences)
-      } catch (err) {
-        if (active) setError(err instanceof Error ? err.message : '加载失败')
-      }
-    }
-    load()
-    return () => {
-      active = false
-    }
-  }, [])
+  const members = useMemo(() => {
+    if (isMockEnabled()) return mockAssignedMembers
+    return (user?.assigned_members ?? []) as {
+      id: number
+      username: string
+      full_name: string
+    }[]
+  }, [user])
 
   const queueItems = useMemo<QueueItem[]>(() => {
-    const assignedIds = new Set(
-      (user?.assigned_members ?? []).map((member) => member.id),
-    )
+    const assignedIds = new Set(members.map((member) => member.id))
     return [
       ...assessmentReviews.map((review) => ({
         key: `assessment-${review.id}`,
@@ -97,37 +118,115 @@ export function BuddyReviewCenter() {
         memberId: review.member_id ?? -1,
       })),
     ].filter((item) => assignedIds.has(item.memberId))
-  }, [assessmentReviews, evidenceReviews, user?.assigned_members])
-  const members = user?.assigned_members ?? []
+  }, [assessmentReviews, evidenceReviews, members])
+
   const assessmentCount = queueItems.filter(
     (item) => item.kind === 'assessment',
   ).length
   const evidenceCount = queueItems.filter(
     (item) => item.kind === 'evidence',
   ).length
+
   const memberName = (id: number) =>
     members.find((member) => member.id === id)?.full_name ?? `成员 ${id}`
+
   const filteredQueue = queueItems.filter((item) => {
     if (memberId !== null && item.memberId !== memberId) return false
     return (
-      queueFilter === '全部待复核' ||
+      queueFilter === '全部待处理' ||
       (queueFilter === '自评复核' && item.kind === 'assessment') ||
       (queueFilter === 'Evidence Review' && item.kind === 'evidence')
     )
   })
+
   const selected =
     filteredQueue.find((item) => item.key === selectedKey) ??
     filteredQueue[0] ??
     null
 
   useEffect(() => {
+    if (isMockEnabled()) {
+      setAssessmentReviews(mockAssessmentReviews)
+      setEvidenceReviews(mockEvidenceReviews)
+      setSummary({
+        assessmentPending: mockAssessmentReviewSummary.pending_count,
+        evidencePending: mockEvidenceReviewSummary.pending_count,
+        completedThisYear:
+          mockAssessmentReviewSummary.completed_count +
+          mockEvidenceReviewSummary.completed_count,
+      })
+      return
+    }
+
+    let active = true
+    async function load() {
+      try {
+        const [
+          assessments,
+          evidences,
+          assessmentSummary,
+          evidenceSummary,
+        ] = await Promise.all([
+          listPendingReviews(),
+          listPendingEvidenceReviews(),
+          getAssessmentReviewSummary(year),
+          getEvidenceReviewSummary(year),
+        ])
+        if (!active) return
+        setAssessmentReviews(assessments)
+        setEvidenceReviews(evidences)
+        setSummary({
+          assessmentPending: assessmentSummary.pending_count,
+          evidencePending: evidenceSummary.pending_count,
+          completedThisYear:
+            assessmentSummary.completed_count + evidenceSummary.completed_count,
+        })
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : '加载失败')
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [year])
+
+  useEffect(() => {
+    if (!selected) {
+      setAssessmentDetails([])
+      setHistory([])
+      return
+    }
+
+    if (isMockEnabled()) {
+      if (selected.kind === 'assessment') {
+        const details =
+          mockAssessmentDetails[selected.review.assessment_id] ?? []
+        const closedHistory =
+          mockAssessmentHistories[selected.review.assessment_id] ?? []
+        setAssessmentDetails(
+          details.map((detail, index) => ({
+            ...detail,
+            id: index + 1,
+            l1_code: detail.l3_code.slice(0, 3),
+            l1_name: undefined,
+            recommended_start_level: undefined,
+            plan_candidate: false,
+            evidence_note: detail.evidence_note ?? null,
+          })) as AssessmentDetail[],
+        )
+        setHistory(closedHistory)
+      } else {
+        const taskId = selected.review.learning_task_id ?? 0
+        const closedHistory = mockEvidenceHistories[taskId] ?? []
+        setAssessmentDetails([])
+        setHistory(closedHistory)
+      }
+      return
+    }
+
     let active = true
     async function loadWorkspace() {
-      if (!selected) {
-        setAssessmentDetails([])
-        setHistory([])
-        return
-      }
       setError('')
       try {
         if (selected.kind === 'assessment') {
@@ -137,14 +236,20 @@ export function BuddyReviewCenter() {
           ])
           if (!active) return
           setAssessmentDetails(assessment.details ?? [])
-          setHistory(reviews.filter((review) => review.status === '已闭环'))
+          setHistory(
+            reviews.filter(
+              (review: AssessmentReview) => review.status === '已闭环',
+            ),
+          )
         } else {
           const reviews = await listEvidenceReviewsForTask(
             selected.review.learning_task_id ?? 0,
           )
           if (!active) return
           setAssessmentDetails([])
-          setHistory(reviews.filter((review) => review.conclusion !== null))
+          setHistory(
+            reviews.filter((review: EvidenceReview) => review.conclusion !== null),
+          )
         }
       } catch (err) {
         if (active) {
@@ -174,8 +279,19 @@ export function BuddyReviewCenter() {
     setMessage('')
   }
 
+  function selectMember(id: number | null) {
+    setMemberId(id)
+    setSelectedKey(null)
+    setConclusion('')
+    setFeedback('')
+  }
+
   async function submitFeedback() {
     if (!selected || !conclusion) return
+    if (feedbackRequired(selected.kind, conclusion) && !feedback.trim()) {
+      setError('建议调整、需补充、驳回必须填写反馈。')
+      return
+    }
     setError('')
     setMessage('')
     setSubmitting(true)
@@ -189,6 +305,11 @@ export function BuddyReviewCenter() {
         setAssessmentReviews((items) =>
           items.filter((item) => item.id !== selected.review.id),
         )
+        setSummary((prev) => ({
+          ...prev,
+          assessmentPending: Math.max(0, prev.assessmentPending - 1),
+          completedThisYear: prev.completedThisYear + 1,
+        }))
         setMessage(`已${value}，反馈已归入历史。`)
       } else {
         const value = conclusion as EvidenceReviewConclusion
@@ -196,6 +317,11 @@ export function BuddyReviewCenter() {
         setEvidenceReviews((items) =>
           items.filter((item) => item.id !== selected.review.id),
         )
+        setSummary((prev) => ({
+          ...prev,
+          evidencePending: Math.max(0, prev.evidencePending - 1),
+          completedThisYear: prev.completedThisYear + 1,
+        }))
         setMessage(
           value === '通过'
             ? 'Evidence 已通过，反馈已归入历史。'
@@ -235,33 +361,17 @@ export function BuddyReviewCenter() {
       )}
 
       <div className="metric-grid buddy-summary" aria-label="Buddy 待办摘要">
-        <button
-          type="button"
-          onClick={() => {
-            setMemberId(null)
-            selectQueue('全部待复核')
-          }}
-        >
-          <span>辅导成员</span>
-          <strong>{members.length}</strong>
-        </button>
         <button type="button" onClick={() => selectQueue('自评复核')}>
           <span>待复核自评</span>
-          <strong>{assessmentCount}</strong>
+          <strong>{summary.assessmentPending}</strong>
         </button>
         <button type="button" onClick={() => selectQueue('Evidence Review')}>
           <span>待 Review Evidence</span>
-          <strong>{evidenceCount}</strong>
+          <strong>{summary.evidencePending}</strong>
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setMemberId(null)
-            selectQueue('全部待复核')
-          }}
-        >
-          <span>需跟进</span>
-          <strong>{queueItems.length}</strong>
+        <button type="button" onClick={() => selectQueue('全部待处理')}>
+          <span>本年度已完成 Review</span>
+          <strong>{summary.completedThisYear}</strong>
         </button>
       </div>
 
@@ -270,34 +380,27 @@ export function BuddyReviewCenter() {
           <h2>辅导成员</h2>
           <button
             className={memberId === null ? 'active' : ''}
-            onClick={() => {
-              setMemberId(null)
-              selectItem('')
-            }}
+            onClick={() => selectMember(null)}
             type="button"
           >
             全部成员
           </button>
-          {members.map((member) => (
-            <button
-              className={memberId === member.id ? 'active' : ''}
-              key={member.id}
-              onClick={() => {
-                setMemberId(member.id)
-                selectItem('')
-              }}
-              type="button"
-            >
-              <strong>{member.full_name}</strong>
-              <span>
-                {
-                  queueItems.filter((item) => item.memberId === member.id)
-                    .length
-                }{' '}
-                项待复核
-              </span>
-            </button>
-          ))}
+          {members.map((member) => {
+            const count = queueItems.filter(
+              (item) => item.memberId === member.id,
+            ).length
+            return (
+              <button
+                className={memberId === member.id ? 'active' : ''}
+                key={member.id}
+                onClick={() => selectMember(member.id)}
+                type="button"
+              >
+                <strong>{member.full_name}</strong>
+                <span className="member-count">{count} 项</span>
+              </button>
+            )
+          })}
         </aside>
 
         <article className="dashboard-card buddy-queue">
@@ -306,7 +409,7 @@ export function BuddyReviewCenter() {
           </div>
           <div className="queue-tabs" role="tablist" aria-label="复核队列类型">
             {(
-              ['全部待复核', '自评复核', 'Evidence Review'] as QueueFilter[]
+              ['全部待处理', '自评复核', 'Evidence Review'] as QueueFilter[]
             ).map((filter) => (
               <button
                 aria-selected={queueFilter === filter}
@@ -321,7 +424,7 @@ export function BuddyReviewCenter() {
             ))}
           </div>
           {filteredQueue.length === 0 ? (
-            <p className="muted">当前范围暂无待复核项。</p>
+            <p className="muted">当前范围暂无待处理项。</p>
           ) : (
             <table className="analytics-table buddy-queue-table">
               <thead>
@@ -387,11 +490,16 @@ export function BuddyReviewCenter() {
                     <ul className="compact-list">
                       {assessmentDetails.map((detail) => (
                         <li key={detail.l3_code}>
-                          {detail.l3_code}：当前 {detail.current_level} → 目标{' '}
-                          {detail.target_level}（Gap{' '}
+                          {detail.l3_code}：当前 {detail.current_level ?? '—'} → 目标{' '}
+                          {detail.target_level ?? '—'}（Gap{' '}
                           {detail.gap_value ??
-                            (detail.current_level != null && detail.target_level != null ? detail.target_level - detail.current_level : 0)}
+                            (detail.current_level != null && detail.target_level != null
+                              ? detail.target_level - detail.current_level
+                              : 0)}
                           ）
+                          {detail.evidence_note && (
+                            <span className="muted"> · {detail.evidence_note}</span>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -450,6 +558,9 @@ export function BuddyReviewCenter() {
                   value={feedback}
                 />
               </label>
+              {feedbackRequired(selected.kind, conclusion || '') && (
+                <p className="muted">建议调整、需补充、驳回必须填写反馈。</p>
+              )}
               <div className="actions">
                 <button
                   disabled={!conclusion || submitting}

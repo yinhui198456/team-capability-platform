@@ -1,6 +1,7 @@
 import asyncio
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 import psycopg
 import pytest
@@ -78,6 +79,10 @@ async def _asgi_request(
         cookie_header = "; ".join(f"{name}={value}" for name, value in cookies.items())
         headers.append((b"cookie", cookie_header.encode("utf-8")))
 
+    parsed = urlsplit(path)
+    scope_path = parsed.path
+    query_string = parsed.query.encode("utf-8")
+
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": body_bytes, "more_body": False}
 
@@ -91,9 +96,9 @@ async def _asgi_request(
             "http_version": "1.1",
             "method": method,
             "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("utf-8"),
-            "query_string": b"",
+            "path": scope_path,
+            "raw_path": scope_path.encode("utf-8"),
+            "query_string": query_string,
             "headers": headers,
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
@@ -154,10 +159,10 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+def _create_and_submit_assessment(connection: psycopg.Connection, username: str, year: int = 2026) -> int:
     cookies = _login(connection, username)
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST", "/api/assessments", {"year": year}, cookies=cookies
     )
     assert status == 200
     assert body is not None
@@ -415,3 +420,98 @@ def test_invalid_conclusion_rejected(
         cookies=buddy_cookies,
     )
     assert status == 422
+
+
+def _summary(
+    connection: psycopg.Connection, username: str, year: int
+) -> tuple[int, dict[str, int] | None]:
+    cookies = _login(connection, username)
+    status, body, _ = _request(
+        "GET", f"/api/assessments/reviews/summary?year={year}", cookies=cookies
+    )
+    return status, body
+
+
+def test_assessment_review_summary_counts_pending_and_completed(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(assessment_schema, "member_summary", ["Member"])
+    buddy_id = _create_test_user(assessment_schema, "buddy_summary", ["Buddy"])
+    create_buddy_relationship(assessment_schema, member_id, buddy_id)
+    assessment_schema.commit()
+
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_summary")
+
+    status, body = _summary(assessment_schema, "buddy_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+    buddy_cookies = _login(assessment_schema, "buddy_summary")
+    status, pending, _ = _request(
+        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
+    )
+    review_id = pending[0]["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/reviews/{review_id}",
+        {"conclusion": "认可", "feedback": "符合预期"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+
+    status, body = _summary(assessment_schema, "buddy_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 0, "completed_count": 1}
+
+
+def test_assessment_review_summary_filters_by_year(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(assessment_schema, "member_year", ["Member"])
+    buddy_id = _create_test_user(assessment_schema, "buddy_year", ["Buddy"])
+    create_buddy_relationship(assessment_schema, member_id, buddy_id)
+    assessment_schema.commit()
+
+    _create_and_submit_assessment(assessment_schema, "member_year", year=2025)
+    _create_and_submit_assessment(assessment_schema, "member_year", year=2026)
+
+    status, body = _summary(assessment_schema, "buddy_year", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+    status, body = _summary(assessment_schema, "buddy_year", 2025)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+
+def test_assessment_review_summary_requires_buddy_role(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(assessment_schema, "member_summary_role", ["Member"])
+    assessment_schema.commit()
+
+    status, body = _summary(assessment_schema, "member_summary_role", 2026)
+    assert status == 403
+
+
+def test_assessment_review_summary_only_includes_assigned_members(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    member_a = _create_test_user(assessment_schema, "member_a_summary", ["Member"])
+    member_b = _create_test_user(assessment_schema, "member_b_summary", ["Member"])
+    buddy_a = _create_test_user(assessment_schema, "buddy_a_summary", ["Buddy"])
+    buddy_b = _create_test_user(assessment_schema, "buddy_b_summary", ["Buddy"])
+    create_buddy_relationship(assessment_schema, member_a, buddy_a)
+    create_buddy_relationship(assessment_schema, member_b, buddy_b)
+    assessment_schema.commit()
+
+    _create_and_submit_assessment(assessment_schema, "member_a_summary")
+    _create_and_submit_assessment(assessment_schema, "member_b_summary")
+
+    status, body = _summary(assessment_schema, "buddy_a_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+    status, body = _summary(assessment_schema, "buddy_b_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}

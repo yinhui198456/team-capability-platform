@@ -1454,6 +1454,37 @@ def submit_evidence_review(
     return _evidence_review_row(updated)
 
 
+def get_evidence_review_summary_for_buddy(
+    connection: psycopg.Connection,
+    buddy_id: int,
+    year: int,
+) -> dict[str, int]:
+    """Return pending and completed evidence review counts for a Buddy in a year."""
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE er.status = '待 Review') AS pending_count,
+            COUNT(*) FILTER (
+                WHERE er.status != '待 Review'
+                  AND EXTRACT(YEAR FROM er.reviewed_at)::INT = %s
+            ) AS completed_count
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE er.buddy_id = %s AND agp.year = %s
+        """,
+        (year, buddy_id, year),
+    ).fetchone()
+    if row is None:
+        return {"pending_count": 0, "completed_count": 0}
+    return {
+        "pending_count": int(row[0] or 0),
+        "completed_count": int(row[1] or 0),
+    }
+
+
 def list_evidence_reviews_for_task(
     connection: psycopg.Connection, member_id: int, learning_task_id: int
 ) -> list[dict[str, object]]:

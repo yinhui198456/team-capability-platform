@@ -13,7 +13,7 @@ type NavSection = {
   items: NavItem[]
 }
 
-// Member IA — 5 modules per ChatGPT-confirmed design
+// Role-aware IA — Member / Buddy / Leader sections per ChatGPT-confirmed R3 navigation
 const NAV_SECTIONS: NavSection[] = [
   {
     label: '我的工作台',
@@ -39,6 +39,20 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member'] },
       { label: '成长档案', href: '/growth/profile', roles: ['Member'] },
+    ],
+  },
+  {
+    label: '导师指导',
+    items: [
+      { label: 'Buddy 复核中心', href: '/mentoring/dashboard', roles: ['Buddy'] },
+    ],
+  },
+  {
+    label: '团队运营',
+    items: [
+      { label: '团队能力分析', href: '/operations/analytics', roles: ['Leader'] },
+      { label: '团队年度能力规划', href: '/operations/team-annual-plan', roles: ['Leader'] },
+      { label: '学习资源', href: '/operations/resources', roles: ['Leader'] },
     ],
   },
   {

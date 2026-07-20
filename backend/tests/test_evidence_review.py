@@ -645,3 +645,88 @@ def test_member_cannot_view_other_member_task_review_history(
         cookies=own_cookies,
     )
     assert status in (403, 404)
+
+
+def _summary(
+    connection: psycopg.Connection, username: str, year: int
+) -> tuple[int, dict[str, int] | None]:
+    cookies = _login(connection, username)
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/evidence-reviews/summary?year={year}",
+        cookies=cookies,
+    )
+    return status, body
+
+
+def test_evidence_review_summary_counts_pending_and_completed(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    _, buddy_cookies, task_id, _ = _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_summary", "buddy_ev_summary"
+    )
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+    status, pending, _ = _request(
+        "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
+    )
+    review_id = pending[0]["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidence-reviews/{review_id}",
+        {"conclusion": "通过", "feedback": "符合预期"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_summary", 2026)
+    assert status == 200
+    assert body == {"pending_count": 0, "completed_count": 1}
+
+
+def test_evidence_review_summary_filters_by_year(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_year", "buddy_ev_year"
+    )
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_year", 2025)
+    assert status == 200
+    assert body == {"pending_count": 0, "completed_count": 0}
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_year", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+
+def test_evidence_review_summary_requires_buddy_role(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(evidence_review_schema, "member_ev_summary_role", ["Member"])
+    evidence_review_schema.commit()
+
+    status, body = _summary(evidence_review_schema, "member_ev_summary_role", 2026)
+    assert status == 403
+
+
+def test_evidence_review_summary_only_includes_assigned_members(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_a", "buddy_ev_a"
+    )
+    _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_b", "buddy_ev_b"
+    )
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_a", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_b", 2026)
+    assert status == 200
+    assert body == {"pending_count": 1, "completed_count": 0}

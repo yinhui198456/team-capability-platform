@@ -6,6 +6,7 @@ from . import policies
 from .repository import (
     create_assessment_draft,
     get_assessment,
+    get_assessment_review_summary_for_buddy,
     get_assessment_reviews,
     get_gap,
     get_pending_reviews_for_buddy,
@@ -145,6 +146,22 @@ def list_pending_reviews(
             detail="insufficient permissions",
         )
     return get_pending_reviews_for_buddy(connection, int(user["id"]))
+
+
+@assessment_router.get("/reviews/summary")
+def get_assessment_review_summary(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+) -> dict[str, int]:
+    if "Buddy" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return get_assessment_review_summary_for_buddy(
+        connection, int(user["id"]), year
+    )
 
 
 @assessment_router.get("/{assessment_id}")

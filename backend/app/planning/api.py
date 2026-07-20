@@ -17,6 +17,7 @@ from .repository import (
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
+    get_evidence_review_summary_for_buddy,
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
@@ -497,6 +498,14 @@ def get_pending_evidence_reviews(
 ) -> list[dict[str, object]]:
     _require_buddy(user)
     return list_pending_evidence_reviews_for_buddy(connection, int(user["id"]))
+
+
+@planning_router.get("/evidence-reviews/summary")
+def get_evidence_review_summary(
+    user: CurrentUser, connection: Connection, year: int
+) -> dict[str, int]:
+    _require_buddy(user)
+    return get_evidence_review_summary_for_buddy(connection, int(user["id"]), year)
 
 
 @planning_router.post("/evidence-reviews/{review_id}")
