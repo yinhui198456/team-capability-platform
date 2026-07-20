@@ -11,6 +11,7 @@
 .timelineBtn { flex: 1; min-width: 52px; padding: var(--space-2) 4px; font-size: var(--text-xs); border: 1px solid var(--color-gray-200); border-radius: var(--radius-md); background: var(--color-white); cursor: pointer; text-align: center; }
 .timelineBtn:hover { border-color: var(--color-brand-500); }
 .timelineBtnActive { background: var(--color-brand-700); color: var(--color-white); border-color: var(--color-brand-700); }
+.timelineBtnActive span { color: rgba(255,255,255,0.8); }
 
 .planList { display: flex; flex-direction: column; gap: var(--space-2); }
 .planItem { background: var(--color-white); border: 1px solid var(--color-gray-200); border-radius: var(--radius-lg); overflow: hidden; }

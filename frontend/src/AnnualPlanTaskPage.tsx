@@ -85,19 +85,22 @@ export function AnnualPlanTaskPage() {
         <div className={s.summaryCard}><dt>总体进度</dt><dd>{progress}%</dd><div className={s.progressBar}><div className={s.progressFill} style={{ width: `${progress}%` }} /></div></div>
         <div className={s.summaryCard}><dt>预计时长</dt><dd>{totalEstimated} h</dd></div>
         <div className={s.summaryCard}><dt>实际时长</dt><dd>{totalActual} h</dd></div>
-        <div className={s.summaryCard}><dt>计划项</dt><dd>{completed}/{items.length}</dd></div>
+        <div className={s.summaryCard}><dt>已完成</dt><dd>{completed}/{items.length}</dd></div>
       </dl>
 
       {/* Monthly timeline */}
       <div className={s.timeline}>
         {MONTHS.map(m => {
           const count = items.filter(i => i.target_month === m).length
-          return <button key={m} className={`${s.timelineBtn} ${selectedMonth === m ? s.timelineBtnActive : ''}`} onClick={() => setSelectedMonth(selectedMonth === m ? null : m)}>{m} 月<span style={{ display: 'block', fontSize: '0.65rem' }}>{count} 项</span></button>
+          return <button key={m} className={`${s.timelineBtn} ${selectedMonth === m ? s.timelineBtnActive : ''}`} onClick={() => setSelectedMonth(selectedMonth === m ? null : m)} aria-pressed={selectedMonth === m}>{m} 月<span style={{ display: 'block', fontSize: '0.65rem' }}>{count} 项</span></button>
         })}
       </div>
 
       {/* Plan items */}
       <div className={s.planList}>
+        <div className={`${s.planHeader} ${s.planHeaderLabel}`} style={{ cursor: 'default', borderBottom: '2px solid var(--color-gray-200)' }}>
+          <strong>能力项</strong><strong>等级提升</strong><strong>计划时长</strong><strong>实际时长</strong><strong>月份</strong><strong>状态</strong><span />
+        </div>
         {visibleItems.length === 0 && <p className="muted">{selectedMonth ? `${selectedMonth} 月暂无计划项` : '暂无计划项，请先生成年度计划。'}</p>}
         {visibleItems.map(item => {
           const td = tasks[item.id]
@@ -121,8 +124,8 @@ export function AnnualPlanTaskPage() {
                     <div className={s.taskField}><span>实际耗时</span><strong>{td.task.actual_hours} h</strong></div>
                     <div className={s.taskField}><span>开始日期</span><strong>{td.task.actual_start_date ?? '—'}</strong></div>
                     <div className={s.taskField}><span>完成日期</span><strong>{td.task.actual_end_date ?? '—'}</strong></div>
-                    {td.task.next_action && <div className={s.taskField} style={{ gridColumn: 'span 2' }}><span>下一步</span><strong>{td.task.next_action}</strong></div>}
-                    {td.task.review_conclusion && <div className={s.taskField} style={{ gridColumn: 'span 2' }}><span>复盘结论</span><strong>{td.task.review_conclusion}</strong></div>}
+                    <div className={s.taskField}><span>延期原因/下一步</span><strong>{td.task.next_action || '待补充'}</strong></div>
+                    <div className={s.taskField}><span>复盘结论</span><strong>{td.task.review_conclusion || '待补充'}</strong></div>
                   </div>
 
                   {/* Evidence */}
