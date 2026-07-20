@@ -49,4 +49,22 @@ describe('AnnualPlanTaskPage', () => {
     const pressedBtn = btns.find(b => b.textContent?.startsWith('3 月')) as HTMLButtonElement
     expect(pressedBtn?.getAttribute('aria-pressed')).toBe('true')
   })
+
+  it('shows month and count when month is selected', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({ id: 1, username: 'member', full_name: 'Member', roles: ['Member'] })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1, member_id: 1, year: 2026, plan_cycle: 12, status: '执行中', start_date: '', end_date: '', created_at: '',
+      items: [
+        { id: 1, annual_growth_plan_id: 1, growth_goal_id: 1, l3_code: 'P01.01.01', current_level: 2, target_level: 4, priority: '中', learning_material: null, learning_task_content: '任务A', expected_output: null, estimated_hours: '10', plan_start_date: '', plan_end_date: '', target_month: 4, status: '进行中' },
+        { id: 2, annual_growth_plan_id: 1, growth_goal_id: 2, l3_code: 'P02.01.01', current_level: 1, target_level: 3, priority: '中', learning_material: null, learning_task_content: '任务B', expected_output: null, estimated_hours: '20', plan_start_date: '', plan_end_date: '', target_month: 4, status: '延期' },
+      ],
+    })
+    render(<MemoryRouter initialEntries={['/growth/annual-plan']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByRole('heading', { name: '年度成长计划' })).toBeTruthy() })
+    const btn = screen.getByRole('button', { name: /4 月/, pressed: false })
+    fireEvent.click(btn)
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+    expect(btn.textContent).toContain('4 月')
+    expect(btn.textContent).toContain('2 项')
+  })
 })

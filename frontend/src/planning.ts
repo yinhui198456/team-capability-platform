@@ -78,6 +78,7 @@ export type LearningTask = {
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
+  delay_reason?: string | null
   plan_item_current_level: number
   plan_item_target_level: number
   plan_item_priority: '高' | '中' | '低'

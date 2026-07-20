@@ -92,7 +92,17 @@ export function AnnualPlanTaskPage() {
       <div className={s.timeline}>
         {MONTHS.map(m => {
           const count = items.filter(i => i.target_month === m).length
-          return <button key={m} className={`${s.timelineBtn} ${selectedMonth === m ? s.timelineBtnActive : ''}`} onClick={() => setSelectedMonth(selectedMonth === m ? null : m)} aria-pressed={selectedMonth === m}>{m} 月<span style={{ display: 'block', fontSize: '0.65rem' }}>{count} 项</span></button>
+          return (
+            <button
+              key={m}
+              className={`${s.timelineBtn} ${selectedMonth === m ? s.timelineBtnActive : ''}`}
+              onClick={() => setSelectedMonth(selectedMonth === m ? null : m)}
+              aria-pressed={selectedMonth === m}
+            >
+              <span className={s.timelineBtnMonth}>{m} 月</span>
+              <span className={s.timelineBtnCount}>{count} 项</span>
+            </button>
+          )
         })}
       </div>
 
@@ -122,10 +132,13 @@ export function AnnualPlanTaskPage() {
                   <div className={s.taskGrid}>
                     <div className={s.taskField}><span>任务状态</span><strong>{td.task.status}</strong></div>
                     <div className={s.taskField}><span>实际耗时</span><strong>{td.task.actual_hours} h</strong></div>
-                    <div className={s.taskField}><span>开始日期</span><strong>{td.task.actual_start_date ?? '—'}</strong></div>
+                    <div className={s.taskField}><span>计划开始日期</span><strong>{item.plan_start_date ?? '—'}</strong></div>
+                    <div className={s.taskField}><span>计划结束日期</span><strong>{item.plan_end_date ?? '—'}</strong></div>
+                    <div className={s.taskField}><span>实际开始日期</span><strong>{td.task.actual_start_date ?? '—'}</strong></div>
                     <div className={s.taskField}><span>完成日期</span><strong>{td.task.actual_end_date ?? '—'}</strong></div>
-                    <div className={s.taskField}><span>延期原因/下一步</span><strong>{td.task.next_action || '待补充'}</strong></div>
-                    <div className={s.taskField}><span>复盘结论</span><strong>{td.task.review_conclusion || '待补充'}</strong></div>
+                    <div className={s.taskField}><span>延期原因</span><strong>{td.task.delay_reason || '待补充'}</strong></div>
+                    <div className={s.taskField}><span>下一步行动</span><strong>{td.task.next_action || '待补充'}</strong></div>
+                    <div className={s.taskField} style={{ gridColumn: '1 / -1' }}><span>复盘结论</span><strong>{td.task.review_conclusion || '待补充'}</strong></div>
                   </div>
 
                   {/* Evidence */}
