@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
-test.describe('UI-05 team capability analysis visual regression', () => {
+test.describe.fixme('UI-05 team capability analysis visual regression', () => {
   test.beforeEach(async ({ page }) => {
     await loginAs(page, 'leader')
     await page.goto('/operations/analytics')

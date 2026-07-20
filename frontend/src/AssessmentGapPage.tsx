@@ -187,10 +187,10 @@ export function AssessmentGapPage() {
           {grouped.map(([code, items]) => (
             <div className={s.domainGroup} key={code}>
               <div className={s.domainHeader} onClick={() => setActiveDomain(code === activeDomain ? '全部' : code)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveDomain(code === activeDomain ? '全部' : code) } }} aria-expanded={activeDomain === '全部' || activeDomain === code}>
-                <span className={s.domainLabel}>{code === activeDomain ? '▾' : '▸'} {domainLabel(code)}</span>
+                <span className={s.domainLabel} data-testid="domain-label">{code === activeDomain ? '▾' : '▸'} {domainLabel(code)}</span>
                 <span className={s.domainProgress}>{items.filter(isFilled).length}/{items.length} 项</span>
               </div>
-              <table className={s.table}>
+              <table className={s.table} data-testid="assessment-table">
                 <thead><tr><th>L3 能力项</th><th>建议起始</th><th>当前 (1-5)</th><th>目标 (1-5)</th><th>Gap</th><th>优先级</th><th style={{width:'80px'}}>计划候选</th><th style={{width:'30px'}}></th></tr></thead>
                 <tbody>
                   {items.map(d => {
@@ -238,7 +238,7 @@ export function AssessmentGapPage() {
 
         {/* Gap sidebar */}
         {gs && (
-          <aside className={s.gapSidebar}>
+          <aside className={s.gapSidebar} data-testid="gap-sidebar">
             <h2>本次评估整体 Gap</h2>
             <dl>
               <div className={s.gapStat}><dt>Gap 总数</dt><dd>{gs.total_gaps}</dd></div>
