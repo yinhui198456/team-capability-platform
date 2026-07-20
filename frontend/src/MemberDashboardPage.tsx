@@ -200,7 +200,7 @@ export function MemberDashboardPage() {
             </div>
             <a href="/growth/annual-plan">查看年度计划</a>
           </article>
-          <article className={`card ${styles.hoursCard}`}>
+          <article className={`card ${styles.hoursCard}`} data-testid="learning-hours-card">
             <h2>学习时长</h2>
             <div className={styles.metricGrid}>
               <div className={styles.metric}><span>全年累计时长</span><strong>{formatHours(dashboard.summary.annual_actual_hours)}</strong></div>
@@ -210,7 +210,7 @@ export function MemberDashboardPage() {
             </div>
             <a href="/growth/review/monthly">查看月度复盘</a>
           </article>
-          <article className={`card ${styles.todoCard}`}>
+          <article className={`card ${styles.todoCard}`} data-testid="todo-card">
             <h2>待办事项</h2>
             <div className={styles.todoGrid}>
               <TodoItem label="待提交 Evidence" value={dashboard.summary.pending_evidence_count} />
@@ -225,7 +225,7 @@ export function MemberDashboardPage() {
             <h2>能力分析</h2>
             <span className="muted">选择能力域查看对应 Gap</span>
           </div>
-          <div className={styles.domainFilter}>
+          <div className={styles.domainFilter} data-testid="domain-filter">
             {['全部', ...dashboard.domain_radar.map(d => d.domain_code)].map(domain => (
               <button aria-pressed={selectedDomain === domain} className={selectedDomain === domain ? 'active' : ''} key={domain} onClick={() => setSelectedDomain(domain)} type="button">
                 {domain === '全部' ? domain : `${domain} ${domainLabel(domain)}`}
@@ -261,7 +261,7 @@ export function MemberDashboardPage() {
             <a href="/growth/annual-plan">进入任务与 Evidence</a>
           </div>
           {dashboard.current_tasks.length === 0 ? <p className="muted">暂无进行中的学习任务。</p> : (
-            <table>
+            <table data-testid="current-tasks-table">
               <thead><tr><th>任务名称</th><th>所属能力域 / L3</th><th>计划月份</th><th>预计时长</th><th>实际时长</th><th>进度</th><th>状态</th></tr></thead>
               <tbody>
                 {dashboard.current_tasks.map(task => {

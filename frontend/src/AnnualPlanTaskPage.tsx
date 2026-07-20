@@ -81,7 +81,7 @@ export function AnnualPlanTaskPage() {
       {error && <p className="error">{error}</p>}
 
       {/* Summary cards */}
-      <dl className={s.summary}>
+      <dl className={s.summary} data-testid="plan-summary">
         <div className={s.summaryCard}><dt>总体进度</dt><dd>{progress}%</dd><div className={s.progressBar}><div className={s.progressFill} style={{ width: `${progress}%` }} /></div></div>
         <div className={s.summaryCard}><dt>预计时长</dt><dd>{totalEstimated} h</dd></div>
         <div className={s.summaryCard}><dt>实际时长</dt><dd>{totalActual} h</dd></div>
@@ -89,7 +89,7 @@ export function AnnualPlanTaskPage() {
       </dl>
 
       {/* Monthly timeline */}
-      <div className={s.timeline}>
+      <div className={s.timeline} data-testid="month-timeline">
         {MONTHS.map(m => {
           const count = items.filter(i => i.target_month === m).length
           return (
@@ -117,8 +117,8 @@ export function AnnualPlanTaskPage() {
           const isExpanded = expandedId === item.id
           const st = item.status
           return (
-            <div className={s.planItem} key={item.id}>
-              <div className={s.planHeader} onClick={() => setExpandedId(isExpanded ? null : item.id)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') { setExpandedId(isExpanded ? null : item.id) } }}>
+            <div className={s.planItem} key={item.id} data-testid="plan-item">
+              <div className={s.planHeader} data-testid="plan-header" onClick={() => setExpandedId(isExpanded ? null : item.id)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') { setExpandedId(isExpanded ? null : item.id) } }}>
                 <div><span className={s.code}>{item.l3_code}</span><span className={s.l3name}>{item.learning_task_content?.slice(0, 40) ?? '—'}</span></div>
                 <span>{item.current_level}→{item.target_level}</span>
                 <span>{hours(item.estimated_hours)} h</span>
@@ -128,7 +128,7 @@ export function AnnualPlanTaskPage() {
                 <span>{isExpanded ? '▾' : '▸'}</span>
               </div>
               {isExpanded && td && (
-                <div className={s.taskPanel}>
+                <div className={s.taskPanel} data-testid="task-detail-panel">
                   <div className={s.taskGrid}>
                     <div className={s.taskField}><span>任务状态</span><strong>{td.task.status}</strong></div>
                     <div className={s.taskField}><span>实际耗时</span><strong>{td.task.actual_hours} h</strong></div>
