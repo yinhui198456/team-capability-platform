@@ -107,6 +107,7 @@ export function TeamAnalyticsPage() {
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [drawerItem, setDrawerItem] = useState<TeamAnalytics['overdue_items'][number] | null>(null)
 
   useEffect(() => {
     if (!isLeader) return
@@ -208,16 +209,6 @@ export function TeamAnalyticsPage() {
       {analytics && (
         <>
           <div className="metric-grid" aria-label="团队关键指标">
-            <article>
-              <span>自评完成率</span>
-              <strong>
-                {percent(analytics.kpis.assessment_completion_rate)}
-              </strong>
-              <small>
-                {analytics.kpis.assessment_completed_count} /{' '}
-                {analytics.kpis.assessment_total_count} 人
-              </small>
-            </article>
             <article>
               <span>计划完成率</span>
               <strong>{percent(analytics.kpis.plan_completion_rate)}</strong>
@@ -345,10 +336,22 @@ export function TeamAnalyticsPage() {
                 </thead>
                 <tbody>
                   {analytics.overdue_items.map((item) => (
-                    <tr key={`${item.member_id}-${item.l3_code}`}>
+                    <tr
+                      className="clickable"
+                      key={`${item.member_id}-${item.l3_code}`}
+                      onClick={() => setDrawerItem(item)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setDrawerItem(item)
+                        }
+                      }}
+                    >
                       <td>{item.full_name}</td>
                       <td>
-                        {item.l3_code} · {item.l3_name ?? ''}
+                        {item.l3_code}{item.l3_name ? ` · ${item.l3_name}` : ''}
                       </td>
                       <td>{item.due_date}</td>
                       <td>{item.overdue_days}</td>
@@ -359,6 +362,39 @@ export function TeamAnalyticsPage() {
               </table>
             )}
           </article>
+          {drawerItem && (
+            <aside
+              aria-label="延期计划项详情"
+              className="detail-drawer"
+              role="dialog"
+            >
+              <div className="detail-drawer-mask" onClick={() => setDrawerItem(null)} />
+              <div className="detail-drawer-panel" role="document">
+                <div className="card-heading">
+                  <h2>计划项详情（只读）</h2>
+                  <button
+                    aria-label="关闭详情"
+                    onClick={() => setDrawerItem(null)}
+                    type="button"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <dl>
+                  <dt>成员</dt>
+                  <dd>{drawerItem.full_name}</dd>
+                  <dt>L3 能力项</dt>
+                  <dd>{drawerItem.l3_code}{drawerItem.l3_name ? ` · ${drawerItem.l3_name}` : ''}</dd>
+                  <dt>计划截止日期</dt>
+                  <dd>{drawerItem.due_date}</dd>
+                  <dt>延期天数</dt>
+                  <dd>{drawerItem.overdue_days} 天</dd>
+                  <dt>状态</dt>
+                  <dd>{drawerItem.status}</dd>
+                </dl>
+              </div>
+            </aside>
+          )}
         </>
       )}
     </section>
