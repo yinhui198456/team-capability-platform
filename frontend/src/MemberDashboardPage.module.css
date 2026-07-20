@@ -1,0 +1,281 @@
+/* R2-A: Member Dashboard — CSS Module */
+
+.overview {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 1120px) {
+  .overview {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Progress Ring ── */
+.progressCard h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
+}
+.progressBody {
+  display: flex;
+  gap: var(--space-6);
+  align-items: center;
+}
+.ring {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--color-brand-700) var(--progress, 0deg),
+    #e8eef7 var(--progress, 0deg)
+  );
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ringValue {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  color: var(--color-gray-900);
+}
+.ringLabel {
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+}
+.statusList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  flex: 1;
+}
+.statusItem {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+}
+.statusItem dt {
+  color: var(--color-gray-600);
+}
+.statusItem dd {
+  font-weight: 600;
+  color: var(--color-gray-900);
+}
+.overdue {
+  color: var(--color-danger);
+}
+
+/* ── Learning Hours ── */
+.hoursCard h2,
+.todoCard h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-4);
+}
+.metricGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.metric {
+  background: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  text-align: center;
+}
+.metric span {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  margin-bottom: var(--space-1);
+}
+.metric strong {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-gray-900);
+}
+
+/* ── Todo Cards ── */
+.todoGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.todoItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-gray-50);
+  text-align: center;
+  gap: var(--space-1);
+}
+.todoItem svg {
+  width: 20px;
+  height: 20px;
+  color: var(--color-gray-500);
+}
+.todoValue {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  color: var(--color-gray-900);
+}
+.todoLabel {
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+}
+.todoDanger {
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+}
+.todoDanger .todoValue {
+  color: var(--color-danger);
+}
+
+/* ── Ability Analysis ── */
+.abilitySection {
+  margin-bottom: var(--space-6);
+}
+.abilityHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+.abilityHead h2 {
+  font-size: var(--text-lg);
+}
+.domainFilter {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.domainFilter button {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  color: var(--color-gray-600);
+  cursor: pointer;
+}
+.domainFilter button[aria-pressed="true"],
+.domainFilter button.active {
+  background: var(--color-brand-700);
+  color: var(--color-white);
+  border-color: var(--color-brand-700);
+}
+
+.abilityGrid {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-6);
+}
+@media (max-width: 840px) {
+  .abilityGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Radar ── */
+.radar {
+  margin: 0;
+}
+.radar svg {
+  width: 100%;
+  max-width: 224px;
+}
+.radar figcaption {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  margin-top: var(--space-2);
+}
+
+/* ── Gap Table ── */
+.gapTable {
+  width: 100%;
+  font-size: var(--text-sm);
+}
+.gapValue {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+.domainBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(23, 92, 211, 0.08);
+  color: var(--color-brand-700);
+  margin-right: var(--space-2);
+}
+.domainDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ── Task Table ── */
+.tasksSection {
+  margin-bottom: var(--space-6);
+}
+.tasksHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+.tasksHead h2 {
+  font-size: var(--text-lg);
+}
+.taskName {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.l3Name {
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  display: block;
+}
+
+.statusPill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
+}
+.statusComplete {
+  background: #ecfdf3;
+  color: var(--color-success);
+}
+.statusOverdue {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.statusInProgress {
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
