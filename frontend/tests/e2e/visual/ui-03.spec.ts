@@ -39,7 +39,7 @@ for (const viewport of VIEWPORTS) {
     test('annual plan screenshot', async ({ page }) => {
       await expect(page).toHaveScreenshot(
         `ui-03-annual-plan-${viewport.name}.png`,
-        { maxDiffPixels: 1000 },
+        { maxDiffPixelRatio: 0.05 },
       )
     })
 

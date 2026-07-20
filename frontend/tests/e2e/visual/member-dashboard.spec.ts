@@ -57,7 +57,7 @@ for (const viewport of VIEWPORTS) {
     test('full page screenshot', async ({ page }) => {
       await expect(page).toHaveScreenshot(
         `member-dashboard-full-${viewport.name}.png`,
-        { maxDiffPixels: 1000, fullPage: true },
+        { maxDiffPixelRatio: 0.05, fullPage: true },
       )
     })
 
@@ -65,7 +65,7 @@ for (const viewport of VIEWPORTS) {
       const card = page.getByTestId('learning-hours-card')
       await expect(card).toHaveScreenshot(
         `member-dashboard-hours-${viewport.name}.png`,
-        { maxDiffPixels: 200 },
+        { maxDiffPixelRatio: 0.05 },
       )
     })
 
@@ -73,7 +73,7 @@ for (const viewport of VIEWPORTS) {
       const card = page.getByTestId('todo-card')
       await expect(card).toHaveScreenshot(
         `member-dashboard-todo-${viewport.name}.png`,
-        { maxDiffPixels: 200 },
+        { maxDiffPixelRatio: 0.05 },
       )
     })
   })

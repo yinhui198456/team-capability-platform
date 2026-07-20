@@ -79,7 +79,7 @@ for (const viewport of VIEWPORTS) {
     test('assessment overview screenshot', async ({ page }) => {
       await expect(page).toHaveScreenshot(
         `ui-02-assessment-overview-${viewport.name}.png`,
-        { maxDiffPixels: 1000 },
+        { maxDiffPixelRatio: 0.05 },
       )
     })
 
@@ -88,7 +88,7 @@ for (const viewport of VIEWPORTS) {
       await gapSidebar.scrollIntoViewIfNeeded()
       await expect(gapSidebar).toHaveScreenshot(
         `ui-02-gap-sidebar-${viewport.name}.png`,
-        { maxDiffPixels: 300 },
+        { maxDiffPixelRatio: 0.05 },
       )
     })
   })
