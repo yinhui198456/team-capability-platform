@@ -121,8 +121,10 @@ for (const viewport of VIEWPORTS) {
       // Evidence tab shows a closed history list that proves read-only state.
       await page.getByRole('tab', { name: 'Evidence Review' }).click()
       await expect(page.locator('.buddy-workspace')).toContainText('反馈历史（只读）')
-      const history = page.locator('.buddy-workspace').getByText('反馈历史（只读）')
-      await history.scrollIntoViewIfNeeded()
+      const historyRecords = page.locator('.buddy-workspace .compact-list li')
+      const recordCount = await historyRecords.count()
+      expect(recordCount).toBeGreaterThanOrEqual(2)
+      await historyRecords.first().scrollIntoViewIfNeeded()
       const filename =
         viewport.name === '1280x800'
           ? 'ui-04-buddy-review-center-history-scrolled-1280x800.png'
