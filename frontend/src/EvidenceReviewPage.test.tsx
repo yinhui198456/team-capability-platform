@@ -19,6 +19,15 @@ describe('EvidenceReviewPage', () => {
   beforeEach(() => {
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
     vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([])
+    vi.spyOn(assessmentReviewApi, 'getAssessmentReviewSummary').mockResolvedValue({
+      pending_count: 0,
+      completed_count: 0,
+    })
+    vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+      pending_count: 1,
+      completed_count: 0,
+    })
+    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([])
   })
 
   afterEach(() => {

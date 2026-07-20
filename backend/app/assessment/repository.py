@@ -599,3 +599,33 @@ def submit_assessment_review(
                 """,
                 (assessment_id,),
             )
+
+
+def get_assessment_review_summary_for_buddy(
+    connection: psycopg.Connection,
+    buddy_id: int,
+    year: int,
+) -> dict[str, int]:
+    """Return pending and completed assessment review counts for a Buddy in a year."""
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (
+                WHERE ar.status = '待复核'
+            ) AS pending_count,
+            COUNT(*) FILTER (
+                WHERE ar.status = '已闭环'
+                  AND EXTRACT(YEAR FROM ar.reviewed_at)::INT = %s
+            ) AS completed_count
+        FROM assessment_review ar
+        JOIN assessment a ON a.id = ar.assessment_id
+        WHERE ar.buddy_id = %s AND a.year = %s
+        """,
+        (year, buddy_id, year),
+    ).fetchone()
+    if row is None:
+        return {"pending_count": 0, "completed_count": 0}
+    return {
+        "pending_count": int(row[0] or 0),
+        "completed_count": int(row[1] or 0),
+    }

@@ -24,6 +24,20 @@ export async function listPendingReviews(): Promise<PendingReview[]> {
   })
 }
 
+export type ReviewSummary = {
+  pending_count: number
+  completed_count: number
+}
+
+export async function getAssessmentReviewSummary(
+  year: number,
+): Promise<ReviewSummary> {
+  return request<ReviewSummary>(
+    `/api/assessments/reviews/summary?year=${year}`,
+    { method: 'GET' },
+  )
+}
+
 export async function submitReview(
   assessmentId: number,
   reviewId: number,

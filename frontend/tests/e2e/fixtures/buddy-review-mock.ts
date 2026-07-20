@@ -1,0 +1,289 @@
+import type { Page } from '@playwright/test'
+
+export type AssignedMember = {
+  id: number
+  username: string
+  full_name: string
+}
+
+export async function mockBuddyReviewData(page: Page): Promise<void> {
+  const assignedMembers: AssignedMember[] = [
+    { id: 3, username: 'member', full_name: 'Member User' },
+    { id: 5, username: 'member2', full_name: 'Member Two' },
+  ]
+
+  await page.route('/api/auth/me', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 2,
+        username: 'buddy',
+        full_name: 'Buddy User',
+        roles: ['Buddy'],
+        primary_buddy: null,
+        assigned_members: assignedMembers,
+      }),
+    })
+  })
+
+  await page.route('/api/assessments/reviews/pending', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 101,
+          assessment_id: 201,
+          sequence: 1,
+          buddy_id: 2,
+          status: '待复核',
+          member_id: 3,
+          year: 2026,
+          version: 1,
+          assessment_status: '待复核',
+          submitted_at: '2026-07-18T09:30:00+08:00',
+        },
+        {
+          id: 102,
+          assessment_id: 202,
+          sequence: 1,
+          buddy_id: 2,
+          status: '待复核',
+          member_id: 5,
+          year: 2026,
+          version: 1,
+          assessment_status: '待复核',
+          submitted_at: '2026-07-19T14:00:00+08:00',
+        },
+      ]),
+    })
+  })
+
+  await page.route('/api/assessments/reviews/summary*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ pending_count: 2, completed_count: 1 }),
+    })
+  })
+
+  await page.route('/api/planning/evidence-reviews/pending', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 301,
+          evidence_id: 401,
+          version_number: 1,
+          status: '待 Review',
+          conclusion: null,
+          feedback: null,
+          reviewed_at: null,
+          created_at: '2026-07-19T10:00:00+08:00',
+          submitted_at: '2026-07-19T10:00:00+08:00',
+          member_id: 3,
+          username: 'member',
+          learning_task_id: 501,
+          l3_code: 'P01.01.01',
+          content: '完成数据管道基础文档与示例代码。',
+          evidence_link: 'https://example.invalid/tcp-demo-evidence',
+        },
+      ]),
+    })
+  })
+
+  await page.route('/api/planning/evidence-reviews/summary*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ pending_count: 1, completed_count: 2 }),
+    })
+  })
+
+  await page.route(/\/api\/assessments\/201$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 201,
+        member_id: 3,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '待复核',
+        created_at: '2026-07-18T09:30:00+08:00',
+        submitted_at: '2026-07-18T09:30:00+08:00',
+        archived_at: null,
+        details: [
+          {
+            id: 1,
+            l3_code: 'P01.01.01',
+            l3_name: '数据管道基础',
+            current_level: 2,
+            target_level: 4,
+            gap_value: 2,
+            evidence_note: '已参与数据管道搭建，完成基础文档。',
+            plan_candidate: false,
+            recommended_start_level: '1',
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+          },
+          {
+            id: 2,
+            l3_code: 'P02.01.01',
+            l3_name: '模型部署流程',
+            current_level: 1,
+            target_level: 3,
+            gap_value: 2,
+            evidence_note: '尚未独立完成模型部署。',
+            plan_candidate: false,
+            recommended_start_level: '1',
+            l1_code: 'P02',
+            l1_name: 'AI Infra / Agent',
+          },
+        ],
+        gap_summary: { total_gaps: 2, avg_gap: 2, high_priority: 0, medium_priority: 2, low_priority: 0 },
+      }),
+    })
+  })
+
+  await page.route(/\/api\/assessments\/202$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 202,
+        member_id: 5,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '待复核',
+        created_at: '2026-07-19T14:00:00+08:00',
+        submitted_at: '2026-07-19T14:00:00+08:00',
+        archived_at: null,
+        details: [
+          {
+            id: 3,
+            l3_code: 'C02.01.01',
+            l3_name: '技术方案写作',
+            current_level: 2,
+            target_level: 4,
+            gap_value: 2,
+            evidence_note: '已完成 1 篇技术方案。',
+            plan_candidate: false,
+            recommended_start_level: '1',
+            l1_code: 'C02',
+            l1_name: '沟通协作',
+          },
+        ],
+        gap_summary: { total_gaps: 1, avg_gap: 2, high_priority: 0, medium_priority: 1, low_priority: 0 },
+      }),
+    })
+  })
+
+  await page.route(/\/api\/assessments\/201\/history/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1001,
+          assessment_id: 201,
+          sequence: 0,
+          buddy_id: 2,
+          conclusion: '认可',
+          feedback: '上次自评认可，继续按计划提升。',
+          reviewed_at: '2026-01-15T10:00:00+08:00',
+          status: '已闭环',
+        },
+      ]),
+    })
+  })
+
+  await page.route(/\/api\/assessments\/202\/history/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+
+  await page.route(/\/api\/planning\/learning-tasks\/501\/evidence-reviews/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 2001,
+          evidence_id: 401,
+          version_number: 1,
+          status: '通过',
+          conclusion: '通过',
+          feedback: 'Evidence 充分，通过。',
+          reviewed_at: '2026-02-10T11:00:00+08:00',
+          created_at: '2026-02-10T11:00:00+08:00',
+        },
+        {
+          id: 2002,
+          evidence_id: 401,
+          version_number: 1,
+          status: '需补充',
+          conclusion: '需补充',
+          feedback: '请补充数据质量监控截图。',
+          reviewed_at: '2026-03-05T14:00:00+08:00',
+          created_at: '2026-03-05T14:00:00+08:00',
+        },
+        {
+          id: 2003,
+          evidence_id: 401,
+          version_number: 1,
+          status: '驳回',
+          conclusion: '驳回',
+          feedback: '链接无法访问，请重新提交。',
+          reviewed_at: '2026-04-12T09:30:00+08:00',
+          created_at: '2026-04-12T09:30:00+08:00',
+        },
+      ]),
+    })
+  })
+}
+
+export async function mockBuddyReviewEmptyData(page: Page): Promise<void> {
+  await page.route('/api/auth/me', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 2,
+        username: 'buddy',
+        full_name: 'Buddy User',
+        roles: ['Buddy'],
+        primary_buddy: null,
+        assigned_members: [
+          { id: 3, username: 'member', full_name: 'Member User' },
+        ],
+      }),
+    })
+  })
+
+  await page.route('/api/assessments/reviews/pending', async (route) => {
+    await route.fulfill({ status: 200, body: JSON.stringify([]) })
+  })
+  await page.route('/api/planning/evidence-reviews/pending', async (route) => {
+    await route.fulfill({ status: 200, body: JSON.stringify([]) })
+  })
+  await page.route('/api/assessments/reviews/summary*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      body: JSON.stringify({ pending_count: 0, completed_count: 0 }),
+    })
+  })
+  await page.route('/api/planning/evidence-reviews/summary*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      body: JSON.stringify({ pending_count: 0, completed_count: 0 }),
+    })
+  })
+}

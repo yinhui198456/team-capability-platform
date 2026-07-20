@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -106,6 +107,17 @@ describe('BuddyReviewCenter', () => {
     vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue(
       options.evidenceHistory ?? [],
     )
+    vi.spyOn(
+      assessmentReviewApi,
+      'getAssessmentReviewSummary',
+    ).mockResolvedValue({
+      pending_count: 1,
+      completed_count: 0,
+    })
+    vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+      pending_count: options.includeEvidence === false ? 0 : 1,
+      completed_count: 0,
+    })
   }
 
   it('summarizes assessment and Evidence review queues', async () => {
@@ -137,8 +149,9 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByText('待 Review Evidence')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '辅导成员' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '全部成员' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: '成员甲' })).toHaveLength(2)
-    expect(screen.getByRole('tab', { name: '全部待复核' })).toBeTruthy()
+    const memberList = screen.getByRole('heading', { name: '辅导成员' }).parentElement!
+    expect(within(memberList).getByRole('button', { name: /成员甲/ })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '全部待处理' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '复核工作区' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/上一版反馈/)).toBeTruthy())
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
@@ -232,7 +245,7 @@ describe('BuddyReviewCenter', () => {
       </MemoryRouter>
     )
     await waitFor(() =>
-      expect(screen.getByText('当前范围暂无待复核项。')).toBeTruthy(),
+      expect(screen.getByText('当前范围暂无待处理项。')).toBeTruthy(),
     )
     expect(screen.queryByText('非负责成员')).toBeNull()
     expect(

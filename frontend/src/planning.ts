@@ -483,6 +483,20 @@ export async function listPendingEvidenceReviews(): Promise<EvidenceReview[]> {
   })
 }
 
+export type ReviewSummary = {
+  pending_count: number
+  completed_count: number
+}
+
+export async function getEvidenceReviewSummary(
+  year: number,
+): Promise<ReviewSummary> {
+  return request<ReviewSummary>(
+    `/api/planning/evidence-reviews/summary?year=${year}`,
+    { method: 'GET' },
+  )
+}
+
 export async function submitEvidenceReview(
   review_id: number,
   conclusion: EvidenceReviewConclusion,
