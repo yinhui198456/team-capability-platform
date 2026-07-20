@@ -45,6 +45,9 @@ for (const viewport of VIEWPORTS) {
       await expect(
         members.getByRole('button', { name: /Member Two/ }),
       ).toBeVisible()
+      // The stray comma from a JSX expression must not render as a text node.
+      await expect(members.getByText(',')).toHaveCount(0)
+      await expect(page.getByText('’')).toHaveCount(0)
 
       const queue = page.locator('.buddy-queue')
       await expect(queue.getByRole('heading', { name: '复核队列' })).toBeVisible()
@@ -63,10 +66,14 @@ for (const viewport of VIEWPORTS) {
     })
 
     test('default all members screenshot', async ({ page }) => {
-      await expect(page).toHaveScreenshot(
-        `ui-04-buddy-review-center-default-${viewport.name}.png`,
-        { fullPage: false, maxDiffPixelRatio: 0.05 },
-      )
+      const filename =
+        viewport.name === '1280x800'
+          ? 'ui-04-buddy-review-center-top-1280x800.png'
+          : `ui-04-buddy-review-center-default-${viewport.name}.png`
+      await expect(page).toHaveScreenshot(filename, {
+        fullPage: false,
+        maxDiffPixelRatio: 0.05,
+      })
     })
 
     test('single member selected screenshot', async ({ page }) => {
@@ -116,10 +123,14 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator('.buddy-workspace')).toContainText('反馈历史（只读）')
       const history = page.locator('.buddy-workspace').getByText('反馈历史（只读）')
       await history.scrollIntoViewIfNeeded()
-      await expect(page).toHaveScreenshot(
-        `ui-04-buddy-review-center-history-${viewport.name}.png`,
-        { fullPage: false, maxDiffPixelRatio: 0.05 },
-      )
+      const filename =
+        viewport.name === '1280x800'
+          ? 'ui-04-buddy-review-center-history-scrolled-1280x800.png'
+          : `ui-04-buddy-review-center-history-${viewport.name}.png`
+      await expect(page).toHaveScreenshot(filename, {
+        fullPage: false,
+        maxDiffPixelRatio: 0.05,
+      })
     })
   })
 }

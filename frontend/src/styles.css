@@ -859,6 +859,7 @@ select {
   align-items: center;
   cursor: pointer;
   display: flex;
+  flex-direction: row;
   font-size: 14px;
   gap: 8px;
   padding: 6px 0;

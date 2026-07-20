@@ -400,7 +400,7 @@ export function BuddyReviewCenter() {
                 <span className="member-count">{count} 项</span>
               </button>
             )
-          })},
+          })}
         </aside>
 
         <article className="dashboard-card buddy-queue">
