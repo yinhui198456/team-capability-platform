@@ -52,8 +52,8 @@ def create_assessment_draft(
                     SELECT
                         %s,
                         c.code,
-                        1,
-                        1,
+                        NULL,
+                        NULL,
                         0,
                         NULL,
                         FALSE
@@ -224,12 +224,14 @@ def save_assessment_draft(
             (assessment_id,),
         )
         for detail in details:
-            current_level = int(detail["current_level"])
-            target_level = int(detail["target_level"])
-            if not (1 <= current_level <= 5 and 1 <= target_level <= 5):
-                raise ValueError(
-                    "current_level and target_level must be between 1 and 5"
-                )
+            cl = detail.get("current_level")
+            tl = detail.get("target_level")
+            current_level = int(cl) if cl is not None else None
+            target_level = int(tl) if tl is not None else None
+            if current_level is not None and not (1 <= current_level <= 5):
+                raise ValueError("current_level must be between 1 and 5")
+            if target_level is not None and not (1 <= target_level <= 5):
+                raise ValueError("target_level must be between 1 and 5")
             connection.execute(
                 """
                 INSERT INTO assessment_detail (

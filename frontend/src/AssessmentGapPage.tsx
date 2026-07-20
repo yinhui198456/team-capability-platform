@@ -13,14 +13,25 @@ import {
 import { mockAssessment, mockAssessmentSubmitted, isMockEnabled } from './__fixtures__/assessmentMock'
 
 const LEVELS = [1, 2, 3, 4, 5]
+
+function levelSelect(value: number | null, onChange: (v: number | null) => void, disabled: boolean) {
+  return (
+    <select value={value ?? ''} onChange={e => onChange(e.target.value ? +e.target.value : null)} disabled={disabled}>
+      <option value="">请选择</option>
+      {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+    </select>
+  )
+}
+
+const LEVEL_HELP = 'P4–P8 为岗位等级要求，1–5 为能力项掌握度（1=入门, 3=独立, 5=专家）。建议起始等级来自能力模型，仅供参考。'
 const DOMAIN_LABELS: Record<string, string> = { P01: '数据基础设施', P02: 'AI Infra / Agent', P03: '工程编码', C01: '基本办公能力', C02: '沟通协作', C03: '学习创新' }
 function domainLabel(code: string): string { const p = code.split('.')[0]; return DOMAIN_LABELS[p] ? `${p} · ${DOMAIN_LABELS[p]}` : code }
-function isFilled(d: AssessmentDetail) { return d.current_level > 1 || d.target_level > 1 || (d.evidence_note ?? '').trim().length > 0 }
+function isFilled(d: AssessmentDetail) { return d.current_level != null && d.target_level != null && (d.evidence_note ?? '').trim().length > 0 }
 function unfilledReason(d: AssessmentDetail): '' | '需评估等级' | '需自评依据' {
-  const hasLevel = d.current_level > 1 || d.target_level > 1
+  const hasLevel = d.current_level != null && d.target_level != null
   const hasEvidence = (d.evidence_note ?? '').trim().length > 0
-  if (!hasLevel && !hasEvidence) return '需评估等级'
-  if (hasLevel && !hasEvidence) return '需自评依据'
+  if (!hasLevel) return '需评估等级'
+  if (!hasEvidence) return '需自评依据'
   return ''
 }
 function priority(gap: number): '高' | '中' | '低' { return gap >= 3 ? '高' : gap > 0 ? '中' : '低' }
@@ -98,7 +109,7 @@ export function AssessmentGapPage() {
     let list = details
     if (activeDomain !== '全部') list = list.filter(d => (d.l1_code ?? d.l3_code.split('.')[0]) === activeDomain)
     if (statusFilter === '未完成') list = list.filter(d => !isFilled(d))
-    if (statusFilter === '有Gap') list = list.filter(d => Math.max(d.target_level - d.current_level, 0) > 0)
+    if (statusFilter === '有Gap') list = list.filter(d => d.current_level != null && d.target_level != null && d.target_level - d.current_level > 0)
     if (statusFilter === '计划候选') list = list.filter(d => d.plan_candidate)
     if (search.trim()) { const q = search.trim().toLowerCase(); list = list.filter(d => d.l3_code.toLowerCase().includes(q) || (d.l3_name ?? '').includes(q)) }
     return list
@@ -166,6 +177,7 @@ export function AssessmentGapPage() {
             <input className={s.searchBox} placeholder="搜索 L3 编号/名称" aria-label="搜索能力项" value={search} onChange={e => setSearch(e.target.value)} />
             <button className={s.locateBtn} onClick={locateNextUnfilled}>定位未填写项</button>
           </div>
+          <div className={s.levelHelp}>{LEVEL_HELP}</div>
         </div>
       )}
 
@@ -183,7 +195,7 @@ export function AssessmentGapPage() {
                 <tbody>
                   {items.map(d => {
                     const gIdx = details.indexOf(d)
-                    const gap = Math.max(d.target_level - d.current_level, 0)
+                    const gap = (d.current_level != null && d.target_level != null) ? Math.max(d.target_level - d.current_level, 0) : 0
                     const pri = priority(gap)
                     const filled = isFilled(d)
                     const reason = unfilledReason(d)
@@ -194,8 +206,8 @@ export function AssessmentGapPage() {
                       <tr className={rowCls} key={d.id} id={`row-${d.id}`}>
                         <td><span className={s.code}>{d.l3_code}</span><span className={s.l3name}>{d.l3_name ?? ''}</span>{!filled && reason && <span className={s.reasonTag}>{reason}</span>}</td>
                         <td><span className={s.recommend}>{d.recommended_start_level ?? '—'}</span></td>
-                        <td><select value={d.current_level} onChange={e => updateDetail(gIdx, { current_level: +e.target.value })} disabled={!isEditable}>{LEVELS.map(l => <option key={l} value={l}>{l}</option>)}</select></td>
-                        <td><select value={d.target_level} onChange={e => updateDetail(gIdx, { target_level: +e.target.value })} disabled={!isEditable}>{LEVELS.map(l => <option key={l} value={l}>{l}</option>)}</select></td>
+                        <td>{levelSelect(d.current_level, v => updateDetail(gIdx, { current_level: v }), !isEditable)}</td>
+                        <td>{levelSelect(d.target_level, v => updateDetail(gIdx, { target_level: v }), !isEditable)}</td>
                         <td className={s.gapCell}><span className={gapCls}>{gap}</span></td>
                         <td><span className={`${s.pill} ${priCls}`}>{pri}</span></td>
                         <td><input type="checkbox" checked={d.plan_candidate ?? false} onChange={e => updateDetail(gIdx, { plan_candidate: e.target.checked })} disabled={!isEditable} /></td>
