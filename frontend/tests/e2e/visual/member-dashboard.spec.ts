@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import { VIEWPORTS } from './viewports'
+
+const VIEWPORTS = [
+  { name: '1440x900', width: 1440, height: 900 },
+  { name: '1280x800', width: 1280, height: 800 },
+] as const
 
 for (const viewport of VIEWPORTS) {
   test.describe(`UI-01 Member dashboard visual regression @ ${viewport.name}`, () => {
@@ -10,6 +14,11 @@ for (const viewport of VIEWPORTS) {
       await loginAs(page, 'member')
       await page.goto('/dashboard/member')
       await expect(page.getByText('我的成长总览')).toBeVisible()
+      // Wait for async dashboard data to avoid screenshot height instability
+      await expect(page.getByTestId('current-tasks-table')).toBeVisible()
+      await expect(
+        page.getByTestId('current-tasks-table').locator('tbody tr'),
+      ).not.toHaveCount(0)
     })
 
     test('semantic alignment', async ({ page }) => {
@@ -46,9 +55,9 @@ for (const viewport of VIEWPORTS) {
     })
 
     test('full page screenshot', async ({ page }) => {
-      await expect(page.locator('section.page')).toHaveScreenshot(
+      await expect(page).toHaveScreenshot(
         `member-dashboard-full-${viewport.name}.png`,
-        { maxDiffPixels: 1000 },
+        { maxDiffPixels: 1000, fullPage: true },
       )
     })
 

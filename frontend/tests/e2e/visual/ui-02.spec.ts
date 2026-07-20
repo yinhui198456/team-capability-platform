@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import { VIEWPORTS } from './viewports'
+
+const VIEWPORTS = [
+  { name: '1440x900', width: 1440, height: 900 },
+  { name: '1280x800', width: 1280, height: 800 },
+] as const
 
 for (const viewport of VIEWPORTS) {
   test.describe(`UI-02 assessment and Gap visual regression @ ${viewport.name}`, () => {
@@ -23,6 +27,9 @@ for (const viewport of VIEWPORTS) {
         await createDraft.click()
       }
       await expect(page.getByLabel('评估摘要')).toBeVisible()
+      // Wait for assessment tables and Gap sidebar to render before screenshots
+      await expect(page.getByTestId('assessment-table')).toHaveCount(6)
+      await expect(page.getByTestId('gap-sidebar')).toBeVisible()
     })
 
     test('semantic alignment', async ({ page }) => {

@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import { VIEWPORTS } from './viewports'
+
+const VIEWPORTS = [
+  { name: '1440x900', width: 1440, height: 900 },
+  { name: '1280x800', width: 1280, height: 800 },
+] as const
 
 for (const viewport of VIEWPORTS) {
   test.describe(`UI-03 annual plan visual regression @ ${viewport.name}`, () => {
@@ -12,6 +16,8 @@ for (const viewport of VIEWPORTS) {
       await expect(
         page.getByRole('heading', { name: '年度成长计划' }),
       ).toBeVisible()
+      // Wait for async plan items to render before screenshots
+      await expect.poll(async () => page.getByTestId('plan-item').count()).toBeGreaterThan(0)
     })
 
     test('annual plan and learning-task semantics', async ({ page }) => {
@@ -31,7 +37,7 @@ for (const viewport of VIEWPORTS) {
     })
 
     test('annual plan screenshot', async ({ page }) => {
-      await expect(page.locator('section.page')).toHaveScreenshot(
+      await expect(page).toHaveScreenshot(
         `ui-03-annual-plan-${viewport.name}.png`,
         { maxDiffPixels: 1000 },
       )
