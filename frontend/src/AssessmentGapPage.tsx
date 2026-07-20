@@ -195,21 +195,22 @@ export function AssessmentGapPage() {
                 <tbody>
                   {items.map(d => {
                     const gIdx = details.indexOf(d)
-                    const gap = (d.current_level != null && d.target_level != null) ? Math.max(d.target_level - d.current_level, 0) : 0
-                    const pri = priority(gap)
+                    const hasLevels = d.current_level != null && d.target_level != null
+                    const gap = hasLevels ? Math.max(d.target_level! - d.current_level!, 0) : null
+                    const pri = hasLevels ? priority(gap!) : null
                     const filled = isFilled(d)
                     const reason = unfilledReason(d)
-                    const rowCls = `${filled ? s.rowFilled : s.rowEmpty} ${gap > 0 ? s.rowGap : ''}`
-                    const gapCls = gap >= 3 ? s.gapHigh : gap > 0 ? s.gapMedium : s.gapLow
-                    const priCls = pri === '高' ? s.priorityHigh : pri === '中' ? s.priorityMedium : s.priorityLow
+                    const rowCls = `${filled ? s.rowFilled : s.rowEmpty} ${gap != null && gap > 0 ? s.rowGap : ''}`
+                    const gapCls = gap == null ? '' : gap >= 3 ? s.gapHigh : gap > 0 ? s.gapMedium : s.gapLow
+                    const priCls = pri === '高' ? s.priorityHigh : pri === '中' ? s.priorityMedium : pri === '低' ? s.priorityLow : ''
                     return (<>
                       <tr className={rowCls} key={d.id} id={`row-${d.id}`}>
                         <td><span className={s.code}>{d.l3_code}</span><span className={s.l3name}>{d.l3_name ?? ''}</span>{!filled && reason && <span className={s.reasonTag}>{reason}</span>}</td>
                         <td><span className={s.recommend}>{d.recommended_start_level ?? '—'}</span></td>
                         <td>{levelSelect(d.current_level, v => updateDetail(gIdx, { current_level: v }), !isEditable)}</td>
                         <td>{levelSelect(d.target_level, v => updateDetail(gIdx, { target_level: v }), !isEditable)}</td>
-                        <td className={s.gapCell}><span className={gapCls}>{gap}</span></td>
-                        <td><span className={`${s.pill} ${priCls}`}>{pri}</span></td>
+                        <td className={s.gapCell}><span className={gapCls}>{gap != null ? gap : '—'}</span></td>
+                        <td><span className={`${s.pill} ${priCls}`}>{pri ?? '未评估'}</span></td>
                         <td><input type="checkbox" checked={d.plan_candidate ?? false} onChange={e => updateDetail(gIdx, { plan_candidate: e.target.checked })} disabled={!isEditable} /></td>
                         <td>{isEditable && <button className={s.inlineBtn} onClick={() => startEdit(d.id, d.evidence_note ?? '')} title="编辑自评依据">{filled ? '✎' : '+'}</button>}</td>
                       </tr>
