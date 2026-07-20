@@ -173,10 +173,43 @@
 .fillLow { background: var(--color-gray-300); }
 
 .submitWarning {
-  margin-top: var(--space-3);
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--color-warning-bg);
   border-radius: var(--radius-md);
   font-size: var(--text-xs);
   color: var(--color-warning);
+  margin-bottom: var(--space-3);
+}
+
+.planGateWarning {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-gray-100);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  margin-bottom: var(--space-3);
+}
+
+.reasonTag {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 4px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.levelHelp {
+  font-size: var(--text-xs);
+  color: var(--color-gray-400);
+  margin-top: var(--space-1);
+  width: 100%;
+  line-height: 1.4;
+}
+
+.table select option[value=""] {
+  color: var(--color-gray-400);
+  font-style: italic;
 }

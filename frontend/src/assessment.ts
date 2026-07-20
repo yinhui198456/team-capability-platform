@@ -18,8 +18,8 @@ export type AssessmentDetail = {
   id?: number
   l3_code: string
   l3_name?: string
-  current_level: number
-  target_level: number
+  current_level: number | null
+  target_level: number | null
   gap_value?: number
   evidence_note?: string
   plan_candidate?: boolean

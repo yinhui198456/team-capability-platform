@@ -390,7 +390,7 @@ export function BuddyReviewCenter() {
                           {detail.l3_code}：当前 {detail.current_level} → 目标{' '}
                           {detail.target_level}（Gap{' '}
                           {detail.gap_value ??
-                            detail.target_level - detail.current_level}
+                            (detail.current_level != null && detail.target_level != null ? detail.target_level - detail.current_level : 0)}
                           ）
                         </li>
                       ))}
