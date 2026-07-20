@@ -16,9 +16,16 @@ const LEVELS = [1, 2, 3, 4, 5]
 const DOMAIN_LABELS: Record<string, string> = { P01: '数据基础设施', P02: 'AI Infra / Agent', P03: '工程编码', C01: '基本办公能力', C02: '沟通协作', C03: '学习创新' }
 function domainLabel(code: string): string { const p = code.split('.')[0]; return DOMAIN_LABELS[p] ? `${p} · ${DOMAIN_LABELS[p]}` : code }
 function isFilled(d: AssessmentDetail) { return d.current_level > 1 || d.target_level > 1 || (d.evidence_note ?? '').trim().length > 0 }
+function unfilledReason(d: AssessmentDetail): '' | '需评估等级' | '需自评依据' {
+  const hasLevel = d.current_level > 1 || d.target_level > 1
+  const hasEvidence = (d.evidence_note ?? '').trim().length > 0
+  if (!hasLevel && !hasEvidence) return '需评估等级'
+  if (hasLevel && !hasEvidence) return '需自评依据'
+  return ''
+}
 function priority(gap: number): '高' | '中' | '低' { return gap >= 3 ? '高' : gap > 0 ? '中' : '低' }
 
-type FilterStatus = '全部' | '未填写' | '有Gap' | '计划候选'
+type FilterStatus = '全部' | '未完成' | '有Gap' | '计划候选'
 
 export function AssessmentGapPage() {
   const year = useYear()
@@ -90,7 +97,7 @@ export function AssessmentGapPage() {
   const filtered = useMemo(() => {
     let list = details
     if (activeDomain !== '全部') list = list.filter(d => (d.l1_code ?? d.l3_code.split('.')[0]) === activeDomain)
-    if (statusFilter === '未填写') list = list.filter(d => !isFilled(d))
+    if (statusFilter === '未完成') list = list.filter(d => !isFilled(d))
     if (statusFilter === '有Gap') list = list.filter(d => Math.max(d.target_level - d.current_level, 0) > 0)
     if (statusFilter === '计划候选') list = list.filter(d => d.plan_candidate)
     if (search.trim()) { const q = search.trim().toLowerCase(); list = list.filter(d => d.l3_code.toLowerCase().includes(q) || (d.l3_name ?? '').includes(q)) }
@@ -127,7 +134,7 @@ export function AssessmentGapPage() {
         <div><p className="eyebrow">能力成长 / 能力自评与 Gap</p><h1>能力自评与 Gap 分析</h1><p className="muted">{assessment.year} 年度 · 版本 {assessment.version} · {assessment.status}</p></div>
         <div className="assessment-actions">
           {isEditable && <button onClick={handleSave}>保存草稿</button>}
-          {isEditable && <button className="primary" onClick={handleSubmit}>提交自评</button>}
+          {isEditable && <button className="primary" onClick={handleSubmit} disabled={unfilled > 0}>提交自评</button>}
           <a href="/capability/assessment/history">查看评估历史</a>
         </div>
       </header>
@@ -136,8 +143,9 @@ export function AssessmentGapPage() {
         <div><span>评估进度</span><strong>{filled} / {details.length}</strong></div>
         <div><span>未完成</span><strong>{unfilled}</strong></div>
         <div><span>最新 Review</span><strong>{reviewLabel}</strong></div>
-        <div><span>计划门禁</span><strong>{canPlan ? '可纳入年度计划' : 'Review 闭环前不可正式纳入计划'}</strong></div>
       </section>
+      {!canPlan && <p className={s.planGateWarning}>Review 认可闭环后才可正式纳入年度计划。当前状态：{reviewLabel}。</p>}
+      {isEditable && unfilled > 0 && <p className={s.submitWarning}>还有 {unfilled} 项未完成，请完成全部自评后再提交。</p>}
       {message && <p className="success">{message}</p>}
       {error && <p className="error">{error}</p>}
 
@@ -151,7 +159,7 @@ export function AssessmentGapPage() {
             </select>
             <select aria-label="状态筛选" value={statusFilter} onChange={e => setStatusFilter(e.target.value as FilterStatus)}>
               <option value="全部">全部状态</option>
-              <option value="未填写">未填写</option>
+              <option value="未完成">未完成</option>
               <option value="有Gap">有 Gap</option>
               <option value="计划候选">计划候选</option>
             </select>
@@ -166,24 +174,25 @@ export function AssessmentGapPage() {
         <div>
           {grouped.map(([code, items]) => (
             <div className={s.domainGroup} key={code}>
-              <div className={s.domainHeader} onClick={() => setActiveDomain(code === activeDomain ? '全部' : code)}>
-                <span className={s.domainLabel}>{domainLabel(code)}</span>
+              <div className={s.domainHeader} onClick={() => setActiveDomain(code === activeDomain ? '全部' : code)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveDomain(code === activeDomain ? '全部' : code) } }} aria-expanded={activeDomain === '全部' || activeDomain === code}>
+                <span className={s.domainLabel}>{code === activeDomain ? '▾' : '▸'} {domainLabel(code)}</span>
                 <span className={s.domainProgress}>{items.filter(isFilled).length}/{items.length} 项</span>
               </div>
               <table className={s.table}>
-                <thead><tr><th>L3 能力项</th><th>建议起始</th><th>当前</th><th>目标</th><th>Gap</th><th>优先级</th><th style={{width:'80px'}}>计划候选</th><th style={{width:'30px'}}></th></tr></thead>
+                <thead><tr><th>L3 能力项</th><th>建议起始</th><th>当前 (1-5)</th><th>目标 (1-5)</th><th>Gap</th><th>优先级</th><th style={{width:'80px'}}>计划候选</th><th style={{width:'30px'}}></th></tr></thead>
                 <tbody>
                   {items.map(d => {
                     const gIdx = details.indexOf(d)
                     const gap = Math.max(d.target_level - d.current_level, 0)
                     const pri = priority(gap)
                     const filled = isFilled(d)
+                    const reason = unfilledReason(d)
                     const rowCls = `${filled ? s.rowFilled : s.rowEmpty} ${gap > 0 ? s.rowGap : ''}`
                     const gapCls = gap >= 3 ? s.gapHigh : gap > 0 ? s.gapMedium : s.gapLow
                     const priCls = pri === '高' ? s.priorityHigh : pri === '中' ? s.priorityMedium : s.priorityLow
                     return (<>
                       <tr className={rowCls} key={d.id} id={`row-${d.id}`}>
-                        <td><span className={s.code}>{d.l3_code}</span><span className={s.l3name}>{d.l3_name ?? ''}</span></td>
+                        <td><span className={s.code}>{d.l3_code}</span><span className={s.l3name}>{d.l3_name ?? ''}</span>{!filled && reason && <span className={s.reasonTag}>{reason}</span>}</td>
                         <td><span className={s.recommend}>{d.recommended_start_level ?? '—'}</span></td>
                         <td><select value={d.current_level} onChange={e => updateDetail(gIdx, { current_level: +e.target.value })} disabled={!isEditable}>{LEVELS.map(l => <option key={l} value={l}>{l}</option>)}</select></td>
                         <td><select value={d.target_level} onChange={e => updateDetail(gIdx, { target_level: +e.target.value })} disabled={!isEditable}>{LEVELS.map(l => <option key={l} value={l}>{l}</option>)}</select></td>
@@ -217,7 +226,7 @@ export function AssessmentGapPage() {
         {/* Gap sidebar */}
         {gs && (
           <aside className={s.gapSidebar}>
-            <h2>Gap 分析</h2>
+            <h2>本次评估整体 Gap</h2>
             <dl>
               <div className={s.gapStat}><dt>Gap 总数</dt><dd>{gs.total_gaps}</dd></div>
               <div className={s.gapStat}><dt>平均 Gap</dt><dd>{gs.avg_gap}</dd></div>
@@ -236,12 +245,6 @@ export function AssessmentGapPage() {
         )}
       </div>
 
-      {/* Submit gate warning */}
-      {isEditable && unfilled > 0 && (
-        <p className={s.submitWarning} style={{ marginTop: 'var(--space-4)', textAlign: 'center' }}>
-          还有 {unfilled} 项未填写，建议完成全部自评后再提交。当前可提交但会影响 Gap 完整性。
-        </p>
-      )}
     </section>
   )
 }
