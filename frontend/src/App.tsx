@@ -6,7 +6,7 @@ import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { GrowthGoalPage } from './GrowthGoalPage'
-import { AnnualPlanPage } from './AnnualPlanPage'
+import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
@@ -51,7 +51,7 @@ export function App() {
           element={<AssessmentHistoryPage />}
         />
         <Route path="/growth/goals" element={<GrowthGoalPage />} />
-        <Route path="/growth/annual-plan" element={<AnnualPlanPage />} />
+        <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
         <Route path="/growth/profile" element={<ProfilePage />} />
         <Route path="/growth/review/monthly" element={<MonthlyReviewPage />} />
         <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
