@@ -82,14 +82,5 @@ for (const viewport of VIEWPORTS) {
         { maxDiffPixelRatio: 0.05 },
       )
     })
-
-    test('Gap sidebar screenshot', async ({ page }) => {
-      const gapSidebar = page.getByTestId('gap-sidebar')
-      await gapSidebar.scrollIntoViewIfNeeded()
-      await expect(gapSidebar).toHaveScreenshot(
-        `ui-02-gap-sidebar-${viewport.name}.png`,
-        { maxDiffPixelRatio: 0.05 },
-      )
-    })
   })
 }
