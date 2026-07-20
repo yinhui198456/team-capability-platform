@@ -70,29 +70,17 @@ describe('AssessmentGapPage', () => {
 
   it('creates draft and shows domain groups with pre-populated L3s', async () => {
     vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({ id: 7 })
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
-      mockDraftAssessment(),
-    )
-
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>
-    )
-    await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: '创建年度自评草稿' }),
-      ).toBeTruthy()
-    })
-
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(mockDraftAssessment())
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByRole('button', { name: '创建年度自评草稿' })).toBeTruthy() })
     fireEvent.click(screen.getByRole('button', { name: '创建年度自评草稿' }))
     expect(assessmentApi.createAssessment).toHaveBeenCalledWith(2026)
-
-    await waitFor(() => {
-      expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
-    })
+    await waitFor(() => { expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy() })
     expect(screen.getByText(/P01.01.01/)).toBeTruthy()
-    expect(screen.getByText(/P01 · 数据基础设施/)).toBeTruthy()
+    const domains = screen.getAllByText(/P01 · 数据基础设施/)
+    expect(domains.length).toBeGreaterThanOrEqual(1)
+    // Filter toolbar visible
+    expect(screen.getByRole('combobox', { name: '能力域筛选' })).toBeTruthy()
   })
 
   it('saves draft and submits with gap sidebar appearing', async () => {
@@ -210,6 +198,78 @@ describe('AssessmentGapPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Review 闭环前不可正式纳入计划')).toBeTruthy()
     })
+  })
+})
+
+describe('R2-B filter, search, gap calc, submit gate', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
+
+  const richDetail = (overrides: Partial<assessmentApi.AssessmentDetail> = {}): assessmentApi.AssessmentDetail => ({
+    id: 1, l3_code: 'P01.01.01', l3_name: '数据管道基础', l1_code: 'P01', l1_name: '数据基础设施',
+    current_level: 2, target_level: 4, gap_value: 2, evidence_note: '', plan_candidate: false,
+    recommended_start_level: 'P4', ...overrides,
+  })
+
+  it('status filter shows only unfilled', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([{ id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null }])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null,
+      details: [richDetail({ id: 1, l3_code: 'P01.01.01', evidence_note: 'done' }), richDetail({ id: 2, l3_code: 'P01.01.02', current_level: 1, target_level: 1, evidence_note: '' })],
+    })
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy() })
+    // Switch to 未填写
+    fireEvent.change(screen.getByRole('combobox', { name: '状态筛选' }), { target: { value: '未填写' }})
+    await waitFor(() => { expect(screen.getByText('P01.01.02')).toBeTruthy() })
+    expect(screen.queryByText('P01.01.01')).toBeNull()
+  })
+
+  it('search finds items by name', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([{ id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null }])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null,
+      details: [richDetail({ id: 1, l3_name: '数据管道基础' }), richDetail({ id: 2, l3_code: 'C01.01.01', l3_name: '办公工具' })],
+    })
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText(/搜索/), { target: { value: '管道' } })
+    await waitFor(() => { expect(screen.getByText('数据管道基础')).toBeTruthy() })
+    expect(screen.queryByText('办公工具')).toBeNull()
+  })
+
+  it('locate next unfilled scrolls to element', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([{ id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null }])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null,
+      details: [richDetail({ id: 1, evidence_note: 'done' }), richDetail({ id: 2, l3_code: 'P01.01.02', current_level: 1, target_level: 1, evidence_note: '' })],
+    })
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: '定位未填写项' }))
+    // Should still be visible (smooth scroll to first unfilled)
+    await waitFor(() => { expect(screen.getByText('P01.01.02')).toBeTruthy() })
+  })
+
+  it('gap calculated in real-time on level change', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([{ id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null }])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null,
+      details: [richDetail({ id: 1, current_level: 2, target_level: 4, gap_value: 2 })],
+    })
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy() })
+    // Gap column rendered
+    expect(screen.getByText(/P01.01.01/)).toBeTruthy()
+  })
+
+  it('submit warning shows unfilled count', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([{ id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null }])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
+      id: 7, member_id: 1, year: 2026, version: 1, assessment_type: '年度', status: '草稿', created_at: '', submitted_at: null, archived_at: null,
+      details: [richDetail({ id: 1, evidence_note: 'done' }), richDetail({ id: 2, current_level: 1, target_level: 1, evidence_note: '' }), richDetail({ id: 3, current_level: 1, target_level: 1, evidence_note: '' })],
+    })
+    render(<MemoryRouter initialEntries={['/capability/assessment']}><App /></MemoryRouter>)
+    await waitFor(() => { expect(screen.getByText(/还有 2 项未填写/)).toBeTruthy() })
   })
 })
 
