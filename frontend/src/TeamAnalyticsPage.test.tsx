@@ -137,6 +137,8 @@ describe('TeamAnalyticsPage', () => {
     expect(drawer).toBeTruthy()
     expect(drawer.textContent).toContain('数据开发')
     expect(drawer.textContent).toContain('只读')
+    expect(drawer.textContent).toContain('延期原因')
+    expect(drawer.textContent).toContain('下一步行动')
     fireEvent.click(screen.getByRole('button', { name: '关闭详情' }))
     await waitFor(() =>
       expect(

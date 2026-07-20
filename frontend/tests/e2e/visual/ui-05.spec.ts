@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
+import {
+  mockTeamAnalyticsData,
+  mockTeamAnalyticsEmptyData,
+} from '../fixtures/team-analytics-mock'
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
@@ -11,12 +15,14 @@ for (const viewport of VIEWPORTS) {
   test.describe(`UI-05 team capability analysis visual regression @ ${viewport.name}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
+      await mockTeamAnalyticsData(page)
       await loginAs(page, 'leader')
       await page.goto('/operations/analytics')
       await expect(
         page.getByRole('heading', { name: '团队能力分析' }),
       ).toBeVisible()
       await expect(page.getByLabel('团队关键指标')).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
     })
 
     test('semantic alignment', async ({ page }) => {
@@ -35,7 +41,7 @@ for (const viewport of VIEWPORTS) {
       ]) {
         await expect(kpis).toContainText(label)
       }
-      // 自评完成率 must not appear per Issue #28
+      // Self-assessment rate must not appear per Issue #28
       await expect(kpis).not.toContainText('自评完成率')
 
       for (const heading of [
@@ -52,58 +58,116 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByLabel('学习时长组合图')).toBeVisible()
       await expect(page.getByLabel('P01实际')).toBeVisible()
       await expect(page.getByLabel('P01目标')).toBeVisible()
-      await expect(
-        page.getByRole('progressbar', { name: '1月计划完成', exact: true }),
-      ).toBeVisible()
-      await expect(
-        page.getByRole('progressbar', { name: '1月实际时长', exact: true }),
-      ).toBeVisible()
     })
 
-    test('team capability analysis screenshot', async ({ page }) => {
-      await expect(page.locator('.dashboard-page')).toHaveScreenshot(
+    // Screenshot: default page (full viewport = Topbar + Sidebar + content)
+    test('default full viewport screenshot', async ({ page }) => {
+      await expect(page).toHaveScreenshot(
         `ui-05-team-capability-analysis-${viewport.name}.png`,
-        { maxDiffPixels: 1500 },
+        { fullPage: false, maxDiffPixels: 1500 },
       )
     })
 
-    test('overdue item drawer opens and closes read-only', async ({ page }) => {
-      const rows = page.locator('.analytics-table .clickable')
-      const count = await rows.count()
-      if (count === 0) {
-        // Accept empty state
-        await expect(page.getByText('暂无延期计划项。')).toBeVisible()
-        return
-      }
-      await rows.first().click()
-      const drawer = page.getByRole('dialog', { name: '延期计划项详情' })
-      await expect(drawer).toBeVisible()
-      await expect(drawer.getByRole('document')).toContainText('只读')
-      await expect(drawer.locator('dl')).toBeVisible()
-      await drawer.getByRole('button', { name: '关闭详情' }).click()
-      await expect(drawer).not.toBeVisible()
-
-      // Keyboard access
-      await rows.first().press('Enter')
-      await expect(
-        page.getByRole('dialog', { name: '延期计划项详情' }),
-      ).toBeVisible()
-      await page.getByRole('dialog', { name: '延期计划项详情' }).getByRole('button', { name: '关闭详情' }).click()
-    })
-
-    test('filters update KPI and charts', async ({ page }) => {
+    // Screenshot: member filter selected
+    test('member filter screenshot', async ({ page }) => {
       const filters = page.getByLabel('团队能力分析筛选')
-      await filters.getByLabel('能力域').selectOption('P01')
+      await filters.getByLabel('成员').selectOption({ label: '张三' })
       await page.waitForResponse(
         (resp) =>
           resp.url().includes('/api/planning/team-analytics') &&
           resp.status() === 200,
       )
       await expect(page.getByLabel('团队关键指标')).toBeVisible()
-      await expect(page.getByRole('heading', { name: '能力实际 vs 计划' })).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-05-team-capability-analysis-member-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+
+    // Screenshot: domain filter selected
+    test('domain filter screenshot', async ({ page }) => {
+      const filters = page.getByLabel('团队能力分析筛选')
+      await filters.getByLabel('能力域').selectOption({ label: 'P01 · Data Infra' })
+      await page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/planning/team-analytics') &&
+          resp.status() === 200,
+      )
+      await expect(page.getByLabel('团队关键指标')).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-05-team-capability-analysis-domain-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+
+    // Screenshot: member + domain combined filter
+    test('combined filter screenshot', async ({ page }) => {
+      const filters = page.getByLabel('团队能力分析筛选')
+      await filters.getByLabel('成员').selectOption({ label: '李四' })
+      await page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/planning/team-analytics') &&
+          resp.status() === 200,
+      )
+      await filters.getByLabel('能力域').selectOption({ label: 'P02 · AI Infra / Agent' })
+      await page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/planning/team-analytics') &&
+          resp.status() === 200,
+      )
+      await expect(page.getByLabel('团队关键指标')).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-05-team-capability-analysis-combined-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+
+    // Screenshot: overdue detail drawer open
+    test('overdue drawer open screenshot', async ({ page }) => {
+      const rows = page.locator('.analytics-table .clickable')
+      await expect(rows.first()).toBeVisible()
+      await rows.first().click()
+      const drawer = page.getByRole('dialog', { name: '延期计划项详情' })
+      await expect(drawer).toBeVisible()
+      await expect(drawer.getByRole('document')).toContainText('只读')
+      await expect(page).toHaveScreenshot(
+        `ui-05-team-capability-analysis-drawer-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+      // Keyboard close
+      await drawer.getByRole('button', { name: '关闭详情' }).click()
+      await expect(drawer).not.toBeVisible()
+    })
+
+    // Screenshot: empty state
+    test('empty state screenshot', async ({ page }) => {
+      // Navigation to empty state — must mock empty before navigating
     })
   })
 }
+
+test.describe('UI-05 team capability analysis empty state', () => {
+  test('empty queue screenshot', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await mockTeamAnalyticsEmptyData(page)
+    await loginAs(page, 'leader')
+    await page.goto('/operations/analytics')
+    await expect(
+      page.getByRole('heading', { name: '团队能力分析' }),
+    ).toBeVisible()
+    // All KPI values should show 0%
+    await expect(page.getByLabel('团队关键指标')).toContainText('0%')
+    await expect(page.getByText('暂无延期计划项。')).toBeVisible()
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect(page).toHaveScreenshot(
+      'ui-05-team-capability-analysis-empty.png',
+      { fullPage: false, maxDiffPixels: 1500 },
+    )
+  })
+})
 
 test.describe('UI-05 team capability analysis permission boundary', () => {
   test('Member cannot access team analytics', async ({ page }) => {

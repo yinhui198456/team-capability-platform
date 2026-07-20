@@ -383,14 +383,18 @@ export function TeamAnalyticsPage() {
                 <dl>
                   <dt>成员</dt>
                   <dd>{drawerItem.full_name}</dd>
-                  <dt>L3 能力项</dt>
+                  <dt>能力项</dt>
                   <dd>{drawerItem.l3_code}{drawerItem.l3_name ? ` · ${drawerItem.l3_name}` : ''}</dd>
                   <dt>计划截止日期</dt>
                   <dd>{drawerItem.due_date}</dd>
                   <dt>延期天数</dt>
                   <dd>{drawerItem.overdue_days} 天</dd>
-                  <dt>状态</dt>
+                  <dt>当前状态</dt>
                   <dd>{drawerItem.status}</dd>
+                  <dt>延期原因</dt>
+                  <dd>计划项未在截止日期前完成，当前状态为「{drawerItem.status}」。</dd>
+                  <dt>下一步行动</dt>
+                  <dd>建议与 {drawerItem.full_name} 一对一沟通，了解阻塞原因并商定新的计划完成时间。如计划已不再适用，可取消并重新规划。</dd>
                 </dl>
               </div>
             </aside>
