@@ -72,6 +72,8 @@ const analytics: planningApi.TeamAnalytics = {
       l3_code: 'P01-L2A-L3A',
       l3_name: '数据开发',
       due_date: '2026-01-31',
+      plan_start_date: '2026-01-01',
+      plan_end_date: '2026-01-31',
       overdue_days: 3,
       status: '延期',
     },
@@ -104,6 +106,8 @@ describe('TeamAnalyticsPage', () => {
     expect(screen.getByText('成员能力达成率')).toBeTruthy()
     expect(screen.getByRole('figure', { name: '计划完成组合图' })).toBeTruthy()
     expect(screen.getByRole('figure', { name: '学习时长组合图' })).toBeTruthy()
+    // 自评完成率 must not appear per Issue #28
+    expect(screen.queryByText('自评完成率')).toBeNull()
 
     fireEvent.change(screen.getByLabelText('能力域'), {
       target: { value: 'P01' },
@@ -113,6 +117,35 @@ describe('TeamAnalyticsPage', () => {
         year: 2026,
         domain_code: 'P01',
       }),
+    )
+  })
+
+  it('opens a read-only detail drawer on overdue item click', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockResolvedValue(analytics)
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
+    fireEvent.click(screen.getByText(/P01-L2A-L3A/))
+    const drawer = await screen.findByRole('dialog', { name: '延期计划项详情' })
+    expect(drawer).toBeTruthy()
+    expect(drawer.textContent).toContain('数据开发')
+    expect(drawer.textContent).toContain('只读')
+    expect(drawer.textContent).toContain('延期原因')
+    expect(drawer.textContent).toContain('下一步行动')
+    fireEvent.click(screen.getByRole('button', { name: '关闭详情' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: '延期计划项详情' }),
+      ).toBeNull(),
     )
   })
 

@@ -1125,6 +1125,114 @@ select {
   stroke: #12b76a;
 }
 
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.trend-legend li {
+  align-items: center;
+  color: #667085;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+}
+
+.legend-swatch.bar {
+  border-radius: 2px;
+  height: 12px;
+  width: 12px;
+}
+
+.legend-swatch.bar.planned {
+  background: #84adf7;
+}
+
+.legend-swatch.bar.actual {
+  background: #175cd3;
+}
+
+.legend-swatch.line {
+  height: 2px;
+  width: 16px;
+}
+
+.legend-swatch.line.planned {
+  background: #f79009;
+}
+
+.legend-swatch.line.actual {
+  background: #12b76a;
+}
+
+.analytics-table .clickable {
+  cursor: pointer;
+}
+
+.analytics-table .clickable:hover {
+  background: #f0f6ff;
+}
+
+.analytics-table .clickable:focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: -2px;
+}
+
+.detail-drawer {
+  bottom: 0;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 100;
+}
+
+.detail-drawer-mask {
+  background: rgba(0, 0, 0, 0.3);
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.detail-drawer-panel {
+  background: #fff;
+  bottom: 0;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.12);
+  max-width: 400px;
+  overflow-y: auto;
+  padding: 24px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 100%;
+}
+
+.detail-drawer-panel dl {
+  display: grid;
+  gap: 16px;
+}
+
+.detail-drawer-panel dt {
+  color: #667085;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.detail-drawer-panel dd {
+  font-size: 14px;
+  font-weight: 500;
+}
+
 @media (max-width: 720px) {
   .task-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
