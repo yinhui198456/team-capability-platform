@@ -43,7 +43,7 @@ jobs:
             -w /app \
             -e PLAYWRIGHT_NO_WEBSERVER=1 \
             mcr.microsoft.com/playwright:v1.61.1-jammy \
-            bash -c "apt-get update && apt-get install -y fonts-noto-cjk && npm ci && npx playwright test"
+            bash -c "apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test"
 
       - name: Upload test results on failure
         if: failure()
