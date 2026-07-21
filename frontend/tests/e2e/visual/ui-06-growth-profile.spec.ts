@@ -1,0 +1,126 @@
+import { expect, test } from '@playwright/test'
+
+import { loginAs } from '../fixtures/auth'
+import {
+  mockGrowthProfileData,
+  mockGrowthProfileEmptyData,
+} from '../fixtures/growth-profile-mock'
+
+const VIEWPORTS = [
+  { name: '1440x900', width: 1440, height: 900 },
+  { name: '1280x800', width: 1280, height: 800 },
+] as const
+
+for (const viewport of VIEWPORTS) {
+  test.describe(`UI-06 growth profile visual regression @ ${viewport.name}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize(viewport)
+      await mockGrowthProfileData(page)
+      await loginAs(page, 'member')
+      await page.goto('/growth/profile?year=2026')
+      await expect(
+        page.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+    })
+
+    test('semantic alignment', async ({ page }) => {
+      const kpiRegion = page.getByRole('region', { name: '年度成长闭环摘要' })
+      await expect(kpiRegion.getByText('已完成计划项')).toBeVisible()
+      await expect(kpiRegion.getByText('实际学习时长')).toBeVisible()
+      await expect(kpiRegion.getByText('已归档 Evidence')).toBeVisible()
+      await expect(kpiRegion.getByText('能力评估')).toBeVisible()
+      await expect(page.getByText('计划学习时长')).toBeVisible()
+      await expect(page.getByText('计划项完成率')).toBeVisible()
+      await expect(page.getByRole('region', { name: '年度成长闭环摘要' })).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '计划项：P01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '计划项：C01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '学习任务：P01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '学习任务：C01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', {
+          name: 'Evidence 版本 1：P01-L2A-L3A',
+        }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', {
+          name: 'Evidence 版本 1：C01-L2A-L3A',
+        }),
+      ).toBeVisible()
+      await expect(page.getByText('2026-03-15')).toBeVisible()
+      await expect(page.getByText('2026-05-10')).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '学习任务：P01-L2A-L3A' }).getByText('实际 8 小时'),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('article', { name: '学习任务：C01-L2A-L3A' }).getByText('实际 5 小时'),
+      ).toBeVisible()
+    })
+
+    test('default full viewport screenshot', async ({ page }) => {
+      await expect(page).toHaveScreenshot(
+        `ui-06-growth-profile-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+
+    test('empty state screenshot', async ({ page }) => {
+      await mockGrowthProfileEmptyData(page)
+      await page.goto('/growth/profile?year=2026')
+      await expect(
+        page.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeVisible()
+      await expect(page.getByText(/暂无年度成长计划/)).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-06-growth-profile-empty-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+  })
+}
+
+for (const viewport of VIEWPORTS) {
+  test.describe(`UI-06 growth profile selector visual regression @ ${viewport.name}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize(viewport)
+      await mockGrowthProfileData(page)
+    })
+
+    test('Buddy selector expanded screenshot', async ({ page }) => {
+      await loginAs(page, 'buddy')
+      await page.goto('/growth/profile?year=2026')
+      await expect(
+        page.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeVisible()
+      await page.getByLabel('查看成员').click()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-06-growth-profile-buddy-selector-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+
+    test('Leader selector expanded screenshot', async ({ page }) => {
+      await loginAs(page, 'leader')
+      await page.goto('/growth/profile?year=2026')
+      await expect(
+        page.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeVisible()
+      await page.getByLabel('查看成员').click()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-06-growth-profile-leader-selector-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixels: 1500 },
+      )
+    })
+  })
+}

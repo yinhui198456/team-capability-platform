@@ -421,6 +421,7 @@ def test_member_views_own_profile_with_aggregation(
 
     stats = body["statistics"]
     assert stats["total_learning_hours"] == 5
+    assert stats["total_planned_hours"] == 10
     assert stats["evidence_count_by_status"]["已归档"] == 1
 
 
@@ -550,3 +551,155 @@ def test_profile_auto_creates_record(
     assert body["annual_plan"] is None
     assert body["assessments"] == []
     assert body["statistics"]["total_learning_hours"] == 0
+    assert body["statistics"]["total_planned_hours"] == 0
+
+
+def test_planned_hours_aggregated_by_plan_year(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=member_cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["statistics"]["total_planned_hours"] == 10
+
+
+def test_cross_year_hours_filtered_by_record_date(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema, "member_cross", "buddy_cross")
+
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
+    )
+    assert status == 200
+    task_id = tasks[0]["id"]
+
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/progress-logs",
+        {"record_date": "2025-12-20", "actual_hours": 4, "note": "跨年日志"},
+        cookies=member_cookies,
+    )
+    assert status == 200
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2025", cookies=member_cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["statistics"]["total_learning_hours"] == 4
+    assert body["statistics"]["total_planned_hours"] == 0
+    assert body["annual_plan"] is None
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=member_cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["statistics"]["total_learning_hours"] == 5
+    assert body["statistics"]["total_planned_hours"] == 10
+
+
+def test_selectable_members_for_member_returns_only_self(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(profile_schema, "member_select", ["Member"])
+    profile_schema.commit()
+    cookies = _login(profile_schema, "member_select")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["members"] == [
+        {"id": member_id, "username": "member_select", "full_name": "member_select"}
+    ]
+
+
+def test_selectable_members_for_buddy_returns_assigned(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id, _ = _build_full_profile(profile_schema, "member_buddy_select", "buddy_select")
+    buddy_cookies = _login(profile_schema, "buddy_select")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert len(body["members"]) == 1
+    assert body["members"][0]["id"] == member_id
+    assert body["members"][0]["username"] == "member_buddy_select"
+
+
+def test_selectable_members_for_buddy_excludes_unassigned(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _build_full_profile(profile_schema, "member_assigned_select", "buddy_assigned_select")
+    _create_test_user(profile_schema, "member_unassigned_select", ["Member"])
+    profile_schema.commit()
+    buddy_cookies = _login(profile_schema, "buddy_assigned_select")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert [m["username"] for m in body["members"]] == ["member_assigned_select"]
+
+
+def test_selectable_members_for_leader_returns_members(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_a = _create_test_user(profile_schema, "member_a_select", ["Member"])
+    member_b = _create_test_user(profile_schema, "member_b_select", ["Member"])
+    _create_test_user(profile_schema, "leader_select", ["Leader"])
+    profile_schema.commit()
+    leader_cookies = _login(profile_schema, "leader_select")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=leader_cookies
+    )
+    assert status == 200
+    assert body is not None
+    ids = {m["id"] for m in body["members"]}
+    assert ids == {member_a, member_b}
+
+
+def test_selectable_members_for_admin_returns_all_active(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(profile_schema, "member_admin_select", ["Member"])
+    buddy_id = _create_test_user(profile_schema, "buddy_admin_select", ["Buddy"])
+    admin_id = _create_test_user(profile_schema, "admin_select", ["Admin"])
+    profile_schema.commit()
+    admin_cookies = _login(profile_schema, "admin_select")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=admin_cookies
+    )
+    assert status == 200
+    assert body is not None
+    ids = {m["id"] for m in body["members"]}
+    assert ids == {member_id, buddy_id, admin_id}
+
+
+def test_member_overreach_with_member_id_is_rejected(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(profile_schema, "member_overreach", ["Member"])
+    other_member_id = _create_test_user(profile_schema, "member_other_overreach", ["Member"])
+    profile_schema.commit()
+    cookies = _login(profile_schema, "member_overreach")
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/profiles?member_id={other_member_id}&year=2026",
+        cookies=cookies,
+    )
+    assert status == 403

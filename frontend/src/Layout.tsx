@@ -35,10 +35,10 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: '成长记录',
+    label: '成长管理',
     items: [
-      { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member'] },
-      { label: '成长档案', href: '/growth/profile', roles: ['Member'] },
+      { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member', 'Buddy', 'Leader', 'Admin'] },
+      { label: '成长档案', href: '/growth/profile', roles: ['Member', 'Buddy', 'Leader', 'Admin'] },
     ],
   },
   {

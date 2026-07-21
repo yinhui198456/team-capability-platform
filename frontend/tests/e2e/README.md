@@ -41,4 +41,4 @@ npm run test:e2e:debug
 
 - `fixtures/` — shared helpers such as role-based login.
 - `smoke/` — quick health checks that require a running environment.
-- `visual/` — screenshot-based visual regression for UI-01 ~ UI-05 prototype pages.
+- `visual/` — screenshot-based visual regression for UI-01 ~ UI-06 prototype pages.

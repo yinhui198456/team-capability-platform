@@ -3,7 +3,7 @@ from typing import Any
 
 import psycopg
 
-from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
+from ..access.repository import get_assigned_members, get_primary_buddy, is_member_assigned_to_buddy
 from ..assessment.repository import get_gap
 from ..catalog.repository import DOMAIN_CODES
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
@@ -303,6 +303,11 @@ def get_annual_plan_with_items(
         """,
         (member_id, year),
     ).fetchall()
+    plan_items = [_plan_item_row(item) for item in items]
+    l3_names = _get_l3_names(connection, [item["l3_code"] for item in plan_items])
+    for item in plan_items:
+        item["l3_name"] = l3_names.get(item["l3_code"])
+
     return {
         "id": row[0],
         "member_id": row[1],
@@ -312,7 +317,7 @@ def get_annual_plan_with_items(
         "start_date": row[5],
         "end_date": row[6],
         "created_at": row[7],
-        "items": [_plan_item_row(item) for item in items],
+        "items": plan_items,
     }
 
 
@@ -1762,8 +1767,13 @@ def get_capability_profile(
         enriched_items = []
         for item in annual_plan["items"]:
             task = _learning_task_with_logs_and_evidences(connection, int(item["id"]))
+            if task is not None:
+                task["l3_name"] = item.get("l3_name")
             enriched_items.append({**item, "learning_task": task})
         annual_plan["items"] = enriched_items
+
+    start_of_year = f"{year}-01-01"
+    start_of_next_year = f"{year + 1}-01-01"
 
     total_hours_row = connection.execute(
         """
@@ -1772,11 +1782,23 @@ def get_capability_profile(
         JOIN learning_task lt ON lt.id = lpl.task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+          AND lpl.record_date >= %s AND lpl.record_date < %s
+        """,
+        (member_id, start_of_year, start_of_next_year),
+    ).fetchone()
+    total_learning_hours = int(total_hours_row[0]) if total_hours_row else 0
+
+    planned_hours_row = connection.execute(
+        """
+        SELECT COALESCE(SUM(CAST(NULLIF(regexp_substr(pi.estimated_hours, '\\d+'), '') AS NUMERIC)), 0)
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
         """,
         (member_id, year),
     ).fetchone()
-    total_learning_hours = int(total_hours_row[0]) if total_hours_row else 0
+    total_planned_hours = int(planned_hours_row[0]) if planned_hours_row else 0
 
     evidence_status_rows = connection.execute(
         """
@@ -1805,9 +1827,65 @@ def get_capability_profile(
         "annual_plan": annual_plan,
         "statistics": {
             "total_learning_hours": total_learning_hours,
+            "total_planned_hours": total_planned_hours,
             "evidence_count_by_status": evidence_count_by_status,
         },
     }
+
+
+def list_selectable_members_for_profile(
+    connection: psycopg.Connection,
+    viewer_id: int,
+    viewer_roles: list[str],
+    year: int,
+) -> list[dict[str, object]]:
+    """返回当前登录人在成长档案中可选的成员列表。
+
+    权限范围：
+    - Admin：全部活跃用户
+    - Leader：全部 Member 角色活跃用户
+    - Buddy：自己负责的成员
+    - Member：仅本人
+    """
+    if "Admin" in viewer_roles:
+        rows = connection.execute(
+            """
+            SELECT id, username, full_name
+            FROM tcp_user
+            WHERE is_active = TRUE
+            ORDER BY username
+            """,
+        ).fetchall()
+        return [
+            {"id": row[0], "username": row[1], "full_name": row[2]} for row in rows
+        ]
+    if "Leader" in viewer_roles:
+        rows = connection.execute(
+            """
+            SELECT u.id, u.username, u.full_name
+            FROM tcp_user u
+            JOIN tcp_user_role ur ON ur.user_id = u.id
+            JOIN tcp_role r ON r.id = ur.role_id
+            WHERE r.code = 'Member' AND u.is_active = TRUE
+            ORDER BY u.username
+            """,
+        ).fetchall()
+        return [
+            {"id": row[0], "username": row[1], "full_name": row[2]} for row in rows
+        ]
+    if "Buddy" in viewer_roles:
+        assigned = get_assigned_members(connection, viewer_id)
+        return [
+            {"id": m["id"], "username": m["username"], "full_name": m["full_name"]}
+            for m in assigned
+        ]
+    row = connection.execute(
+        "SELECT id, username, full_name FROM tcp_user WHERE id = %s",
+        (viewer_id,),
+    ).fetchone()
+    if row is None:
+        return []
+    return [{"id": row[0], "username": row[1], "full_name": row[2]}]
 
 
 _ALLOWED_TEAM_PLAN_STATUSES = {"已发布", "已归档"}

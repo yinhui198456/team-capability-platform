@@ -32,6 +32,7 @@ from .repository import (
     list_pending_evidence_reviews_for_buddy,
     list_plan_items,
     list_progress_logs,
+    list_selectable_members_for_profile,
     submit_evidence,
     submit_evidence_review,
     update_evidence_draft,
@@ -604,6 +605,21 @@ def get_profiles(
             detail="member not found",
         )
     return result
+
+
+@planning_router.get("/profiles/selectable-members")
+def get_profile_selectable_members(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+) -> dict[str, object]:
+    members = list_selectable_members_for_profile(
+        connection,
+        int(user["id"]),
+        user["roles"],
+        year,
+    )
+    return {"members": members}
 
 
 @planning_router.get("/team-analytics")

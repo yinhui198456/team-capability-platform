@@ -414,8 +414,10 @@ export type CapabilityProfileAssessment = {
 }
 
 export type CapabilityProfilePlanItem = PlanItem & {
+  l3_name?: string | null
   learning_task:
     | (LearningTask & {
+        l3_name?: string | null
         progress_logs: ProgressLog[]
         evidences: (Evidence & { review: EvidenceReview | null })[]
       })
@@ -428,7 +430,18 @@ export type CapabilityProfileAnnualPlan = Omit<AnnualPlan, 'items'> & {
 
 export type CapabilityProfileStatistics = {
   total_learning_hours: number
+  total_planned_hours: number
   evidence_count_by_status: Record<string, number>
+}
+
+export type SelectableMember = {
+  id: number
+  username: string
+  full_name: string
+}
+
+export type SelectableMembersResponse = {
+  members: SelectableMember[]
 }
 
 export type CapabilityProfile = {
@@ -454,6 +467,15 @@ export async function getCapabilityProfile(
   return request<CapabilityProfile>(`/api/planning/profiles?year=${year}`, {
     method: 'GET',
   })
+}
+
+export async function getSelectableMembersForProfile(
+  year: number,
+): Promise<SelectableMembersResponse> {
+  return request<SelectableMembersResponse>(
+    `/api/planning/profiles/selectable-members?year=${year}`,
+    { method: 'GET' },
+  )
 }
 
 export async function getMemberDashboard(
