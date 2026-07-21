@@ -16,9 +16,9 @@
 |---|---|
 | 了解产品范围、角色和业务闭环 | `01_Product.md`、`02_Design.md` |
 | 了解逻辑数据对象与页面/原型 | `03_Data.md`、`04_UI.md` |
-| 了解技术边界、路由、验收和迭代设计 | `05_Development.md` |
+| 了解技术边界、路由、验收和迭代设计 | `05_Development.md`、`07_AcceptanceMapping.md` |
 | 查看当前进度、门禁和下一步 | `06_Roadmap.md`、`HANDOFF.md` |
-| 查看已执行技术验收 | `acceptance/ITERATION_3A_TECHNICAL_ACCEPTANCE.md` 至 `ITERATION_6_TECHNICAL_ACCEPTANCE.md` |
+| 查看已执行技术验收 | `acceptance/ITERATION_3A_TECHNICAL_ACCEPTANCE.md` 至 `ITERATION_6_TECHNICAL_ACCEPTANCE.md`、`07_AcceptanceMapping.md` |
 | 查看能力模型与学习计划原始参考 | `reference/CapabilityModel.md`、`reference/LearningPlan.md` |
 
 ## 验收口径
