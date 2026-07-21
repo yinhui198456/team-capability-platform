@@ -36,29 +36,14 @@ jobs:
           docker compose logs backend
           exit 1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Install Playwright Chromium
-        working-directory: frontend
-        run: npx playwright install chromium
-
-      - name: Install Chinese fonts
+      - name: Run E2E tests in Playwright container
         run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
-
-      - name: Run E2E tests
-        working-directory: frontend
-        run: npm run test:e2e
+          docker run --rm --network host \
+            -v "$PWD/frontend:/app" \
+            -w /app \
+            -e PLAYWRIGHT_NO_WEBSERVER=1 \
+            mcr.microsoft.com/playwright:v1.61.1-jammy \
+            bash -c "apt-get update && apt-get install -y fonts-noto-cjk && npm ci && npx playwright test"
 
       - name: Upload test results on failure
         if: failure()
