@@ -1125,6 +1125,54 @@ select {
   stroke: #12b76a;
 }
 
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.trend-legend li {
+  align-items: center;
+  color: #667085;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+}
+
+.legend-swatch.bar {
+  border-radius: 2px;
+  height: 12px;
+  width: 12px;
+}
+
+.legend-swatch.bar.planned {
+  background: #84adf7;
+}
+
+.legend-swatch.bar.actual {
+  background: #175cd3;
+}
+
+.legend-swatch.line {
+  height: 2px;
+  width: 16px;
+}
+
+.legend-swatch.line.planned {
+  background: #f79009;
+}
+
+.legend-swatch.line.actual {
+  background: #12b76a;
+}
+
 .analytics-table .clickable {
   cursor: pointer;
 }

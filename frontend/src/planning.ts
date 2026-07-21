@@ -624,6 +624,8 @@ export type TeamAnalytics = {
     l3_code: string
     l3_name: string | null
     due_date: string
+    plan_start_date: string
+    plan_end_date: string
     overdue_days: number
     status: string
   }>

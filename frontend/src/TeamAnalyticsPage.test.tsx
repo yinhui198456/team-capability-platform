@@ -72,6 +72,8 @@ const analytics: planningApi.TeamAnalytics = {
       l3_code: 'P01-L2A-L3A',
       l3_name: '数据开发',
       due_date: '2026-01-31',
+      plan_start_date: '2026-01-01',
+      plan_end_date: '2026-01-31',
       overdue_days: 3,
       status: '延期',
     },
