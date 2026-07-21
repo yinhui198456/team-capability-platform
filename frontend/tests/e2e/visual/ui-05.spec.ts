@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 import {
@@ -52,7 +52,7 @@ const EXPECTED_LISI_P02 = {
 }
 
 async function assertKpis(
-  page: import('@playwright/test').Page,
+  page: Page,
   expected: { planCompletionRate: string; evidencePassRate: string; overdueCount: string },
 ) {
   const kpis = page.getByLabel('团队关键指标')
@@ -114,6 +114,18 @@ for (const viewport of VIEWPORTS) {
       await expect(legends.first()).toContainText('当月实际')
       await expect(legends.first()).toContainText('累计计划')
       await expect(legends.first()).toContainText('累计实际')
+
+      // Year selector cleanup: only Topbar YearContext selector exists
+      const topbar = page.locator('.app-topbar')
+      await expect(topbar.getByLabel('选择年度')).toBeVisible()
+      const content = page.locator('.app-content')
+      await expect(content.getByLabel('年度')).not.toBeVisible()
+      await expect(content.getByRole('spinbutton', { name: '年度' })).not.toBeVisible()
+
+      // Domain table header must be "计划值", not old "目标"
+      const domainTable = page.locator('.dashboard-card:has-text("能力实际 vs 计划") .analytics-table')
+      await expect(domainTable).toContainText('计划值')
+      await expect(domainTable).not.toContainText('目标')
     })
 
     // Screenshot: default page (full viewport = Topbar + Sidebar + content)
@@ -259,13 +271,9 @@ test.describe('UI-05 cross-viewport business value consistency', () => {
         }
 
         const kpis = page.getByLabel('团队关键指标')
-        const planText = await kpis.locator('article:has-text("计划完成率") strong').textContent()
-        const evidenceText = await kpis.locator('article:has-text("Evidence 通过率") strong').textContent()
-        const overdueText = await kpis.locator('article:has-text("延期计划项") strong').textContent()
-
-        expect(planText).toBe(scenario.expected.planCompletionRate)
-        expect(evidenceText).toBe(scenario.expected.evidencePassRate)
-        expect(overdueText).toBe(scenario.expected.overdueCount)
+        await expect(kpis.locator('article:has-text("计划完成率") strong')).toHaveText(scenario.expected.planCompletionRate)
+        await expect(kpis.locator('article:has-text("Evidence 通过率") strong')).toHaveText(scenario.expected.evidencePassRate)
+        await expect(kpis.locator('article:has-text("延期计划项") strong')).toHaveText(scenario.expected.overdueCount)
       })
     }
   }
