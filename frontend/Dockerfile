@@ -5,7 +5,7 @@ ENV VITE_ENABLE_MOCK=$VITE_ENABLE_MOCK
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --foreground-scripts || (sleep 5 && npm ci --foreground-scripts)
 COPY . .
 RUN npm run build
 
