@@ -32,7 +32,9 @@ for (const viewport of VIEWPORTS) {
       await expect(kpiRegion.getByText('能力评估')).toBeVisible()
       await expect(page.getByText('计划学习时长')).toBeVisible()
       await expect(page.getByText('计划项完成率')).toBeVisible()
-      await expect(page.getByRole('region', { name: '年度成长闭环摘要' })).toBeVisible()
+      await expect(
+        page.getByRole('region', { name: '年度成长闭环摘要' }),
+      ).toBeVisible()
       await expect(
         page.getByRole('article', { name: '计划项：P01-L2A-L3A' }),
       ).toBeVisible()
@@ -58,10 +60,14 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByText('2026-03-15')).toBeVisible()
       await expect(page.getByText('2026-05-10')).toBeVisible()
       await expect(
-        page.getByRole('article', { name: '学习任务：P01-L2A-L3A' }).getByText('实际 8 小时'),
+        page
+          .getByRole('article', { name: '学习任务：P01-L2A-L3A' })
+          .getByText('实际 8 小时'),
       ).toBeVisible()
       await expect(
-        page.getByRole('article', { name: '学习任务：C01-L2A-L3A' }).getByText('实际 5 小时'),
+        page
+          .getByRole('article', { name: '学习任务：C01-L2A-L3A' })
+          .getByText('实际 5 小时'),
       ).toBeVisible()
     })
 

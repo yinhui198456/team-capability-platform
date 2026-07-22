@@ -30,7 +30,10 @@ export async function getOrNull<T>(
   const response = await fetch(path, {
     ...options,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options?.headers ?? {}),
+    },
   })
   if (response.status === 404) return null
   if (!response.ok) {

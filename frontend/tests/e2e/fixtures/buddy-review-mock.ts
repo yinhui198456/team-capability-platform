@@ -144,7 +144,13 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
             l1_name: 'AI Infra / Agent',
           },
         ],
-        gap_summary: { total_gaps: 2, avg_gap: 2, high_priority: 0, medium_priority: 2, low_priority: 0 },
+        gap_summary: {
+          total_gaps: 2,
+          avg_gap: 2,
+          high_priority: 0,
+          medium_priority: 2,
+          low_priority: 0,
+        },
       }),
     })
   })
@@ -178,7 +184,13 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
             l1_name: '沟通协作',
           },
         ],
-        gap_summary: { total_gaps: 1, avg_gap: 2, high_priority: 0, medium_priority: 1, low_priority: 0 },
+        gap_summary: {
+          total_gaps: 1,
+          avg_gap: 2,
+          high_priority: 0,
+          medium_priority: 1,
+          low_priority: 0,
+        },
       }),
     })
   })
@@ -210,44 +222,47 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
     })
   })
 
-  await page.route(/\/api\/planning\/learning-tasks\/501\/evidence-reviews/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([
-        {
-          id: 2001,
-          evidence_id: 401,
-          version_number: 1,
-          status: '通过',
-          conclusion: '通过',
-          feedback: 'Evidence 充分，通过。',
-          reviewed_at: '2026-02-10T11:00:00+08:00',
-          created_at: '2026-02-10T11:00:00+08:00',
-        },
-        {
-          id: 2002,
-          evidence_id: 401,
-          version_number: 1,
-          status: '需补充',
-          conclusion: '需补充',
-          feedback: '请补充数据质量监控截图。',
-          reviewed_at: '2026-03-05T14:00:00+08:00',
-          created_at: '2026-03-05T14:00:00+08:00',
-        },
-        {
-          id: 2003,
-          evidence_id: 401,
-          version_number: 1,
-          status: '驳回',
-          conclusion: '驳回',
-          feedback: '链接无法访问，请重新提交。',
-          reviewed_at: '2026-04-12T09:30:00+08:00',
-          created_at: '2026-04-12T09:30:00+08:00',
-        },
-      ]),
-    })
-  })
+  await page.route(
+    /\/api\/planning\/learning-tasks\/501\/evidence-reviews/,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 2001,
+            evidence_id: 401,
+            version_number: 1,
+            status: '通过',
+            conclusion: '通过',
+            feedback: 'Evidence 充分，通过。',
+            reviewed_at: '2026-02-10T11:00:00+08:00',
+            created_at: '2026-02-10T11:00:00+08:00',
+          },
+          {
+            id: 2002,
+            evidence_id: 401,
+            version_number: 1,
+            status: '需补充',
+            conclusion: '需补充',
+            feedback: '请补充数据质量监控截图。',
+            reviewed_at: '2026-03-05T14:00:00+08:00',
+            created_at: '2026-03-05T14:00:00+08:00',
+          },
+          {
+            id: 2003,
+            evidence_id: 401,
+            version_number: 1,
+            status: '驳回',
+            conclusion: '驳回',
+            feedback: '链接无法访问，请重新提交。',
+            reviewed_at: '2026-04-12T09:30:00+08:00',
+            created_at: '2026-04-12T09:30:00+08:00',
+          },
+        ]),
+      })
+    },
+  )
 }
 
 export async function mockBuddyReviewEmptyData(page: Page): Promise<void> {

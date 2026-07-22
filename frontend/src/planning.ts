@@ -6,7 +6,9 @@ export type AvailableYears = {
 }
 
 export async function getAvailableYears(): Promise<AvailableYears> {
-  return request<AvailableYears>('/api/planning/available-years', { method: 'GET' })
+  return request<AvailableYears>('/api/planning/available-years', {
+    method: 'GET',
+  })
 }
 
 export type AnnualPlanEligibility = {
@@ -668,7 +670,9 @@ export async function getTeamAnalytics(query: {
   })
 }
 
-export async function createLearningTask(plan_item_id: number): Promise<LearningTask> {
+export async function createLearningTask(
+  plan_item_id: number,
+): Promise<LearningTask> {
   return request<LearningTask>(
     `/api/planning/plan-items/${plan_item_id}/learning-task`,
     { method: 'POST' },

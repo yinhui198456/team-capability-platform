@@ -126,7 +126,8 @@ function AssessmentHistory({ profile }: { profile: CapabilityProfile }) {
       ) : (
         <div className={styles.assessmentList}>
           {assessments.map((assessment) => {
-            const latestReview = assessment.reviews[assessment.reviews.length - 1]
+            const latestReview =
+              assessment.reviews[assessment.reviews.length - 1]
             return (
               <article
                 key={assessment.id}
@@ -171,7 +172,9 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
     return profile.annual_plan.items.filter((i) => i.status === '已完成').length
   }, [profile])
   const total = profile.annual_plan?.items.length ?? 0
-  const evidenceStats = Object.entries(profile.statistics.evidence_count_by_status)
+  const evidenceStats = Object.entries(
+    profile.statistics.evidence_count_by_status,
+  )
 
   return (
     <section className={styles.card} aria-label="年度统计">
@@ -200,7 +203,9 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
           <span className={styles.statValue}>
             {evidenceStats.length === 0
               ? '无 Evidence'
-              : evidenceStats.map(([status, count]) => `${status} ${count}`).join(' · ')}
+              : evidenceStats
+                  .map(([status, count]) => `${status} ${count}`)
+                  .join(' · ')}
           </span>
         </div>
       </div>
@@ -211,7 +216,9 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
 function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
   const tasks = useMemo(() => {
     if (!profile.annual_plan) return []
-    return profile.annual_plan.items.filter((item) => item.learning_task !== null)
+    return profile.annual_plan.items.filter(
+      (item) => item.learning_task !== null,
+    )
   }, [profile])
 
   return (
@@ -314,9 +321,9 @@ export function ProfilePage() {
   )
 
   const [profile, setProfile] = useState<CapabilityProfile | null>(null)
-  const [selectableMembers, setSelectableMembers] = useState<SelectableMember[]>(
-    [],
-  )
+  const [selectableMembers, setSelectableMembers] = useState<
+    SelectableMember[]
+  >([])
   const [currentMemberId, setCurrentMemberId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -396,13 +403,15 @@ export function ProfilePage() {
 
   const kpi = useMemo(() => {
     const completed =
-      profile?.annual_plan?.items.filter((i) => i.status === '已完成').length ?? 0
+      profile?.annual_plan?.items.filter((i) => i.status === '已完成').length ??
+      0
     const total = profile?.annual_plan?.items.length ?? 0
-    const archived =
-      profile?.statistics.evidence_count_by_status['已归档'] ?? 0
+    const archived = profile?.statistics.evidence_count_by_status['已归档'] ?? 0
     const latestAssessment = profile?.assessments[0]
-    const latestReview = latestAssessment?.reviews[latestAssessment.reviews.length - 1]
-    const assessmentDisplay = latestReview?.conclusion ?? latestAssessment?.status ?? '暂无评估'
+    const latestReview =
+      latestAssessment?.reviews[latestAssessment.reviews.length - 1]
+    const assessmentDisplay =
+      latestReview?.conclusion ?? latestAssessment?.status ?? '暂无评估'
     return { completed, total, archived, assessmentDisplay }
   }, [profile])
 
@@ -450,9 +459,7 @@ export function ProfilePage() {
         <p className="muted">没有可查看的成员。</p>
       )}
 
-      {!profile && !error && (
-        <p className="muted">暂无成长档案数据。</p>
-      )}
+      {!profile && !error && <p className="muted">暂无成长档案数据。</p>}
 
       {profile && (
         <>
@@ -494,7 +501,8 @@ export function ProfilePage() {
                       状态：<strong>{profile.annual_plan.status}</strong>
                     </div>
                     <div className={styles.planMetaItem}>
-                      周期：<strong>{profile.annual_plan.plan_cycle} 个月</strong>
+                      周期：
+                      <strong>{profile.annual_plan.plan_cycle} 个月</strong>
                     </div>
                     <div className={styles.planMetaItem}>
                       计划时长：

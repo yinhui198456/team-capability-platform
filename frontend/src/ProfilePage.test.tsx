@@ -1,6 +1,12 @@
 /// @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -288,7 +294,9 @@ describe('ProfilePage', () => {
     })
 
     expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
-    expect(screen.getByText(/数据范围：负责成员/, { selector: 'p' })).toBeTruthy()
+    expect(
+      screen.getByText(/数据范围：负责成员/, { selector: 'p' }),
+    ).toBeTruthy()
   })
 
   it('shows member selector for Leader and lists team members', async () => {

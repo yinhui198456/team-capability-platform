@@ -133,7 +133,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(
@@ -166,7 +166,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('发布')).toBeTruthy()
@@ -212,7 +212,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('更新')).toBeTruthy()
@@ -251,7 +251,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('归档')).toBeTruthy()
@@ -283,7 +283,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText(/无权限/)).toBeTruthy()
@@ -310,7 +310,7 @@ describe('TeamAnnualPlanPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('发布')).toBeTruthy()

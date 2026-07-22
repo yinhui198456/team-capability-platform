@@ -14,7 +14,11 @@ export type User = {
 }
 
 export async function login(username: string, password: string): Promise<User> {
-  return request<User>('/api/auth/login', { method: 'POST' }, { username, password })
+  return request<User>(
+    '/api/auth/login',
+    { method: 'POST' },
+    { username, password },
+  )
 }
 
 export async function logout(): Promise<void> {

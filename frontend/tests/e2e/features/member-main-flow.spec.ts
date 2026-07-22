@@ -11,7 +11,9 @@ test.describe('Member main flow', () => {
 
     // 1. 我的工作台
     await page.goto(`/dashboard/member?year=${year}`)
-    await expect(page.getByRole('heading', { name: '我的成长总览' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '我的成长总览' }),
+    ).toBeVisible()
     await expect(page).toHaveURL(new RegExp(`/dashboard/member\\?year=${year}`))
 
     // 2. 能力自评与 Gap

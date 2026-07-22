@@ -110,7 +110,7 @@ describe('LoginPage', () => {
     render(
       <MemoryRouter initialEntries={['/login']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     expect(screen.getByLabelText('用户名')).toBeTruthy()
     expect(screen.getByLabelText('密码')).toBeTruthy()
@@ -131,7 +131,7 @@ describe('LoginPage', () => {
     render(
       <MemoryRouter initialEntries={['/login']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     fireEvent.change(screen.getByLabelText('用户名'), {
       target: { value: 'leader' },

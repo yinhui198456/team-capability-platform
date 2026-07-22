@@ -3,15 +3,6 @@ import type { Page } from '@playwright/test'
 // Static, deterministic data for UI-05 visual regression.
 // No Math.random, no time-based seeds, no viewport-dependent generation.
 
-const domainLabels: Record<string, string> = {
-  P01: 'Data Infra',
-  P02: 'AI Infra / Agent',
-  P03: 'Coding',
-  C01: '基本办公',
-  C02: '沟通协作',
-  C03: '学习创新',
-}
-
 const domainOrder = ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']
 
 const members = [
@@ -21,7 +12,10 @@ const members = [
 ]
 
 // Per-member actual/plan per domain (same source for domain averages & heatmap)
-const memberDomainGrids: Record<number, Record<string, { actual: number; plan: number }>> = {
+const memberDomainGrids: Record<
+  number,
+  Record<string, { actual: number; plan: number }>
+> = {
   3: {
     P01: { actual: 2.5, plan: 4.0 },
     P02: { actual: 1.5, plan: 3.5 },
@@ -62,8 +56,12 @@ function buildDomainAverages(memberIds: number[], domainCodes: string[]) {
     const values = memberIds
       .map((id) => memberDomainGrids[id][code])
       .filter(Boolean)
-    const actual = round1(values.reduce((sum, v) => sum + v.actual, 0) / values.length)
-    const plan = round1(values.reduce((sum, v) => sum + v.plan, 0) / values.length)
+    const actual = round1(
+      values.reduce((sum, v) => sum + v.actual, 0) / values.length,
+    )
+    const plan = round1(
+      values.reduce((sum, v) => sum + v.plan, 0) / values.length,
+    )
     return { domain_code: code, actual, target: plan }
   })
 }
@@ -95,14 +93,20 @@ function buildMemberAttainment(memberIds: number[], domainCodes: string[]) {
 }
 
 // 12-month trends: base values that change deterministically by filter.
-function buildMonthlyTrends(memberId: number | null, domainCode: string | null) {
-  const memberMultiplier = memberId === 3 ? 0.9 : memberId === 5 ? 0.8 : memberId === 7 ? 1.1 : 1.0
+function buildMonthlyTrends(
+  memberId: number | null,
+  domainCode: string | null,
+) {
+  const memberMultiplier =
+    memberId === 3 ? 0.9 : memberId === 5 ? 0.8 : memberId === 7 ? 1.1 : 1.0
   const domainMultiplier = domainCode ? 0.7 : 1.0
   const scale = memberMultiplier * domainMultiplier
 
   return Array.from({ length: 12 }, (_, i) => {
     const month = i + 1
-    const plannedCount = Math.round((month <= 7 ? i + 1 : Math.max(1, 12 - i)) * scale)
+    const plannedCount = Math.round(
+      (month <= 7 ? i + 1 : Math.max(1, 12 - i)) * scale,
+    )
     const actualCount = Math.max(0, plannedCount - (i % 3 === 0 ? 1 : 0))
     const plannedHours = plannedCount * 8
     const actualHours = actualCount * 8 + (i % 4 === 0 ? 2 : 0)
@@ -166,24 +170,84 @@ const overdueCatalog = [
   },
 ]
 
-const kpisByFilter: Record<string, { plan_rate: number; plan_done: number; plan_total: number; evidence_rate: number; evidence_passed: number; evidence_total: number }> = {
-  'default': { plan_rate: 0.58, plan_done: 21, plan_total: 36, evidence_rate: 0.75, evidence_passed: 9, evidence_total: 12 },
-  'member_3': { plan_rate: 0.50, plan_done: 6, plan_total: 12, evidence_rate: 0.67, evidence_passed: 4, evidence_total: 6 },
-  'member_5': { plan_rate: 0.60, plan_done: 9, plan_total: 15, evidence_rate: 0.80, evidence_passed: 4, evidence_total: 5 },
-  'member_7': { plan_rate: 0.75, plan_done: 9, plan_total: 12, evidence_rate: 0.83, evidence_passed: 5, evidence_total: 6 },
-  'domain_P01': { plan_rate: 0.55, plan_done: 5, plan_total: 9, evidence_rate: 0.70, evidence_passed: 7, evidence_total: 10 },
-  'domain_P02': { plan_rate: 0.43, plan_done: 3, plan_total: 7, evidence_rate: 0.60, evidence_passed: 3, evidence_total: 5 },
-  'member_5_domain_P02': { plan_rate: 0.40, plan_done: 2, plan_total: 5, evidence_rate: 0.50, evidence_passed: 1, evidence_total: 2 },
+const kpisByFilter: Record<
+  string,
+  {
+    plan_rate: number
+    plan_done: number
+    plan_total: number
+    evidence_rate: number
+    evidence_passed: number
+    evidence_total: number
+  }
+> = {
+  default: {
+    plan_rate: 0.58,
+    plan_done: 21,
+    plan_total: 36,
+    evidence_rate: 0.75,
+    evidence_passed: 9,
+    evidence_total: 12,
+  },
+  member_3: {
+    plan_rate: 0.5,
+    plan_done: 6,
+    plan_total: 12,
+    evidence_rate: 0.67,
+    evidence_passed: 4,
+    evidence_total: 6,
+  },
+  member_5: {
+    plan_rate: 0.6,
+    plan_done: 9,
+    plan_total: 15,
+    evidence_rate: 0.8,
+    evidence_passed: 4,
+    evidence_total: 5,
+  },
+  member_7: {
+    plan_rate: 0.75,
+    plan_done: 9,
+    plan_total: 12,
+    evidence_rate: 0.83,
+    evidence_passed: 5,
+    evidence_total: 6,
+  },
+  domain_P01: {
+    plan_rate: 0.55,
+    plan_done: 5,
+    plan_total: 9,
+    evidence_rate: 0.7,
+    evidence_passed: 7,
+    evidence_total: 10,
+  },
+  domain_P02: {
+    plan_rate: 0.43,
+    plan_done: 3,
+    plan_total: 7,
+    evidence_rate: 0.6,
+    evidence_passed: 3,
+    evidence_total: 5,
+  },
+  member_5_domain_P02: {
+    plan_rate: 0.4,
+    plan_done: 2,
+    plan_total: 5,
+    evidence_rate: 0.5,
+    evidence_passed: 1,
+    evidence_total: 2,
+  },
 }
 
 function resolveKpis(memberId: number | null, domainCode: string | null) {
-  const key = memberId && domainCode
-    ? `member_${memberId}_domain_${domainCode}`
-    : memberId
-      ? `member_${memberId}`
-      : domainCode
-        ? `domain_${domainCode}`
-        : 'default'
+  const key =
+    memberId && domainCode
+      ? `member_${memberId}_domain_${domainCode}`
+      : memberId
+        ? `member_${memberId}`
+        : domainCode
+          ? `domain_${domainCode}`
+          : 'default'
   return kpisByFilter[key] ?? kpisByFilter['default']
 }
 
@@ -195,16 +259,14 @@ export async function mockTeamAnalyticsData(page: Page): Promise<void> {
       : null
     const domainCode = url.searchParams.get('domain_code') || null
 
-    const memberIds = memberId
-      ? [memberId]
-      : members.map((m) => m.member_id)
-    const domainCodes = domainCode
-      ? [domainCode]
-      : domainOrder
+    const memberIds = memberId ? [memberId] : members.map((m) => m.member_id)
+    const domainCodes = domainCode ? [domainCode] : domainOrder
 
     const memberIdSet = new Set(memberIds)
-    const filteredOverdue = overdueCatalog.filter((item) =>
-      memberIdSet.has(item.member_id) && (domainCode ? item.l3_code.startsWith(domainCode) : true),
+    const filteredOverdue = overdueCatalog.filter(
+      (item) =>
+        memberIdSet.has(item.member_id) &&
+        (domainCode ? item.l3_code.startsWith(domainCode) : true),
     )
 
     const kpis = resolveKpis(memberId, domainCode)
@@ -259,7 +321,11 @@ export async function mockTeamAnalyticsEmptyData(page: Page): Promise<void> {
           evidence_total_count: 0,
           overdue_plan_item_count: 0,
         },
-        domain_averages: domainOrder.map((code) => ({ domain_code: code, actual: 0, target: 0 })),
+        domain_averages: domainOrder.map((code) => ({
+          domain_code: code,
+          actual: 0,
+          target: 0,
+        })),
         member_attainment: [],
         monthly_trends: Array.from({ length: 12 }, (_, i) => ({
           month: i + 1,

@@ -70,50 +70,85 @@ function TrendTable({
     hours ? trend.cumulative_planned_hours : trend.cumulative_planned_rate * 100
   const maxCumulative = Math.max(
     1,
-    ...trends.flatMap((trend) => [cumulativeActual(trend), cumulativePlan(trend)]),
+    ...trends.flatMap((trend) => [
+      cumulativeActual(trend),
+      cumulativePlan(trend),
+    ]),
   )
-  const points = (value: (trend: TeamAnalytics['monthly_trends'][number]) => number) =>
-    trends.map((trend, index) => `${(index / Math.max(1, trends.length - 1)) * 100},${100 - (value(trend) / maxCumulative) * 90}`).join(' ')
+  const points = (
+    value: (trend: TeamAnalytics['monthly_trends'][number]) => number,
+  ) =>
+    trends
+      .map(
+        (trend, index) =>
+          `${(index / Math.max(1, trends.length - 1)) * 100},${100 - (value(trend) / maxCumulative) * 90}`,
+      )
+      .join(' ')
   return (
     <>
       <TrendLegend />
-      <figure className="trend-chart" aria-label={hours ? '学习时长组合图' : '计划完成组合图'}>
-        <div className="trend-bars">{trends.map((trend) => <div key={trend.month}><i style={{ height: `${((hours ? trend.planned_hours : trend.planned_count) / maxValue) * 100}%` }} /><i className="actual" style={{ height: `${((hours ? trend.actual_hours : trend.actual_count) / maxValue) * 100}%` }} /><span>{trend.month}</span></div>)}</div>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points={points(cumulativePlan)} /><polyline className="actual" points={points(cumulativeActual)} /></svg>
+      <figure
+        className="trend-chart"
+        aria-label={hours ? '学习时长组合图' : '计划完成组合图'}
+      >
+        <div className="trend-bars">
+          {trends.map((trend) => (
+            <div key={trend.month}>
+              <i
+                style={{
+                  height: `${((hours ? trend.planned_hours : trend.planned_count) / maxValue) * 100}%`,
+                }}
+              />
+              <i
+                className="actual"
+                style={{
+                  height: `${((hours ? trend.actual_hours : trend.actual_count) / maxValue) * 100}%`,
+                }}
+              />
+              <span>{trend.month}</span>
+            </div>
+          ))}
+        </div>
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <polyline points={points(cumulativePlan)} />
+          <polyline className="actual" points={points(cumulativeActual)} />
+        </svg>
       </figure>
       <table className="analytics-table">
-      <thead>
-        <tr>
-          <th>月份</th>
-          <th>{hours ? '当月计划时长' : '当月计划'}</th>
-          <th>{hours ? '当月实际时长' : '当月实际'}</th>
-          <th>{hours ? '累计计划时长' : '累计计划'}</th>
-          <th>{hours ? '累计实际时长' : '累计实际'}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {trends.map((trend) => (
-          <tr key={trend.month}>
-            <td>{trend.month}月</td>
-            <td>
-              {hours ? `${trend.planned_hours} h` : trend.planned_count}
-            </td>
-            <td>
-              {hours ? `${trend.actual_hours} h` : trend.actual_count}
-            </td>
-            <td>
-              {hours
-                ? `${trend.cumulative_planned_hours} h`
-                : percent(trend.cumulative_planned_rate)}
-            </td>
-            <td>
-              {hours
-                ? `${trend.cumulative_actual_hours} h`
-                : percent(trend.cumulative_actual_rate)}
-            </td>
+        <thead>
+          <tr>
+            <th>月份</th>
+            <th>{hours ? '当月计划时长' : '当月计划'}</th>
+            <th>{hours ? '当月实际时长' : '当月实际'}</th>
+            <th>{hours ? '累计计划时长' : '累计计划'}</th>
+            <th>{hours ? '累计实际时长' : '累计实际'}</th>
           </tr>
-        ))}
-      </tbody>
+        </thead>
+        <tbody>
+          {trends.map((trend) => (
+            <tr key={trend.month}>
+              <td>{trend.month}月</td>
+              <td>
+                {hours ? `${trend.planned_hours} h` : trend.planned_count}
+              </td>
+              <td>{hours ? `${trend.actual_hours} h` : trend.actual_count}</td>
+              <td>
+                {hours
+                  ? `${trend.cumulative_planned_hours} h`
+                  : percent(trend.cumulative_planned_rate)}
+              </td>
+              <td>
+                {hours
+                  ? `${trend.cumulative_actual_hours} h`
+                  : percent(trend.cumulative_actual_rate)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
       </table>
     </>
   )
@@ -127,7 +162,9 @@ export function TeamAnalyticsPage() {
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [drawerItem, setDrawerItem] = useState<TeamAnalytics['overdue_items'][number] | null>(null)
+  const [drawerItem, setDrawerItem] = useState<
+    TeamAnalytics['overdue_items'][number] | null
+  >(null)
   const lastFocusedRow = useRef<HTMLTableRowElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -176,7 +213,10 @@ export function TeamAnalyticsPage() {
     return [...seen]
   }, [analytics])
 
-  function openDrawer(item: TeamAnalytics['overdue_items'][number], row: HTMLTableRowElement) {
+  function openDrawer(
+    item: TeamAnalytics['overdue_items'][number],
+    row: HTMLTableRowElement,
+  ) {
     lastFocusedRow.current = row
     setDrawerItem(item)
   }
@@ -387,7 +427,8 @@ export function TeamAnalyticsPage() {
                     >
                       <td>{item.full_name}</td>
                       <td>
-                        {item.l3_code}{item.l3_name ? ` · ${item.l3_name}` : ''}
+                        {item.l3_code}
+                        {item.l3_name ? ` · ${item.l3_name}` : ''}
                       </td>
                       <td>{item.due_date}</td>
                       <td>{item.overdue_days}</td>
@@ -404,7 +445,10 @@ export function TeamAnalyticsPage() {
               className="detail-drawer"
               role="dialog"
             >
-              <div className="detail-drawer-mask" onClick={() => setDrawerItem(null)} />
+              <div
+                className="detail-drawer-mask"
+                onClick={() => setDrawerItem(null)}
+              />
               <div className="detail-drawer-panel" role="document">
                 <div className="card-heading">
                   <h2>计划项详情（只读）</h2>
@@ -421,7 +465,10 @@ export function TeamAnalyticsPage() {
                   <dt>成员</dt>
                   <dd>{drawerItem.full_name}</dd>
                   <dt>能力项</dt>
-                  <dd>{drawerItem.l3_code}{drawerItem.l3_name ? ` · ${drawerItem.l3_name}` : ''}</dd>
+                  <dd>
+                    {drawerItem.l3_code}
+                    {drawerItem.l3_name ? ` · ${drawerItem.l3_name}` : ''}
+                  </dd>
                   <dt>计划开始日期</dt>
                   <dd>{drawerItem.plan_start_date}</dd>
                   <dt>计划结束日期</dt>
@@ -431,9 +478,15 @@ export function TeamAnalyticsPage() {
                   <dt>当前状态</dt>
                   <dd>{drawerItem.status}</dd>
                   <dt>延期原因</dt>
-                  <dd>计划项未在截止日期前完成，当前状态为「{drawerItem.status}」。</dd>
+                  <dd>
+                    计划项未在截止日期前完成，当前状态为「{drawerItem.status}
+                    」。
+                  </dd>
                   <dt>下一步行动</dt>
-                  <dd>建议与 {drawerItem.full_name} 一对一沟通，了解阻塞原因并商定新的计划完成时间。如计划已不再适用，可取消并重新规划。</dd>
+                  <dd>
+                    建议与 {drawerItem.full_name}{' '}
+                    一对一沟通，了解阻塞原因并商定新的计划完成时间。如计划已不再适用，可取消并重新规划。
+                  </dd>
                 </dl>
               </div>
             </aside>

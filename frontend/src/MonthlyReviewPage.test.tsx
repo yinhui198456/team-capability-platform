@@ -32,7 +32,7 @@ describe('MonthlyReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/review/monthly']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(
@@ -58,7 +58,7 @@ describe('MonthlyReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/review/monthly']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('2026 年暂无学习时长记录。')).toBeTruthy()

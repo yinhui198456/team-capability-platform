@@ -50,7 +50,9 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByText('’')).toHaveCount(0)
 
       const queue = page.locator('.buddy-queue')
-      await expect(queue.getByRole('heading', { name: '复核队列' })).toBeVisible()
+      await expect(
+        queue.getByRole('heading', { name: '复核队列' }),
+      ).toBeVisible()
       await expect(
         queue.getByRole('tablist', { name: '复核队列类型' }),
       ).toContainText('全部待处理')
@@ -82,7 +84,9 @@ for (const viewport of VIEWPORTS) {
         .getByRole('button', { name: /Member Two/ })
         .click()
       await expect(
-        page.locator('.buddy-member-list .active').filter({ hasText: 'Member Two' }),
+        page
+          .locator('.buddy-member-list .active')
+          .filter({ hasText: 'Member Two' }),
       ).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
@@ -93,9 +97,7 @@ for (const viewport of VIEWPORTS) {
 
     test('assessment conclusion selected screenshot', async ({ page }) => {
       await page.getByLabel('建议调整').check()
-      await page
-        .getByLabel('反馈')
-        .fill('请补充更多自评依据并细化 Gap 说明。')
+      await page.getByLabel('反馈').fill('请补充更多自评依据并细化 Gap 说明。')
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
         `ui-04-buddy-review-center-assessment-${viewport.name}.png`,
@@ -105,11 +107,11 @@ for (const viewport of VIEWPORTS) {
 
     test('evidence 需补充 with feedback screenshot', async ({ page }) => {
       await page.getByRole('tab', { name: 'Evidence Review' }).click()
-      await expect(page.locator('.buddy-workspace')).toContainText('Evidence 版本 1')
+      await expect(page.locator('.buddy-workspace')).toContainText(
+        'Evidence 版本 1',
+      )
       await page.getByLabel('需补充').check()
-      await page
-        .getByLabel('反馈')
-        .fill('请补充数据质量监控截图与运行日志。')
+      await page.getByLabel('反馈').fill('请补充数据质量监控截图与运行日志。')
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
         `ui-04-buddy-review-center-evidence-${viewport.name}.png`,
@@ -120,7 +122,9 @@ for (const viewport of VIEWPORTS) {
     test('history screenshot', async ({ page }) => {
       // Evidence tab shows a closed history list that proves read-only state.
       await page.getByRole('tab', { name: 'Evidence Review' }).click()
-      await expect(page.locator('.buddy-workspace')).toContainText('反馈历史（只读）')
+      await expect(page.locator('.buddy-workspace')).toContainText(
+        '反馈历史（只读）',
+      )
       const historyRecords = page.locator('.buddy-workspace .compact-list li')
       const recordCount = await historyRecords.count()
       expect(recordCount).toBeGreaterThanOrEqual(2)
@@ -160,10 +164,10 @@ test.describe('UI-04 Buddy review center empty state', () => {
   })
 
   test('empty queue screenshot', async ({ page }) => {
-    await expect(page).toHaveScreenshot(
-      'ui-04-buddy-review-center-empty.png',
-      { fullPage: false, maxDiffPixels: 1000 },
-    )
+    await expect(page).toHaveScreenshot('ui-04-buddy-review-center-empty.png', {
+      fullPage: false,
+      maxDiffPixels: 1000,
+    })
   })
 })
 
@@ -171,27 +175,30 @@ test.describe('UI-04 Buddy review center permission boundary', () => {
   test('hides queue items outside the Buddy assignment', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await mockBuddyReviewEmptyData(page)
-    await page.route('/api/planning/evidence-reviews/pending', async (route) => {
-      await route.fulfill({
-        status: 200,
-        body: JSON.stringify([
-          {
-            id: 999,
-            evidence_id: 999,
-            version_number: 1,
-            status: '待 Review',
-            conclusion: null,
-            feedback: null,
-            reviewed_at: null,
-            member_id: 99,
-            username: 'unassigned',
-            learning_task_id: 999,
-            l3_code: 'P01.01.01',
-            content: '不属于当前 Buddy 的 evidence',
-          },
-        ]),
-      })
-    })
+    await page.route(
+      '/api/planning/evidence-reviews/pending',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          body: JSON.stringify([
+            {
+              id: 999,
+              evidence_id: 999,
+              version_number: 1,
+              status: '待 Review',
+              conclusion: null,
+              feedback: null,
+              reviewed_at: null,
+              member_id: 99,
+              username: 'unassigned',
+              learning_task_id: 999,
+              l3_code: 'P01.01.01',
+              content: '不属于当前 Buddy 的 evidence',
+            },
+          ]),
+        })
+      },
+    )
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
     await expect(
@@ -202,8 +209,12 @@ test.describe('UI-04 Buddy review center permission boundary', () => {
       '选择一项待复核内容后查看依据和历史反馈。',
     )
     await expect(
-      page.locator('.buddy-summary button').filter({ hasText: '待 Review Evidence' }),
+      page
+        .locator('.buddy-summary button')
+        .filter({ hasText: '待 Review Evidence' }),
     ).toContainText('0')
-    await expect(page.locator('text=不属于当前 Buddy 的 evidence')).toHaveCount(0)
+    await expect(page.locator('text=不属于当前 Buddy 的 evidence')).toHaveCount(
+      0,
+    )
   })
 })

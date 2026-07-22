@@ -83,8 +83,6 @@ export type ResourceDetail = {
   }>
 }
 
-
-
 export function useCatalog<T>(path: string | null) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
@@ -162,7 +160,11 @@ export async function updateCapabilityNode(
   nodeCode: string,
   body: object,
 ): Promise<object> {
-  return request<object>(`/api/capability-model/nodes/${nodeCode}`, { method: 'PUT' }, body)
+  return request<object>(
+    `/api/capability-model/nodes/${nodeCode}`,
+    { method: 'PUT' },
+    body,
+  )
 }
 
 export async function createLearningResource(body: object): Promise<object> {
@@ -173,14 +175,17 @@ export async function updateLearningResource(
   materialCode: string,
   body: object,
 ): Promise<object> {
-  return request<object>(`/api/learning-resources/${materialCode}`, { method: 'PUT' }, body)
+  return request<object>(
+    `/api/learning-resources/${materialCode}`,
+    { method: 'PUT' },
+    body,
+  )
 }
 
 export async function archiveLearningResource(
   materialCode: string,
 ): Promise<object> {
-  return request<object>(
-    `/api/learning-resources/${materialCode}/archive`,
-    { method: 'POST' },
-  )
+  return request<object>(`/api/learning-resources/${materialCode}/archive`, {
+    method: 'POST',
+  })
 }

@@ -42,7 +42,11 @@ export function YearProvider({ children }: { children: React.ReactNode }) {
         let resolved: number
         if (urlYear && Number.isFinite(urlYear) && avail.includes(urlYear)) {
           resolved = urlYear
-        } else if (urlYear && Number.isFinite(urlYear) && !avail.includes(urlYear)) {
+        } else if (
+          urlYear &&
+          Number.isFinite(urlYear) &&
+          !avail.includes(urlYear)
+        ) {
           // Invalid year in URL — redirect to active
           const next = new URLSearchParams(searchParams)
           next.set('year', String(active))
@@ -69,14 +73,16 @@ export function YearProvider({ children }: { children: React.ReactNode }) {
           setReady(true)
         }
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   return (
     <YearStateContext.Provider value={{ availableYears }}>
-    <YearContext.Provider value={ready ? year : fallbackYear}>
-      {children}
-    </YearContext.Provider>
+      <YearContext.Provider value={ready ? year : fallbackYear}>
+        {children}
+      </YearContext.Provider>
     </YearStateContext.Provider>
   )
 }

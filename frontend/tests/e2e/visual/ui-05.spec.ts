@@ -53,11 +53,17 @@ const EXPECTED_LISI_P02 = {
 
 async function assertKpis(
   page: Page,
-  expected: { planCompletionRate: string; evidencePassRate: string; overdueCount: string },
+  expected: {
+    planCompletionRate: string
+    evidencePassRate: string
+    overdueCount: string
+  },
 ) {
   const kpis = page.getByLabel('团队关键指标')
   await expect(kpis).toContainText(`计划完成率${expected.planCompletionRate}`)
-  await expect(kpis).toContainText(`Evidence 通过率${expected.evidencePassRate}`)
+  await expect(kpis).toContainText(
+    `Evidence 通过率${expected.evidencePassRate}`,
+  )
   await expect(kpis).toContainText(`延期计划项${expected.overdueCount}`)
 }
 
@@ -79,15 +85,13 @@ for (const viewport of VIEWPORTS) {
       const filters = page.getByLabel('团队能力分析筛选')
       await expect(filters.getByLabel('成员')).toContainText('全部')
       await expect(filters.getByLabel('能力域')).toContainText('全部')
-      await expect(filters.getByLabel('能力域')).toContainText('P01 · Data Infra')
+      await expect(filters.getByLabel('能力域')).toContainText(
+        'P01 · Data Infra',
+      )
       await expect(filters.getByLabel('能力域')).toContainText('C03 · 学习创新')
 
       const kpis = page.getByLabel('团队关键指标')
-      for (const label of [
-        '计划完成率',
-        'Evidence 通过率',
-        '延期计划项',
-      ]) {
+      for (const label of ['计划完成率', 'Evidence 通过率', '延期计划项']) {
         await expect(kpis).toContainText(label)
       }
       // Self-assessment rate must not appear per Issue #28
@@ -120,10 +124,14 @@ for (const viewport of VIEWPORTS) {
       await expect(topbar.getByLabel('选择年度')).toBeVisible()
       const content = page.locator('.app-content')
       await expect(content.getByLabel('年度')).not.toBeVisible()
-      await expect(content.getByRole('spinbutton', { name: '年度' })).not.toBeVisible()
+      await expect(
+        content.getByRole('spinbutton', { name: '年度' }),
+      ).not.toBeVisible()
 
       // Domain table header must be "计划值", not old "目标"
-      const domainTable = page.locator('.dashboard-card:has-text("能力实际 vs 计划") .analytics-table')
+      const domainTable = page.locator(
+        '.dashboard-card:has-text("能力实际 vs 计划") .analytics-table',
+      )
       await expect(domainTable).toContainText('计划值')
       await expect(domainTable).not.toContainText('目标')
     })
@@ -131,8 +139,12 @@ for (const viewport of VIEWPORTS) {
     // Screenshot: default page (full viewport = Topbar + Sidebar + content)
     test('default full viewport screenshot', async ({ page }) => {
       await assertKpis(page, EXPECTED_DEFAULT)
-      await expect(page.getByRole('row', { name: /张三/ })).toContainText(EXPECTED_DEFAULT.zhangsanP01)
-      await expect(page.getByRole('row', { name: /李四/ })).toContainText(EXPECTED_DEFAULT.lisiP02)
+      await expect(page.getByRole('row', { name: /张三/ })).toContainText(
+        EXPECTED_DEFAULT.zhangsanP01,
+      )
+      await expect(page.getByRole('row', { name: /李四/ })).toContainText(
+        EXPECTED_DEFAULT.lisiP02,
+      )
       await expect(page).toHaveScreenshot(
         `ui-05-team-capability-analysis-${viewport.name}.png`,
         { fullPage: false, maxDiffPixels: 1500 },
@@ -149,7 +161,9 @@ for (const viewport of VIEWPORTS) {
           resp.status() === 200,
       )
       await assertKpis(page, EXPECTED_ZHANGSAN)
-      await expect(page.getByRole('row', { name: /张三/ })).toContainText(EXPECTED_ZHANGSAN.zhangsanP01)
+      await expect(page.getByRole('row', { name: /张三/ })).toContainText(
+        EXPECTED_ZHANGSAN.zhangsanP01,
+      )
       await expect(page.getByLabel('团队关键指标')).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
@@ -161,15 +175,21 @@ for (const viewport of VIEWPORTS) {
     // Screenshot + cascade: domain filter selected
     test('domain filter screenshot', async ({ page }) => {
       const filters = page.getByLabel('团队能力分析筛选')
-      await filters.getByLabel('能力域').selectOption({ label: 'P01 · Data Infra' })
+      await filters
+        .getByLabel('能力域')
+        .selectOption({ label: 'P01 · Data Infra' })
       await page.waitForResponse(
         (resp) =>
           resp.url().includes('/api/planning/team-analytics') &&
           resp.status() === 200,
       )
       await assertKpis(page, EXPECTED_P01)
-      const domainTable = page.locator('.dashboard-card:has-text("能力实际 vs 计划") .analytics-table')
-      await expect(domainTable.locator('tbody tr')).toHaveCount(EXPECTED_P01.domainRows)
+      const domainTable = page.locator(
+        '.dashboard-card:has-text("能力实际 vs 计划") .analytics-table',
+      )
+      await expect(domainTable.locator('tbody tr')).toHaveCount(
+        EXPECTED_P01.domainRows,
+      )
       await expect(page.getByLabel('团队关键指标')).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
@@ -187,14 +207,18 @@ for (const viewport of VIEWPORTS) {
           resp.url().includes('/api/planning/team-analytics') &&
           resp.status() === 200,
       )
-      await filters.getByLabel('能力域').selectOption({ label: 'P02 · AI Infra / Agent' })
+      await filters
+        .getByLabel('能力域')
+        .selectOption({ label: 'P02 · AI Infra / Agent' })
       await page.waitForResponse(
         (resp) =>
           resp.url().includes('/api/planning/team-analytics') &&
           resp.status() === 200,
       )
       await assertKpis(page, EXPECTED_LISI_P02)
-      await expect(page.getByRole('row', { name: /李四/ })).toContainText(EXPECTED_LISI_P02.lisiP02)
+      await expect(page.getByRole('row', { name: /李四/ })).toContainText(
+        EXPECTED_LISI_P02.lisiP02,
+      )
       await expect(page.getByLabel('团队关键指标')).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
@@ -243,10 +267,30 @@ for (const viewport of VIEWPORTS) {
 // Cross-viewport numeric consistency: same filter state must yield identical KPI text.
 test.describe('UI-05 cross-viewport business value consistency', () => {
   for (const scenario of [
-    { label: 'default', url: '/operations/analytics', expected: EXPECTED_DEFAULT },
-    { label: 'zhangsan', url: '/operations/analytics?year=2026', member: '张三', expected: EXPECTED_ZHANGSAN },
-    { label: 'p01', url: '/operations/analytics?year=2026', domain: 'P01 · Data Infra', expected: EXPECTED_P01 },
-    { label: 'lisi-p02', url: '/operations/analytics?year=2026', member: '李四', domain: 'P02 · AI Infra / Agent', expected: EXPECTED_LISI_P02 },
+    {
+      label: 'default',
+      url: '/operations/analytics',
+      expected: EXPECTED_DEFAULT,
+    },
+    {
+      label: 'zhangsan',
+      url: '/operations/analytics?year=2026',
+      member: '张三',
+      expected: EXPECTED_ZHANGSAN,
+    },
+    {
+      label: 'p01',
+      url: '/operations/analytics?year=2026',
+      domain: 'P01 · Data Infra',
+      expected: EXPECTED_P01,
+    },
+    {
+      label: 'lisi-p02',
+      url: '/operations/analytics?year=2026',
+      member: '李四',
+      domain: 'P02 · AI Infra / Agent',
+      expected: EXPECTED_LISI_P02,
+    },
   ] as const) {
     for (const viewport of VIEWPORTS) {
       test(`${scenario.label} @ ${viewport.name}`, async ({ page }) => {
@@ -254,26 +298,42 @@ test.describe('UI-05 cross-viewport business value consistency', () => {
         await mockTeamAnalyticsData(page)
         await loginAs(page, 'leader')
         await page.goto(scenario.url)
-        await expect(page.getByRole('heading', { name: '团队能力分析' })).toBeVisible()
+        await expect(
+          page.getByRole('heading', { name: '团队能力分析' }),
+        ).toBeVisible()
 
         const filters = page.getByLabel('团队能力分析筛选')
         if (scenario.member) {
-          await filters.getByLabel('成员').selectOption({ label: scenario.member })
+          await filters
+            .getByLabel('成员')
+            .selectOption({ label: scenario.member })
           await page.waitForResponse(
-            (resp) => resp.url().includes('/api/planning/team-analytics') && resp.status() === 200,
+            (resp) =>
+              resp.url().includes('/api/planning/team-analytics') &&
+              resp.status() === 200,
           )
         }
         if (scenario.domain) {
-          await filters.getByLabel('能力域').selectOption({ label: scenario.domain })
+          await filters
+            .getByLabel('能力域')
+            .selectOption({ label: scenario.domain })
           await page.waitForResponse(
-            (resp) => resp.url().includes('/api/planning/team-analytics') && resp.status() === 200,
+            (resp) =>
+              resp.url().includes('/api/planning/team-analytics') &&
+              resp.status() === 200,
           )
         }
 
         const kpis = page.getByLabel('团队关键指标')
-        await expect(kpis.locator('article:has-text("计划完成率") strong')).toHaveText(scenario.expected.planCompletionRate)
-        await expect(kpis.locator('article:has-text("Evidence 通过率") strong')).toHaveText(scenario.expected.evidencePassRate)
-        await expect(kpis.locator('article:has-text("延期计划项") strong')).toHaveText(scenario.expected.overdueCount)
+        await expect(
+          kpis.locator('article:has-text("计划完成率") strong'),
+        ).toHaveText(scenario.expected.planCompletionRate)
+        await expect(
+          kpis.locator('article:has-text("Evidence 通过率") strong'),
+        ).toHaveText(scenario.expected.evidencePassRate)
+        await expect(
+          kpis.locator('article:has-text("延期计划项") strong'),
+        ).toHaveText(scenario.expected.overdueCount)
       })
     }
   }

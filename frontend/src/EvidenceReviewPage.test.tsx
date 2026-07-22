@@ -19,7 +19,10 @@ describe('EvidenceReviewPage', () => {
   beforeEach(() => {
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
     vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([])
-    vi.spyOn(assessmentReviewApi, 'getAssessmentReviewSummary').mockResolvedValue({
+    vi.spyOn(
+      assessmentReviewApi,
+      'getAssessmentReviewSummary',
+    ).mockResolvedValue({
       pending_count: 0,
       completed_count: 0,
     })
@@ -67,7 +70,7 @@ describe('EvidenceReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(
@@ -111,7 +114,7 @@ describe('EvidenceReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByLabelText('通过')).toBeTruthy()

@@ -12,7 +12,9 @@ export const growthProfileMockMember2 = {
   full_name: '李四',
 }
 
-export function buildGrowthProfileResponse(member: typeof growthProfileMockMember) {
+export function buildGrowthProfileResponse(
+  member: typeof growthProfileMockMember,
+) {
   return {
     id: 1,
     member_id: member.id,
@@ -228,15 +230,18 @@ export async function mockGrowthProfileData(page: Page): Promise<void> {
     })
   })
 
-  await page.route('/api/planning/profiles/selectable-members*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        members: [growthProfileMockMember, growthProfileMockMember2],
-      }),
-    })
-  })
+  await page.route(
+    '/api/planning/profiles/selectable-members*',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          members: [growthProfileMockMember, growthProfileMockMember2],
+        }),
+      })
+    },
+  )
 
   await page.route('/api/planning/available-years', async (route) => {
     await route.fulfill({
@@ -271,13 +276,16 @@ export async function mockGrowthProfileEmptyData(page: Page): Promise<void> {
     })
   })
 
-  await page.route('/api/planning/profiles/selectable-members*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ members: [growthProfileMockMember] }),
-    })
-  })
+  await page.route(
+    '/api/planning/profiles/selectable-members*',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ members: [growthProfileMockMember] }),
+      })
+    },
+  )
 
   await page.route('/api/planning/available-years', async (route) => {
     await route.fulfill({

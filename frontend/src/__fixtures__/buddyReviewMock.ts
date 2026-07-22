@@ -90,36 +90,37 @@ export type AssessmentDetailHistory = {
   evidence_note?: string | null
 }
 
-export const mockAssessmentDetails: Record<number, AssessmentDetailHistory[]> = {
-  201: [
-    {
-      l3_code: 'P01.01.01',
-      l3_name: '数据管道基础',
-      current_level: 2,
-      target_level: 4,
-      gap_value: 2,
-      evidence_note: '已参与数据管道搭建，完成基础文档。',
-    },
-    {
-      l3_code: 'P02.01.01',
-      l3_name: '模型部署流程',
-      current_level: 1,
-      target_level: 3,
-      gap_value: 2,
-      evidence_note: '尚未独立完成模型部署。',
-    },
-  ],
-  202: [
-    {
-      l3_code: 'C02.01.01',
-      l3_name: '技术方案写作',
-      current_level: 2,
-      target_level: 4,
-      gap_value: 2,
-      evidence_note: '已完成 1 篇技术方案。',
-    },
-  ],
-}
+export const mockAssessmentDetails: Record<number, AssessmentDetailHistory[]> =
+  {
+    201: [
+      {
+        l3_code: 'P01.01.01',
+        l3_name: '数据管道基础',
+        current_level: 2,
+        target_level: 4,
+        gap_value: 2,
+        evidence_note: '已参与数据管道搭建，完成基础文档。',
+      },
+      {
+        l3_code: 'P02.01.01',
+        l3_name: '模型部署流程',
+        current_level: 1,
+        target_level: 3,
+        gap_value: 2,
+        evidence_note: '尚未独立完成模型部署。',
+      },
+    ],
+    202: [
+      {
+        l3_code: 'C02.01.01',
+        l3_name: '技术方案写作',
+        current_level: 2,
+        target_level: 4,
+        gap_value: 2,
+        evidence_note: '已完成 1 篇技术方案。',
+      },
+    ],
+  }
 
 export type HistoryItem = {
   id: number

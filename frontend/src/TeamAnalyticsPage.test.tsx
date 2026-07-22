@@ -99,7 +99,7 @@ describe('TeamAnalyticsPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/analytics']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
     expect(screen.getAllByText('50%')).not.toHaveLength(0)
@@ -160,7 +160,7 @@ describe('TeamAnalyticsPage', () => {
     render(
       <MemoryRouter initialEntries={['/operations/analytics']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText(/无权限/)).toBeTruthy())
     expect(getTeamAnalytics).not.toHaveBeenCalled()

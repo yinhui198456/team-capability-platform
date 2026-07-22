@@ -152,7 +152,9 @@ export function AnnualPlanPage() {
         <div>
           <span>年度 / 周期</span>
           <strong>
-            {plan ? `${plan.year} / ${plan.plan_cycle} 个月` : `${year} / 12 个月`}
+            {plan
+              ? `${plan.year} / ${plan.plan_cycle} 个月`
+              : `${year} / 12 个月`}
           </strong>
         </div>
         <div>
