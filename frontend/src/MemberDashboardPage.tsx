@@ -154,7 +154,8 @@ function Radar({
   )
 }
 
-type DashboardStage = 'self-assessment' | 'pending-review' | 'plan' | 'archived'
+type DashboardStage =
+  'self-assessment' | 'pending-review' | 'plan-pending' | 'plan' | 'archived'
 
 function deriveStage(dashboard: MemberDashboard): DashboardStage {
   const status = dashboard.assessment?.status
@@ -162,14 +163,8 @@ function deriveStage(dashboard: MemberDashboard): DashboardStage {
   if (!status || status === '草稿') return 'self-assessment'
   if (status === '待复核' || status === '建议调整') return 'pending-review'
   if (planStatus === '已归档') return 'archived'
-  if (
-    planStatus === '制定中' ||
-    planStatus === '执行中' ||
-    status === '已复核' ||
-    status === '已归档'
-  ) {
-    return 'plan'
-  }
+  if (planStatus === '制定中' || planStatus === '执行中') return 'plan'
+  if (status === '已复核' || status === '已归档') return 'plan-pending'
   return 'self-assessment'
 }
 
@@ -198,7 +193,13 @@ const stageMeta: Record<
     label: '计划执行中',
     title: '我的成长总览',
     description: '将自评、Gap、年度计划与 Evidence 进展放在同一工作区。',
-    cta: { label: '进入学习任务 / 提交 Evidence', href: '/growth/tasks' },
+    cta: { label: '查看年度计划', href: '/growth/annual-plan' },
+  },
+  'plan-pending': {
+    label: '待制定计划',
+    title: '准备生成年度计划',
+    description: '自评已通过复核，现在可以基于 Gap 生成年度成长计划。',
+    cta: { label: '生成年度计划', href: '/growth/annual-plan' },
   },
   archived: {
     label: '年度已归档',
@@ -251,6 +252,21 @@ function SelfAssessmentCTA({ year }: { year: number }) {
       </p>
       <a className="primary-link" href={`/capability/assessment?year=${year}`}>
         完成能力自评
+      </a>
+    </article>
+  )
+}
+
+function PlanPendingCTA({ year }: { year: number }) {
+  return (
+    <article className={`card ${styles.stageCard} ${styles.ctaCard}`}>
+      <h2>生成年度计划</h2>
+      <p className="muted">
+        自评已通过 Buddy 复核，基于已确认的 Gap
+        生成年度成长计划后即可开始学习任务。
+      </p>
+      <a className="primary-link" href={`/growth/annual-plan?year=${year}`}>
+        生成年度计划
       </a>
     </article>
   )
@@ -676,6 +692,7 @@ export function MemberDashboardPage() {
       {dashboard && stage && (
         <>
           {stage === 'self-assessment' && <SelfAssessmentCTA year={year} />}
+          {stage === 'plan-pending' && <PlanPendingCTA year={year} />}
           {stage === 'pending-review' && (
             <>
               <ReviewStatusCard assessment={dashboard.assessment!} />

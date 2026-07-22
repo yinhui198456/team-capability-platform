@@ -1,4 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { useMe } from './catalog'
+import { defaultRouteFor } from './access'
 import { YearProvider } from './YearContext'
 import { Layout } from './Layout'
 import { LoginPage } from './LoginPage'
@@ -15,6 +18,19 @@ import { LearningResourcesPage } from './LearningResourcesPage'
 import { TeamAnalyticsPage } from './TeamAnalyticsPage'
 import { TeamAnnualPlanPage } from './TeamAnnualPlanPage'
 import { SystemAdminPage } from './SystemAdminPage'
+
+function DefaultRoute() {
+  const navigate = useNavigate()
+  const { user, loading } = useMe()
+
+  useEffect(() => {
+    if (loading) return
+    const target = user ? defaultRouteFor(user.roles) : '/login'
+    navigate(target, { replace: true })
+  }, [loading, user, navigate])
+
+  return <p className="muted">正在加载…</p>
+}
 
 export function App() {
   return (
@@ -72,11 +88,8 @@ export function App() {
           />
           <Route path="/system/users" element={<SystemAdminPage />} />
 
-          {/* Default */}
-          <Route
-            path="*"
-            element={<Navigate to="/dashboard/member" replace />}
-          />
+          {/* Default: role-aware redirect or /login */}
+          <Route path="*" element={<DefaultRoute />} />
         </Route>
       </Routes>
     </YearProvider>

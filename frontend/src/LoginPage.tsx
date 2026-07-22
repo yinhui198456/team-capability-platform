@@ -1,16 +1,10 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
-import { login, type User } from './access'
-
-function defaultRouteFor(user: User): string {
-  if (user.roles.includes('Admin')) return '/system/users'
-  if (user.roles.includes('Leader')) return '/operations/analytics'
-  if (user.roles.includes('Buddy')) return '/mentoring/dashboard'
-  if (user.roles.includes('Member')) return '/dashboard/member'
-  return '/capability/model'
-}
+import { login, defaultRouteFor, type User } from './access'
 
 export function LoginPage() {
+  const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -22,8 +16,8 @@ export function LoginPage() {
     setLoading(true)
 
     try {
-      const user = await login(username, password)
-      window.location.href = defaultRouteFor(user)
+      const user: User = await login(username, password)
+      navigate(defaultRouteFor(user.roles), { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : '登录失败')
     } finally {

@@ -241,9 +241,7 @@ test.describe('Member 工作台成长阶段', () => {
     await expect(page.getByText('数据建模与设计')).toBeVisible()
   })
 
-  test('计划执行中阶段：主按钮为“进入学习任务 / 提交 Evidence”', async ({
-    page,
-  }) => {
+  test('计划执行中阶段：主按钮为“查看年度计划”', async ({ page }) => {
     await routeDashboard(page, planPayload)
     await page.goto('/dashboard/member?year=2026')
     await expect(
@@ -251,12 +249,33 @@ test.describe('Member 工作台成长阶段', () => {
     ).toBeVisible()
     await expect(page.getByLabel('当前阶段')).toHaveText('计划执行中')
 
-    const cta = page.getByRole('link', { name: '进入学习任务 / 提交 Evidence' })
+    const cta = page.getByRole('link', { name: '查看年度计划' }).first()
     await expect(cta).toBeVisible()
-    await expect(cta).toHaveAttribute('href', '/growth/tasks?year=2026')
+    await expect(cta).toHaveAttribute('href', '/growth/annual-plan?year=2026')
 
     await expect(page.getByTestId('todo-card')).toBeVisible()
     await expect(page.getByTestId('current-tasks-table')).toBeVisible()
+  })
+
+  test('待制定计划阶段：主按钮为“生成年度计划”', async ({ page }) => {
+    await routeDashboard(page, {
+      ...planPayload,
+      annual_plan_status: null,
+      plan_progress: emptyProgress,
+      current_tasks: [],
+    })
+    await page.goto('/dashboard/member?year=2026')
+    await expect(
+      page.getByRole('heading', { name: '准备生成年度计划' }),
+    ).toBeVisible()
+    await expect(page.getByLabel('当前阶段')).toHaveText('待制定计划')
+
+    const cta = page.getByRole('link', { name: '生成年度计划' }).first()
+    await expect(cta).toBeVisible()
+    await expect(cta).toHaveAttribute('href', '/growth/annual-plan?year=2026')
+
+    await expect(page.getByTestId('todo-card')).not.toBeVisible()
+    await expect(page.getByTestId('current-tasks-table')).not.toBeVisible()
   })
 
   test('年度完成阶段：主按钮为“查看成长档案”', async ({ page }) => {

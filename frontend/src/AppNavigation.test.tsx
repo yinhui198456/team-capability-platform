@@ -144,6 +144,112 @@ describe('r1.1 topbar — sidebar is sole navigation', () => {
   })
 })
 
+describe('role-based default routing', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  function stubUser(role: string | null) {
+    if (role === null) {
+      vi.spyOn(accessApi, 'me').mockRejectedValue(new Error('Unauthorized'))
+      return
+    }
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: role.toLowerCase(),
+      full_name: role,
+      roles: role === 'no-role' ? [] : [role],
+    })
+  }
+
+  it.each([
+    ['Admin', '/system/users', '用户管理'],
+    ['Leader', '/operations/analytics', '团队能力分析'],
+    ['Buddy', '/mentoring/dashboard', 'Buddy 复核中心'],
+    ['Member', '/dashboard/member', '我的成长总览'],
+    ['no-role', '/capability/model', '能力地图'],
+  ])('redirects %s from / to %s', async (role, _expectedPath, expectedText) => {
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    if (role === 'Member') stubDashboard()
+    stubUser(role === 'no-role' ? null : role)
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(expectedText)).toBeTruthy()
+    })
+  })
+
+  it.each([
+    ['Admin', '/system/users', '用户管理'],
+    ['Leader', '/operations/analytics', '团队能力分析'],
+    ['Buddy', '/mentoring/dashboard', 'Buddy 复核中心'],
+    ['Member', '/dashboard/member', '我的成长总览'],
+  ])(
+    'redirects %s from unknown URL to default route',
+    async (role, _expectedPath, expectedText) => {
+      vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+        available_years: [2026],
+        active_year: 2026,
+      })
+      if (role === 'Member') stubDashboard()
+      stubUser(role)
+      render(
+        <MemoryRouter initialEntries={['/not-a-real-page']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await waitFor(() => {
+        expect(screen.getByText(expectedText)).toBeTruthy()
+      })
+    },
+  )
+
+  it('redirects unauthenticated users from / to /login', async () => {
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    stubUser(null)
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'UAT 登录' })).toBeTruthy()
+    })
+  })
+
+  it('gives Admin priority over Member when both roles present', async () => {
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'admin-member',
+      full_name: 'Admin Member',
+      roles: ['Admin', 'Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('用户管理')).toBeTruthy()
+    })
+    expect(screen.queryByText('Member 工作台')).toBeNull()
+  })
+})
+
 describe('year parameter persistence', () => {
   afterEach(() => {
     cleanup()

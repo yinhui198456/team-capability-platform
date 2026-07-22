@@ -7,14 +7,7 @@ import {
 } from 'react-router-dom'
 import { useMe } from './catalog'
 import { useYear, useYearState } from './YearContext'
-
-function defaultRouteFor(roles: string[]): string {
-  if (roles.includes('Admin')) return '/system/users'
-  if (roles.includes('Leader')) return '/operations/analytics'
-  if (roles.includes('Buddy')) return '/mentoring/dashboard'
-  if (roles.includes('Member')) return '/dashboard/member'
-  return '/capability/model'
-}
+import { defaultRouteFor } from './access'
 
 type NavItem = {
   label: string

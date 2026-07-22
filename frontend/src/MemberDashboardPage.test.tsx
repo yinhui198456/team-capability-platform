@@ -127,6 +127,9 @@ describe('MemberDashboardPage', () => {
     expect(screen.getByText('当月累计时长')).toBeTruthy()
     expect(screen.getByText('当月计划时长')).toBeTruthy()
     expect(screen.getByText('年度计划进度')).toBeTruthy()
+    expect(
+      screen.getAllByRole('link', { name: '查看年度计划' }).length,
+    ).toBeGreaterThanOrEqual(1)
   })
 
   it('filters gaps by domain and restores on 全部', async () => {
@@ -283,6 +286,47 @@ describe('MemberDashboardPage', () => {
     expect(screen.getByText('P02.01.01')).toBeTruthy()
     expect(screen.queryByText('年度计划进度')).toBeNull()
     expect(screen.queryByTestId('todo-card')).toBeNull()
+  })
+
+  it('renders plan-pending stage after reviewed assessment without plan', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      assessment: {
+        id: 1,
+        status: '已复核' as const,
+        submitted_at: '2026-01-02T00:00:00Z',
+        archived_at: null,
+        review_status: '已闭环' as const,
+        review_conclusion: '认可' as const,
+      },
+      annual_plan_status: null,
+      plan_progress: {
+        total: 0,
+        未开始: 0,
+        进行中: 0,
+        '待 Evidence Review': 0,
+        已完成: 0,
+        延期: 0,
+      },
+      current_tasks: [],
+      gaps: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('准备生成年度计划')).toBeTruthy()
+    })
+    expect(screen.getByLabelText('当前阶段').textContent).toBe('待制定计划')
+    expect(
+      screen.getAllByRole('link', { name: '生成年度计划' }).length,
+    ).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('年度计划进度')).toBeNull()
+    expect(screen.queryByTestId('current-tasks-table')).toBeNull()
   })
 
   it('renders archived stage with annual summary', async () => {

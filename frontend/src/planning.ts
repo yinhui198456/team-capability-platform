@@ -237,7 +237,8 @@ export function formatL3Name(
   l3Name: string | null | undefined,
   l3Code: string,
 ): string {
-  return l3Name ? `${l3Name}（${l3Code}）` : l3Code
+  const name = l3Name?.trim()
+  return name ? `${name}（${l3Code}）` : l3Code
 }
 
 export async function updatePlanItem(
