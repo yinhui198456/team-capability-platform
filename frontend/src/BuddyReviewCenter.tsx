@@ -179,11 +179,11 @@ export function BuddyReviewCenter() {
   }, [year])
 
   useEffect(() => {
-    if (!selected) {
-      setAssessmentDetails([])
-      setHistory([])
-      return
-    }
+    // ponytail: clear immediately on switch so old item's data never bleeds through
+    setAssessmentDetails([])
+    setHistory([])
+
+    if (!selected) return
 
     if (isMockEnabled()) {
       if (selected.kind === 'assessment') {

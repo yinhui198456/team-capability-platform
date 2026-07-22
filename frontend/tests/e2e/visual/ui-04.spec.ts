@@ -125,10 +125,19 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator('.buddy-workspace')).toContainText(
         '反馈历史（只读）',
       )
-      const historyRecords = page.locator('.buddy-workspace .compact-list li')
-      const recordCount = await historyRecords.count()
-      expect(recordCount).toBeGreaterThanOrEqual(2)
-      await historyRecords.first().scrollIntoViewIfNeeded()
+      // Scope to the history list under "反馈历史（只读）" heading, not the workspace-wide compact-list
+      const historyList = page
+        .locator('.buddy-workspace h3', { hasText: '反馈历史（只读）' })
+        .locator('+ ul.compact-list')
+      await expect(historyList).toBeVisible()
+      // Auto-waiting: mock returns exactly 3 history records
+      await expect(historyList.locator('li')).toHaveCount(3)
+      await expect(historyList.locator('li').first()).toContainText(
+        'Evidence 充分，通过。',
+      )
+      if (viewport.name === '1280x800') {
+        await historyList.locator('li').first().scrollIntoViewIfNeeded()
+      }
       const filename =
         viewport.name === '1280x800'
           ? 'ui-04-buddy-review-center-history-scrolled-1280x800.png'
