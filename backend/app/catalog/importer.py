@@ -17,6 +17,35 @@ SELF_ASSESSMENT_SHEET = "02_能力差距自评"
 RESOURCE_SHEET = "06_学习材料索引"
 MODEL_CODE = "technical-architecture-development-20260509-v1.0"
 MODEL_VERSION = "20260509_V1.0"
+
+
+def resolve_workbook_dir(anchor: Path | None = None) -> Path:
+    """Resolve the capability-model directory starting from an anchor file.
+
+    Walks up the directory tree until both required workbooks are found.
+    This makes the resolver independent of the current working directory and
+    works in host, CI, and Docker layouts as long as the workbooks live in a
+    sibling ``capability-model`` directory somewhere above the anchor.
+    """
+    anchor_path = anchor or Path(__file__).resolve()
+    current = anchor_path.parent
+    for _ in range(10):
+        candidate = current / "capability-model"
+        if (candidate / MODEL_WORKBOOK).is_file() and (
+            candidate / PLAN_WORKBOOK
+        ).is_file():
+            return candidate
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    raise FileNotFoundError(
+        f"Could not find capability-model directory containing "
+        f"{MODEL_WORKBOOK} and {PLAN_WORKBOOK}; last searched: "
+        f"{current / 'capability-model'}"
+    )
+
+
 DOMAINS = {
     "P01": "Data Infra 能力",
     "P02": "AI Infra / Agent 能力",

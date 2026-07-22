@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -55,12 +54,10 @@ def access_schema(connection: psycopg.Connection) -> psycopg.Connection:
 
 @pytest.fixture
 def catalog_initialized(connection: psycopg.Connection) -> None:
-    from app.catalog.importer import import_catalog
+    from app.catalog.importer import import_catalog, resolve_workbook_dir
     from app.catalog.schema import create_catalog_schema
 
-    workbook_dir = Path("/capability-model")
-    if not workbook_dir.exists():
-        workbook_dir = Path(__file__).parents[2] / "capability-model"
+    workbook_dir = resolve_workbook_dir()
     create_catalog_schema(connection)
     import_catalog(workbook_dir, connection)
     connection.commit()

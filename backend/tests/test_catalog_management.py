@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -8,11 +7,11 @@ import pytest
 
 from app.access.repository import assign_role, create_session, create_user
 from app.access.schema import create_access_schema
-from app.catalog.importer import import_catalog
+from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 
-WORKBOOK_DIR = Path("/capability-model")
+WORKBOOK_DIR = resolve_workbook_dir()
 SESSION_COOKIE = "tcp_session"
 
 

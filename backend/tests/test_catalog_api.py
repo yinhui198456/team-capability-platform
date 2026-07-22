@@ -1,17 +1,16 @@
 import asyncio
 import json
-from pathlib import Path
 from urllib.parse import urlencode
 
 import psycopg
 import pytest
 
 from app.catalog.api import router
-from app.catalog.importer import import_catalog
+from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 
-WORKBOOK_DIR = Path("/capability-model")
+WORKBOOK_DIR = resolve_workbook_dir()
 
 
 @pytest.fixture(autouse=True)
