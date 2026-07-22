@@ -126,6 +126,17 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 原型路径固定为：`docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png`、`UI-02-assessment-gap.png`、`UI-03-annual-plan-task.png`、`UI-04-buddy-review-center.png`、`UI-05-team-capability-analysis.png`。
 
+#### 4.1.1 登录后默认路由
+
+| 登录角色 | 默认跳转路由 | 回退 |
+|---|---|---|
+| Member | `/dashboard/member` | `/capability/model` |
+| Buddy | `/mentoring/dashboard` | `/capability/model` |
+| Leader | `/operations/analytics` | `/capability/model` |
+| Admin | `/system/users` | `/capability/model` |
+
+多角色账号按 Admin → Leader → Buddy → Member 顺序命中第一个有效角色；无任何业务角色时回退到 `/capability/model`。
+
 | 原型 | 主路由/页面 | 实际资产路径 |
 |---|---|---|
 | UI-01 | `/dashboard/member` / 我的成长看板 | `docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png` |
@@ -260,6 +271,7 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 - E2E 测试复用 Docker Compose 的演示种子数据，不单独创建测试数据库。
 - 写入型测试按角色使用固定演示账号，避免跨测试状态污染；必要时在测试前后通过 API 重置目标对象状态。
+
 ## 10. 后端本地测试
 
 后端代码依赖 `psycopg` 等包，必须在项目虚拟环境中运行测试。
