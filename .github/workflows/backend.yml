@@ -1,0 +1,77 @@
+name: Backend Quality Gate
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tcp
+          POSTGRES_USER: tcp
+          POSTGRES_PASSWORD: tcp_dev_only
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U tcp -d tcp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+
+      - name: Run Ruff
+        run: ruff check backend/app backend/tests
+
+      - name: Check Black formatting
+        run: black --check backend/app backend/tests
+
+      - name: Run full pytest suite
+        working-directory: backend
+        run: pytest tests -q
+
+  docker-test-stage:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tcp
+          POSTGRES_USER: tcp
+          POSTGRES_PASSWORD: tcp_dev_only
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U tcp -d tcp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend test image
+        run: docker build --target test -t tcp-backend:test -f backend/Dockerfile .
+
+      - name: Run pytest inside Docker test stage
+        run: |
+          docker run --rm --network host --add-host postgres:127.0.0.1 \
+            tcp-backend:test pytest tests -q

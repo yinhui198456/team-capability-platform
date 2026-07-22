@@ -36,6 +36,23 @@ jobs:
           docker compose logs backend
           exit 1
 
+      - name: Smoke test the running stack
+        run: |
+          set -e
+          echo "Checking backend health..."
+          curl -sf http://localhost:18001/health
+          echo ""
+          echo "Checking backend readiness..."
+          curl -sf http://localhost:18001/ready
+          echo ""
+          echo "Checking public catalog API..."
+          curl -sf http://localhost:18001/api/capability-model > /dev/null
+          echo ""
+          echo "Checking frontend is reachable..."
+          curl -sf http://localhost:18081/ > /dev/null
+          echo ""
+          echo "Smoke tests passed"
+
       - name: Run E2E tests in Playwright container
         run: |
           docker run --rm --network host \
