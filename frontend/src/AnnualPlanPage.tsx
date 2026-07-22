@@ -4,6 +4,7 @@ import { me, type User } from './access'
 import { useYear } from './YearContext'
 import { LearningTaskPage } from './LearningTaskPage'
 import {
+  formatL3Name,
   generatePlanItems,
   getAnnualPlan,
   getAnnualPlanEligibility,
@@ -250,7 +251,7 @@ export function AnnualPlanPage() {
                     className="plan-item-select"
                     onClick={() => setSelectedItem(item)}
                   >
-                    <strong>{item.l3_code}</strong>
+                    <strong>{formatL3Name(item.l3_name, item.l3_code)}</strong>
                     <span>
                       当前 {item.current_level} → 目标 {item.target_level} ·{' '}
                       {item.target_month ?? '未设置'} 月
@@ -274,7 +275,9 @@ export function AnnualPlanPage() {
           {!selectedItem && <p className="muted">选择左侧计划项查看详情。</p>}
           {selectedItem && (
             <>
-              <h3>{selectedItem.l3_code}</h3>
+              <h3>
+                {formatL3Name(selectedItem.l3_name, selectedItem.l3_code)}
+              </h3>
               <dl className="detail-list">
                 <div>
                   <dt>学习任务 / 实操内容</dt>

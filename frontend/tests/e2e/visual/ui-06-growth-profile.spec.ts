@@ -69,6 +69,29 @@ for (const viewport of VIEWPORTS) {
           .getByRole('article', { name: '学习任务：C01-L2A-L3A' })
           .getByText('实际 5 小时'),
       ).toBeVisible()
+
+      // Fixture exposes real workbook L3 names alongside the test codes
+      await expect(
+        page
+          .getByText('TDC / TDH / ArgoDB / TDS 产品定位（P01-L2A-L3A）')
+          .first(),
+      ).toBeVisible()
+      await expect(
+        page.getByText('常用办公工具基础（C01-L2A-L3A）').first(),
+      ).toBeVisible()
+
+      // Below-fold DOM verification: scroll to the learning-task region and
+      // confirm progress logs / evidence remain in the document at 1280x800.
+      const timeline = page.getByRole('region', { name: '学习任务与学习日志' })
+      await timeline.scrollIntoViewIfNeeded()
+      await expect(
+        timeline.getByRole('article', { name: '学习任务：P01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(
+        timeline.getByRole('article', { name: '学习任务：C01-L2A-L3A' }),
+      ).toBeVisible()
+      await expect(page.getByText('完成 POC 与文档')).toBeVisible()
+      await expect(page.getByText('TDD 练习')).toBeVisible()
     })
 
     test('default full viewport screenshot', async ({ page }) => {

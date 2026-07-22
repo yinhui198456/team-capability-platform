@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
 import {
+  formatL3Name,
   getAnnualPlan,
   generatePlanItems,
   type AnnualPlan,
@@ -257,9 +258,8 @@ export function AnnualPlanTaskPage() {
                 }}
               >
                 <div>
-                  <span className={s.code}>{item.l3_code}</span>
                   <span className={s.l3name}>
-                    {item.learning_task_content?.slice(0, 40) ?? '—'}
+                    {formatL3Name(item.l3_name, item.l3_code)}
                   </span>
                 </div>
                 <span>

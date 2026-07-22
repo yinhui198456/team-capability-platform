@@ -40,6 +40,7 @@ describe('AnnualPlanTaskPage', () => {
           annual_growth_plan_id: 1,
           growth_goal_id: 1,
           l3_code: 'P01.01.01',
+          l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
           current_level: 2,
           target_level: 4,
           priority: '中',
@@ -79,8 +80,11 @@ describe('AnnualPlanTaskPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: '年度成长计划' })).toBeTruthy()
     })
-    expect(screen.getByText('测试任务')).toBeTruthy()
-    expect(screen.getByText('延期任务')).toBeTruthy()
+    expect(
+      screen.getByText((content) =>
+        content.includes('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+      ),
+    ).toBeTruthy()
     // Column headers
     expect(screen.getByText('能力项')).toBeTruthy()
     expect(screen.getByText('等级提升')).toBeTruthy()
@@ -109,6 +113,7 @@ describe('AnnualPlanTaskPage', () => {
           annual_growth_plan_id: 1,
           growth_goal_id: 1,
           l3_code: 'P01.01.01',
+          l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
           current_level: 2,
           target_level: 4,
           priority: '中',
@@ -126,6 +131,7 @@ describe('AnnualPlanTaskPage', () => {
           annual_growth_plan_id: 1,
           growth_goal_id: 2,
           l3_code: 'P02.01.01',
+          l3_name: '主流 AI Infra 技术体系认知',
           current_level: 1,
           target_level: 3,
           priority: '中',
@@ -154,14 +160,66 @@ describe('AnnualPlanTaskPage', () => {
       btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
     )
     await waitFor(() => {
-      expect(screen.getByText('任务A')).toBeTruthy()
+      expect(
+        screen.getByText('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+      ).toBeTruthy()
     })
-    expect(screen.queryByText('任务B')).toBeNull()
+    expect(
+      screen.queryByText('主流 AI Infra 技术体系认知（P02.01.01）'),
+    ).toBeNull()
     // aria-pressed on the clicked month button
     const pressedBtn = btns.find((b) =>
       b.textContent?.startsWith('3 月'),
     ) as HTMLButtonElement
     expect(pressedBtn?.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('falls back to l3_code when l3_name is missing', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '执行中',
+      start_date: '',
+      end_date: '',
+      created_at: '',
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 1,
+          growth_goal_id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 4,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: '无名称任务',
+          expected_output: null,
+          estimated_hours: '10',
+          plan_start_date: '',
+          plan_end_date: '',
+          target_month: 3,
+          status: '进行中',
+        },
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: '年度成长计划' })).toBeTruthy()
+    })
+    expect(screen.getByText('P01.01.01')).toBeTruthy()
+    expect(screen.queryByText('无名称任务')).toBeNull()
   })
 
   it('shows month and count when month is selected', async () => {

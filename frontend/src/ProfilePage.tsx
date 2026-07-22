@@ -7,6 +7,7 @@ import {
   getCapabilityProfile,
   getCapabilityProfileForMember,
   getSelectableMembersForProfile,
+  formatL3Name,
   type CapabilityProfile,
   type CapabilityProfilePlanItem,
   type SelectableMember,
@@ -47,13 +48,6 @@ function scopeLabel(roles: string[]) {
   if (roles.includes('Buddy')) return '负责成员'
   if (roles.includes('Member')) return '本人'
   return '公共目录'
-}
-
-function abilityName(
-  l3Name: string | null | undefined,
-  l3Code: string,
-): string {
-  return l3Name || l3Code
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
@@ -99,9 +93,8 @@ function PlanItemCard({ item }: { item: CapabilityProfilePlanItem }) {
       <div className={styles.planItemHeader}>
         <div>
           <div className={styles.planItemName}>
-            {abilityName(item.l3_name, item.l3_code)}
+            {formatL3Name(item.l3_name, item.l3_code)}
           </div>
-          <div className={styles.planItemCode}>{item.l3_code}</div>
         </div>
         <Badge>{item.status}</Badge>
       </div>
@@ -243,9 +236,8 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                 <div className={styles.taskItemHeader}>
                   <div>
                     <div className={styles.taskTitle}>
-                      {abilityName(item.l3_name ?? task.l3_name, item.l3_code)}
+                      {formatL3Name(item.l3_name ?? task.l3_name, item.l3_code)}
                     </div>
-                    <div className={styles.taskCode}>{item.l3_code}</div>
                   </div>
                   <Badge>{task.status}</Badge>
                 </div>

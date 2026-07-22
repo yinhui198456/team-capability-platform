@@ -177,8 +177,9 @@ describe('ProfilePage', () => {
     expect(within(kpiRegion).getByText('实际学习时长')).toBeTruthy()
     expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
-    expect(screen.getAllByText('P01-L2A-L3A').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('测试能力项 P01').length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText(/测试能力项 P01（P01-L2A-L3A）/).length,
+    ).toBeGreaterThanOrEqual(2)
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()
     expect(screen.getByText(/Review 结论：通过/)).toBeTruthy()
@@ -400,17 +401,32 @@ describe('ProfilePage', () => {
     expect(screen.queryByRole('button', { name: /审核/ })).toBeNull()
   })
 
-  it('shows empty state when no selectable members for Buddy', async () => {
+  it('falls back to l3_code when l3_name is not provided', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
-      id: 2,
-      username: 'buddy',
-      full_name: 'Buddy',
-      roles: ['Buddy'],
-      assigned_members: [],
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
     })
-    vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
-      members: [],
-    })
+    const profileWithoutName: planningApi.CapabilityProfile = {
+      ...baseProfile,
+      annual_plan: {
+        ...baseProfile.annual_plan!,
+        items: [
+          {
+            ...baseProfile.annual_plan!.items[0],
+            l3_name: null,
+            learning_task: {
+              ...baseProfile.annual_plan!.items[0].learning_task!,
+              l3_name: null,
+            },
+          },
+        ],
+      },
+    }
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue(
+      profileWithoutName,
+    )
 
     render(
       <MemoryRouter initialEntries={['/growth/profile']}>
@@ -419,8 +435,12 @@ describe('ProfilePage', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/没有可查看的成员/)).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
     })
+
+    expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThanOrEqual(2)
   })
 })
 

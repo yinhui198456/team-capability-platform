@@ -55,6 +55,7 @@ export type PlanItem = {
   annual_growth_plan_id: number
   growth_goal_id: number
   l3_code: string
+  l3_name?: string | null
   current_level: number
   target_level: number
   priority: '高' | '中' | '低'
@@ -231,6 +232,13 @@ export type PlanItemUpdate = Partial<{
   target_month: number | null
   status: '进行中' | '暂停' | '取消'
 }>
+
+export function formatL3Name(
+  l3Name: string | null | undefined,
+  l3Code: string,
+): string {
+  return l3Name ? `${l3Name}（${l3Code}）` : l3Code
+}
 
 export async function updatePlanItem(
   plan_item_id: number,
