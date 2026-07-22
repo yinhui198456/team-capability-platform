@@ -159,7 +159,9 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str, year: int = 2026) -> int:
+def _create_and_submit_assessment(
+    connection: psycopg.Connection, username: str, year: int = 2026
+) -> int:
     cookies = _login(connection, username)
     status, body, _ = _request(
         "POST", "/api/assessments", {"year": year}, cookies=cookies

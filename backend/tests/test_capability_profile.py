@@ -570,7 +570,9 @@ def test_planned_hours_aggregated_by_plan_year(
 def test_cross_year_hours_filtered_by_record_date(
     profile_schema: psycopg.Connection,
 ) -> None:
-    _, member_cookies = _build_full_profile(profile_schema, "member_cross", "buddy_cross")
+    _, member_cookies = _build_full_profile(
+        profile_schema, "member_cross", "buddy_cross"
+    )
 
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
@@ -624,11 +626,15 @@ def test_selectable_members_for_member_returns_only_self(
 def test_selectable_members_for_buddy_returns_assigned(
     profile_schema: psycopg.Connection,
 ) -> None:
-    member_id, _ = _build_full_profile(profile_schema, "member_buddy_select", "buddy_select")
+    member_id, _ = _build_full_profile(
+        profile_schema, "member_buddy_select", "buddy_select"
+    )
     buddy_cookies = _login(profile_schema, "buddy_select")
 
     status, body, _ = _request(
-        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=buddy_cookies
+        "GET",
+        "/api/planning/profiles/selectable-members?year=2026",
+        cookies=buddy_cookies,
     )
     assert status == 200
     assert body is not None
@@ -640,13 +646,17 @@ def test_selectable_members_for_buddy_returns_assigned(
 def test_selectable_members_for_buddy_excludes_unassigned(
     profile_schema: psycopg.Connection,
 ) -> None:
-    _build_full_profile(profile_schema, "member_assigned_select", "buddy_assigned_select")
+    _build_full_profile(
+        profile_schema, "member_assigned_select", "buddy_assigned_select"
+    )
     _create_test_user(profile_schema, "member_unassigned_select", ["Member"])
     profile_schema.commit()
     buddy_cookies = _login(profile_schema, "buddy_assigned_select")
 
     status, body, _ = _request(
-        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=buddy_cookies
+        "GET",
+        "/api/planning/profiles/selectable-members?year=2026",
+        cookies=buddy_cookies,
     )
     assert status == 200
     assert body is not None
@@ -663,7 +673,9 @@ def test_selectable_members_for_leader_returns_members(
     leader_cookies = _login(profile_schema, "leader_select")
 
     status, body, _ = _request(
-        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=leader_cookies
+        "GET",
+        "/api/planning/profiles/selectable-members?year=2026",
+        cookies=leader_cookies,
     )
     assert status == 200
     assert body is not None
@@ -681,7 +693,9 @@ def test_selectable_members_for_admin_returns_all_active(
     admin_cookies = _login(profile_schema, "admin_select")
 
     status, body, _ = _request(
-        "GET", "/api/planning/profiles/selectable-members?year=2026", cookies=admin_cookies
+        "GET",
+        "/api/planning/profiles/selectable-members?year=2026",
+        cookies=admin_cookies,
     )
     assert status == 200
     assert body is not None
@@ -693,7 +707,9 @@ def test_member_overreach_with_member_id_is_rejected(
     profile_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(profile_schema, "member_overreach", ["Member"])
-    other_member_id = _create_test_user(profile_schema, "member_other_overreach", ["Member"])
+    other_member_id = _create_test_user(
+        profile_schema, "member_other_overreach", ["Member"]
+    )
     profile_schema.commit()
     cookies = _login(profile_schema, "member_overreach")
 
