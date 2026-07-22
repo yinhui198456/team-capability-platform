@@ -339,8 +339,11 @@ describe('ProfilePage', () => {
       </MemoryRouter>,
     )
 
+    // Wait for both the profile load and the member selector to stabilize.
+    // The page toggles loading while fetching the selected member profile,
+    // so waiting only for the selector can race with the loading state.
     await waitFor(() => {
-      expect(screen.getByLabelText('查看成员')).toBeTruthy()
+      expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
     })
 
     const selector = screen.getByLabelText('查看成员') as HTMLSelectElement
