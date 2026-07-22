@@ -1,3 +1,4 @@
+import os
 from collections.abc import Iterator
 
 import psycopg
@@ -6,8 +7,9 @@ import pytest
 from app.settings import settings
 
 TEST_DATABASE = "tcp_test"
-TEST_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/tcp_test"
-ADMIN_DATABASE_URL = "postgresql://tcp:tcp_dev_only@postgres:5432/postgres"
+_POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
+TEST_DATABASE_URL = f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:5432/tcp_test"
+ADMIN_DATABASE_URL = f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:5432/postgres"
 TEST_DATABASE_LOCK_KEY = 651042
 # ponytail: global PostgreSQL advisory lock on tcp_test blocks cross-process conflicts.
 # Serial test sessions are a known ceiling; isolate per worker only if throughput caps.

@@ -10,6 +10,8 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_HOST: localhost
     services:
       postgres:
         image: postgres:16-alpine
