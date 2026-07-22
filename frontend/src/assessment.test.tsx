@@ -8,8 +8,23 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import * as accessApi from './access'
 import * as assessmentApi from './assessment'
+import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
+
+function stubAuthAndYear() {
+  vi.spyOn(accessApi, 'me').mockResolvedValue({
+    id: 1,
+    username: 'member',
+    full_name: 'Member',
+    roles: ['Member'],
+  })
+  vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+    available_years: [2026],
+    active_year: 2026,
+  })
+}
 
 function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
   return {
@@ -43,6 +58,7 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
 
 describe('AssessmentGapPage', () => {
   beforeEach(() => {
+    stubAuthAndYear()
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
   })
   afterEach(() => {
@@ -119,6 +135,9 @@ describe('AssessmentGapPage', () => {
 })
 
 describe('R2-B filter/search', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+  })
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()

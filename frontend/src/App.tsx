@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from './AuthContext'
 import { useMe } from './catalog'
 import { defaultRouteFor } from './access'
 import { YearProvider } from './YearContext'
@@ -32,64 +33,81 @@ function DefaultRoute() {
   return <p className="muted">正在加载…</p>
 }
 
+function AuthenticatedShell() {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return <p className="muted">正在加载…</p>
+  }
+  if (!user) {
+    return <Navigate to="/login" replace />
+  }
+  return (
+    <YearProvider>
+      <Layout />
+    </YearProvider>
+  )
+}
+
 export function App() {
   return (
-    <Routes>
-      {/* Public */}
-      <Route path="/login" element={<LoginPage />} />
+    <AuthProvider>
+      <Routes>
+        {/* Public */}
+        <Route path="/login" element={<LoginPage />} />
 
-      {/* Legacy redirects */}
-      <Route
-        path="/growth/tasks"
-        element={<Navigate to="/growth/annual-plan" replace />}
-      />
-      <Route
-        path="/mentoring/assessment-review"
-        element={<Navigate to="/mentoring/dashboard" replace />}
-      />
-      <Route
-        path="/mentoring/evidence-review"
-        element={<Navigate to="/mentoring/dashboard" replace />}
-      />
-      <Route
-        path="/capability/gap"
-        element={<Navigate to="/capability/assessment" replace />}
-      />
+        {/* Legacy redirects */}
+        <Route
+          path="/growth/tasks"
+          element={<Navigate to="/growth/annual-plan" replace />}
+        />
+        <Route
+          path="/mentoring/assessment-review"
+          element={<Navigate to="/mentoring/dashboard" replace />}
+        />
+        <Route
+          path="/mentoring/evidence-review"
+          element={<Navigate to="/mentoring/dashboard" replace />}
+        />
+        <Route
+          path="/capability/gap"
+          element={<Navigate to="/capability/assessment" replace />}
+        />
 
-      {/* Authenticated app shell: YearProvider remounts after login */}
-      <Route
-        element={
-          <YearProvider>
-            <Layout />
-          </YearProvider>
-        }
-      >
-        <Route path="/dashboard/member" element={<MemberDashboardPage />} />
-        <Route path="/capability/model" element={<CapabilityModelPage />} />
-        <Route path="/capability/assessment" element={<AssessmentGapPage />} />
-        <Route
-          path="/capability/assessment/history"
-          element={<AssessmentHistoryPage />}
-        />
-        <Route path="/growth/goals" element={<GrowthGoalPage />} />
-        <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
-        <Route path="/growth/profile" element={<ProfilePage />} />
-        <Route path="/growth/review/monthly" element={<MonthlyReviewPage />} />
-        <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
-        <Route
-          path="/operations/resources"
-          element={<LearningResourcesPage />}
-        />
-        <Route path="/operations/analytics" element={<TeamAnalyticsPage />} />
-        <Route
-          path="/operations/team-annual-plan"
-          element={<TeamAnnualPlanPage />}
-        />
-        <Route path="/system/users" element={<SystemAdminPage />} />
+        {/* Authenticated app shell: auth gate + YearProvider remounts after login */}
+        <Route element={<AuthenticatedShell />}>
+          <Route path="/dashboard/member" element={<MemberDashboardPage />} />
+          <Route path="/capability/model" element={<CapabilityModelPage />} />
+          <Route
+            path="/capability/assessment"
+            element={<AssessmentGapPage />}
+          />
+          <Route
+            path="/capability/assessment/history"
+            element={<AssessmentHistoryPage />}
+          />
+          <Route path="/growth/goals" element={<GrowthGoalPage />} />
+          <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
+          <Route path="/growth/profile" element={<ProfilePage />} />
+          <Route
+            path="/growth/review/monthly"
+            element={<MonthlyReviewPage />}
+          />
+          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          <Route
+            path="/operations/resources"
+            element={<LearningResourcesPage />}
+          />
+          <Route path="/operations/analytics" element={<TeamAnalyticsPage />} />
+          <Route
+            path="/operations/team-annual-plan"
+            element={<TeamAnnualPlanPage />}
+          />
+          <Route path="/system/users" element={<SystemAdminPage />} />
 
-        {/* Default: role-aware redirect or /login */}
-        <Route path="*" element={<DefaultRoute />} />
-      </Route>
-    </Routes>
+          {/* Default: role-aware redirect */}
+          <Route path="*" element={<DefaultRoute />} />
+        </Route>
+      </Routes>
+    </AuthProvider>
   )
 }

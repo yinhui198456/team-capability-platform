@@ -210,6 +210,9 @@ describe('BuddyReviewCenter', () => {
         <App />
       </MemoryRouter>,
     )
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Evidence Review' })).toBeTruthy(),
+    )
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('通过'))
@@ -279,6 +282,9 @@ describe('BuddyReviewCenter', () => {
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
       </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Evidence Review' })).toBeTruthy(),
     )
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() => expect(screen.getByText('需补充')).toBeTruthy())

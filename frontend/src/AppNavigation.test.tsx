@@ -286,6 +286,99 @@ describe('role-based default routing', () => {
   })
 })
 
+describe('authenticated route guard', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  function renderUnauthenticated(initialEntries: string[]) {
+    vi.spyOn(accessApi, 'me').mockRejectedValue(new Error('Unauthorized'))
+    return render(
+      <MemoryRouter initialEntries={initialEntries}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+  }
+
+  it.each([
+    ['/dashboard/member'],
+    ['/system/users'],
+    ['/growth/annual-plan?year=2025'],
+    ['/capability/model'],
+  ])('redirects unauthenticated user from %s to /login', async (path) => {
+    const getAvailableYears = vi
+      .spyOn(planningApi, 'getAvailableYears')
+      .mockResolvedValue({ available_years: [2026], active_year: 2026 })
+    const getAnnualPlan = vi
+      .spyOn(planningApi, 'getAnnualPlan')
+      .mockResolvedValue(null)
+    const getMemberDashboard = vi
+      .spyOn(planningApi, 'getMemberDashboard')
+      .mockResolvedValue(emptyDashboard)
+
+    renderUnauthenticated([path])
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
+    expect(getAvailableYears).not.toHaveBeenCalled()
+    expect(getAnnualPlan).not.toHaveBeenCalled()
+    expect(getMemberDashboard).not.toHaveBeenCalled()
+  })
+
+  it('preserves path and year for authenticated Member accessing /growth/annual-plan', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2025, 2026],
+      active_year: 2026,
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
+
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2025']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/growth/annual-plan?year=2025',
+      )
+    })
+  })
+
+  it('allows logged-in no-role user to access /capability/model', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'public',
+      full_name: 'Public',
+      roles: [],
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model',
+      )
+    })
+  })
+})
+
 describe('year parameter persistence', () => {
   afterEach(() => {
     cleanup()
@@ -307,10 +400,12 @@ describe('year parameter persistence', () => {
     await waitFor(() => {
       expect(screen.getByText('数据范围：本人')).toBeTruthy()
     })
-    const yearLinks = screen
-      .getAllByRole('link')
-      .filter((l) => l.getAttribute('href')?.includes('year=2025'))
-    expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    await waitFor(() => {
+      const yearLinks = screen
+        .getAllByRole('link')
+        .filter((l) => l.getAttribute('href')?.includes('year=2025'))
+      expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    })
   })
 
   it('[2026 only] ?year=2025 falls back to 2026', async () => {
@@ -330,7 +425,9 @@ describe('year parameter persistence', () => {
     })
     const sel = container.querySelector('.year-selector') as HTMLSelectElement
     expect(sel).toBeTruthy()
-    expect(sel.value).toBe('2026')
+    await waitFor(() => {
+      expect(sel.value).toBe('2026')
+    })
   })
 
   it('no ?year= uses activeYear', async () => {
@@ -348,10 +445,12 @@ describe('year parameter persistence', () => {
     await waitFor(() => {
       expect(screen.getByText('数据范围：本人')).toBeTruthy()
     })
-    const yearLinks = screen
-      .getAllByRole('link')
-      .filter((l) => l.getAttribute('href')?.includes('year=2025'))
-    expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    await waitFor(() => {
+      const yearLinks = screen
+        .getAllByRole('link')
+        .filter((l) => l.getAttribute('href')?.includes('year=2025'))
+      expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    })
   })
 
   it('no activeYear uses latest available', async () => {
@@ -369,10 +468,12 @@ describe('year parameter persistence', () => {
     await waitFor(() => {
       expect(screen.getByText('数据范围：本人')).toBeTruthy()
     })
-    const yearLinks = screen
-      .getAllByRole('link')
-      .filter((l) => l.getAttribute('href')?.includes('year=2025'))
-    expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    await waitFor(() => {
+      const yearLinks = screen
+        .getAllByRole('link')
+        .filter((l) => l.getAttribute('href')?.includes('year=2025'))
+      expect(yearLinks.length).toBeGreaterThanOrEqual(2)
+    })
   })
 
   it('single year → selector disabled', async () => {

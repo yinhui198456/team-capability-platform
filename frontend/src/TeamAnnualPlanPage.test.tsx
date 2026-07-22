@@ -171,6 +171,9 @@ describe('TeamAnnualPlanPage', () => {
     await waitFor(() => {
       expect(screen.getByText('发布')).toBeTruthy()
     })
+    await waitFor(() => {
+      expect(screen.getByLabelText('P01 · Data Infra')).toBeTruthy()
+    })
 
     fireEvent.click(screen.getByLabelText('P01 · Data Infra'))
     fireEvent.click(screen.getByLabelText('P03 · Coding'))
