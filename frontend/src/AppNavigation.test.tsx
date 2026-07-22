@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
+
+function LocationDisplay() {
+  const location = useLocation()
+  return (
+    <span data-testid="location">{location.pathname + location.search}</span>
+  )
+}
 
 function response(payload: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) })
@@ -150,80 +157,115 @@ describe('role-based default routing', () => {
     vi.restoreAllMocks()
   })
 
-  function stubUser(role: string | null) {
-    if (role === null) {
-      vi.spyOn(accessApi, 'me').mockRejectedValue(new Error('Unauthorized'))
-      return
-    }
-    vi.spyOn(accessApi, 'me').mockResolvedValue({
-      id: 1,
-      username: role.toLowerCase(),
-      full_name: role,
-      roles: role === 'no-role' ? [] : [role],
-    })
+  function renderWithLocation(
+    initialEntries: string[],
+    user: accessApi.User | null,
+  ) {
+    vi.spyOn(accessApi, 'me').mockImplementation(() =>
+      user ? Promise.resolve(user) : Promise.reject(new Error('Unauthorized')),
+    )
+    return render(
+      <MemoryRouter initialEntries={initialEntries}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
   }
 
   it.each([
-    ['Admin', '/system/users', '用户管理'],
-    ['Leader', '/operations/analytics', '团队能力分析'],
-    ['Buddy', '/mentoring/dashboard', 'Buddy 复核中心'],
-    ['Member', '/dashboard/member', '我的成长总览'],
-    ['no-role', '/capability/model', '能力地图'],
-  ])('redirects %s from / to %s', async (role, _expectedPath, expectedText) => {
+    ['Admin', '/system/users'],
+    ['Leader', '/operations/analytics'],
+    ['Buddy', '/mentoring/dashboard'],
+    ['Member', '/dashboard/member'],
+  ])('redirects %s from / to %s', async (role, expectedPath) => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
       available_years: [2026],
       active_year: 2026,
     })
     if (role === 'Member') stubDashboard()
-    stubUser(role === 'no-role' ? null : role)
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <App />
-      </MemoryRouter>,
-    )
+    renderWithLocation(['/'], {
+      id: 1,
+      username: role.toLowerCase(),
+      full_name: role,
+      roles: [role],
+    })
     await waitFor(() => {
-      expect(screen.getByText(expectedText)).toBeTruthy()
+      expect(screen.getByTestId('location').textContent).toBe(expectedPath)
+    })
+  })
+
+  it('redirects no-role user from / to /capability/model', async () => {
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    renderWithLocation(['/'], {
+      id: 1,
+      username: 'public',
+      full_name: 'Public',
+      roles: [],
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model',
+      )
     })
   })
 
   it.each([
-    ['Admin', '/system/users', '用户管理'],
-    ['Leader', '/operations/analytics', '团队能力分析'],
-    ['Buddy', '/mentoring/dashboard', 'Buddy 复核中心'],
-    ['Member', '/dashboard/member', '我的成长总览'],
+    ['Admin', '/system/users'],
+    ['Leader', '/operations/analytics'],
+    ['Buddy', '/mentoring/dashboard'],
+    ['Member', '/dashboard/member'],
   ])(
     'redirects %s from unknown URL to default route',
-    async (role, _expectedPath, expectedText) => {
+    async (role, expectedPath) => {
       vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
         available_years: [2026],
         active_year: 2026,
       })
       if (role === 'Member') stubDashboard()
-      stubUser(role)
-      render(
-        <MemoryRouter initialEntries={['/not-a-real-page']}>
-          <App />
-        </MemoryRouter>,
-      )
+      renderWithLocation(['/not-a-real-page'], {
+        id: 1,
+        username: role.toLowerCase(),
+        full_name: role,
+        roles: [role],
+      })
       await waitFor(() => {
-        expect(screen.getByText(expectedText)).toBeTruthy()
+        expect(screen.getByTestId('location').textContent).toBe(expectedPath)
       })
     },
   )
 
-  it('redirects unauthenticated users from / to /login', async () => {
+  it('redirects no-role user from unknown URL to /capability/model', async () => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
       available_years: [2026],
       active_year: 2026,
     })
-    stubUser(null)
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <App />
-      </MemoryRouter>,
-    )
+    renderWithLocation(['/not-a-real-page'], {
+      id: 1,
+      username: 'public',
+      full_name: 'Public',
+      roles: [],
+    })
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'UAT 登录' })).toBeTruthy()
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model',
+      )
+    })
+  })
+
+  it('redirects unauthenticated users from / to /login', async () => {
+    renderWithLocation(['/'], null)
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
+  })
+
+  it('redirects unauthenticated users from unknown URL to /login', async () => {
+    renderWithLocation(['/not-a-real-page'], null)
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
     })
   })
 
@@ -232,21 +274,15 @@ describe('role-based default routing', () => {
       available_years: [2026],
       active_year: 2026,
     })
-    vi.spyOn(accessApi, 'me').mockResolvedValue({
+    renderWithLocation(['/'], {
       id: 1,
       username: 'admin-member',
       full_name: 'Admin Member',
       roles: ['Admin', 'Member'],
     })
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <App />
-      </MemoryRouter>,
-    )
     await waitFor(() => {
-      expect(screen.getByText('用户管理')).toBeTruthy()
+      expect(screen.getByTestId('location').textContent).toBe('/system/users')
     })
-    expect(screen.queryByText('Member 工作台')).toBeNull()
   })
 })
 

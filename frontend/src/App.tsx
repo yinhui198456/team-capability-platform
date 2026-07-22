@@ -34,64 +34,62 @@ function DefaultRoute() {
 
 export function App() {
   return (
-    <YearProvider>
-      <Routes>
-        {/* Public */}
-        <Route path="/login" element={<LoginPage />} />
+    <Routes>
+      {/* Public */}
+      <Route path="/login" element={<LoginPage />} />
 
-        {/* Legacy redirects */}
-        <Route
-          path="/growth/tasks"
-          element={<Navigate to="/growth/annual-plan" replace />}
-        />
-        <Route
-          path="/mentoring/assessment-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
-        />
-        <Route
-          path="/mentoring/evidence-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
-        />
-        <Route
-          path="/capability/gap"
-          element={<Navigate to="/capability/assessment" replace />}
-        />
+      {/* Legacy redirects */}
+      <Route
+        path="/growth/tasks"
+        element={<Navigate to="/growth/annual-plan" replace />}
+      />
+      <Route
+        path="/mentoring/assessment-review"
+        element={<Navigate to="/mentoring/dashboard" replace />}
+      />
+      <Route
+        path="/mentoring/evidence-review"
+        element={<Navigate to="/mentoring/dashboard" replace />}
+      />
+      <Route
+        path="/capability/gap"
+        element={<Navigate to="/capability/assessment" replace />}
+      />
 
-        {/* App shell with sidebar */}
-        <Route element={<Layout />}>
-          <Route path="/dashboard/member" element={<MemberDashboardPage />} />
-          <Route path="/capability/model" element={<CapabilityModelPage />} />
-          <Route
-            path="/capability/assessment"
-            element={<AssessmentGapPage />}
-          />
-          <Route
-            path="/capability/assessment/history"
-            element={<AssessmentHistoryPage />}
-          />
-          <Route path="/growth/goals" element={<GrowthGoalPage />} />
-          <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
-          <Route path="/growth/profile" element={<ProfilePage />} />
-          <Route
-            path="/growth/review/monthly"
-            element={<MonthlyReviewPage />}
-          />
-          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
-          <Route
-            path="/operations/resources"
-            element={<LearningResourcesPage />}
-          />
-          <Route path="/operations/analytics" element={<TeamAnalyticsPage />} />
-          <Route
-            path="/operations/team-annual-plan"
-            element={<TeamAnnualPlanPage />}
-          />
-          <Route path="/system/users" element={<SystemAdminPage />} />
+      {/* Authenticated app shell: YearProvider remounts after login */}
+      <Route
+        element={
+          <YearProvider>
+            <Layout />
+          </YearProvider>
+        }
+      >
+        <Route path="/dashboard/member" element={<MemberDashboardPage />} />
+        <Route path="/capability/model" element={<CapabilityModelPage />} />
+        <Route path="/capability/assessment" element={<AssessmentGapPage />} />
+        <Route
+          path="/capability/assessment/history"
+          element={<AssessmentHistoryPage />}
+        />
+        <Route path="/growth/goals" element={<GrowthGoalPage />} />
+        <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
+        <Route path="/growth/profile" element={<ProfilePage />} />
+        <Route path="/growth/review/monthly" element={<MonthlyReviewPage />} />
+        <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+        <Route
+          path="/operations/resources"
+          element={<LearningResourcesPage />}
+        />
+        <Route path="/operations/analytics" element={<TeamAnalyticsPage />} />
+        <Route
+          path="/operations/team-annual-plan"
+          element={<TeamAnnualPlanPage />}
+        />
+        <Route path="/system/users" element={<SystemAdminPage />} />
 
-          {/* Default: role-aware redirect or /login */}
-          <Route path="*" element={<DefaultRoute />} />
-        </Route>
-      </Routes>
-    </YearProvider>
+        {/* Default: role-aware redirect or /login */}
+        <Route path="*" element={<DefaultRoute />} />
+      </Route>
+    </Routes>
   )
 }

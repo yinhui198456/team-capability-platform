@@ -102,13 +102,14 @@ function YearSelector() {
   const year = useYear()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { pathname } = useLocation()
   const { availableYears } = useYearState()
   const singleYear = availableYears.length <= 1
 
   function handleChange(value: string) {
     const next = new URLSearchParams(searchParams)
     next.set('year', value)
-    navigate(`${window.location.pathname}?${next.toString()}`, {
+    navigate(`${pathname}?${next.toString()}`, {
       replace: true,
     })
   }
