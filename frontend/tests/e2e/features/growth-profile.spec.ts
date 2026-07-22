@@ -43,7 +43,9 @@ test.describe('成长档案', () => {
     await expect(selector).toBeVisible()
     await expect(selector).toHaveValue(String(growthProfileMockMember.id))
 
-    await selector.selectOption({ label: `${growthProfileMockMember2.full_name}（${growthProfileMockMember2.username}）` })
+    await selector.selectOption({
+      label: `${growthProfileMockMember2.full_name}（${growthProfileMockMember2.username}）`,
+    })
     await expect(
       page.getByText(new RegExp(`成员：${growthProfileMockMember2.full_name}`)),
     ).toBeVisible()
@@ -82,7 +84,9 @@ test.describe('成长档案', () => {
   test('Member 越权访问其他成员固定行为', async ({ page }) => {
     await mockGrowthProfileData(page)
     await loginAs(page, 'member')
-    await page.goto(`/growth/profile?member_id=${growthProfileMockMember2.id}&year=2026`)
+    await page.goto(
+      `/growth/profile?member_id=${growthProfileMockMember2.id}&year=2026`,
+    )
 
     await expect(
       page.getByRole('heading', { name: '成长档案', level: 1 }),

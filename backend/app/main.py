@@ -1,6 +1,5 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import psycopg
 from fastapi import FastAPI, HTTPException
@@ -12,7 +11,7 @@ from .access.schema import create_access_schema
 from .access.seed import seed_demo_accounts, seed_demo_business_data
 from .assessment import assessment_router, create_assessment_schema, gap_router
 from .catalog.api import router as catalog_router
-from .catalog.importer import ensure_catalog_initialized
+from .catalog.importer import ensure_catalog_initialized, resolve_workbook_dir
 from .planning import create_planning_schema, planning_router
 from .settings import settings
 
@@ -20,7 +19,7 @@ from .settings import settings
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     with psycopg.connect(settings.database_url) as connection:
-        ensure_catalog_initialized(connection, Path("/app/capability-model"))
+        ensure_catalog_initialized(connection, resolve_workbook_dir())
         create_access_schema(connection)
         create_assessment_schema(connection)
         create_planning_schema(connection)

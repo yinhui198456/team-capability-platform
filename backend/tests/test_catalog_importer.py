@@ -7,10 +7,14 @@ import psycopg
 import pytest
 from openpyxl import load_workbook
 
-from app.catalog.importer import ensure_catalog_initialized, import_catalog
+from app.catalog.importer import (
+    ensure_catalog_initialized,
+    import_catalog,
+    resolve_workbook_dir,
+)
 from app.catalog.schema import create_catalog_schema
 
-WORKBOOK_DIR = Path("/capability-model")
+WORKBOOK_DIR = resolve_workbook_dir()
 MODEL_WORKBOOK = "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx"
 PLAN_WORKBOOK = "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx"
 

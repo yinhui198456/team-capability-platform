@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import psycopg
 import pytest
 
-from app.catalog.importer import import_catalog
+from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.catalog.repository import (
     get_capability_model,
     get_learning_resource,
@@ -11,7 +9,7 @@ from app.catalog.repository import (
 )
 from app.catalog.schema import create_catalog_schema
 
-WORKBOOK_DIR = Path("/capability-model")
+WORKBOOK_DIR = resolve_workbook_dir()
 
 
 @pytest.fixture(autouse=True)

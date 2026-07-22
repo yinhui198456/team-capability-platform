@@ -159,9 +159,7 @@ def get_assessment_review_summary(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
-    return get_assessment_review_summary_for_buddy(
-        connection, int(user["id"]), year
-    )
+    return get_assessment_review_summary_for_buddy(connection, int(user["id"]), year)
 
 
 @assessment_router.get("/{assessment_id}")

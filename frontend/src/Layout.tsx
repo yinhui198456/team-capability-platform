@@ -1,6 +1,13 @@
-import { NavLink, Outlet, useSearchParams, useNavigate } from 'react-router-dom'
+import {
+  NavLink,
+  Outlet,
+  useSearchParams,
+  useNavigate,
+  useLocation,
+} from 'react-router-dom'
 import { useMe } from './catalog'
 import { useYear, useYearState } from './YearContext'
+import { defaultRouteFor } from './access'
 
 type NavItem = {
   label: string
@@ -17,13 +24,23 @@ type NavSection = {
 const NAV_SECTIONS: NavSection[] = [
   {
     label: '我的工作台',
-    items: [{ label: '我的工作台', href: '/dashboard/member', roles: ['Member'] }],
+    items: [
+      { label: '我的工作台', href: '/dashboard/member', roles: ['Member'] },
+    ],
   },
   {
     label: '能力成长',
     items: [
-      { label: '能力自评与 Gap', href: '/capability/assessment', roles: ['Member'] },
-      { label: '评估历史', href: '/capability/assessment/history', roles: ['Member'] },
+      {
+        label: '能力自评与 Gap',
+        href: '/capability/assessment',
+        roles: ['Member'],
+      },
+      {
+        label: '评估历史',
+        href: '/capability/assessment/history',
+        roles: ['Member'],
+      },
     ],
   },
   {
@@ -37,21 +54,41 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: '成长管理',
     items: [
-      { label: '月度复盘', href: '/growth/review/monthly', roles: ['Member', 'Buddy', 'Leader', 'Admin'] },
-      { label: '成长档案', href: '/growth/profile', roles: ['Member', 'Buddy', 'Leader', 'Admin'] },
+      {
+        label: '月度复盘',
+        href: '/growth/review/monthly',
+        roles: ['Member', 'Buddy', 'Leader', 'Admin'],
+      },
+      {
+        label: '成长档案',
+        href: '/growth/profile',
+        roles: ['Member', 'Buddy', 'Leader', 'Admin'],
+      },
     ],
   },
   {
     label: '导师指导',
     items: [
-      { label: 'Buddy 复核中心', href: '/mentoring/dashboard', roles: ['Buddy'] },
+      {
+        label: 'Buddy 复核中心',
+        href: '/mentoring/dashboard',
+        roles: ['Buddy'],
+      },
     ],
   },
   {
     label: '团队运营',
     items: [
-      { label: '团队能力分析', href: '/operations/analytics', roles: ['Leader'] },
-      { label: '团队年度能力规划', href: '/operations/team-annual-plan', roles: ['Leader'] },
+      {
+        label: '团队能力分析',
+        href: '/operations/analytics',
+        roles: ['Leader'],
+      },
+      {
+        label: '团队年度能力规划',
+        href: '/operations/team-annual-plan',
+        roles: ['Leader'],
+      },
       { label: '学习资源', href: '/operations/resources', roles: ['Leader'] },
     ],
   },
@@ -65,13 +102,16 @@ function YearSelector() {
   const year = useYear()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { pathname } = useLocation()
   const { availableYears } = useYearState()
   const singleYear = availableYears.length <= 1
 
   function handleChange(value: string) {
     const next = new URLSearchParams(searchParams)
     next.set('year', value)
-    navigate(`${window.location.pathname}?${next.toString()}`, { replace: true })
+    navigate(`${pathname}?${next.toString()}`, {
+      replace: true,
+    })
   }
 
   return (
@@ -84,7 +124,9 @@ function YearSelector() {
       aria-label="选择年度"
     >
       {availableYears.map((y) => (
-        <option key={y} value={y}>{y} 年</option>
+        <option key={y} value={y}>
+          {y} 年
+        </option>
       ))}
     </select>
   )
@@ -108,6 +150,9 @@ export function Layout() {
   const [searchParams] = useSearchParams()
   const contextYear = useYear()
   const yearForLinks = searchParams.get('year') ?? String(contextYear)
+  const location = useLocation()
+  const homePath = defaultRouteFor(roles)
+  const isPublicStandard = location.pathname === '/capability/model'
 
   function yHref(path: string): string {
     return `${path}?year=${yearForLinks}`
@@ -121,12 +166,16 @@ export function Layout() {
     <div className="app-shell">
       {/* Topbar — brand only, nav is sidebar-exclusive */}
       <header className="app-topbar">
-        <NavLink to={yHref('/dashboard/member')} className="app-topbar-brand">
+        <NavLink to={yHref(homePath)} className="app-topbar-brand">
           Team Capability Platform
         </NavLink>
         <div className="app-topbar-right">
           {roles.includes('Member') && <YearSelector />}
-          <span className="app-topbar-scope">数据范围：{scopeLabel(roles)}</span>
+          {!isPublicStandard && (
+            <span className="app-topbar-scope">
+              数据范围：{scopeLabel(roles)}
+            </span>
+          )}
         </div>
       </header>
 

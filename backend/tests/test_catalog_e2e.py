@@ -1,12 +1,12 @@
 import asyncio
 import json
-from pathlib import Path
 
 import psycopg
 
+from app.catalog.importer import resolve_workbook_dir
 from app.main import app, lifespan
 
-WORKBOOK_DIR = Path("/app/capability-model")
+WORKBOOK_DIR = resolve_workbook_dir()
 WORKBOOKS = (
     "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx",
     "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx",

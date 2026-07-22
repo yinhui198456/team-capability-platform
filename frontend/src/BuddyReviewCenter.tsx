@@ -11,7 +11,6 @@ import {
   listPendingReviews,
   submitReview,
   type PendingReview,
-  type ReviewSummary as AssessmentReviewSummary,
 } from './assessmentReview'
 import { useMe } from './catalog'
 import {
@@ -32,7 +31,6 @@ import {
   submitEvidenceReview,
   type EvidenceReviewConclusion,
   type EvidenceReview,
-  type ReviewSummary as EvidenceReviewSummary,
 } from './planning'
 import { useYear } from './YearContext'
 
@@ -120,13 +118,6 @@ export function BuddyReviewCenter() {
     ].filter((item) => assignedIds.has(item.memberId))
   }, [assessmentReviews, evidenceReviews, members])
 
-  const assessmentCount = queueItems.filter(
-    (item) => item.kind === 'assessment',
-  ).length
-  const evidenceCount = queueItems.filter(
-    (item) => item.kind === 'evidence',
-  ).length
-
   const memberName = (id: number) =>
     members.find((member) => member.id === id)?.full_name ?? `成员 ${id}`
 
@@ -161,17 +152,13 @@ export function BuddyReviewCenter() {
     let active = true
     async function load() {
       try {
-        const [
-          assessments,
-          evidences,
-          assessmentSummary,
-          evidenceSummary,
-        ] = await Promise.all([
-          listPendingReviews(),
-          listPendingEvidenceReviews(),
-          getAssessmentReviewSummary(year),
-          getEvidenceReviewSummary(year),
-        ])
+        const [assessments, evidences, assessmentSummary, evidenceSummary] =
+          await Promise.all([
+            listPendingReviews(),
+            listPendingEvidenceReviews(),
+            getAssessmentReviewSummary(year),
+            getEvidenceReviewSummary(year),
+          ])
         if (!active) return
         setAssessmentReviews(assessments)
         setEvidenceReviews(evidences)
@@ -248,7 +235,9 @@ export function BuddyReviewCenter() {
           if (!active) return
           setAssessmentDetails([])
           setHistory(
-            reviews.filter((review: EvidenceReview) => review.conclusion !== null),
+            reviews.filter(
+              (review: EvidenceReview) => review.conclusion !== null,
+            ),
           )
         }
       } catch (err) {
@@ -490,15 +479,19 @@ export function BuddyReviewCenter() {
                     <ul className="compact-list">
                       {assessmentDetails.map((detail) => (
                         <li key={detail.l3_code}>
-                          {detail.l3_code}：当前 {detail.current_level ?? '—'} → 目标{' '}
-                          {detail.target_level ?? '—'}（Gap{' '}
+                          {detail.l3_code}：当前 {detail.current_level ?? '—'} →
+                          目标 {detail.target_level ?? '—'}（Gap{' '}
                           {detail.gap_value ??
-                            (detail.current_level != null && detail.target_level != null
+                            (detail.current_level != null &&
+                            detail.target_level != null
                               ? detail.target_level - detail.current_level
                               : 0)}
                           ）
                           {detail.evidence_note && (
-                            <span className="muted"> · {detail.evidence_note}</span>
+                            <span className="muted">
+                              {' '}
+                              · {detail.evidence_note}
+                            </span>
                           )}
                         </li>
                       ))}

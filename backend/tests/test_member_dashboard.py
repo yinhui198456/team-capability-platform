@@ -46,6 +46,12 @@ def test_member_dashboard_aggregates_only_current_member_data(
     assert len(body["gaps"]) == 1
     assert body["gaps"][0]["l3_code"] == "P01-L2A-L3A"
     assert body["current_tasks"] == []
+    assert body["assessment"] is not None
+    assert body["assessment"]["status"] == "已归档"
+    assert body["assessment"]["submitted_at"] is not None
+    assert body["assessment"]["review_status"] == "已闭环"
+    assert body["assessment"]["review_conclusion"] == "认可"
+    assert body["annual_plan_status"] == "制定中"
 
 
 def test_member_dashboard_rejects_non_members(

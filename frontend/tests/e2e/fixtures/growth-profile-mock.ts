@@ -12,7 +12,9 @@ export const growthProfileMockMember2 = {
   full_name: '李四',
 }
 
-export function buildGrowthProfileResponse(member: typeof growthProfileMockMember) {
+export function buildGrowthProfileResponse(
+  member: typeof growthProfileMockMember,
+) {
   return {
     id: 1,
     member_id: member.id,
@@ -61,7 +63,7 @@ export function buildGrowthProfileResponse(member: typeof growthProfileMockMembe
           annual_growth_plan_id: 20,
           growth_goal_id: 40,
           l3_code: 'P01-L2A-L3A',
-          l3_name: '能力项 P01',
+          l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
           current_level: 2,
           target_level: 4,
           priority: '高',
@@ -77,7 +79,7 @@ export function buildGrowthProfileResponse(member: typeof growthProfileMockMembe
             id: 50,
             plan_item_id: 30,
             l3_code: 'P01-L2A-L3A',
-            l3_name: '能力项 P01',
+            l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
             status: '已完成',
             actual_start_date: '2026-03-01',
             actual_end_date: '2026-03-31',
@@ -140,7 +142,7 @@ export function buildGrowthProfileResponse(member: typeof growthProfileMockMembe
           annual_growth_plan_id: 20,
           growth_goal_id: 41,
           l3_code: 'C01-L2A-L3A',
-          l3_name: '能力项 C01',
+          l3_name: '常用办公工具基础',
           current_level: 3,
           target_level: 4,
           priority: '中',
@@ -156,7 +158,7 @@ export function buildGrowthProfileResponse(member: typeof growthProfileMockMembe
             id: 51,
             plan_item_id: 31,
             l3_code: 'C01-L2A-L3A',
-            l3_name: '能力项 C01',
+            l3_name: '常用办公工具基础',
             status: '进行中',
             actual_start_date: null,
             actual_end_date: null,
@@ -228,15 +230,18 @@ export async function mockGrowthProfileData(page: Page): Promise<void> {
     })
   })
 
-  await page.route('/api/planning/profiles/selectable-members*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        members: [growthProfileMockMember, growthProfileMockMember2],
-      }),
-    })
-  })
+  await page.route(
+    '/api/planning/profiles/selectable-members*',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          members: [growthProfileMockMember, growthProfileMockMember2],
+        }),
+      })
+    },
+  )
 
   await page.route('/api/planning/available-years', async (route) => {
     await route.fulfill({
@@ -271,13 +276,16 @@ export async function mockGrowthProfileEmptyData(page: Page): Promise<void> {
     })
   })
 
-  await page.route('/api/planning/profiles/selectable-members*', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ members: [growthProfileMockMember] }),
-    })
-  })
+  await page.route(
+    '/api/planning/profiles/selectable-members*',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ members: [growthProfileMockMember] }),
+      })
+    },
+  )
 
   await page.route('/api/planning/available-years', async (route) => {
     await route.fulfill({

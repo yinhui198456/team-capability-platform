@@ -690,9 +690,7 @@ def test_evidence_review_summary_counts_pending_and_completed(
 def test_evidence_review_summary_filters_by_year(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
-    _seed_submitted_evidence(
-        evidence_review_schema, "member_ev_year", "buddy_ev_year"
-    )
+    _seed_submitted_evidence(evidence_review_schema, "member_ev_year", "buddy_ev_year")
 
     status, body = _summary(evidence_review_schema, "buddy_ev_year", 2025)
     assert status == 200
@@ -716,12 +714,8 @@ def test_evidence_review_summary_requires_buddy_role(
 def test_evidence_review_summary_only_includes_assigned_members(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
-    _seed_submitted_evidence(
-        evidence_review_schema, "member_ev_a", "buddy_ev_a"
-    )
-    _seed_submitted_evidence(
-        evidence_review_schema, "member_ev_b", "buddy_ev_b"
-    )
+    _seed_submitted_evidence(evidence_review_schema, "member_ev_a", "buddy_ev_a")
+    _seed_submitted_evidence(evidence_review_schema, "member_ev_b", "buddy_ev_b")
 
     status, body = _summary(evidence_review_schema, "buddy_ev_a", 2026)
     assert status == 200

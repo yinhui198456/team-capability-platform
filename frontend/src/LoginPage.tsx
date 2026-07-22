@@ -1,8 +1,13 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
-import { login } from './access'
+import { login, defaultRouteFor, type User } from './access'
+
+import { useAuth } from './AuthContext'
 
 export function LoginPage() {
+  const navigate = useNavigate()
+  const { refresh } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -14,8 +19,9 @@ export function LoginPage() {
     setLoading(true)
 
     try {
-      await login(username, password)
-      window.location.href = '/capability/model'
+      const user: User = await login(username, password)
+      await refresh()
+      navigate(defaultRouteFor(user.roles), { replace: true })
     } catch (error) {
       setError(error instanceof Error ? error.message : '登录失败')
     } finally {

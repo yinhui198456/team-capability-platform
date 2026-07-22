@@ -71,9 +71,7 @@ def _require_leader(user: CurrentUser) -> None:
 
 
 @planning_router.get("/available-years")
-def get_available_years(
-    user: CurrentUser, connection: Connection
-) -> dict[str, object]:
+def get_available_years(user: CurrentUser, connection: Connection) -> dict[str, object]:
     """Returns years with data for the current user, plus the active year."""
     _require_member(user)
     member_id = int(user["id"])
@@ -87,8 +85,14 @@ def get_available_years(
         """,
         (member_id, member_id),
     ).fetchall()
-    available = [r[0] for r in rows] if rows else [int(__import__('datetime').datetime.now().year)]
-    active = max(available) if available else int(__import__('datetime').datetime.now().year)
+    available = (
+        [r[0] for r in rows]
+        if rows
+        else [int(__import__("datetime").datetime.now().year)]
+    )
+    active = (
+        max(available) if available else int(__import__("datetime").datetime.now().year)
+    )
     return {"available_years": available, "active_year": active}
 
 

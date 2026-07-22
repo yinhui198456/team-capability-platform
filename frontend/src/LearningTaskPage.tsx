@@ -6,6 +6,7 @@ import {
   createEvidence,
   createProgressLog,
   deleteProgressLog,
+  formatL3Name,
   getAnnualPlan,
   getMonthlyHours,
   listEvidences,
@@ -350,7 +351,9 @@ export function LearningTaskPage({
               className="task-detail"
             >
               <div className="learning-task-header">
-                <span className="learning-task-l3">{task.l3_code}</span>
+                <span className="learning-task-l3">
+                  {formatL3Name(task.l3_name, task.l3_code)}
+                </span>
                 <span className="learning-task-levels">
                   当前 {task.plan_item_current_level} → 目标{' '}
                   {task.plan_item_target_level}

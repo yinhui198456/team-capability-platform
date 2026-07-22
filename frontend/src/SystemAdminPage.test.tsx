@@ -63,9 +63,9 @@ it('renders the Admin system management workspace', async () => {
   render(
     <MemoryRouter initialEntries={['/system/users']}>
       <App />
-    </MemoryRouter>
+    </MemoryRouter>,
   )
-    await waitFor(() => {
+  await waitFor(() => {
     expect(screen.getByRole('heading', { name: '系统管理' })).toBeTruthy()
   })
   expect(screen.getByText('用户管理')).toBeTruthy()

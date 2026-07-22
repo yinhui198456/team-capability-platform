@@ -6,7 +6,9 @@ export type AvailableYears = {
 }
 
 export async function getAvailableYears(): Promise<AvailableYears> {
-  return request<AvailableYears>('/api/planning/available-years', { method: 'GET' })
+  return request<AvailableYears>('/api/planning/available-years', {
+    method: 'GET',
+  })
 }
 
 export type AnnualPlanEligibility = {
@@ -53,6 +55,7 @@ export type PlanItem = {
   annual_growth_plan_id: number
   growth_goal_id: number
   l3_code: string
+  l3_name?: string | null
   current_level: number
   target_level: number
   priority: '高' | '中' | '低'
@@ -89,8 +92,25 @@ export type LearningTask = {
   plan_item_target_month?: number | null
 }
 
+export type MemberDashboardAssessmentStatus =
+  '草稿' | '待复核' | '已复核' | '建议调整' | '已归档'
+
+export type MemberDashboardAnnualPlanStatus =
+  '制定中' | '执行中' | '已归档' | null
+
+export type MemberDashboardAssessment = {
+  id: number
+  status: MemberDashboardAssessmentStatus
+  submitted_at: string | null
+  archived_at: string | null
+  review_status: '待复核' | '已闭环' | null
+  review_conclusion: '认可' | '建议调整' | null
+}
+
 export type MemberDashboard = {
   year: number
+  assessment: MemberDashboardAssessment | null
+  annual_plan_status: MemberDashboardAnnualPlanStatus
   summary: {
     annual_actual_hours: number
     annual_planned_hours: number
@@ -212,6 +232,14 @@ export type PlanItemUpdate = Partial<{
   target_month: number | null
   status: '进行中' | '暂停' | '取消'
 }>
+
+export function formatL3Name(
+  l3Name: string | null | undefined,
+  l3Code: string,
+): string {
+  const name = l3Name?.trim()
+  return name ? `${name}（${l3Code}）` : l3Code
+}
 
 export async function updatePlanItem(
   plan_item_id: number,
@@ -668,7 +696,9 @@ export async function getTeamAnalytics(query: {
   })
 }
 
-export async function createLearningTask(plan_item_id: number): Promise<LearningTask> {
+export async function createLearningTask(
+  plan_item_id: number,
+): Promise<LearningTask> {
   return request<LearningTask>(
     `/api/planning/plan-items/${plan_item_id}/learning-task`,
     { method: 'POST' },

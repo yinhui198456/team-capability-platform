@@ -3,7 +3,9 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 test.describe('smoke', () => {
-  test('anonymous capability model page shows six domains', async ({ page }) => {
+  test('anonymous capability model page shows six domains', async ({
+    page,
+  }) => {
     const response = await page.request.get('/api/capability-model')
     expect(response.ok()).toBeTruthy()
     const payload = await response.json()

@@ -138,7 +138,7 @@ describe('BuddyReviewCenter', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() =>
       expect(
@@ -149,8 +149,12 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByText('待 Review Evidence')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '辅导成员' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '全部成员' })).toBeTruthy()
-    const memberList = screen.getByRole('heading', { name: '辅导成员' }).parentElement!
-    expect(within(memberList).getByRole('button', { name: /成员甲/ })).toBeTruthy()
+    const memberList = screen.getByRole('heading', {
+      name: '辅导成员',
+    }).parentElement!
+    expect(
+      within(memberList).getByRole('button', { name: /成员甲/ }),
+    ).toBeTruthy()
     expect(within(memberList).queryByText(',')).toBeNull()
     expect(screen.queryByText('’')).toBeNull()
     expect(screen.getByRole('tab', { name: '全部待处理' })).toBeTruthy()
@@ -177,7 +181,7 @@ describe('BuddyReviewCenter', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('认可'))
@@ -204,7 +208,10 @@ describe('BuddyReviewCenter', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Evidence Review' })).toBeTruthy(),
     )
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
@@ -244,7 +251,7 @@ describe('BuddyReviewCenter', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() =>
       expect(screen.getByText('当前范围暂无待处理项。')).toBeTruthy(),
@@ -264,7 +271,9 @@ describe('BuddyReviewCenter', () => {
     )
     await waitFor(() => expect(screen.getByText('建议调整')).toBeTruthy())
     fireEvent.click(screen.getByText('建议调整'))
-    expect((screen.getByLabelText('建议调整') as HTMLInputElement).checked).toBe(true)
+    expect(
+      (screen.getByLabelText('建议调整') as HTMLInputElement).checked,
+    ).toBe(true)
   })
 
   it('selects an Evidence conclusion by clicking the label text', async () => {
@@ -274,10 +283,15 @@ describe('BuddyReviewCenter', () => {
         <App />
       </MemoryRouter>,
     )
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Evidence Review' })).toBeTruthy(),
+    )
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() => expect(screen.getByText('需补充')).toBeTruthy())
     fireEvent.click(screen.getByText('需补充'))
-    expect((screen.getByLabelText('需补充') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText('需补充') as HTMLInputElement).checked).toBe(
+      true,
+    )
   })
 
   it.each(['/mentoring/assessment-review', '/mentoring/evidence-review'])(
@@ -287,7 +301,7 @@ describe('BuddyReviewCenter', () => {
       render(
         <MemoryRouter initialEntries={[path]}>
           <App />
-        </MemoryRouter>
+        </MemoryRouter>,
       )
 
       await waitFor(() =>

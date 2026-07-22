@@ -12,7 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import type { CapabilityModel } from './catalog'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
+
+function LocationDisplay() {
+  const location = useLocation()
+  return (
+    <span data-testid="location">{location.pathname + location.search}</span>
+  )
+}
 
 function emptyDomain(code: string) {
   return {
@@ -174,6 +181,8 @@ function mockFetchWithAuth(
 ) {
   return vi.fn((input: string) => {
     if (input === '/api/auth/me') return userResponse
+    if (input === '/api/planning/available-years')
+      return response({ available_years: [2026], active_year: 2026 })
     if (input.startsWith('/api/capability-model')) return response(model)
     if (input === '/api/learning-resources/P01-M001') return response(detail)
     if (input.includes('name=%E4%BA%A7%E5%93%81%E4%BD%93%E7%B3%BB')) {
@@ -187,6 +196,20 @@ function mockFetchWithAuth(
     if (input.includes('l3_code=P01.01.01')) return response([resources[0]])
     return response(resources)
   })
+}
+
+function stubMember() {
+  vi.stubGlobal(
+    'fetch',
+    mockFetchWithAuth(
+      response({
+        id: 2,
+        username: 'member',
+        full_name: 'Member User',
+        roles: ['Member'],
+      }),
+    ),
+  )
 }
 
 beforeEach(() => {
@@ -213,10 +236,11 @@ afterEach(() => {
 
 describe('catalog routes', () => {
   it('renders the read-only capability tree with unmatched material warning', async () => {
+    stubMember()
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/Data Infra 能力/)
     fireEvent.click(screen.getByText(/Data Infra 产品体系认知/))
@@ -235,10 +259,11 @@ describe('catalog routes', () => {
   })
 
   it('filters resources by name, status, and L3 then links reverse L3 details', async () => {
+    stubMember()
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.change(screen.getByLabelText('名称'), {
@@ -278,10 +303,11 @@ describe('catalog routes', () => {
   it.each(['/capability/model', '/operations/resources'])(
     'does not render mutation or other-domain controls on %s',
     async (path) => {
+      stubMember()
       render(
         <MemoryRouter initialEntries={[path]}>
           <App />
-        </MemoryRouter>
+        </MemoryRouter>,
       )
 
       await screen.findByText(
@@ -305,20 +331,25 @@ describe('catalog routes', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     // Verify catalog model was never fetched — the redirect should NOT trigger catalog loading
-    const modelCalls = vi.mocked(fetch).mock.calls.filter(
-      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).startsWith('/api/capability-model'),
-    )
+    const modelCalls = vi
+      .mocked(fetch)
+      .mock.calls.filter(
+        (call: unknown[]) =>
+          typeof call[0] === 'string' &&
+          (call[0] as string).startsWith('/api/capability-model'),
+      )
     expect(modelCalls).toHaveLength(0)
   })
 
   it('renders the capability model with L3 details on the model page', async () => {
+    stubMember()
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/TDC \/ TDH \/ ArgoDB \/ TDS 产品定位/)
     const target = document.getElementById('P01.01.01')
@@ -330,13 +361,16 @@ describe('catalog routes', () => {
 })
 
 describe('Member and anonymous catalog access', () => {
-  it('does not show Leader controls for an unauthenticated user', async () => {
+  it('redirects an unauthenticated user from /capability/model to /login', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+        <LocationDisplay />
+      </MemoryRouter>,
     )
-    await screen.findByText(/Data Infra 能力/)
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
     expect(screen.queryByText('编辑')).toBeNull()
     expect(screen.queryByText('编辑节点')).toBeNull()
   })
@@ -356,7 +390,7 @@ describe('Member and anonymous catalog access', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     expect(screen.queryByText('新建资源')).toBeNull()
@@ -403,7 +437,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/Data Infra 能力/)
     expect(screen.getAllByText('编辑').length).toBeGreaterThanOrEqual(2)
@@ -414,7 +448,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/Data Infra 能力/)
     fireEvent.click(screen.getAllByText('编辑')[0])
@@ -458,7 +492,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/Data Infra 能力/)
     fireEvent.click(screen.getAllByText('编辑节点')[0])
@@ -497,7 +531,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     expect(screen.getByText('新建资源')).toBeTruthy()
@@ -508,7 +542,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getByText('新建资源'))
@@ -569,7 +603,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
@@ -616,7 +650,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
@@ -630,7 +664,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
@@ -655,7 +689,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText(/Data Infra 能力/)
     fireEvent.click(screen.getAllByText('编辑')[0])
@@ -676,7 +710,7 @@ describe('Leader catalog controls', () => {
     render(
       <MemoryRouter initialEntries={['/operations/resources']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getByText('新建资源'))

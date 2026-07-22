@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { request } from './shared/api'
 import { me, type User } from './access'
+import { useAuth } from './AuthContext'
 
 const DOMAIN_CODES = new Set(['P01', 'P02', 'P03', 'C01', 'C02', 'C03'])
 
@@ -83,8 +84,6 @@ export type ResourceDetail = {
   }>
 }
 
-
-
 export function useCatalog<T>(path: string | null) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
@@ -113,29 +112,35 @@ export function useCatalog<T>(path: string | null) {
 }
 
 export function useMe() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const auth = useAuth()
+  const hasProvider = auth.hasProvider
+
+  const [directUser, setDirectUser] = useState<User | null>(null)
+  const [directLoading, setDirectLoading] = useState(!hasProvider)
 
   useEffect(() => {
+    if (hasProvider) return
     let active = true
-    setLoading(true)
+    setDirectLoading(true)
     me().then(
       (value) => {
         if (!active) return
-        setUser(value)
-        setLoading(false)
+        setDirectUser(value)
+        setDirectLoading(false)
       },
       () => {
         if (!active) return
-        setUser(null)
-        setLoading(false)
+        setDirectUser(null)
+        setDirectLoading(false)
       },
     )
     return () => {
       active = false
     }
-  }, [])
+  }, [hasProvider])
 
+  const user = hasProvider ? auth.user : directUser
+  const loading = hasProvider ? auth.loading : directLoading
   return { user, loading, isLeader: user?.roles.includes('Leader') ?? false }
 }
 
@@ -162,7 +167,11 @@ export async function updateCapabilityNode(
   nodeCode: string,
   body: object,
 ): Promise<object> {
-  return request<object>(`/api/capability-model/nodes/${nodeCode}`, { method: 'PUT' }, body)
+  return request<object>(
+    `/api/capability-model/nodes/${nodeCode}`,
+    { method: 'PUT' },
+    body,
+  )
 }
 
 export async function createLearningResource(body: object): Promise<object> {
@@ -173,14 +182,17 @@ export async function updateLearningResource(
   materialCode: string,
   body: object,
 ): Promise<object> {
-  return request<object>(`/api/learning-resources/${materialCode}`, { method: 'PUT' }, body)
+  return request<object>(
+    `/api/learning-resources/${materialCode}`,
+    { method: 'PUT' },
+    body,
+  )
 }
 
 export async function archiveLearningResource(
   materialCode: string,
 ): Promise<object> {
-  return request<object>(
-    `/api/learning-resources/${materialCode}/archive`,
-    { method: 'POST' },
-  )
+  return request<object>(`/api/learning-resources/${materialCode}/archive`, {
+    method: 'POST',
+  })
 }

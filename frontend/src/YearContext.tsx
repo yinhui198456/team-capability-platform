@@ -22,61 +22,76 @@ export function YearProvider({ children }: { children: React.ReactNode }) {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const [year, setYear] = useState<number>(() => {
-    const p = searchParams.get('year')
-    return p ? parseInt(p, 10) : fallbackYear
-  })
-  const [availableYears, setAvailableYears] = useState<number[]>([])
+  const [yearData, setYearData] = useState<{
+    availableYears: number[]
+    activeYear: number | null
+  } | null>(null)
+  const [year, setYear] = useState<number>(fallbackYear)
   const [ready, setReady] = useState(false)
 
+  // Fetch available years once on mount.
   useEffect(() => {
     let cancelled = false
     getAvailableYears()
       .then((data) => {
         if (cancelled) return
-        const avail = data.available_years ?? []
-        const active = data.active_year
-        const urlParam = searchParams.get('year')
-        const urlYear = urlParam ? parseInt(urlParam, 10) : null
-
-        let resolved: number
-        if (urlYear && Number.isFinite(urlYear) && avail.includes(urlYear)) {
-          resolved = urlYear
-        } else if (urlYear && Number.isFinite(urlYear) && !avail.includes(urlYear)) {
-          // Invalid year in URL — redirect to active
-          const next = new URLSearchParams(searchParams)
-          next.set('year', String(active))
-          navigate(`${location.pathname}?${next.toString()}`, { replace: true })
-          resolved = active
-        } else if (active) {
-          resolved = active
-        } else if (avail.length > 0) {
-          resolved = Math.max(...avail)
-        } else {
-          resolved = fallbackYear
-        }
-
-        setAvailableYears(avail)
-        if (!cancelled) setYear(resolved)
-        setReady(true)
+        setYearData({
+          availableYears: data.available_years ?? [],
+          activeYear: data.active_year || null,
+        })
       })
       .catch(() => {
         if (!cancelled) {
-          setAvailableYears([])
-          const urlParam = searchParams.get('year')
-          const urlYear = urlParam ? parseInt(urlParam, 10) : null
-          setYear(urlYear && Number.isFinite(urlYear) ? urlYear : fallbackYear)
-          setReady(true)
+          setYearData({ availableYears: [], activeYear: null })
         }
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [])
 
+  // Resolve / sync year whenever the URL param or fetched metadata changes.
+  useEffect(() => {
+    if (!yearData) return
+
+    const { availableYears, activeYear } = yearData
+    const urlParam = searchParams.get('year')
+    const urlYear = urlParam ? parseInt(urlParam, 10) : null
+
+    const validAvail =
+      availableYears.length > 0
+        ? availableYears
+        : activeYear
+          ? [activeYear]
+          : []
+    const resolvedActive =
+      activeYear ||
+      (validAvail.length > 0 ? Math.max(...validAvail) : fallbackYear)
+
+    let resolved: number
+    if (urlYear && Number.isFinite(urlYear) && validAvail.includes(urlYear)) {
+      resolved = urlYear
+    } else if (urlYear && Number.isFinite(urlYear)) {
+      // Invalid year in URL — redirect to active year without breaking history.
+      const next = new URLSearchParams(searchParams)
+      next.set('year', String(resolvedActive))
+      navigate(`${location.pathname}?${next.toString()}`, { replace: true })
+      resolved = resolvedActive
+    } else {
+      resolved = resolvedActive
+    }
+
+    setYear(resolved)
+    setReady(true)
+  }, [searchParams, yearData, navigate, location.pathname])
+
   return (
-    <YearStateContext.Provider value={{ availableYears }}>
-    <YearContext.Provider value={ready ? year : fallbackYear}>
-      {children}
-    </YearContext.Provider>
+    <YearStateContext.Provider
+      value={{ availableYears: yearData?.availableYears ?? [] }}
+    >
+      <YearContext.Provider value={ready ? year : fallbackYear}>
+        {children}
+      </YearContext.Provider>
     </YearStateContext.Provider>
   )
 }

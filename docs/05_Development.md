@@ -126,6 +126,17 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 原型路径固定为：`docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png`、`UI-02-assessment-gap.png`、`UI-03-annual-plan-task.png`、`UI-04-buddy-review-center.png`、`UI-05-team-capability-analysis.png`。
 
+#### 4.1.1 登录后默认路由
+
+| 登录角色 | 默认跳转路由 | 回退 |
+|---|---|---|
+| Member | `/dashboard/member` | `/capability/model` |
+| Buddy | `/mentoring/dashboard` | `/capability/model` |
+| Leader | `/operations/analytics` | `/capability/model` |
+| Admin | `/system/users` | `/capability/model` |
+
+多角色账号按 Admin → Leader → Buddy → Member 顺序命中第一个有效角色；无任何业务角色时回退到 `/capability/model`。
+
 | 原型 | 主路由/页面 | 实际资产路径 |
 |---|---|---|
 | UI-01 | `/dashboard/member` / 我的成长看板 | `docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png` |
@@ -260,3 +271,64 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 - E2E 测试复用 Docker Compose 的演示种子数据，不单独创建测试数据库。
 - 写入型测试按角色使用固定演示账号，避免跨测试状态污染；必要时在测试前后通过 API 重置目标对象状态。
+
+## 10. 后端本地测试
+
+后端代码依赖 `psycopg` 等包，必须在项目虚拟环境中运行测试。
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest tests/test_member_dashboard.py tests/test_capability_profile.py -v
+```
+
+### 全量测试命令
+
+能力模型文件路径通过 `app.catalog.importer.resolve_workbook_dir()` 自动解析，不再依赖当前工作目录。以下命令均可在仓库根目录或 `backend/` 子目录执行：
+
+```bash
+cd backend
+source .venv/bin/activate
+
+# 代码风格检查
+ruff check app tests
+black --check app tests
+
+# 全量后端测试
+pytest tests -q
+
+# 单模块调试
+pytest tests/test_catalog_api.py -v
+```
+
+### Docker 内测试
+
+`backend/Dockerfile` 已增加 `test` stage，可在容器内运行完整 pytest：
+
+```bash
+# 先启动本地 PostgreSQL（例如通过 docker compose up -d postgres）
+docker build --target test -t tcp-backend:test -f backend/Dockerfile .
+docker run --rm --network host --add-host postgres:127.0.0.1 tcp-backend:test pytest tests -q
+```
+
+### 常见问题
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'psycopg'` | 未激活 `.venv`，系统 Python 缺少依赖 | `source .venv/bin/activate` |
+| `FileNotFoundError: ... capability-model/...xlsx` | 能力模型文件缺失或路径解析失败 | 确认 `capability-model/` 目录存在且包含两份 Excel |
+
+## 11. 质量门禁与 CI
+
+仓库已配置 GitHub Actions：
+
+- `.github/workflows/backend.yml`：Ruff、Black、全量 pytest、Docker `test` stage 构建。
+- `.github/workflows/frontend.yml`：ESLint、Prettier、vitest 单元测试、Vite 生产构建。
+- `.github/workflows/e2e.yml`：Docker Compose 启动、健康检查、smoke 测试、Playwright E2E。
+
+本地提交前建议依次执行：
+
+```bash
+cd backend && source .venv/bin/activate && ruff check app tests && black --check app tests && pytest tests -q
+cd ../frontend && npm run lint && npm run format:check && npm run test && npm run build
+```

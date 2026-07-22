@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
-const backendURL = process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://localhost:18001'
+const backendURL =
+  process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://localhost:18001'
 const year = new Date().getFullYear()
 
 test.describe('e2e smoke', () => {
@@ -29,9 +30,13 @@ test.describe('e2e smoke', () => {
     expect(payload.roles).toContain('Member')
   })
 
-  test('member profile loads with assessments and annual plan', async ({ page }) => {
+  test('member profile loads with assessments and annual plan', async ({
+    page,
+  }) => {
     await loginAs(page, 'member')
-    const response = await page.request.get(`/api/planning/profiles?year=${year}`)
+    const response = await page.request.get(
+      `/api/planning/profiles?year=${year}`,
+    )
     expect(response.ok()).toBeTruthy()
     const payload = await response.json()
     expect(payload.member.username).toBe('member')

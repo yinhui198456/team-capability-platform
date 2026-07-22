@@ -17,7 +17,9 @@ for (const viewport of VIEWPORTS) {
         page.getByRole('heading', { name: '年度成长计划' }),
       ).toBeVisible()
       // Wait for async plan items to render before screenshots
-      await expect.poll(async () => page.getByTestId('plan-item').count()).toBeGreaterThan(0)
+      await expect
+        .poll(async () => page.getByTestId('plan-item').count())
+        .toBeGreaterThan(0)
     })
 
     test('annual plan and learning-task semantics', async ({ page }) => {

@@ -86,7 +86,7 @@ describe('AssessmentReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(
@@ -129,7 +129,7 @@ describe('AssessmentReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByLabelText('认可')).toBeTruthy()
@@ -184,7 +184,7 @@ describe('AssessmentReviewPage', () => {
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByLabelText('建议调整')).toBeTruthy()

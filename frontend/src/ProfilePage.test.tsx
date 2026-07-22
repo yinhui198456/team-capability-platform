@@ -1,6 +1,12 @@
 /// @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -171,8 +177,9 @@ describe('ProfilePage', () => {
     expect(within(kpiRegion).getByText('实际学习时长')).toBeTruthy()
     expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
-    expect(screen.getAllByText('P01-L2A-L3A').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('测试能力项 P01').length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText(/测试能力项 P01（P01-L2A-L3A）/).length,
+    ).toBeGreaterThanOrEqual(2)
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()
     expect(screen.getByText(/Review 结论：通过/)).toBeTruthy()
@@ -288,7 +295,9 @@ describe('ProfilePage', () => {
     })
 
     expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
-    expect(screen.getByText(/数据范围：负责成员/, { selector: 'p' })).toBeTruthy()
+    expect(
+      screen.getByText(/数据范围：负责成员/, { selector: 'p' }),
+    ).toBeTruthy()
   })
 
   it('shows member selector for Leader and lists team members', async () => {
@@ -331,8 +340,11 @@ describe('ProfilePage', () => {
       </MemoryRouter>,
     )
 
+    // Wait for both the profile load and the member selector to stabilize.
+    // The page toggles loading while fetching the selected member profile,
+    // so waiting only for the selector can race with the loading state.
     await waitFor(() => {
-      expect(screen.getByLabelText('查看成员')).toBeTruthy()
+      expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
     })
 
     const selector = screen.getByLabelText('查看成员') as HTMLSelectElement
@@ -389,17 +401,32 @@ describe('ProfilePage', () => {
     expect(screen.queryByRole('button', { name: /审核/ })).toBeNull()
   })
 
-  it('shows empty state when no selectable members for Buddy', async () => {
+  it('falls back to l3_code when l3_name is not provided', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
-      id: 2,
-      username: 'buddy',
-      full_name: 'Buddy',
-      roles: ['Buddy'],
-      assigned_members: [],
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
     })
-    vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
-      members: [],
-    })
+    const profileWithoutName: planningApi.CapabilityProfile = {
+      ...baseProfile,
+      annual_plan: {
+        ...baseProfile.annual_plan!,
+        items: [
+          {
+            ...baseProfile.annual_plan!.items[0],
+            l3_name: null,
+            learning_task: {
+              ...baseProfile.annual_plan!.items[0].learning_task!,
+              l3_name: null,
+            },
+          },
+        ],
+      },
+    }
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue(
+      profileWithoutName,
+    )
 
     render(
       <MemoryRouter initialEntries={['/growth/profile']}>
@@ -408,8 +435,12 @@ describe('ProfilePage', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/没有可查看的成员/)).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
     })
+
+    expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThanOrEqual(2)
   })
 })
 

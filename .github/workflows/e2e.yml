@@ -36,12 +36,43 @@ jobs:
           docker compose logs backend
           exit 1
 
+      - name: Wait for frontend reachability
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:18081/ > /dev/null; then
+              echo "Frontend is reachable"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become reachable in time"
+          docker compose logs frontend
+          exit 1
+
+      - name: Smoke test the running stack
+        run: |
+          set -e
+          echo "Checking backend health..."
+          curl -sf http://localhost:18001/health
+          echo ""
+          echo "Checking backend readiness..."
+          curl -sf http://localhost:18001/ready
+          echo ""
+          echo "Checking public catalog API..."
+          curl -sf http://localhost:18001/api/capability-model > /dev/null
+          echo ""
+          echo "Checking frontend is reachable..."
+          curl -sf http://localhost:18081/ > /dev/null
+          echo ""
+          echo "Smoke tests passed"
+
       - name: Run E2E tests in Playwright container
         run: |
           docker run --rm --network host \
             -v "$PWD/frontend:/app" \
             -w /app \
             -e PLAYWRIGHT_NO_WEBSERVER=1 \
+            -e TCP_E2E_ISOLATED=1 \
             mcr.microsoft.com/playwright:v1.61.1-jammy \
             bash -c "apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test"
 

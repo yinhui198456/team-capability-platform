@@ -53,7 +53,7 @@ describe('GrowthGoalPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/goals']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
@@ -101,7 +101,7 @@ describe('GrowthGoalPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/goals']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText('创建成长目标')).toBeTruthy()
@@ -141,7 +141,7 @@ describe('GrowthGoalPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/goals']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText(/年度计划生成受限/)).toBeTruthy()
@@ -183,7 +183,7 @@ describe('GrowthGoalPage', () => {
     render(
       <MemoryRouter initialEntries={['/growth/goals']}>
         <App />
-      </MemoryRouter>
+      </MemoryRouter>,
     )
     await waitFor(() => {
       expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()

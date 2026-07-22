@@ -15,16 +15,21 @@ const credentials: Record<
 
 export type ExtendedRole = Role | 'member2'
 
-export async function loginAs(
-  page: Page,
-  role: ExtendedRole,
-): Promise<void> {
+const defaultRoutes: Record<ExtendedRole, string> = {
+  member: '/dashboard/member',
+  member2: '/dashboard/member',
+  buddy: '/mentoring/dashboard',
+  leader: '/operations/analytics',
+  admin: '/system/users',
+}
+
+export async function loginAs(page: Page, role: ExtendedRole): Promise<void> {
   const { username, password } = credentials[role]
   await page.goto('/login')
   await page.getByLabel('用户名').fill(username)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: '登录' }).click()
-  await page.waitForURL((url) => url.pathname !== '/login')
+  await page.waitForURL((url) => url.pathname === defaultRoutes[role])
 }
 
 export async function logout(page: Page): Promise<void> {

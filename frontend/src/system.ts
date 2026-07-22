@@ -46,7 +46,11 @@ export function updateSystemUser(
   userId: number,
   body: SystemUserInput,
 ): Promise<SystemUser> {
-  return request<SystemUser>(`/api/system/users/${userId}`, { method: 'PUT' }, body)
+  return request<SystemUser>(
+    `/api/system/users/${userId}`,
+    { method: 'PUT' },
+    body,
+  )
 }
 
 export function getSystemConfigs(): Promise<SystemConfig[]> {
@@ -57,5 +61,9 @@ export function updateSystemConfig(
   code: string,
   body: Pick<SystemConfig, 'value' | 'enabled'>,
 ): Promise<SystemConfig> {
-  return request<SystemConfig>(`/api/system/settings/${code}`, { method: 'PUT' }, body)
+  return request<SystemConfig>(
+    `/api/system/settings/${code}`,
+    { method: 'PUT' },
+    body,
+  )
 }
