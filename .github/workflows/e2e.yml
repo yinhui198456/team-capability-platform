@@ -36,6 +36,19 @@ jobs:
           docker compose logs backend
           exit 1
 
+      - name: Wait for frontend reachability
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:18081/ > /dev/null; then
+              echo "Frontend is reachable"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become reachable in time"
+          docker compose logs frontend
+          exit 1
+
       - name: Smoke test the running stack
         run: |
           set -e
