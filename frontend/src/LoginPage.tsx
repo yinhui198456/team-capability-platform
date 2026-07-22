@@ -1,6 +1,14 @@
 import { useState } from 'react'
 
-import { login } from './access'
+import { login, type User } from './access'
+
+function defaultRouteFor(user: User): string {
+  if (user.roles.includes('Admin')) return '/system/users'
+  if (user.roles.includes('Leader')) return '/operations/analytics'
+  if (user.roles.includes('Buddy')) return '/mentoring/dashboard'
+  if (user.roles.includes('Member')) return '/dashboard/member'
+  return '/capability/model'
+}
 
 export function LoginPage() {
   const [username, setUsername] = useState('')
@@ -14,8 +22,8 @@ export function LoginPage() {
     setLoading(true)
 
     try {
-      await login(username, password)
-      window.location.href = '/capability/model'
+      const user = await login(username, password)
+      window.location.href = defaultRouteFor(user)
     } catch (error) {
       setError(error instanceof Error ? error.message : '登录失败')
     } finally {

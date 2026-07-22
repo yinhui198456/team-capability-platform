@@ -170,7 +170,7 @@
   color: var(--color-gray-600);
   cursor: pointer;
 }
-.domainFilter button[aria-pressed="true"],
+.domainFilter button[aria-pressed='true'],
 .domainFilter button.active {
   background: var(--color-brand-700);
   color: var(--color-white);
@@ -278,4 +278,81 @@
 .statusInProgress {
   background: var(--color-brand-50);
   color: var(--color-brand-700);
+}
+
+/* ── Stage-aware header ── */
+.dashboardHeader {
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.headerActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.stageBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+
+/* ── Stage cards ── */
+.stageCard {
+  margin-bottom: var(--space-6);
+  padding: var(--space-6);
+}
+
+.stageCard h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-3);
+}
+
+.ctaCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+  max-width: 720px;
+}
+
+.reviewStatusList {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.reviewStatusList div {
+  background: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.reviewStatusList dt {
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  margin-bottom: var(--space-1);
+}
+
+.reviewStatusList dd {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-gray-900);
+}
+
+@media (max-width: 720px) {
+  .headerActions {
+    align-items: flex-start;
+  }
+  .reviewStatusList {
+    grid-template-columns: 1fr;
+  }
 }

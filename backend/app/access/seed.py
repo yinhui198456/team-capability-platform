@@ -152,6 +152,24 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             "SELECT id FROM learning_task WHERE plan_item_id = %s",
             (plan_item["id"],),
         ).fetchone()[0]
+        # 补齐 UAT Mock 数据的计划预计时长，避免“有计划但时长 0h”的歧义。
+        current_month = date.today().month
+        connection.execute(
+            """
+            UPDATE plan_item
+            SET estimated_hours = %s, target_month = %s
+            WHERE id = %s
+            """,
+            ("10", current_month, plan_item["id"]),
+        )
+        connection.execute(
+            """
+            UPDATE annual_growth_plan
+            SET status = '执行中'
+            WHERE member_id = %s AND year = %s
+            """,
+            (member_id, year),
+        )
         create_progress_log(
             connection,
             member_id,
@@ -184,5 +202,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             member_id,
             task_id,
             {"status": "进行中"},
+        )
+        connection.execute(
+            "UPDATE learning_task SET actual_hours = %s WHERE id = %s",
+            (4, task_id),
         )
         get_capability_profile(connection, member_id, ["Member"], member_id, year)

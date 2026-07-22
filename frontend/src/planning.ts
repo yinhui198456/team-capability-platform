@@ -91,8 +91,25 @@ export type LearningTask = {
   plan_item_target_month?: number | null
 }
 
+export type MemberDashboardAssessmentStatus =
+  '草稿' | '待复核' | '已复核' | '建议调整' | '已归档'
+
+export type MemberDashboardAnnualPlanStatus =
+  '制定中' | '执行中' | '已归档' | null
+
+export type MemberDashboardAssessment = {
+  id: number
+  status: MemberDashboardAssessmentStatus
+  submitted_at: string | null
+  archived_at: string | null
+  review_status: '待复核' | '已闭环' | null
+  review_conclusion: '认可' | '建议调整' | null
+}
+
 export type MemberDashboard = {
   year: number
+  assessment: MemberDashboardAssessment | null
+  annual_plan_status: MemberDashboardAnnualPlanStatus
   summary: {
     annual_actual_hours: number
     annual_planned_hours: number

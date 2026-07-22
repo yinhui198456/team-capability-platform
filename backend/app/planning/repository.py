@@ -1,9 +1,13 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import psycopg
 
-from ..access.repository import get_assigned_members, get_primary_buddy, is_member_assigned_to_buddy
+from ..access.repository import (
+    get_assigned_members,
+    get_primary_buddy,
+    is_member_assigned_to_buddy,
+)
 from ..assessment.repository import get_gap
 from ..catalog.repository import DOMAIN_CODES
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
@@ -11,6 +15,16 @@ from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 
 def _now(connection: psycopg.Connection) -> Any:
     return connection.execute("SELECT NOW()").fetchone()[0]
+
+
+def _serialize_datetime(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
 
 
 def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -915,6 +929,73 @@ def get_member_dashboard(
 ) -> dict[str, object]:
     """Return the Member-only, read-only aggregation used by UI-01."""
     current_month = _now(connection).month
+
+    # Latest assessment of the year (including draft) drives the dashboard stage.
+    latest_assessment_row = connection.execute(
+        """
+        SELECT id, status, submitted_at, archived_at
+        FROM assessment
+        WHERE member_id = %s AND year = %s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (member_id, year),
+    ).fetchone()
+    latest_assessment: dict[str, object] | None = None
+    if latest_assessment_row is not None:
+        latest_assessment = {
+            "id": latest_assessment_row[0],
+            "status": latest_assessment_row[1],
+            "submitted_at": _serialize_datetime(latest_assessment_row[2]),
+            "archived_at": _serialize_datetime(latest_assessment_row[3]),
+        }
+
+    # Latest submitted assessment of the year feeds the radar and Gap list.
+    submitted_assessment_row = connection.execute(
+        """
+        SELECT id
+        FROM assessment
+        WHERE member_id = %s AND year = %s
+          AND status IN ('待复核', '已复核', '建议调整', '已归档')
+        ORDER BY submitted_at DESC NULLS LAST, id DESC
+        LIMIT 1
+        """,
+        (member_id, year),
+    ).fetchone()
+    submitted_assessment_id = (
+        submitted_assessment_row[0] if submitted_assessment_row else None
+    )
+
+    # Latest review for the latest assessment (may be pending or closed).
+    review_status: str | None = None
+    review_conclusion: str | None = None
+    if latest_assessment is not None:
+        review_row = connection.execute(
+            """
+            SELECT status, conclusion
+            FROM assessment_review
+            WHERE assessment_id = %s
+            ORDER BY sequence DESC, id DESC
+            LIMIT 1
+            """,
+            (latest_assessment["id"],),
+        ).fetchone()
+        if review_row is not None:
+            review_status = review_row[0]
+            review_conclusion = review_row[1]
+
+    # Annual plan status for the year.
+    annual_plan_status_row = connection.execute(
+        """
+        SELECT status
+        FROM annual_growth_plan
+        WHERE member_id = %s AND year = %s
+        LIMIT 1
+        """,
+        (member_id, year),
+    ).fetchone()
+    annual_plan_status = annual_plan_status_row[0] if annual_plan_status_row else None
+
     total_hours_row = connection.execute(
         """
         SELECT COALESCE(SUM(lpl.actual_hours), 0)
@@ -984,16 +1065,10 @@ def get_member_dashboard(
         SELECT SUBSTRING(ad.l3_code FROM 1 FOR 3),
                ROUND(AVG(ad.current_level))::INT
         FROM assessment_detail ad
-        JOIN assessment a ON a.id = ad.assessment_id
-        WHERE a.id = (
-            SELECT id FROM assessment
-            WHERE member_id = %s AND year = %s AND status = '已归档'
-            ORDER BY archived_at DESC NULLS LAST, created_at DESC
-            LIMIT 1
-        )
+        WHERE ad.assessment_id = %s
         GROUP BY SUBSTRING(ad.l3_code FROM 1 FOR 3)
         """,
-        (member_id, year),
+        (submitted_assessment_id,),
     ).fetchall()
     scores = {str(row[0]): int(row[1]) for row in score_rows}
     progress_rows = connection.execute(
@@ -1024,7 +1099,34 @@ def get_member_dashboard(
         for task in list_learning_tasks(connection, member_id)
         if task["status"] not in {"已完成", "取消"}
     ]
-    gaps = list_eligible_gaps(connection, member_id)
+
+    # Gaps come from the latest submitted assessment, not limited to plan_candidate.
+    gaps: list[dict[str, object]] = []
+    if submitted_assessment_id is not None:
+        gap_rows = connection.execute(
+            """
+            SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
+                   g.target_level, g.gap_value, g.priority
+            FROM gap g
+            WHERE g.assessment_id = %s
+            ORDER BY g.l3_code
+            """,
+            (submitted_assessment_id,),
+        ).fetchall()
+        gaps = [
+            {
+                "id": row[0],
+                "assessment_id": row[1],
+                "l3_code": row[2],
+                "current_level": row[3],
+                "target_level": row[4],
+                "gap_value": row[5],
+                "priority": row[6],
+                "plan_candidate": False,
+            }
+            for row in gap_rows
+        ]
+
     l3_codes = list(
         {gap["l3_code"] for gap in gaps} | {task["l3_code"] for task in current_tasks}
     )
@@ -1034,8 +1136,18 @@ def get_member_dashboard(
     for task in current_tasks:
         task["l3_name"] = l3_names.get(task["l3_code"])
 
+    assessment_out: dict[str, object] | None = None
+    if latest_assessment is not None:
+        assessment_out = {
+            **latest_assessment,
+            "review_status": review_status,
+            "review_conclusion": review_conclusion,
+        }
+
     return {
         "year": year,
+        "assessment": assessment_out,
+        "annual_plan_status": annual_plan_status,
         "summary": {
             "annual_actual_hours": int(total_hours_row[0]) if total_hours_row else 0,
             "annual_planned_hours": float(plan_hours_row[0]) if plan_hours_row else 0,
@@ -1791,7 +1903,15 @@ def get_capability_profile(
 
     planned_hours_row = connection.execute(
         """
-        SELECT COALESCE(SUM(CAST(NULLIF(regexp_substr(pi.estimated_hours, '\\d+'), '') AS NUMERIC)), 0)
+        SELECT COALESCE(
+            SUM(
+                CAST(
+                    NULLIF(regexp_substr(pi.estimated_hours, '\\d+'), '')
+                    AS NUMERIC
+                )
+            ),
+            0
+        )
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
@@ -1856,9 +1976,7 @@ def list_selectable_members_for_profile(
             ORDER BY username
             """,
         ).fetchall()
-        return [
-            {"id": row[0], "username": row[1], "full_name": row[2]} for row in rows
-        ]
+        return [{"id": row[0], "username": row[1], "full_name": row[2]} for row in rows]
     if "Leader" in viewer_roles:
         rows = connection.execute(
             """
@@ -1870,9 +1988,7 @@ def list_selectable_members_for_profile(
             ORDER BY u.username
             """,
         ).fetchall()
-        return [
-            {"id": row[0], "username": row[1], "full_name": row[2]} for row in rows
-        ]
+        return [{"id": row[0], "username": row[1], "full_name": row[2]} for row in rows]
     if "Buddy" in viewer_roles:
         assigned = get_assigned_members(connection, viewer_id)
         return [
