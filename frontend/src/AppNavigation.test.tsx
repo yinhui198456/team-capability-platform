@@ -377,6 +377,40 @@ describe('authenticated route guard', () => {
       )
     })
   })
+  it('dashboard brand and primary-CTA have correct CSS classes', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(
+      emptyDashboard,
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    // Brand link must have correct class (white-on-dark, not overridden by :visited)
+    const brandLink = screen.getByRole('link', {
+      name: 'Team Capability Platform',
+    })
+    expect(brandLink.classList.contains('app-topbar-brand')).toBe(true)
+    // Primary CTA in the dashboard header must have .primary-link class
+    const primaryLinks = document.querySelectorAll('a.primary-link')
+    expect(primaryLinks.length).toBeGreaterThan(0)
+    primaryLinks.forEach((link) => {
+      expect(link.classList.contains('primary-link')).toBe(true)
+    })
+  })
 })
 
 describe('year parameter persistence', () => {

@@ -485,7 +485,11 @@ function PlanDashboard({
               </div>
               <div className={styles.statusItem}>
                 <dt>延期</dt>
-                <dd className={styles.overdue}>
+                <dd
+                  className={
+                    dashboard.plan_progress.延期 > 0 ? styles.overdue : ''
+                  }
+                >
                   {dashboard.plan_progress.延期}
                 </dd>
               </div>
@@ -544,9 +548,13 @@ function PlanDashboard({
             <TodoItem
               label="计划到期"
               value={dashboard.plan_progress.延期}
-              tone="danger"
+              tone={dashboard.plan_progress.延期 > 0 ? 'danger' : 'default'}
             />
-            <TodoItem label="学习任务延期" value={overdueTasks} tone="danger" />
+            <TodoItem
+              label="学习任务延期"
+              value={overdueTasks}
+              tone={overdueTasks > 0 ? 'danger' : 'default'}
+            />
           </div>
         </article>
       </div>

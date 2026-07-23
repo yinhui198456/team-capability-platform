@@ -41,15 +41,27 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  position: relative;
+}
+.ring::before {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  background: var(--color-white);
 }
 .ringValue {
   font-size: var(--text-3xl);
   font-weight: 700;
   color: var(--color-gray-900);
+  position: relative;
+  z-index: 1;
 }
 .ringLabel {
   font-size: var(--text-xs);
   color: var(--color-gray-500);
+  position: relative;
+  z-index: 1;
 }
 .statusList {
   display: grid;
@@ -92,7 +104,7 @@
   padding: var(--space-3);
   text-align: center;
 }
-.metric span {
+.metric > span {
   display: block;
   font-size: var(--text-xs);
   color: var(--color-gray-500);

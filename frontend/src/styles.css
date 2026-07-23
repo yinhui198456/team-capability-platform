@@ -393,6 +393,18 @@ select {
   text-decoration: none;
   white-space: nowrap;
 }
+.primary-link:visited {
+  color: #fff;
+}
+.primary-link:hover {
+  background: #0742a6;
+  color: #fff;
+  text-decoration: none;
+}
+.primary-link:focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: 2px;
+}
 
 .metric-grid,
 .dashboard-grid {
@@ -519,6 +531,7 @@ select {
   align-items: baseline;
   display: inline-flex;
   gap: 2px;
+  white-space: nowrap;
 }
 
 .hours-number {

@@ -24,8 +24,11 @@ a {
 a:hover {
   text-decoration: underline;
 }
-a:visited {
-  color: var(--color-brand-700);
+/* ponytail: no global :visited rule — each component owns its visited state */
+a:focus-visible {
+  outline: 2px solid var(--border-color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 h1,
@@ -81,9 +84,17 @@ button {
   white-space: nowrap;
   flex-shrink: 0;
 }
+.app-topbar-brand:visited {
+  color: var(--color-white);
+}
 .app-topbar-brand:hover {
   text-decoration: none;
   color: var(--color-white);
+}
+.app-topbar-brand:focus-visible {
+  outline: 2px solid var(--color-white);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .app-topbar-right {
@@ -113,8 +124,12 @@ button {
   max-width: 140px;
 }
 .year-selector:disabled {
-  opacity: 0.6;
   cursor: default;
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.6);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .app-sidebar {
@@ -146,15 +161,25 @@ button {
   border-radius: var(--radius-md);
   margin-bottom: 2px;
 }
+.app-sidebar-item:visited {
+  color: var(--color-gray-600);
+}
 .app-sidebar-item:hover {
   background: var(--color-gray-100);
   color: var(--color-gray-800);
   text-decoration: none;
 }
+.app-sidebar-item:focus-visible {
+  outline: 2px solid var(--border-color-focus);
+  outline-offset: -2px;
+}
 .app-sidebar-item.active {
   background: var(--color-brand-50);
   color: var(--color-brand-700);
   font-weight: 600;
+}
+.app-sidebar-item.active:visited {
+  color: var(--color-brand-700);
 }
 
 .app-content {
@@ -254,6 +279,11 @@ button.primary:hover,
   background: var(--color-brand-900);
   border-color: var(--color-brand-900);
   color: var(--color-white);
+}
+button.primary:focus-visible,
+.button-primary:focus-visible {
+  outline: 2px solid var(--border-color-focus);
+  outline-offset: 2px;
 }
 
 /* ── Tables ── */
