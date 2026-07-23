@@ -48,7 +48,6 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: '年度成长计划', href: '/growth/annual-plan', roles: ['Member'] },
       { label: '学习任务', href: '/growth/tasks', roles: ['Member'] },
-      { label: 'Evidence', href: '/growth/evidence', roles: ['Member'] },
     ],
   },
   {

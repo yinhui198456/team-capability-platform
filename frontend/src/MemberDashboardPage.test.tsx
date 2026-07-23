@@ -333,6 +333,56 @@ describe('MemberDashboardPage', () => {
     expect(screen.queryByTestId('current-tasks-table')).toBeNull()
   })
 
+  it('shows no danger style when overdue count is zero', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      plan_progress: { ...baseDashboard.plan_progress, 延期: 0 },
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(screen.getByText('计划到期')).toBeTruthy()
+    })
+    // The "计划到期" todo card should NOT have danger styling when overdue=0
+    const planOverdueCard = screen
+      .getByText('计划到期')
+      .closest('[class*="todoItem"]')
+    expect(planOverdueCard?.className).not.toContain('todoDanger')
+  })
+
+  it('shows danger style when overdue count is greater than zero', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      plan_progress: { ...baseDashboard.plan_progress, 延期: 3 },
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(screen.getByText('计划到期')).toBeTruthy()
+    })
+    // The "计划到期" todo card SHOULD have danger styling when overdue=3
+    const planOverdueCard = screen
+      .getByText('计划到期')
+      .closest('[class*="todoItem"]')
+    expect(planOverdueCard?.className).toContain('todoDanger')
+  })
+
   it('renders archived stage with annual summary', async () => {
     stubYear()
     stubMember()

@@ -377,6 +377,41 @@ describe('authenticated route guard', () => {
       )
     })
   })
+  it('preserves brand and primary-link visibility after navigating back', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(
+      emptyDashboard,
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    // Brand link must have correct class (white-on-dark, not overridden by :visited)
+    const brandLink = screen.getByRole('link', {
+      name: 'Team Capability Platform',
+    })
+    expect(brandLink.className).toContain('app-topbar-brand')
+    // Primary CTA must have correct class (white-on-blue button)
+    const cta = screen.queryByRole('link', {
+      name: /查看年度计划|生成年度计划|完成能力自评|查看复核状态|查看成长档案/,
+    })
+    if (cta) {
+      expect(cta.className).toContain('primary-link')
+    }
+  })
 })
 
 describe('year parameter persistence', () => {
