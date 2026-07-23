@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -138,7 +139,12 @@ describe('TeamAnalyticsPage', () => {
     const drawer = await screen.findByRole('dialog', { name: '延期计划项详情' })
     expect(drawer).toBeTruthy()
     expect(drawer.textContent).toContain('数据开发')
-    expect(drawer.textContent).toContain('延期计划项详情')
+    expect(
+      within(drawer).getByRole('heading', { name: '延期计划项详情' }),
+    ).toBeTruthy()
+    expect(drawer.textContent).toContain('只读')
+    expect(drawer.textContent).toContain('计划开始日期')
+    expect(drawer.textContent).toContain('计划结束日期')
     expect(drawer.textContent).toContain('延期原因')
     expect(drawer.textContent).toContain('下一步行动')
     fireEvent.click(screen.getByRole('button', { name: '关闭详情' }))

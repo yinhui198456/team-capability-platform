@@ -235,6 +235,7 @@ for (const viewport of VIEWPORTS) {
       const drawer = page.getByRole('dialog', { name: '延期计划项详情' })
       await expect(drawer).toBeVisible()
       await expect(drawer.getByRole('document')).toContainText('延期计划项详情')
+      await expect(drawer.getByRole('document')).toContainText('只读')
       await expect(drawer.getByRole('document')).toContainText('计划开始日期')
       await expect(drawer.getByRole('document')).toContainText('计划结束日期')
       await expect(page).toHaveScreenshot(
