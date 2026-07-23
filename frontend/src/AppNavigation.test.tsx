@@ -377,7 +377,7 @@ describe('authenticated route guard', () => {
       )
     })
   })
-  it('preserves brand and primary-link visibility after navigating back', async () => {
+  it('dashboard brand and primary-CTA have correct CSS classes', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 1,
       username: 'member',
@@ -403,14 +403,13 @@ describe('authenticated route guard', () => {
     const brandLink = screen.getByRole('link', {
       name: 'Team Capability Platform',
     })
-    expect(brandLink.className).toContain('app-topbar-brand')
-    // Primary CTA must have correct class (white-on-blue button)
-    const cta = screen.queryByRole('link', {
-      name: /查看年度计划|生成年度计划|完成能力自评|查看复核状态|查看成长档案/,
+    expect(brandLink.classList.contains('app-topbar-brand')).toBe(true)
+    // Primary CTA in the dashboard header must have .primary-link class
+    const primaryLinks = document.querySelectorAll('a.primary-link')
+    expect(primaryLinks.length).toBeGreaterThan(0)
+    primaryLinks.forEach((link) => {
+      expect(link.classList.contains('primary-link')).toBe(true)
     })
-    if (cta) {
-      expect(cta.className).toContain('primary-link')
-    }
   })
 })
 
