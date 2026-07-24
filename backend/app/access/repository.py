@@ -281,8 +281,13 @@ def create_user_admin(
 
     user_id = create_user(connection, username, full_name, password, is_active)
     return update_user_admin(
-        connection, user_id, full_name, is_active, roles,
-        current_level, target_level,
+        connection,
+        user_id,
+        full_name,
+        is_active,
+        roles,
+        current_level,
+        target_level,
     )
 
 

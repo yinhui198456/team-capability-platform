@@ -1996,7 +1996,9 @@ def list_selectable_members_for_profile(
         assigned = get_assigned_members(connection, viewer_id)
         return [
             {
-                "id": m["id"], "username": m["username"], "full_name": m["full_name"],
+                "id": m["id"],
+                "username": m["username"],
+                "full_name": m["full_name"],
                 "current_level": m.get("current_level"),
                 "target_level": m.get("target_level"),
             }
@@ -2011,8 +2013,11 @@ def list_selectable_members_for_profile(
         return []
     return [
         {
-            "id": row[0], "username": row[1], "full_name": row[2],
-            "current_level": row[3], "target_level": row[4],
+            "id": row[0],
+            "username": row[1],
+            "full_name": row[2],
+            "current_level": row[3],
+            "target_level": row[4],
         }
     ]
 

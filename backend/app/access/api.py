@@ -184,8 +184,13 @@ def put_system_user(
     _require_admin(user)
     try:
         updated = update_user_admin(
-            connection, user_id, body.full_name, body.is_active, body.roles,
-            body.current_level, body.target_level,
+            connection,
+            user_id,
+            body.full_name,
+            body.is_active,
+            body.roles,
+            body.current_level,
+            body.target_level,
         )
         return _system_user_response(updated)
     except KeyError as exc:

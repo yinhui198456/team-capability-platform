@@ -112,9 +112,7 @@ def create_access_schema(connection: psycopg.Connection) -> None:
             "target_level IS NULL OR target_level IN ('P4','P5','P6','P7','P8')",
         ),
     ]:
-        connection.execute(
-            f"ALTER TABLE tcp_user ADD COLUMN IF NOT EXISTS {col} TEXT"
-        )
+        connection.execute(f"ALTER TABLE tcp_user ADD COLUMN IF NOT EXISTS {col} TEXT")
         # Drop old constraint without level list then re-add
         connection.execute(
             f"ALTER TABLE tcp_user DROP CONSTRAINT IF EXISTS {col}_check"
