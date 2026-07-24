@@ -307,9 +307,9 @@ def is_member_assigned_to_buddy(
     connection: psycopg.Connection, member_id: int, buddy_id: int
 ) -> bool:
     row = connection.execute(
-        f"""SELECT 1 FROM buddy_relationship
-            WHERE member_id = %s AND buddy_id = %s
-              AND is_primary = TRUE AND {_effective_today_condition('br')}""",
+        f"""SELECT 1 FROM buddy_relationship br
+            WHERE br.member_id = %s AND br.buddy_id = %s
+              AND br.is_primary = TRUE AND {_effective_today_condition('br')}""",
         (member_id, buddy_id),
     ).fetchone()
     return row is not None
