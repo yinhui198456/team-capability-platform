@@ -60,7 +60,13 @@ def create_access_schema(connection: psycopg.Connection) -> None:
             effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
             effective_to DATE,
             is_primary BOOLEAN NOT NULL DEFAULT TRUE,
-            CHECK (member_id <> buddy_id)
+            effective_date DATE,
+            expiry_date DATE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (member_id <> buddy_id),
+            CHECK (effective_date IS NULL OR expiry_date IS NULL
+                   OR effective_date <= expiry_date)
         )
         """
     )
@@ -126,6 +132,52 @@ def create_access_schema(connection: psycopg.Connection) -> None:
         ON buddy_relationship(member_id)
         WHERE is_primary = TRUE AND effective_to IS NULL
         """
+    )
+    # Migration: add effective_date/expiry_date/created_at/updated_at to existing tables
+    for col, col_type, col_default in [
+        ("effective_date", "DATE", None),
+        ("expiry_date", "DATE", None),
+        ("created_at", "TIMESTAMPTZ", "NOW()"),
+        ("updated_at", "TIMESTAMPTZ", "NOW()"),
+    ]:
+        if col_default:
+            connection.execute(
+                f"ALTER TABLE buddy_relationship ADD COLUMN IF NOT EXISTS "
+                f"{col} {col_type} NOT NULL DEFAULT {col_default}"
+            )
+        else:
+            connection.execute(
+                f"ALTER TABLE buddy_relationship ADD COLUMN IF NOT EXISTS "
+                f"{col} {col_type}"
+            )
+    # Backfill effective_date/expiry_date from effective_from/effective_to
+    connection.execute(
+        """UPDATE buddy_relationship
+           SET effective_date = effective_from
+           WHERE effective_date IS NULL"""
+    )
+    connection.execute(
+        """UPDATE buddy_relationship
+           SET expiry_date = effective_to
+           WHERE expiry_date IS NULL AND effective_to IS NOT NULL"""
+    )
+    # Add date order constraint
+    connection.execute(
+        """ALTER TABLE buddy_relationship
+           DROP CONSTRAINT IF EXISTS buddy_relationship_date_check"""
+    )
+    connection.execute(
+        """ALTER TABLE buddy_relationship
+           ADD CONSTRAINT buddy_relationship_date_check
+           CHECK (effective_date IS NULL OR expiry_date IS NULL
+                  OR effective_date <= expiry_date)"""
+    )
+    # Drop legacy unique index, add new one based on effective_date/expiry_date
+    connection.execute("""DROP INDEX IF EXISTS unique_active_primary_buddy""")
+    connection.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS unique_active_primary_buddy
+           ON buddy_relationship(member_id)
+           WHERE is_primary = TRUE AND expiry_date IS NULL"""
     )
     connection.execute(
         """

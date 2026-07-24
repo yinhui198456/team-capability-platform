@@ -4,14 +4,19 @@ from pydantic import BaseModel
 from ..settings import settings
 from .policies import SESSION_COOKIE_NAME, Connection, CurrentUser
 from .repository import (
+    create_buddy_relationship,
     create_session,
     create_user_admin,
     delete_session,
+    end_buddy_relationship,
     get_assigned_members,
     get_primary_buddy,
     get_user_by_username,
+    list_available_buddies,
+    list_buddy_relationships,
     list_system_configs,
     list_users,
+    update_buddy_relationship,
     update_system_config,
     update_user_admin,
 )
@@ -227,4 +232,108 @@ def put_system_setting(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+# ── Buddy relationship management (Admin only) ──
+
+
+class BuddyRelationshipCreate(BaseModel):
+    member_id: int
+    buddy_id: int
+    effective_date: str
+    expiry_date: str | None = None
+
+
+class BuddyRelationshipUpdate(BaseModel):
+    buddy_id: int
+    effective_date: str
+    expiry_date: str | None = None
+
+
+class BuddyRelationshipEnd(BaseModel):
+    end_date: str
+
+
+@system_router.get("/buddy-relationships/{member_id}")
+def get_buddy_relationships(
+    member_id: int, user: CurrentUser, connection: Connection
+) -> list[dict[str, object]]:
+    _require_admin(user)
+    return list_buddy_relationships(connection, member_id)
+
+
+@system_router.get("/available-buddies")
+def get_available_buddies(
+    user: CurrentUser,
+    connection: Connection,
+) -> list[dict[str, object]]:
+    _require_admin(user)
+    return list_available_buddies(connection)
+
+
+@system_router.post("/buddy-relationships", status_code=status.HTTP_201_CREATED)
+def post_buddy_relationship(
+    body: BuddyRelationshipCreate, user: CurrentUser, connection: Connection
+) -> dict[str, object]:
+    _require_admin(user)
+    try:
+        create_buddy_relationship(
+            connection,
+            body.member_id,
+            body.buddy_id,
+            body.effective_date,
+            body.expiry_date,
+        )
+        rels = list_buddy_relationships(connection, body.member_id)
+        return {"relationships": rels}
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
+@system_router.put("/buddy-relationships/{relationship_id}")
+def put_buddy_relationship(
+    relationship_id: int,
+    body: BuddyRelationshipUpdate,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    _require_admin(user)
+    try:
+        return update_buddy_relationship(
+            connection,
+            relationship_id,
+            body.buddy_id,
+            body.effective_date,
+            body.expiry_date,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
+@system_router.post("/buddy-relationships/{relationship_id}/end")
+def post_end_buddy_relationship(
+    relationship_id: int,
+    body: BuddyRelationshipEnd,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    _require_admin(user)
+    try:
+        return end_buddy_relationship(connection, relationship_id, body.end_date)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
