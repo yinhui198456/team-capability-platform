@@ -276,19 +276,22 @@ def create_user_admin(
 ) -> dict[str, object]:
     if not roles or not set(roles).issubset(_ROLE_CODES):
         raise ValueError("roles must be selected from the fixed role list")
+    _validate_level(current_level, "current_level")
+    _validate_level(target_level, "target_level")
     if get_user_by_username(connection, username) is not None:
         raise ValueError("username already exists")
 
-    user_id = create_user(connection, username, full_name, password, is_active)
-    return update_user_admin(
-        connection,
-        user_id,
-        full_name,
-        is_active,
-        roles,
-        current_level,
-        target_level,
-    )
+    with connection.transaction():
+        user_id = create_user(connection, username, full_name, password, is_active)
+        return update_user_admin(
+            connection,
+            user_id,
+            full_name,
+            is_active,
+            roles,
+            current_level,
+            target_level,
+        )
 
 
 def _validate_level(value: str | None, field: str) -> None:

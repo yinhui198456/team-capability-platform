@@ -725,3 +725,77 @@ def test_member_overreach_with_member_id_is_rejected(
         cookies=cookies,
     )
     assert status == 403
+
+
+def test_member_profile_includes_levels(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(profile_schema, "profile_levels", ["Member"])
+    profile_schema.execute(
+        "UPDATE tcp_user SET current_level = %s, target_level = %s WHERE id = %s",
+        ("P6", "P7", member_id),
+    )
+    profile_schema.commit()
+    cookies = _login(profile_schema, "profile_levels")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["member"]["current_level"] == "P6"
+    assert body["member"]["target_level"] == "P7"
+
+
+def test_member_profile_levels_null(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(profile_schema, "profile_none", ["Member"])
+    profile_schema.commit()
+    cookies = _login(profile_schema, "profile_none")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["member"]["current_level"] is None
+    assert body["member"]["target_level"] is None
+
+
+def test_member_profile_level_only_target(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(profile_schema, "profile_target", ["Member"])
+    profile_schema.execute(
+        "UPDATE tcp_user SET target_level = %s WHERE id = %s", ("P7", member_id)
+    )
+    profile_schema.commit()
+    cookies = _login(profile_schema, "profile_target")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["member"]["current_level"] is None
+    assert body["member"]["target_level"] == "P7"
+
+
+def test_member_profile_level_only_current(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(profile_schema, "profile_current", ["Member"])
+    profile_schema.execute(
+        "UPDATE tcp_user SET current_level = %s WHERE id = %s", ("P6", member_id)
+    )
+    profile_schema.commit()
+    cookies = _login(profile_schema, "profile_current")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/profiles?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assert body["member"]["current_level"] == "P6"
+    assert body["member"]["target_level"] is None

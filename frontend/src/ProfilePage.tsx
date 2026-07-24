@@ -417,15 +417,14 @@ export function ProfilePage() {
           {profile && (
             <p className={styles.pageSubtitle}>
               成员：{profile.member.full_name}（{profile.member.username}）
-              {profile.member.current_level != null && (
+              {(profile.member.current_level != null ||
+                profile.member.target_level != null) && (
                 <>
                   {' '}
-                  · 职级：{profile.member.current_level}
-                  {profile.member.target_level != null
-                    ? ` → ${profile.member.target_level}`
-                    : ''}
+                  · 职级：{profile.member.current_level ?? '—'} →{' '}
+                  {profile.member.target_level ?? '—'}
                 </>
-              )}{' '}
+              )}
               · 年度：{profile.year} · 数据范围：{scopeLabel(roles)}
             </p>
           )}
