@@ -161,6 +161,7 @@ function UserMenu() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [error, setError] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
+  const inFlight = useRef(false)
 
   const close = useCallback(() => setOpen(false), [])
 
@@ -183,15 +184,18 @@ function UserMenu() {
   }, [open, close])
 
   async function handleLogout() {
+    if (inFlight.current) return
+    inFlight.current = true
     setLoggingOut(true)
     setError('')
     const ok = await logout()
     if (ok) {
       navigate('/login', { replace: true })
-      // loggingOut stays true — user is navigating away
+      // keep locked — user is navigating away
     } else {
       setError('退出失败，请重试')
       setLoggingOut(false)
+      inFlight.current = false
     }
   }
 

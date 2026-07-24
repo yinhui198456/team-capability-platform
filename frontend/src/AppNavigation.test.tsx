@@ -819,7 +819,7 @@ describe('user menu and admin navigation', () => {
     expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
   })
 
-  it('logout disabled while request in flight', async () => {
+  it('double-click sends only one logout request', async () => {
     let resolveLogout: () => void
     const mockLogout = vi.fn(
       () =>
@@ -850,13 +850,57 @@ describe('user menu and admin navigation', () => {
     await waitFor(() => {
       expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
     })
+    // Click twice rapidly
+    const logoutBtn = screen.getByRole('menuitem', { name: '退出登录' })
+    logoutBtn.click()
+    logoutBtn.click()
+    // Resolve
+    resolveLogout!()
+    await waitFor(() => {
+      expect(mockLogout).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('failed logout allows retry', async () => {
+    
+    const mockLogout = vi.fn(() => {
+      
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ detail: 'server error' }),
+      })
+    })
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Member User')).toBeTruthy()
+    })
+    screen.getByRole('button', { name: /Member User/ }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+    // First attempt fails
     screen.getByRole('menuitem', { name: '退出登录' }).click()
     await waitFor(() => {
-      expect(screen.getByRole('menuitem', { name: '退出中…' })).toBeTruthy()
+      expect(screen.getByText('退出失败，请重试')).toBeTruthy()
     })
-    const btn = screen.getByRole('menuitem', { name: '退出中…' })
-    expect((btn as HTMLButtonElement).disabled).toBe(true)
-    resolveLogout!()
+    expect(mockLogout).toHaveBeenCalledTimes(1)
+    // Second attempt also sends request
+    const retryBtn = screen.getByRole('menuitem', { name: '退出登录' })
+    retryBtn.click()
+    await waitFor(() => {
+      expect(mockLogout).toHaveBeenCalledTimes(2)
+    })
   })
 
   it.each([
