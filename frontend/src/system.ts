@@ -6,6 +6,8 @@ export type SystemUser = {
   full_name: string
   is_active: boolean
   roles: string[]
+  current_level: string | null
+  target_level: string | null
 }
 
 export type SystemConfig = {
@@ -21,6 +23,8 @@ export type SystemUserInput = {
   full_name: string
   is_active: boolean
   roles: string[]
+  current_level?: string | null
+  target_level?: string | null
 }
 
 export type SystemUserCreateInput = SystemUserInput & {

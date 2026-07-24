@@ -51,6 +51,8 @@ def _row_to_user(row: Any) -> dict[str, object]:
         "password_hash": row[3],
         "is_active": row[4],
         "created_at": row[5],
+        "current_level": row[6] if len(row) > 6 else None,
+        "target_level": row[7] if len(row) > 7 else None,
         "roles": [],
     }
 
@@ -74,7 +76,8 @@ def get_user_with_roles(
 ) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, username, full_name, password_hash, is_active, created_at
+        SELECT id, username, full_name, password_hash, is_active, created_at,
+               current_level, target_level
         FROM tcp_user
         WHERE id = %s
         """,
@@ -92,7 +95,8 @@ def get_user_by_username(
 ) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, username, full_name, password_hash, is_active, created_at
+        SELECT id, username, full_name, password_hash, is_active, created_at,
+               current_level, target_level
         FROM tcp_user
         WHERE username = %s
         """,
@@ -252,6 +256,7 @@ def is_member_assigned_to_buddy(
 
 
 _ROLE_CODES = {"Member", "Buddy", "Leader", "Admin"}
+_VALID_LEVELS = {"P4", "P5", "P6", "P7", "P8"}
 
 
 def list_users(connection: psycopg.Connection) -> list[dict[str, object]]:
@@ -266,6 +271,8 @@ def create_user_admin(
     password: str,
     is_active: bool,
     roles: list[str],
+    current_level: str | None = None,
+    target_level: str | None = None,
 ) -> dict[str, object]:
     if not roles or not set(roles).issubset(_ROLE_CODES):
         raise ValueError("roles must be selected from the fixed role list")
@@ -273,7 +280,18 @@ def create_user_admin(
         raise ValueError("username already exists")
 
     user_id = create_user(connection, username, full_name, password, is_active)
-    return update_user_admin(connection, user_id, full_name, is_active, roles)
+    return update_user_admin(
+        connection, user_id, full_name, is_active, roles,
+        current_level, target_level,
+    )
+
+
+def _validate_level(value: str | None, field: str) -> None:
+    if value is not None:
+        if not isinstance(value, str) or value not in _VALID_LEVELS:
+            raise ValueError(
+                f"{field} must be one of P4, P5, P6, P7, P8 or null, got {value!r}"
+            )
 
 
 def update_user_admin(
@@ -282,14 +300,19 @@ def update_user_admin(
     full_name: str,
     is_active: bool,
     roles: list[str],
+    current_level: str | None = None,
+    target_level: str | None = None,
 ) -> dict[str, object]:
     if not roles or not set(roles).issubset(_ROLE_CODES):
         raise ValueError("roles must be selected from the fixed role list")
+    _validate_level(current_level, "current_level")
+    _validate_level(target_level, "target_level")
     with connection.transaction():
         updated = connection.execute(
-            """UPDATE tcp_user SET full_name = %s, is_active = %s
+            """UPDATE tcp_user SET full_name = %s, is_active = %s,
+               current_level = %s, target_level = %s
             WHERE id = %s RETURNING id""",
-            (full_name, is_active, user_id),
+            (full_name, is_active, current_level, target_level, user_id),
         ).fetchone()
         if updated is None:
             raise KeyError("user not found")

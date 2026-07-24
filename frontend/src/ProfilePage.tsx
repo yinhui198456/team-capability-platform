@@ -416,8 +416,16 @@ export function ProfilePage() {
           <h1 className={styles.pageTitle}>成长档案</h1>
           {profile && (
             <p className={styles.pageSubtitle}>
-              成员：{profile.member.full_name}（{profile.member.username}）·
-              年度：{profile.year} · 数据范围：{scopeLabel(roles)}
+              成员：{profile.member.full_name}（{profile.member.username}）
+              {profile.member.current_level != null && (
+                <>
+                  {' '}· 职级：{profile.member.current_level}
+                  {profile.member.target_level != null
+                    ? ` → ${profile.member.target_level}`
+                    : ''}
+                </>
+              )}{' '}
+              · 年度：{profile.year} · 数据范围：{scopeLabel(roles)}
             </p>
           )}
         </div>
