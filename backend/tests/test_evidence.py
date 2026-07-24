@@ -643,7 +643,7 @@ def test_submit_evidence_without_buddy_returns_422(
         """
         UPDATE buddy_relationship
         SET effective_to = CURRENT_DATE,
-            expiry_date = CURRENT_DATE
+            expiry_date = CURRENT_DATE - 1
         WHERE member_id = %s AND buddy_id = %s
         """,
         (member_id, buddy_id),
