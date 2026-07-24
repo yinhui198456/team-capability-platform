@@ -311,11 +311,8 @@ test.describe('buddy relationship admin management', () => {
   })
 
   test('admin assigns buddy through browser UI form', async ({ page }) => {
-    const {
-      memberUsername,
-      memberFullName,
-      buddyOneFullName,
-    } = await createTestUsers(page, 'ui')
+    const { memberUsername, memberFullName, buddyOneFullName } =
+      await createTestUsers(page, 'ui')
 
     await loginAs(page, 'admin')
     await page.goto('/system/users')
