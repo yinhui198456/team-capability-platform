@@ -21,8 +21,24 @@ export async function login(username: string, password: string): Promise<User> {
   )
 }
 
-export async function logout(): Promise<void> {
-  await request<void>('/api/auth/logout', { method: 'POST' }, {})
+export type LogoutResult = { ok: true } | { ok: false; retryable: boolean }
+
+export async function logout(): Promise<LogoutResult> {
+  try {
+    const resp = await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    // 2xx or 401 (already expired) → both mean session is gone
+    if (resp.ok || resp.status === 401) return { ok: true }
+    // 5xx → retryable
+    return { ok: false, retryable: true }
+  } catch {
+    // network error → retryable
+    return { ok: false, retryable: true }
+  }
 }
 
 export async function me(): Promise<User> {

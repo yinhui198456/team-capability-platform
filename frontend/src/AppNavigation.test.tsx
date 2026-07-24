@@ -546,10 +546,6 @@ describe('user menu and admin navigation', () => {
             json: () =>
               Promise.resolve({ code: 'T', version: 'V1', domains: [] }),
           })
-        if (url.includes('/api/assessment-reviews/pending'))
-          return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
-        if (url.includes('/api/evidence-reviews/pending'))
-          return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (
           url.includes('/api/assessment-reviews/summary') ||
           url.includes('/api/evidence-reviews/summary')
@@ -563,6 +559,11 @@ describe('user menu and admin navigation', () => {
                 completed_this_year: 0,
               }),
           })
+        if (
+          url.includes('/api/assessment-reviews/pending') ||
+          url.includes('/api/evidence-reviews/pending')
+        )
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
       }),
     )
@@ -574,6 +575,45 @@ describe('user menu and admin navigation', () => {
     vi.restoreAllMocks()
   })
 
+  // ---- helpers for logout tests ----
+  function stubLogoutFetch(
+    logoutHandler: () => Promise<unknown>,
+    user: { id: number; username: string; full_name: string; roles: string[] },
+  ) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : ''
+        if (url === '/api/auth/me')
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(user),
+          })
+        if (init?.method === 'POST' && url === '/api/auth/logout')
+          return logoutHandler()
+        if (url.startsWith('/api/capability-model'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({ code: 'T', version: 'V1', domains: [] }),
+          })
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }),
+    )
+  }
+
+  async function openMenuAndClickLogout(fullName: string) {
+    await waitFor(() => {
+      expect(screen.getByText(fullName)).toBeTruthy()
+    })
+    screen.getByRole('button', { name: new RegExp(fullName) }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+    screen.getByRole('menuitem', { name: '退出登录' }).click()
+  }
+
+  // ---- visibility per role ----
   it('shows user menu trigger with full_name for all roles', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 1,
@@ -589,7 +629,6 @@ describe('user menu and admin navigation', () => {
     await waitFor(() => {
       expect(screen.getByText('Member User')).toBeTruthy()
     })
-    // Has a clickable trigger
     const trigger = screen.getByRole('button', { name: /Member User/ })
     expect(trigger).toBeTruthy()
     expect(trigger.getAttribute('aria-haspopup')).toBe('true')
@@ -600,7 +639,7 @@ describe('user menu and admin navigation', () => {
       id: 1,
       username: 'multi',
       full_name: 'Multi User',
-      roles: ['Member', 'Admin'],
+      roles: ['Admin', 'Member'],
     })
     render(
       <MemoryRouter initialEntries={['/dashboard/member']}>
@@ -612,7 +651,7 @@ describe('user menu and admin navigation', () => {
     })
     screen.getByRole('button', { name: /Multi User/ }).click()
     await waitFor(() => {
-      expect(screen.getByText('Member / Admin')).toBeTruthy()
+      expect(screen.getByText('Admin / Member')).toBeTruthy()
     })
     expect(screen.getByText('@multi')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
@@ -630,7 +669,6 @@ describe('user menu and admin navigation', () => {
       const routes: Record<string, string> = {
         Member: '/dashboard/member',
         Buddy: '/mentoring/dashboard',
-        // ponytail: /capability/model avoids TeamAnalyticsPage which needs shaped mock
         Leader: '/capability/model',
       }
       render(
@@ -658,11 +696,9 @@ describe('user menu and admin navigation', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      // Sidebar label + page h1 both contain "系统管理"
       const elements = screen.getAllByText('系统管理')
       expect(elements.length).toBeGreaterThanOrEqual(2)
     })
-    // Sidebar link to /system/users
     const sidebarLinks = screen.getAllByRole('link', { name: '用户管理' })
     expect(sidebarLinks.length).toBeGreaterThanOrEqual(1)
     expect(sidebarLinks[0].getAttribute('href')).toContain('/system/users')
@@ -685,87 +721,123 @@ describe('user menu and admin navigation', () => {
     })
   })
 
-  it('logout button clears auth and redirects to /login', async () => {
+  // ---- logout status-specific tests ----
+  it('logout 2xx clears auth and redirects to /login', async () => {
     const mockLogout = vi.fn().mockResolvedValue({
       ok: true,
+      status: 200,
       json: () => Promise.resolve({ ok: true }),
     })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: string, init?: RequestInit) => {
-        const url = typeof input === 'string' ? input : ''
-        if (url === '/api/auth/me')
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                id: 1,
-                username: 'member',
-                full_name: 'Member User',
-                roles: ['Member'],
-              }),
-          })
-        if (init?.method === 'POST' && url === '/api/auth/logout')
-          return mockLogout()
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve([]),
-        })
-      }),
-    )
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
     render(
       <MemoryRouter initialEntries={['/dashboard/member']}>
         <App />
         <LocationDisplay />
       </MemoryRouter>,
     )
-    await waitFor(() => {
-      expect(screen.getByText('Member User')).toBeTruthy()
-    })
-    // Open user menu
-    screen.getByRole('button', { name: /Member User/ }).click()
-    await waitFor(() => {
-      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
-    })
-    // Click logout
-    screen.getByRole('menuitem', { name: '退出登录' }).click()
-    await waitFor(() => {
-      expect(mockLogout).toHaveBeenCalled()
-    })
+    await openMenuAndClickLogout('Member User')
     await waitFor(() => {
       expect(screen.getByTestId('location').textContent).toBe('/login')
     })
   })
 
-  it('logout button is disabled while request in flight', async () => {
+  it('logout 401 clears auth and redirects without error', async () => {
+    const mockLogout = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ detail: 'unauthorized' }),
+    })
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await openMenuAndClickLogout('Member User')
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
+    expect(screen.queryByText(/退出失败/)).toBeNull()
+  })
+
+  it('logout 500 keeps user state and shows error', async () => {
+    const mockLogout = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ detail: 'server error' }),
+    })
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await openMenuAndClickLogout('Member User')
+    await waitFor(() => {
+      expect(screen.getByText('退出失败，请重试')).toBeTruthy()
+    })
+    expect(screen.getByTestId('location').textContent).not.toBe('/login')
+    expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+  })
+
+  it('logout network error keeps user state and shows error', async () => {
+    const mockLogout = vi.fn().mockRejectedValue(new Error('Network error'))
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await openMenuAndClickLogout('Member User')
+    await waitFor(() => {
+      expect(screen.getByText('退出失败，请重试')).toBeTruthy()
+    })
+    expect(screen.getByTestId('location').textContent).not.toBe('/login')
+    expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+  })
+
+  it('logout disabled while request in flight', async () => {
     let resolveLogout: () => void
     const mockLogout = vi.fn(
       () =>
         new Promise<unknown>((resolve) => {
           resolveLogout = () =>
-            resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+            resolve({
+              ok: true,
+              status: 200,
+              json: () => Promise.resolve({ ok: true }),
+            })
         }),
     )
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: string, init?: RequestInit) => {
-        const url = typeof input === 'string' ? input : ''
-        if (url === '/api/auth/me')
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                id: 1,
-                username: 'member',
-                full_name: 'Member User',
-                roles: ['Member'],
-              }),
-          })
-        if (init?.method === 'POST' && url === '/api/auth/logout')
-          return mockLogout()
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
-      }),
-    )
+    stubLogoutFetch(mockLogout, {
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
     render(
       <MemoryRouter initialEntries={['/dashboard/member']}>
         <App />
@@ -782,51 +854,56 @@ describe('user menu and admin navigation', () => {
     await waitFor(() => {
       expect(screen.getByRole('menuitem', { name: '退出中…' })).toBeTruthy()
     })
-    // Button should be disabled
     const btn = screen.getByRole('menuitem', { name: '退出中…' })
     expect((btn as HTMLButtonElement).disabled).toBe(true)
-    // Resolve
     resolveLogout!()
   })
 
-  it('shows error message when logout fails', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: string, init?: RequestInit) => {
-        const url = typeof input === 'string' ? input : ''
-        if (url === '/api/auth/me')
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                id: 1,
-                username: 'member',
-                full_name: 'Member User',
-                roles: ['Member'],
-              }),
-          })
-        if (init?.method === 'POST' && url === '/api/auth/logout')
-          return Promise.reject(new Error('Network error'))
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
-      }),
+  it.each([
+    ['Member', '/dashboard/member'],
+    ['Buddy', '/mentoring/dashboard'],
+    ['Leader', '/capability/model'],
+    ['Admin', '/system/users'],
+  ])('%s sees user menu and logout entry', async (role, path) => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: role.toLowerCase(),
+      full_name: `${role} User`,
+      roles: [role],
+    })
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>,
     )
+    await waitFor(() => {
+      expect(screen.getByText(`${role} User`)).toBeTruthy()
+    })
+    screen.getByRole('button', { name: new RegExp(`${role} User`) }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+  })
+
+  it('multi-role user displays all roles and admin sidebar', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'multi',
+      full_name: 'Multi User',
+      roles: ['Admin', 'Member'],
+    })
     render(
       <MemoryRouter initialEntries={['/dashboard/member']}>
         <App />
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByText('Member User')).toBeTruthy()
+      expect(screen.getByText('Multi User')).toBeTruthy()
     })
-    screen.getByRole('button', { name: /Member User/ }).click()
+    expect(screen.getByText('系统管理')).toBeTruthy()
+    screen.getByRole('button', { name: /Multi User/ }).click()
     await waitFor(() => {
-      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+      expect(screen.getByText('Admin / Member')).toBeTruthy()
     })
-    screen.getByRole('menuitem', { name: '退出登录' }).click()
-    await waitFor(() => {
-      expect(screen.getByText('退出失败，请重试')).toBeTruthy()
-    })
-    // Button should be re-enabled
-    expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
   })
 })

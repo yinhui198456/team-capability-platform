@@ -3,27 +3,35 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 test.describe('logout and admin navigation', () => {
-  test('Member can logout and cannot access protected pages', async ({
+  test('Member visits multiple pages, logs out, back+direct URL blocked', async ({
     page,
   }) => {
     await loginAs(page, 'member')
-    await expect(page.getByText('我的成长总览')).toBeVisible()
 
-    // Open user menu
+    // Visit at least two protected pages to build browser history
+    await page.goto('/dashboard/member')
+    await expect(page.getByText('我的成长总览')).toBeVisible()
+    await page.goto('/capability/model')
+    await expect(page.getByRole('heading', { name: '能力地图' })).toBeVisible()
+
+    // Logout via user menu
     await page.getByRole('button', { name: /Member User/ }).click()
     const dropdown = page.locator('.user-menu-dropdown')
     await expect(
       dropdown.getByRole('menuitem', { name: '退出登录' }),
     ).toBeVisible()
-    // Check role label inside dropdown
-    await expect(dropdown.locator('.user-menu-roles')).toContainText('Member')
-
-    // Logout
     await dropdown.getByRole('menuitem', { name: '退出登录' }).click()
     await expect(page).toHaveURL(/\/login/)
 
-    // logout uses replace:true; back goes to blank page, not authenticated page
-    // Direct URL access must redirect to login
+    // page.goBack() must land on login, not restore authenticated pages
+    await page.goBack()
+    await expect(page).toHaveURL(/\/login/)
+    await expect(page.getByText('我的成长总览')).not.toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '能力地图' }),
+    ).not.toBeVisible()
+
+    // Direct URL access must also redirect to /login
     await page.goto('/dashboard/member')
     await expect(page).toHaveURL(/\/login/)
   })
@@ -33,12 +41,10 @@ test.describe('logout and admin navigation', () => {
     await page.goto('/capability/model')
     await expect(page.getByRole('heading', { name: '能力地图' })).toBeVisible()
 
-    // Sidebar should have 系统管理 section
     await expect(page.getByText('系统管理')).toBeVisible()
     const sidebarLink = page.getByRole('link', { name: '用户管理' })
     await expect(sidebarLink).toBeVisible()
 
-    // Click sidebar link
     await sidebarLink.click()
     await expect(page).toHaveURL(/\/system\/users/)
     await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
@@ -52,22 +58,28 @@ test.describe('logout and admin navigation', () => {
     ).toBeVisible()
   })
 
-  test('non-Admin users do not see admin sidebar entry', async ({ page }) => {
+  test('non-Admin blocked: no sidebar entry, direct access denied, API 403', async ({
+    page,
+  }) => {
     await loginAs(page, 'member')
     await expect(page.getByText('我的成长总览')).toBeVisible()
 
+    // No admin sidebar
     await expect(page.getByText('系统管理')).not.toBeVisible()
     await expect(page.getByRole('link', { name: '用户管理' })).not.toBeVisible()
 
-    // Direct URL access is blocked by route guard
+    // Direct URL → page renders "无权限"
     await page.goto('/system/users')
     await expect(page.getByText(/无权限/)).toBeVisible()
+
+    // Direct API call → 403
+    const apiResp = await page.request.get('/api/system/users')
+    expect(apiResp.status()).toBe(403)
   })
 
   test('multi-role user with Admin can see and access admin', async ({
     page,
   }) => {
-    // Create multi-role user via API
     await loginAs(page, 'admin')
     const cookies = await page.context().cookies()
     const session = cookies.find((c) => c.name === 'tcp_session')
@@ -107,16 +119,14 @@ test.describe('logout and admin navigation', () => {
       },
     ])
 
-    // Admin priority: default route is /system/users
     await page.goto('/system/users')
     await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
 
-    // Sidebar must show 系统管理 label
     await expect(
       page.locator('.app-sidebar-section-label').getByText('系统管理'),
     ).toBeVisible()
 
-    // User menu shows both roles in dropdown
+    // User menu shows both roles
     await page.getByRole('button', { name: new RegExp(fullName) }).click()
     const dropdown = page.locator('.user-menu-dropdown')
     await expect(dropdown.locator('.user-menu-roles')).toContainText(
@@ -126,8 +136,6 @@ test.describe('logout and admin navigation', () => {
     // Can navigate to member dashboard via sidebar
     await page.getByRole('link', { name: '我的工作台' }).click()
     await expect(page.getByText('我的成长总览')).toBeVisible()
-
-    // 系统管理 still visible in sidebar (user still has Admin)
     await expect(
       page.locator('.app-sidebar-section-label').getByText('系统管理'),
     ).toBeVisible()

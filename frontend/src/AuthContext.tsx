@@ -13,7 +13,8 @@ type AuthContextValue = {
   loading: boolean
   hasProvider: boolean
   refresh: () => Promise<void>
-  logout: () => Promise<void>
+  /** Returns true when the session is gone (2xx or 401), false when retryable. */
+  logout: () => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -21,7 +22,7 @@ const AuthContext = createContext<AuthContextValue>({
   loading: false,
   hasProvider: false,
   refresh: async () => {},
-  logout: async () => {},
+  logout: async () => false,
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -41,8 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    await logoutApi()
-    setUser(null)
+    const result = await logoutApi()
+    if (result.ok) {
+      setUser(null)
+      return true
+    }
+    return false
   }, [])
 
   useEffect(() => {

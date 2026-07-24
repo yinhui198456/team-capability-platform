@@ -185,10 +185,11 @@ function UserMenu() {
   async function handleLogout() {
     setLoggingOut(true)
     setError('')
-    try {
-      await logout()
+    const ok = await logout()
+    if (ok) {
       navigate('/login', { replace: true })
-    } catch {
+      // loggingOut stays true — user is navigating away
+    } else {
       setError('退出失败，请重试')
       setLoggingOut(false)
     }
