@@ -2,12 +2,19 @@ import { useEffect, useState, type FormEvent } from 'react'
 
 import { useMe } from './catalog'
 import {
+  createBuddyRelationship,
   createSystemUser,
+  endBuddyRelationship,
+  getAvailableBuddies,
+  getBuddyRelationships,
   getSystemConfigs,
   getSystemRoles,
   getSystemUsers,
+  updateBuddyRelationship,
   updateSystemConfig,
   updateSystemUser,
+  type AvailableBuddy,
+  type BuddyRelationship,
   type SystemConfig,
   type SystemUser,
 } from './system'
@@ -46,6 +53,17 @@ function RolePicker({
   )
 }
 
+function relationshipStatus(rel: BuddyRelationship): string {
+  const today = new Date().toISOString().split('T')[0]
+  if (rel.expiry_date && rel.expiry_date < today) return '已失效'
+  if (rel.effective_date > today) return '未来生效'
+  return '当前有效'
+}
+
+function formatDate(value: string | null): string {
+  return value ?? '长期有效'
+}
+
 export function SystemAdminPage() {
   const { user } = useMe()
   const [users, setUsers] = useState<SystemUser[]>([])
@@ -62,6 +80,15 @@ export function SystemAdminPage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const [relationships, setRelationships] = useState<BuddyRelationship[]>([])
+  const [availableBuddies, setAvailableBuddies] = useState<AvailableBuddy[]>([])
+  const [editingRelationship, setEditingRelationship] =
+    useState<BuddyRelationship | null>(null)
+  const [showAddRelationship, setShowAddRelationship] = useState(false)
+  const [buddyId, setBuddyId] = useState('')
+  const [effectiveDate, setEffectiveDate] = useState('')
+  const [expiryDate, setExpiryDate] = useState('')
+
   const LEVEL_OPTIONS = ['P4', 'P5', 'P6', 'P7', 'P8']
 
   const isAdmin = user?.roles.includes('Admin') ?? false
@@ -77,11 +104,24 @@ export function SystemAdminPage() {
     setConfigs(nextConfigs)
   }
 
+  async function loadBuddies() {
+    const buddies = await getAvailableBuddies()
+    setAvailableBuddies(buddies)
+  }
+
+  async function loadRelationships(memberId: number) {
+    const rels = await getBuddyRelationships(memberId)
+    setRelationships(rels)
+  }
+
   useEffect(() => {
     if (!isAdmin) return
     refresh().catch((reason: unknown) =>
       setError(reason instanceof Error ? reason.message : '加载失败'),
     )
+    loadBuddies().catch(() => {
+      /* ignore: buddy dropdown will be empty and save will surface errors */
+    })
   }, [isAdmin])
 
   function selectUser(nextUser: SystemUser) {
@@ -91,6 +131,85 @@ export function SystemAdminPage() {
     setSelectedRoles(nextUser.roles)
     setCurrentLevel(nextUser.current_level ?? '')
     setTargetLevel(nextUser.target_level ?? '')
+    resetRelationshipForm()
+    if (nextUser.roles.includes('Member')) {
+      loadRelationships(nextUser.id).catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : '加载关系失败'),
+      )
+    } else {
+      setRelationships([])
+    }
+  }
+
+  function resetRelationshipForm() {
+    setEditingRelationship(null)
+    setShowAddRelationship(false)
+    setBuddyId('')
+    setEffectiveDate('')
+    setExpiryDate('')
+  }
+
+  function startAddRelationship() {
+    setEditingRelationship(null)
+    setShowAddRelationship(true)
+    setBuddyId(availableBuddies[0]?.id.toString() ?? '')
+    setEffectiveDate(new Date().toISOString().split('T')[0])
+    setExpiryDate('')
+  }
+
+  function startEditRelationship(rel: BuddyRelationship) {
+    setShowAddRelationship(false)
+    setEditingRelationship(rel)
+    setBuddyId(rel.buddy_id.toString())
+    setEffectiveDate(rel.effective_date)
+    setExpiryDate(rel.expiry_date ?? '')
+  }
+
+  async function saveRelationship(event: FormEvent) {
+    event.preventDefault()
+    if (!selectedId) return
+    const selectedBuddyId = Number(buddyId)
+    if (!selectedBuddyId) return
+    setSaving(true)
+    setError('')
+    try {
+      if (editingRelationship) {
+        await updateBuddyRelationship(editingRelationship.id, {
+          buddy_id: selectedBuddyId,
+          effective_date: effectiveDate,
+          expiry_date: expiryDate || null,
+        })
+      } else {
+        await createBuddyRelationship({
+          member_id: selectedId,
+          buddy_id: selectedBuddyId,
+          effective_date: effectiveDate,
+          expiry_date: expiryDate || null,
+        })
+      }
+      resetRelationshipForm()
+      await loadRelationships(selectedId)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '保存关系失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function endRelationship(rel: BuddyRelationship) {
+    if (!selectedId) return
+    const today = new Date().toISOString().split('T')[0]
+    if (!window.confirm(`确认将 “${rel.buddy_name}” 的关系结束于 ${today}？`)) return
+    setSaving(true)
+    setError('')
+    try {
+      await endBuddyRelationship(rel.id, today)
+      await loadRelationships(selectedId)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '结束关系失败')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function saveUser(event: FormEvent) {
@@ -156,6 +275,9 @@ export function SystemAdminPage() {
       setSaving(false)
     }
   }
+
+  const selectedUser = users.find((u) => u.id === selectedId)
+  const canManageBuddy = selectedUser?.roles.includes('Member') ?? false
 
   if (!user) {
     return (
@@ -311,6 +433,34 @@ export function SystemAdminPage() {
               selected={selectedRoles}
               onChange={setSelectedRoles}
             />
+            <label>
+              当前职级
+              <select
+                value={currentLevel}
+                onChange={(e) => setCurrentLevel(e.target.value)}
+              >
+                <option value="">未设置</option>
+                {LEVEL_OPTIONS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              目标职级
+              <select
+                value={targetLevel}
+                onChange={(e) => setTargetLevel(e.target.value)}
+              >
+                <option value="">未设置</option>
+                {LEVEL_OPTIONS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               disabled={saving || selectedRoles.length === 0}
               type="submit"
@@ -369,6 +519,112 @@ export function SystemAdminPage() {
           </form>
         ))}
       </article>
+      {selectedId && canManageBuddy && (
+        <article className="dashboard-card buddy-relationship-card">
+          <h2>主 Buddy 关系</h2>
+          {relationships.length === 0 ? (
+            <p className="muted">该成员暂无 Buddy 关系。</p>
+          ) : (
+            <ul className="buddy-relationship-list" aria-label="Buddy 关系历史">
+              {relationships.map((rel) => (
+                <li key={rel.id} className="buddy-relationship-item">
+                  <div className="buddy-relationship-summary">
+                    <span className="buddy-name">{rel.buddy_name}</span>
+                    <span className="buddy-date">
+                      {formatDate(rel.effective_date)} ~{' '}
+                      {formatDate(rel.expiry_date)}
+                    </span>
+                    <span className={`buddy-status status-${relationshipStatus(rel)}`}>
+                      {relationshipStatus(rel)}
+                    </span>
+                  </div>
+                  <div className="buddy-relationship-actions">
+                    <button
+                      type="button"
+                      onClick={() => startEditRelationship(rel)}
+                      disabled={saving}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => endRelationship(rel)}
+                      disabled={saving || rel.expiry_date !== null}
+                    >
+                      结束
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!showAddRelationship && !editingRelationship && (
+            <button
+              type="button"
+              className="add-relationship-button"
+              onClick={startAddRelationship}
+              disabled={saving || availableBuddies.length === 0}
+            >
+              新增关系
+            </button>
+          )}
+          {(showAddRelationship || editingRelationship) && (
+            <form className="system-form" onSubmit={saveRelationship}>
+              <h3>{editingRelationship ? '修改关系' : '新增关系'}</h3>
+              <label>
+                Buddy
+                <select
+                  value={buddyId}
+                  onChange={(event) => setBuddyId(event.target.value)}
+                  required
+                >
+                  <option value="">请选择</option>
+                  {availableBuddies.map((buddy) => (
+                    <option key={buddy.id} value={buddy.id}>
+                      {buddy.full_name} · {buddy.username}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                生效日期
+                <input
+                  type="date"
+                  value={effectiveDate}
+                  onChange={(event) => setEffectiveDate(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                失效日期（留空为长期有效）
+                <input
+                  type="date"
+                  value={expiryDate}
+                  onChange={(event) => setExpiryDate(event.target.value)}
+                />
+              </label>
+              <div className="form-actions">
+                <button type="submit" disabled={saving}>
+                  保存关系
+                </button>
+                <button
+                  type="button"
+                  onClick={resetRelationshipForm}
+                  disabled={saving}
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          )}
+        </article>
+      )}
+      {selectedId && !canManageBuddy && (
+        <article className="dashboard-card buddy-relationship-card">
+          <h2>主 Buddy 关系</h2>
+          <p className="muted">仅 Member 角色可维护 Buddy 关系。</p>
+        </article>
+      )}
     </section>
   )
 }

@@ -88,9 +88,9 @@ def test_primary_buddy_unique_index(connection: psycopg.Connection) -> None:
         connection.execute(
             """
             INSERT INTO buddy_relationship (
-                member_id, buddy_id, is_primary, effective_to
+                member_id, buddy_id, is_primary, effective_date, effective_to
             )
-            VALUES (%s, %s, TRUE, NULL)
+            VALUES (%s, %s, TRUE, CURRENT_DATE, NULL)
             """,
             (member_id, buddy_id),
         )
@@ -100,12 +100,69 @@ def test_primary_buddy_unique_index(connection: psycopg.Connection) -> None:
             connection.execute(
                 """
                 INSERT INTO buddy_relationship (
-                    member_id, buddy_id, is_primary, effective_to
+                    member_id, buddy_id, is_primary, effective_date, effective_to
                 )
-                VALUES (%s, %s, TRUE, NULL)
+                VALUES (%s, %s, TRUE, CURRENT_DATE, NULL)
                 """,
                 (member_id, buddy_id),
             )
+
+
+def test_effective_date_is_not_null_after_migration(
+    connection: psycopg.Connection,
+) -> None:
+    _drop_access_tables(connection)
+    create_access_schema(connection)
+
+    # Simulate pre-migration state where effective_date was nullable.
+    connection.execute(
+        "ALTER TABLE buddy_relationship ALTER COLUMN effective_date DROP NOT NULL"
+    )
+
+    with connection.transaction():
+        connection.execute(
+            """
+            INSERT INTO tcp_user (username, full_name, password_hash)
+            VALUES ('member', 'Member User', 'hash'),
+                   ('buddy', 'Buddy User', 'hash')
+            """
+        )
+        member_id = connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'member'"
+        ).fetchone()[0]
+        buddy_id = connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'buddy'"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO buddy_relationship
+                (member_id, buddy_id, effective_from, effective_to)
+            VALUES (%s, %s, CURRENT_DATE, NULL)
+            """,
+            (member_id, buddy_id),
+        )
+
+    create_access_schema(connection)
+
+    row = connection.execute(
+        "SELECT effective_date, expiry_date, effective_from, effective_to "
+        "FROM buddy_relationship WHERE member_id = %s",
+        (member_id,),
+    ).fetchone()
+    assert row is not None
+    assert row[0] is not None  # effective_date backfilled
+    assert row[0] == row[2]    # synced with effective_from
+    assert row[1] == row[3]    # expiry_date synced with effective_to
+
+    nullable = connection.execute(
+        """
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_name = 'buddy_relationship' AND column_name = 'effective_date'
+        """
+    ).fetchone()
+    assert nullable is not None
+    assert nullable[0] == "NO"
 
 
 def test_member_cannot_be_own_buddy(connection: psycopg.Connection) -> None:
@@ -128,9 +185,10 @@ def test_member_cannot_be_own_buddy(connection: psycopg.Connection) -> None:
             connection.execute(
                 """
                 INSERT INTO buddy_relationship (
-                    member_id, buddy_id, is_primary, effective_to
+                    member_id, buddy_id, is_primary, effective_date, effective_to
                 )
-                VALUES (%s, %s, TRUE, NULL)
+                VALUES (%s, %s, TRUE, CURRENT_DATE, NULL)
                 """,
                 (user_id, user_id),
             )
+

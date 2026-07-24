@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
@@ -241,18 +243,32 @@ def put_system_setting(
 class BuddyRelationshipCreate(BaseModel):
     member_id: int
     buddy_id: int
-    effective_date: str
-    expiry_date: str | None = None
+    effective_date: date
+    expiry_date: date | None = None
 
 
 class BuddyRelationshipUpdate(BaseModel):
     buddy_id: int
-    effective_date: str
-    expiry_date: str | None = None
+    effective_date: date
+    expiry_date: date | None = None
 
 
 class BuddyRelationshipEnd(BaseModel):
-    end_date: str
+    end_date: date
+
+
+def _buddy_relationship_response(rel: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": rel["id"],
+        "member_id": rel["member_id"],
+        "buddy_id": rel["buddy_id"],
+        "buddy_name": rel.get("buddy_name", ""),
+        "effective_date": rel["effective_date"],
+        "expiry_date": rel["expiry_date"],
+        "is_primary": rel["is_primary"],
+        "created_at": rel["created_at"],
+        "updated_at": rel["updated_at"],
+    }
 
 
 @system_router.get("/buddy-relationships/{member_id}")
@@ -260,7 +276,10 @@ def get_buddy_relationships(
     member_id: int, user: CurrentUser, connection: Connection
 ) -> list[dict[str, object]]:
     _require_admin(user)
-    return list_buddy_relationships(connection, member_id)
+    return [
+        _buddy_relationship_response(rel)
+        for rel in list_buddy_relationships(connection, member_id)
+    ]
 
 
 @system_router.get("/available-buddies")
@@ -278,7 +297,7 @@ def post_buddy_relationship(
 ) -> dict[str, object]:
     _require_admin(user)
     try:
-        create_buddy_relationship(
+        relationship_id = create_buddy_relationship(
             connection,
             body.member_id,
             body.buddy_id,
@@ -286,7 +305,10 @@ def post_buddy_relationship(
             body.expiry_date,
         )
         rels = list_buddy_relationships(connection, body.member_id)
-        return {"relationships": rels}
+        for rel in rels:
+            if rel["id"] == relationship_id:
+                return _buddy_relationship_response(rel)
+        raise RuntimeError("created relationship not found")
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -302,13 +324,14 @@ def put_buddy_relationship(
 ) -> dict[str, object]:
     _require_admin(user)
     try:
-        return update_buddy_relationship(
+        rel = update_buddy_relationship(
             connection,
             relationship_id,
             body.buddy_id,
             body.effective_date,
             body.expiry_date,
         )
+        return _buddy_relationship_response(rel)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -328,7 +351,8 @@ def post_end_buddy_relationship(
 ) -> dict[str, object]:
     _require_admin(user)
     try:
-        return end_buddy_relationship(connection, relationship_id, body.end_date)
+        rel = end_buddy_relationship(connection, relationship_id, body.end_date)
+        return _buddy_relationship_response(rel)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

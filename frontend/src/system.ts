@@ -82,6 +82,8 @@ export type BuddyRelationship = {
   effective_date: string
   expiry_date: string | null
   is_primary: boolean
+  created_at: string
+  updated_at: string
 }
 
 export type AvailableBuddy = {

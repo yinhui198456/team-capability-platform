@@ -1,9 +1,11 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import psycopg
 
 from .security import hash_password, hash_session_token
+
+_BUDDY_LOCK_KEYSPACE = 1  # namespace for pg_advisory_xact_lock on member_id
 
 
 def _now(connection: psycopg.Connection) -> Any:
@@ -170,6 +172,41 @@ def _require_role(
         raise ValueError(f"{param_name} {user_id} does not have the {role_code} role")
 
 
+def _require_user_exists(
+    connection: psycopg.Connection, user_id: int, param_name: str
+) -> None:
+    row = connection.execute(
+        "SELECT 1 FROM tcp_user WHERE id = %s", (user_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"{param_name} {user_id} does not exist")
+
+
+def _require_active_user(
+    connection: psycopg.Connection, user_id: int, param_name: str
+) -> None:
+    row = connection.execute(
+        "SELECT is_active FROM tcp_user WHERE id = %s", (user_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"{param_name} {user_id} does not exist")
+    if not row[0]:
+        raise ValueError(f"{param_name} {user_id} is inactive")
+
+
+def _advisory_lock_member(connection: psycopg.Connection, member_id: int) -> None:
+    # ponytail: member-level serialization for create/update/end overlap checks.
+    key = (_BUDDY_LOCK_KEYSPACE << 32) | member_id
+    connection.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
+
+
+def _validate_buddy_relationship_dates(
+    effective_date: date, expiry_date: date | None
+) -> None:
+    if expiry_date is not None and effective_date > expiry_date:
+        raise ValueError("生效日期不得晚于失效日期。")
+
+
 def _effective_today_condition(alias: str = "") -> str:
     # ponytail: closed interval; expiry_date IS NULL = open-ended
     prefix = f"{alias}." if alias else ""
@@ -182,20 +219,19 @@ def _effective_today_condition(alias: str = "") -> str:
 def _check_buddy_relationship_overlap(
     connection: psycopg.Connection,
     member_id: int,
-    buddy_id: int,
-    effective_date: str,
-    expiry_date: str | None,
+    effective_date: date,
+    expiry_date: date | None,
     exclude_id: int | None = None,
 ) -> None:
     """Reject if interval overlaps an existing primary relationship for this member."""
-    if expiry_date:
+    if expiry_date is not None:
         overlap_sql = (
             "SELECT 1 FROM buddy_relationship"
             " WHERE member_id = %s AND is_primary = TRUE"
             "  AND effective_date <= %s"
             "  AND (expiry_date IS NULL OR expiry_date >= %s)"
         )
-        params = (member_id, expiry_date, effective_date)
+        params: tuple[Any, ...] = (member_id, expiry_date, effective_date)
     else:
         overlap_sql = (
             "SELECT 1 FROM buddy_relationship"
@@ -219,10 +255,10 @@ def _buddy_relationship_row(row: Any) -> dict[str, object]:
         "effective_from": row[3],
         "effective_to": row[4],
         "is_primary": row[5],
-        "effective_date": row[6] if len(row) > 6 else None,
-        "expiry_date": row[7] if len(row) > 7 else None,
-        "created_at": row[8] if len(row) > 8 else None,
-        "updated_at": row[9] if len(row) > 9 else None,
+        "effective_date": row[6],
+        "expiry_date": row[7],
+        "created_at": row[8],
+        "updated_at": row[9],
     }
 
 
@@ -230,31 +266,37 @@ def create_buddy_relationship(
     connection: psycopg.Connection,
     member_id: int,
     buddy_id: int,
-    effective_date: str | None = None,
-    expiry_date: str | None = None,
+    effective_date: date | None = None,
+    expiry_date: date | None = None,
     is_primary: bool = True,
 ) -> int:
-    from datetime import date as _date
-
     if effective_date is None:
-        effective_date = str(_date.today())
+        effective_date = date.today()
+    if member_id == buddy_id:
+        raise ValueError("member_id and buddy_id cannot be the same user")
+    _validate_buddy_relationship_dates(effective_date, expiry_date)
+    _require_user_exists(connection, member_id, "member_id")
+    _require_user_exists(connection, buddy_id, "buddy_id")
     _require_role(connection, member_id, "Member", "member_id")
     _require_role(connection, buddy_id, "Buddy", "buddy_id")
+    _require_active_user(connection, buddy_id, "buddy_id")
     with connection.transaction():
+        _advisory_lock_member(connection, member_id)
         _check_buddy_relationship_overlap(
-            connection, member_id, buddy_id, effective_date, expiry_date
+            connection, member_id, effective_date, expiry_date
         )
         row = connection.execute(
             """INSERT INTO buddy_relationship
                (member_id, buddy_id, effective_from, effective_date,
-                expiry_date, is_primary)
-               VALUES (%s, %s, %s::date, %s::date, %s::date, %s)
+                effective_to, expiry_date, is_primary)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
                 member_id,
                 buddy_id,
                 effective_date,
                 effective_date,
+                expiry_date,
                 expiry_date,
                 is_primary,
             ),
@@ -327,7 +369,7 @@ def list_buddy_relationships(
            FROM buddy_relationship br
            JOIN tcp_user u ON u.id = br.buddy_id
            WHERE br.member_id = %s
-           ORDER BY br.effective_date DESC""",
+           ORDER BY br.effective_date DESC, br.id DESC""",
         (member_id,),
     ).fetchall()
     return [
@@ -346,13 +388,45 @@ def list_buddy_relationships(
     ]
 
 
+def _fetch_buddy_relationship(
+    connection: psycopg.Connection, relationship_id: int
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """SELECT br.id, br.member_id, br.buddy_id,
+                  br.effective_date, br.expiry_date,
+                  br.is_primary, br.created_at, br.updated_at,
+                  u.full_name as buddy_name
+           FROM buddy_relationship br
+           JOIN tcp_user u ON u.id = br.buddy_id
+           WHERE br.id = %s""",
+        (relationship_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "buddy_id": row[2],
+        "effective_date": row[3],
+        "expiry_date": row[4],
+        "is_primary": row[5],
+        "created_at": row[6],
+        "updated_at": row[7],
+        "buddy_name": row[8],
+    }
+
+
 def update_buddy_relationship(
     connection: psycopg.Connection,
     relationship_id: int,
     buddy_id: int,
-    effective_date: str,
-    expiry_date: str | None,
+    effective_date: date,
+    expiry_date: date | None,
 ) -> dict[str, object]:
+    _validate_buddy_relationship_dates(effective_date, expiry_date)
+    _require_user_exists(connection, buddy_id, "buddy_id")
+    _require_role(connection, buddy_id, "Buddy", "buddy_id")
+    _require_active_user(connection, buddy_id, "buddy_id")
     with connection.transaction():
         existing = connection.execute(
             "SELECT member_id, buddy_id FROM buddy_relationship WHERE id = %s",
@@ -361,54 +435,59 @@ def update_buddy_relationship(
         if existing is None:
             raise KeyError("relationship not found")
         member_id = existing[0]
-        _require_role(connection, buddy_id, "Buddy", "buddy_id")
-        if expiry_date is not None and effective_date > expiry_date:
-            raise ValueError("生效日期不得晚于失效日期。")
+        if member_id == buddy_id:
+            raise ValueError("member_id and buddy_id cannot be the same user")
+        _advisory_lock_member(connection, member_id)
         _check_buddy_relationship_overlap(
             connection,
             member_id,
-            buddy_id,
             effective_date,
             expiry_date,
             relationship_id,
         )
         connection.execute(
             """UPDATE buddy_relationship
-               SET buddy_id = %s, effective_date = %s::date, expiry_date = %s::date,
-                   effective_from = %s::date, updated_at = NOW()
+               SET buddy_id = %s, effective_date = %s, expiry_date = %s,
+                   effective_from = %s, effective_to = %s, updated_at = NOW()
                WHERE id = %s""",
-            (buddy_id, effective_date, expiry_date, effective_date, relationship_id),
+            (buddy_id, effective_date, expiry_date, effective_date, expiry_date, relationship_id),
         )
-    return _buddy_relationship_row(
-        connection.execute(
-            "SELECT * FROM buddy_relationship WHERE id = %s", (relationship_id,)
-        ).fetchone()
-    )
+    rel = _fetch_buddy_relationship(connection, relationship_id)
+    assert rel is not None
+    return rel
 
 
 def end_buddy_relationship(
-    connection: psycopg.Connection, relationship_id: int, end_date: str
+    connection: psycopg.Connection, relationship_id: int, end_date: date
 ) -> dict[str, object]:
     with connection.transaction():
         existing = connection.execute(
-            """SELECT effective_date FROM buddy_relationship WHERE id = %s""",
+            """SELECT member_id, effective_date, expiry_date
+               FROM buddy_relationship WHERE id = %s""",
             (relationship_id,),
         ).fetchone()
         if existing is None:
             raise KeyError("relationship not found")
-        if end_date < str(existing[0]):
+        member_id = existing[0]
+        effective_date = existing[1]
+        current_expiry = existing[2]
+        if end_date < effective_date:
             raise ValueError("结束日期不得早于生效日期。")
+        if current_expiry is not None and end_date > current_expiry:
+            raise ValueError("结束日期不得晚于当前失效日期，不能延长关系。")
+        _advisory_lock_member(connection, member_id)
+        _check_buddy_relationship_overlap(
+            connection, member_id, effective_date, end_date, relationship_id
+        )
         connection.execute(
             """UPDATE buddy_relationship
-               SET expiry_date = %s::date, updated_at = NOW()
+               SET expiry_date = %s, effective_to = %s, updated_at = NOW()
                WHERE id = %s""",
-            (end_date, relationship_id),
+            (end_date, end_date, relationship_id),
         )
-    return _buddy_relationship_row(
-        connection.execute(
-            "SELECT * FROM buddy_relationship WHERE id = %s", (relationship_id,)
-        ).fetchone()
-    )
+    rel = _fetch_buddy_relationship(connection, relationship_id)
+    assert rel is not None
+    return rel
 
 
 def list_available_buddies(

@@ -161,6 +161,11 @@ def create_access_schema(connection: psycopg.Connection) -> None:
            SET expiry_date = effective_to
            WHERE expiry_date IS NULL AND effective_to IS NOT NULL"""
     )
+    # effective_date is the canonical start date; disallow null after backfill.
+    connection.execute(
+        """ALTER TABLE buddy_relationship
+           ALTER COLUMN effective_date SET NOT NULL"""
+    )
     # Add date order constraint
     connection.execute(
         """ALTER TABLE buddy_relationship
@@ -169,8 +174,7 @@ def create_access_schema(connection: psycopg.Connection) -> None:
     connection.execute(
         """ALTER TABLE buddy_relationship
            ADD CONSTRAINT buddy_relationship_date_check
-           CHECK (effective_date IS NULL OR expiry_date IS NULL
-                  OR effective_date <= expiry_date)"""
+           CHECK (expiry_date IS NULL OR effective_date <= expiry_date)"""
     )
     # Drop legacy unique index, add new one based on effective_date/expiry_date
     connection.execute("""DROP INDEX IF EXISTS unique_active_primary_buddy""")

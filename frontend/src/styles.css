@@ -1040,6 +1040,101 @@ select {
   color: #667085;
 }
 
+.buddy-relationship-card {
+  margin-top: 16px;
+}
+
+.buddy-relationship-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.buddy-relationship-item {
+  align-items: center;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.buddy-relationship-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.buddy-name {
+  color: #101828;
+  font-weight: 500;
+}
+
+.buddy-date {
+  color: #667085;
+  font-size: 14px;
+}
+
+.buddy-status {
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
+.status-当前有效 {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.status-未来生效 {
+  background: #eff8ff;
+  color: #175cd3;
+}
+
+.status-已失效 {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.buddy-relationship-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.buddy-relationship-actions button {
+  background: #f9fafb;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 12px;
+}
+
+.add-relationship-button {
+  background: #175cd3;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 16px;
+}
+
+.add-relationship-button:disabled {
+  background: #b2ddff;
+  cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+}
+
 @media (max-width: 640px) {
   .page-heading,
   .card-heading {

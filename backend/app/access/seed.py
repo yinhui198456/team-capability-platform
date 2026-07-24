@@ -75,7 +75,7 @@ def seed_demo_accounts(connection: psycopg.Connection) -> None:
             connection,
             user_ids[member_username],
             user_ids[buddy_username],
-            effective_date=str(date.today()),
+            effective_date=date.today(),
         )
 
 

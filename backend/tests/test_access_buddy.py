@@ -47,7 +47,7 @@ def test_second_primary_buddy_rejected_by_unique_constraint(
     buddy_two_id = _create_user_with_roles(access_schema, "buddy2", ["Buddy"])
     create_buddy_relationship(access_schema, member_id, buddy_one_id)
 
-    with pytest.raises(ValueError, match="日期不可重叠"):
+    with pytest.raises(ValueError, match="该成员在所选日期区间内已有主 Buddy 关系，日期不可重叠。"):
         create_buddy_relationship(access_schema, member_id, buddy_two_id)
 
 
