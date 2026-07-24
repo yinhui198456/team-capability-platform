@@ -466,6 +466,8 @@ export type SelectableMember = {
   id: number
   username: string
   full_name: string
+  current_level: string | null
+  target_level: string | null
 }
 
 export type SelectableMembersResponse = {
@@ -483,6 +485,8 @@ export type CapabilityProfile = {
     id: number
     username: string
     full_name: string
+    current_level?: string | null
+    target_level?: string | null
   }
   assessments: CapabilityProfileAssessment[]
   annual_plan: CapabilityProfileAnnualPlan | null

@@ -268,6 +268,8 @@ def test_me_returns_public_identity_and_buddy_info(
         "username",
         "full_name",
         "roles",
+        "current_level",
+        "target_level",
         "primary_buddy",
         "assigned_members",
     }

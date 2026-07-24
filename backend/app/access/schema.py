@@ -10,7 +10,15 @@ def create_access_schema(connection: psycopg.Connection) -> None:
             full_name TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            current_level TEXT,
+            target_level TEXT,
+            CONSTRAINT current_level_check CHECK (
+                current_level IS NULL OR current_level IN ('P4','P5','P6','P7','P8')
+            ),
+            CONSTRAINT target_level_check CHECK (
+                target_level IS NULL OR target_level IN ('P4','P5','P6','P7','P8')
+            )
         )
         """
     )
@@ -93,6 +101,25 @@ def create_access_schema(connection: psycopg.Connection) -> None:
         ON tcp_session(expires_at)
         """
     )
+    # Migration: add current_level / target_level to existing tcp_user tables
+    for col, constraint in [
+        (
+            "current_level",
+            "current_level IS NULL OR current_level IN ('P4','P5','P6','P7','P8')",
+        ),
+        (
+            "target_level",
+            "target_level IS NULL OR target_level IN ('P4','P5','P6','P7','P8')",
+        ),
+    ]:
+        connection.execute(f"ALTER TABLE tcp_user ADD COLUMN IF NOT EXISTS {col} TEXT")
+        # Drop old constraint without level list then re-add
+        connection.execute(
+            f"ALTER TABLE tcp_user DROP CONSTRAINT IF EXISTS {col}_check"
+        )
+        connection.execute(
+            f"ALTER TABLE tcp_user ADD CONSTRAINT {col}_check CHECK ({constraint})"
+        )
     connection.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS unique_active_primary_buddy

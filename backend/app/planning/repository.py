@@ -1806,7 +1806,8 @@ def get_capability_profile(
     year: int,
 ) -> dict[str, object] | None:
     member_row = connection.execute(
-        "SELECT id, username, full_name FROM tcp_user WHERE id = %s",
+        """SELECT id, username, full_name, current_level, target_level
+           FROM tcp_user WHERE id = %s""",
         (member_id,),
     ).fetchone()
     if member_row is None:
@@ -1942,6 +1943,8 @@ def get_capability_profile(
             "id": member_row[0],
             "username": member_row[1],
             "full_name": member_row[2],
+            "current_level": member_row[3],
+            "target_level": member_row[4],
         },
         "assessments": assessments,
         "annual_plan": annual_plan,
@@ -1992,16 +1995,31 @@ def list_selectable_members_for_profile(
     if "Buddy" in viewer_roles:
         assigned = get_assigned_members(connection, viewer_id)
         return [
-            {"id": m["id"], "username": m["username"], "full_name": m["full_name"]}
+            {
+                "id": m["id"],
+                "username": m["username"],
+                "full_name": m["full_name"],
+                "current_level": m.get("current_level"),
+                "target_level": m.get("target_level"),
+            }
             for m in assigned
         ]
     row = connection.execute(
-        "SELECT id, username, full_name FROM tcp_user WHERE id = %s",
+        """SELECT id, username, full_name, current_level, target_level
+           FROM tcp_user WHERE id = %s""",
         (viewer_id,),
     ).fetchone()
     if row is None:
         return []
-    return [{"id": row[0], "username": row[1], "full_name": row[2]}]
+    return [
+        {
+            "id": row[0],
+            "username": row[1],
+            "full_name": row[2],
+            "current_level": row[3],
+            "target_level": row[4],
+        }
+    ]
 
 
 _ALLOWED_TEAM_PLAN_STATUSES = {"已发布", "已归档"}

@@ -1230,6 +1230,11 @@ select {
   width: 100%;
 }
 
+.level-hint {
+  color: #98a2b3;
+  font-size: 12px;
+}
+
 .readonly-badge {
   background: #f2f4f7;
   border-radius: 6px;

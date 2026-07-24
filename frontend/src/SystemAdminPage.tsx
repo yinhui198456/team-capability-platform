@@ -57,8 +57,12 @@ export function SystemAdminPage() {
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [currentLevel, setCurrentLevel] = useState<string>('')
+  const [targetLevel, setTargetLevel] = useState<string>('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  const LEVEL_OPTIONS = ['P4', 'P5', 'P6', 'P7', 'P8']
 
   const isAdmin = user?.roles.includes('Admin') ?? false
 
@@ -85,6 +89,8 @@ export function SystemAdminPage() {
     setFullName(nextUser.full_name)
     setIsActive(nextUser.is_active)
     setSelectedRoles(nextUser.roles)
+    setCurrentLevel(nextUser.current_level ?? '')
+    setTargetLevel(nextUser.target_level ?? '')
   }
 
   async function saveUser(event: FormEvent) {
@@ -97,6 +103,8 @@ export function SystemAdminPage() {
         full_name: fullName,
         is_active: isActive,
         roles: selectedRoles,
+        current_level: currentLevel || null,
+        target_level: targetLevel || null,
       })
       await refresh()
     } catch (reason) {
@@ -119,6 +127,8 @@ export function SystemAdminPage() {
         full_name: fullName,
         is_active: isActive,
         roles: selectedRoles,
+        current_level: currentLevel || null,
+        target_level: targetLevel || null,
       })
       setUsername('')
       setPassword('')
@@ -189,6 +199,11 @@ export function SystemAdminPage() {
               >
                 {systemUser.full_name} · {systemUser.username} ·{' '}
                 {systemUser.is_active ? '启用' : '停用'}
+                <span className="level-hint">
+                  {' '}
+                  · {systemUser.current_level ?? '—'} →{' '}
+                  {systemUser.target_level ?? '—'}
+                </span>
               </button>
             ))}
           </div>
@@ -216,6 +231,34 @@ export function SystemAdminPage() {
                 selected={selectedRoles}
                 onChange={setSelectedRoles}
               />
+              <label>
+                当前职级
+                <select
+                  value={currentLevel}
+                  onChange={(e) => setCurrentLevel(e.target.value)}
+                >
+                  <option value="">未设置</option>
+                  {LEVEL_OPTIONS.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                目标职级
+                <select
+                  value={targetLevel}
+                  onChange={(e) => setTargetLevel(e.target.value)}
+                >
+                  <option value="">未设置</option>
+                  {LEVEL_OPTIONS.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 disabled={saving || selectedRoles.length === 0}
                 type="submit"

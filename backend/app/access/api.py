@@ -100,6 +100,8 @@ def me(user: CurrentUser, connection: Connection) -> dict[str, object]:
         "username": user["username"],
         "full_name": user["full_name"],
         "roles": roles,
+        "current_level": user.get("current_level"),
+        "target_level": user.get("target_level"),
         "primary_buddy": primary_buddy,
         "assigned_members": assigned_members,
     }
@@ -109,6 +111,8 @@ class AdminUserUpdate(BaseModel):
     full_name: str
     is_active: bool
     roles: list[str]
+    current_level: str | None = None
+    target_level: str | None = None
 
 
 class AdminUserCreate(AdminUserUpdate):
@@ -135,6 +139,8 @@ def _system_user_response(user: dict[str, object]) -> dict[str, object]:
         "full_name": user["full_name"],
         "is_active": user["is_active"],
         "roles": user["roles"],
+        "current_level": user.get("current_level"),
+        "target_level": user.get("target_level"),
     }
 
 
@@ -161,6 +167,8 @@ def post_system_user(
             body.password,
             body.is_active,
             body.roles,
+            body.current_level,
+            body.target_level,
         )
         return _system_user_response(created)
     except ValueError as exc:
@@ -176,7 +184,13 @@ def put_system_user(
     _require_admin(user)
     try:
         updated = update_user_admin(
-            connection, user_id, body.full_name, body.is_active, body.roles
+            connection,
+            user_id,
+            body.full_name,
+            body.is_active,
+            body.roles,
+            body.current_level,
+            body.target_level,
         )
         return _system_user_response(updated)
     except KeyError as exc:

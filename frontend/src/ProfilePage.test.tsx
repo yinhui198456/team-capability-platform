@@ -25,6 +25,8 @@ const baseProfile: planningApi.CapabilityProfile = {
     id: 1,
     username: 'member',
     full_name: 'Member',
+    current_level: null,
+    target_level: null,
   },
   assessments: [
     {
@@ -261,7 +263,15 @@ describe('ProfilePage', () => {
       ],
     })
     vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
-      members: [{ id: 1, username: 'member', full_name: 'Member' }],
+      members: [
+        {
+          id: 1,
+          username: 'member',
+          full_name: 'Member',
+          current_level: null,
+          target_level: null,
+        },
+      ],
     })
     vi.spyOn(planningApi, 'getCapabilityProfileForMember').mockResolvedValue({
       id: 1,
@@ -309,8 +319,20 @@ describe('ProfilePage', () => {
     })
     vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
       members: [
-        { id: 1, username: 'member', full_name: 'Member' },
-        { id: 2, username: 'member2', full_name: 'Member Two' },
+        {
+          id: 1,
+          username: 'member',
+          full_name: 'Member',
+          current_level: null,
+          target_level: null,
+        },
+        {
+          id: 2,
+          username: 'member2',
+          full_name: 'Member Two',
+          current_level: null,
+          target_level: null,
+        },
       ],
     })
     vi.spyOn(planningApi, 'getCapabilityProfileForMember').mockResolvedValue({
@@ -441,6 +463,107 @@ describe('ProfilePage', () => {
     })
 
     expect(screen.getAllByText(/P01-L2A-L3A/).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('displays P6 → P7 when both levels set', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue({
+      ...baseProfile,
+      member: {
+        ...baseProfile.member,
+        current_level: 'P6',
+        target_level: 'P7',
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/职级：P6 → P7/)).toBeTruthy()
+    })
+  })
+
+  it('displays — → P7 when only target set', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue({
+      ...baseProfile,
+      member: {
+        ...baseProfile.member,
+        current_level: null,
+        target_level: 'P7',
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/职级：— → P7/)).toBeTruthy()
+    })
+  })
+
+  it('displays P6 → — when only current set', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue({
+      ...baseProfile,
+      member: {
+        ...baseProfile.member,
+        current_level: 'P6',
+        target_level: null,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/职级：P6 → —/)).toBeTruthy()
+    })
+  })
+
+  it('hides level segment when both are null', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue({
+      ...baseProfile,
+      member: {
+        ...baseProfile.member,
+        current_level: null,
+        target_level: null,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
+    })
+    expect(screen.queryByText(/职级：/)).toBeNull()
   })
 })
 

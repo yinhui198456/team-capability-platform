@@ -10,6 +10,7 @@ from app.access.repository import (
     create_session,
     create_user,
     create_user_admin,
+    get_user_by_username,
     get_user_with_roles,
     list_system_configs,
     update_system_config,
@@ -225,3 +226,241 @@ def test_system_api_is_admin_only_and_never_exposes_password_hash(
     )
     assert status == 403
     assert body == {"detail": "insufficient permissions"}
+
+
+def test_admin_can_create_user_with_p_levels(access_schema: psycopg.Connection) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "p6_member",
+            "full_name": "P6 Member",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "P6",
+            "target_level": "P7",
+        },
+        admin_cookies,
+    )
+    assert status == 201
+    assert body["current_level"] == "P6"
+    assert body["target_level"] == "P7"
+    assert body["roles"] == ["Member"]
+
+
+def test_admin_can_update_user_levels(access_schema: psycopg.Connection) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "updatable",
+            "full_name": "Updatable",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+        },
+        admin_cookies,
+    )
+    assert status == 201
+    user_id = body["id"]
+    assert body["current_level"] is None
+
+    status, body = _request(
+        "PUT",
+        f"/api/system/users/{user_id}",
+        {
+            "full_name": "Updatable",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "P5",
+            "target_level": "P8",
+        },
+        admin_cookies,
+    )
+    assert status == 200
+    assert body["current_level"] == "P5"
+    assert body["target_level"] == "P8"
+
+
+def test_null_levels_can_be_saved(access_schema: psycopg.Connection) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "null_levels",
+            "full_name": "Null Levels",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": None,
+            "target_level": None,
+        },
+        admin_cookies,
+    )
+    assert status == 201
+    assert body["current_level"] is None
+    assert body["target_level"] is None
+
+
+def test_invalid_level_rejected_and_no_user_left_behind(
+    access_schema: psycopg.Connection,
+) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    users_before = _request("GET", "/api/system/users", cookies=admin_cookies)[1]
+    count_before = len(users_before)
+
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "invalid_p9",
+            "full_name": "Invalid P9",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "P9",
+            "target_level": "P5",
+        },
+        admin_cookies,
+    )
+    assert status == 422
+
+    # Verify no user was created
+    users_after = _request("GET", "/api/system/users", cookies=admin_cookies)[1]
+    assert len(users_after) == count_before
+
+    # Verify the user doesn't exist in the database
+    u = get_user_with_roles(access_schema, int(users_after[-1]["id"]))
+    assert u is not None
+    assert u["username"] != "invalid_p9"
+
+
+def test_empty_string_level_rejected(access_schema: psycopg.Connection) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "empty_level",
+            "full_name": "Empty Level",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "",
+            "target_level": "P5",
+        },
+        admin_cookies,
+    )
+    assert status == 422
+
+
+def test_non_admin_cannot_modify_levels(access_schema: psycopg.Connection) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "member_level",
+            "full_name": "Member Level",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "P4",
+            "target_level": "P5",
+        },
+        admin_cookies,
+    )
+    assert status == 201
+    user_id = body["id"]
+
+    # Login as member
+    member_id = get_user_by_username(access_schema, "member_level")
+    assert member_id is not None
+    member_cookies = _cookies_for_user(access_schema, member_id["id"])
+    access_schema.commit()
+
+    status, _ = _request(
+        "PUT",
+        f"/api/system/users/{user_id}",
+        {
+            "full_name": "Hacked",
+            "is_active": True,
+            "roles": ["Member"],
+            "current_level": "P8",
+            "target_level": "P8",
+        },
+        member_cookies,
+    )
+    assert status == 403
+
+    # Verify user was not modified
+    status, body = _request("GET", "/api/system/users", cookies=admin_cookies)
+    admin_users = [u for u in body if u["id"] == user_id]
+    assert len(admin_users) == 1
+    assert admin_users[0]["current_level"] == "P4"
+
+
+def test_existing_roles_unaffected_by_level_update(
+    access_schema: psycopg.Connection,
+) -> None:
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
+    status, body = _request(
+        "POST",
+        "/api/system/users",
+        {
+            "username": "multi_role",
+            "full_name": "Multi Role",
+            "password": "secret",
+            "is_active": True,
+            "roles": ["Member", "Buddy"],
+            "current_level": "P4",
+            "target_level": "P6",
+        },
+        admin_cookies,
+    )
+    assert status == 201
+    user_id = body["id"]
+    assert set(body["roles"]) == {"Buddy", "Member"}
+
+    # Update only level, keep roles unchanged
+    status, body = _request(
+        "PUT",
+        f"/api/system/users/{user_id}",
+        {
+            "full_name": "Multi Role",
+            "is_active": True,
+            "roles": ["Member", "Buddy"],
+            "current_level": "P7",
+            "target_level": "P8",
+        },
+        admin_cookies,
+    )
+    assert status == 200
+    assert set(body["roles"]) == {"Buddy", "Member"}
+    assert body["current_level"] == "P7"
+    assert body["target_level"] == "P8"
