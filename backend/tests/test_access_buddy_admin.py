@@ -1,6 +1,5 @@
 import asyncio
 import json
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from typing import Any
@@ -554,45 +553,6 @@ class TestBuddyOverlap:
         assert status == 422
 
 
-class TestBuddyConcurrency:
-    def test_concurrent_create_for_same_member_only_one_succeeds(
-        self, access_schema: psycopg.Connection
-    ) -> None:
-        admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
-        member_id, buddy_one_id, buddy_two_id = _create_member_and_buddies(
-            access_schema
-        )
-        cookies = _cookies_for_user(access_schema, admin_id)
-        today = date.today()
-
-        results: list[tuple[int, Any | None]] = []
-        lock = threading.Lock()
-
-        def attempt(buddy_id: int) -> None:
-            status, body = _request(
-                "POST",
-                "/api/system/buddy-relationships",
-                {
-                    "member_id": member_id,
-                    "buddy_id": buddy_id,
-                    "effective_date": str(today),
-                    "expiry_date": None,
-                },
-                cookies,
-            )
-            with lock:
-                results.append((status, body))
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            executor.submit(attempt, buddy_one_id)
-            executor.submit(attempt, buddy_two_id)
-
-        successes = [r for r in results if r[0] == 201]
-        failures = [r for r in results if r[0] == 422]
-        assert len(successes) == 1
-        assert len(failures) == 1
-
-
 class TestBuddyPermissionsRealtime:
     def test_buddy_gains_and_loses_member_access_via_relationship_change(
         self, access_schema: psycopg.Connection
@@ -803,3 +763,196 @@ class TestBuddyLifecycleStates:
         )
         assert status == 422
         assert "Member" in str(body)
+
+
+class TestBuddyConcurrency:
+    def test_concurrent_update_and_end_does_not_500(
+        self, access_schema: psycopg.Connection
+    ) -> None:
+        """End must re-read after lock so a concurrent update doesn't corrupt."""
+        admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
+        member_id, buddy_one_id, buddy_two_id = _create_member_and_buddies(
+            access_schema
+        )
+        cookies = _cookies_for_user(access_schema, admin_id)
+        today = date.today()
+
+        # Create a relationship that starts today.
+        status, rel = _request(
+            "POST",
+            "/api/system/buddy-relationships",
+            {
+                "member_id": member_id,
+                "buddy_id": buddy_one_id,
+                "effective_date": str(today),
+                "expiry_date": None,
+            },
+            cookies,
+        )
+        assert status == 201
+        rel_id = rel["id"]
+
+        def _do_update() -> tuple[int, Any | None]:
+            return _request(
+                "PUT",
+                f"/api/system/buddy-relationships/{rel_id}",
+                {
+                    "buddy_id": buddy_two_id,
+                    "effective_date": str(today - timedelta(days=10)),
+                    "expiry_date": str(today + timedelta(days=30)),
+                },
+                cookies,
+            )
+
+        def _do_end() -> tuple[int, Any | None]:
+            return _request(
+                "POST",
+                f"/api/system/buddy-relationships/{rel_id}/end",
+                {"end_date": str(today)},
+                cookies,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(_do_update),
+                executor.submit(_do_end),
+            ]
+            results = [future.result() for future in futures]
+
+        status_codes = {r[0] for r in results}
+        # Neither must be 500; both must be 2xx or 4xx.
+        assert 500 not in status_codes, f"Unexpected 500 in {status_codes}"
+
+        # Verify the final row is consistent.
+        row = access_schema.execute(
+            """SELECT effective_date, expiry_date,
+                      effective_from, effective_to
+               FROM buddy_relationship WHERE id = %s""",
+            (rel_id,),
+        ).fetchone()
+        assert row is not None
+        eff_date, exp_date, eff_from, eff_to = row
+        # Old/new fields must be synced.
+        assert eff_date == eff_from
+        assert exp_date == eff_to
+        # effective_date <= expiry_date (or expiry is null).
+        if exp_date is not None:
+            assert (
+                eff_date <= exp_date
+            ), f"effective_date {eff_date} > expiry_date {exp_date}"
+
+    def test_end_and_create_future_do_not_overlap_or_500(
+        self, access_schema: psycopg.Connection
+    ) -> None:
+        admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
+        member_id, buddy_one_id, buddy_two_id = _create_member_and_buddies(
+            access_schema
+        )
+        cookies = _cookies_for_user(access_schema, admin_id)
+        today = date.today()
+
+        status, rel = _request(
+            "POST",
+            "/api/system/buddy-relationships",
+            {
+                "member_id": member_id,
+                "buddy_id": buddy_one_id,
+                "effective_date": str(today - timedelta(days=10)),
+                "expiry_date": None,
+            },
+            cookies,
+        )
+        assert status == 201
+        rel_id = rel["id"]
+
+        def _do_end() -> tuple[int, Any | None]:
+            return _request(
+                "POST",
+                f"/api/system/buddy-relationships/{rel_id}/end",
+                {"end_date": str(today)},
+                cookies,
+            )
+
+        def _do_create_future() -> tuple[int, Any | None]:
+            return _request(
+                "POST",
+                "/api/system/buddy-relationships",
+                {
+                    "member_id": member_id,
+                    "buddy_id": buddy_two_id,
+                    "effective_date": str(today + timedelta(days=1)),
+                    "expiry_date": None,
+                },
+                cookies,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(_do_end),
+                executor.submit(_do_create_future),
+            ]
+            results = [future.result() for future in futures]
+
+        status_codes = {r[0] for r in results}
+        assert 500 not in status_codes, f"Unexpected 500 in {status_codes}"
+
+        # Rows for this member must not overlap.
+        rows = access_schema.execute(
+            """SELECT effective_date, expiry_date
+               FROM buddy_relationship
+               WHERE member_id = %s AND is_primary = TRUE
+               ORDER BY effective_date""",
+            (member_id,),
+        ).fetchall()
+        for i in range(len(rows) - 1):
+            prev_expiry = rows[i][1]
+            next_eff = rows[i + 1][0]
+            if prev_expiry is not None and next_eff is not None:
+                assert prev_expiry < next_eff, (
+                    f"Overlap: row {i} expiry {prev_expiry} >= "
+                    f"row {i + 1} effective {next_eff}"
+                )
+
+    def test_concurrent_creates_only_one_succeeds_without_500(
+        self, access_schema: psycopg.Connection
+    ) -> None:
+        admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
+        member_id, buddy_one_id, buddy_two_id = _create_member_and_buddies(
+            access_schema
+        )
+        cookies = _cookies_for_user(access_schema, admin_id)
+        today = date.today()
+
+        def _do_create(buddy_id: int) -> tuple[int, Any | None]:
+            return _request(
+                "POST",
+                "/api/system/buddy-relationships",
+                {
+                    "member_id": member_id,
+                    "buddy_id": buddy_id,
+                    "effective_date": str(today),
+                    "expiry_date": None,
+                },
+                cookies,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(_do_create, buddy_one_id),
+                executor.submit(_do_create, buddy_two_id),
+            ]
+            results = [future.result() for future in futures]
+
+        status_codes = [r[0] for r in results]
+        assert 500 not in status_codes, f"Unexpected 500 in {status_codes}"
+        # Exactly one must succeed.
+        successes = [s for s in status_codes if s == 201]
+        assert len(successes) == 1, f"Expected exactly 1 success, got {status_codes}"
+
+        # Final: only one primary relationship for this member.
+        count = access_schema.execute(
+            """SELECT COUNT(*) FROM buddy_relationship
+               WHERE member_id = %s AND is_primary = TRUE""",
+            (member_id,),
+        ).fetchone()[0]
+        assert count == 1

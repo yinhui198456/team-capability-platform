@@ -1,5 +1,6 @@
 from datetime import date
 
+import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
@@ -313,6 +314,11 @@ def post_buddy_relationship(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    except psycopg.errors.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="数据冲突，请检查关系日期或成员信息后重试。",
+        ) from None
 
 
 @system_router.put("/buddy-relationships/{relationship_id}")
@@ -340,6 +346,11 @@ def put_buddy_relationship(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    except psycopg.errors.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="数据冲突，请检查关系日期或成员信息后重试。",
+        ) from None
 
 
 @system_router.post("/buddy-relationships/{relationship_id}/end")
@@ -361,3 +372,8 @@ def post_end_buddy_relationship(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    except psycopg.errors.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="数据冲突，请检查关系日期或成员信息后重试。",
+        ) from None

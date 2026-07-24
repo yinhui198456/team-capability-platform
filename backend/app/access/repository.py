@@ -428,16 +428,27 @@ def update_buddy_relationship(
     _require_role(connection, buddy_id, "Buddy", "buddy_id")
     _require_active_user(connection, buddy_id, "buddy_id")
     with connection.transaction():
-        existing = connection.execute(
-            "SELECT member_id, buddy_id FROM buddy_relationship WHERE id = %s",
+        # Read only member_id — immutable anchor for the lock.
+        anchor = connection.execute(
+            "SELECT member_id FROM buddy_relationship WHERE id = %s",
             (relationship_id,),
         ).fetchone()
-        if existing is None:
+        if anchor is None:
             raise KeyError("relationship not found")
-        member_id = existing[0]
+        member_id = anchor[0]
         if member_id == buddy_id:
             raise ValueError("member_id and buddy_id cannot be the same user")
+
         _advisory_lock_member(connection, member_id)
+
+        # Re-read under lock so overlap check sees committed state.
+        current = connection.execute(
+            "SELECT id FROM buddy_relationship WHERE id = %s FOR UPDATE",
+            (relationship_id,),
+        ).fetchone()
+        if current is None:
+            raise KeyError("relationship not found")
+
         _check_buddy_relationship_overlap(
             connection,
             member_id,
@@ -468,24 +479,39 @@ def end_buddy_relationship(
     connection: psycopg.Connection, relationship_id: int, end_date: date
 ) -> dict[str, object]:
     with connection.transaction():
-        existing = connection.execute(
-            """SELECT member_id, effective_date, expiry_date
-               FROM buddy_relationship WHERE id = %s""",
+        # Step 1: read only member_id — the immutable anchor for the lock.
+        anchor = connection.execute(
+            "SELECT member_id FROM buddy_relationship WHERE id = %s",
             (relationship_id,),
         ).fetchone()
-        if existing is None:
+        if anchor is None:
             raise KeyError("relationship not found")
-        member_id = existing[0]
-        effective_date = existing[1]
-        current_expiry = existing[2]
+        member_id = anchor[0]
+
+        # Step 2: acquire member-level advisory lock.
+        _advisory_lock_member(connection, member_id)
+
+        # Step 3: re-read current row under lock (FOR UPDATE).
+        current = connection.execute(
+            """SELECT effective_date, expiry_date
+               FROM buddy_relationship WHERE id = %s FOR UPDATE""",
+            (relationship_id,),
+        ).fetchone()
+        if current is None:
+            raise KeyError("relationship not found")
+        effective_date: date = current[0]
+        current_expiry: date | None = current[1]
+
+        # Step 4: validate against the freshest data.
         if end_date < effective_date:
             raise ValueError("结束日期不得早于生效日期。")
         if current_expiry is not None and end_date > current_expiry:
             raise ValueError("结束日期不得晚于当前失效日期，不能延长关系。")
-        _advisory_lock_member(connection, member_id)
         _check_buddy_relationship_overlap(
             connection, member_id, effective_date, end_date, relationship_id
         )
+
+        # Step 5: commit the end.
         connection.execute(
             """UPDATE buddy_relationship
                SET expiry_date = %s, effective_to = %s, updated_at = NOW()
