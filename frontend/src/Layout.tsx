@@ -6,8 +6,10 @@ import {
   useLocation,
 } from 'react-router-dom'
 import { useMe } from './catalog'
+import { useAuth } from './AuthContext'
 import { useYear, useYearState } from './YearContext'
 import { defaultRouteFor } from './access'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type NavItem = {
   label: string
@@ -95,6 +97,10 @@ const NAV_SECTIONS: NavSection[] = [
     label: '能力标准',
     items: [{ label: '能力地图', href: '/capability/model' }],
   },
+  {
+    label: '系统管理',
+    items: [{ label: '用户管理', href: '/system/users', roles: ['Admin'] }],
+  },
 ]
 
 function YearSelector() {
@@ -143,6 +149,99 @@ function scopeLabel(roles: string[]) {
   return '公共目录'
 }
 
+function roleDisplay(roles: string[]): string {
+  return roles.join(' / ')
+}
+
+function UserMenu() {
+  const { user } = useMe()
+  const { logout } = useAuth()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [error, setError] = useState('')
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const close = useCallback(() => setOpen(false), [])
+
+  useEffect(() => {
+    if (!open) return
+    function handler(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        close()
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') close()
+    }
+    document.addEventListener('mousedown', handler)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, close])
+
+  async function handleLogout() {
+    setLoggingOut(true)
+    setError('')
+    try {
+      await logout()
+      navigate('/login', { replace: true })
+    } catch {
+      setError('退出失败，请重试')
+      setLoggingOut(false)
+    }
+  }
+
+  const roles = user?.roles ?? []
+
+  return (
+    <div className="user-menu" ref={menuRef}>
+      <button
+        className="user-menu-trigger"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        type="button"
+      >
+        <span className="user-menu-name">
+          {user?.full_name ?? user?.username}
+        </span>
+        <span
+          className={`user-menu-arrow${open ? ' open' : ''}`}
+          aria-hidden="true"
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="user-menu-dropdown" role="menu">
+          <div className="user-menu-info">
+            <strong>{user?.full_name}</strong>
+            <span className="user-menu-username">@{user?.username}</span>
+            <span className="user-menu-roles">{roleDisplay(roles)}</span>
+          </div>
+          <hr className="user-menu-separator" />
+          {error && (
+            <p className="user-menu-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button
+            className="user-menu-logout"
+            role="menuitem"
+            onClick={handleLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? '退出中…' : '退出登录'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Layout() {
   const { user } = useMe()
   const roles = user?.roles ?? []
@@ -163,7 +262,6 @@ export function Layout() {
 
   return (
     <div className="app-shell">
-      {/* Topbar — brand only, nav is sidebar-exclusive */}
       <header className="app-topbar">
         <NavLink to={yHref(homePath)} className="app-topbar-brand">
           Team Capability Platform
@@ -175,6 +273,7 @@ export function Layout() {
               数据范围：{scopeLabel(roles)}
             </span>
           )}
+          <UserMenu />
         </div>
       </header>
 

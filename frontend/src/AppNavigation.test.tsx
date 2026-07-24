@@ -533,3 +533,287 @@ describe('year parameter persistence', () => {
     expect(select.disabled).toBe(true)
   })
 })
+
+describe('user menu and admin navigation', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string): Promise<unknown> => {
+        const url = typeof input === 'string' ? input : ''
+        // TeamAnalyticsPage needs a properly-shaped response.
+        if (url.startsWith('/api/planning/team-analytics'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                member_attainment: [],
+                domain_aggregates: [],
+              }),
+          })
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }),
+    )
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('shows user menu trigger with full_name for all roles', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member User',
+      roles: ['Member'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Member User')).toBeTruthy()
+    })
+    // Has a clickable trigger
+    const trigger = screen.getByRole('button', { name: /Member User/ })
+    expect(trigger).toBeTruthy()
+    expect(trigger.getAttribute('aria-haspopup')).toBe('true')
+  })
+
+  it('opens dropdown with name, roles and logout on click', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'multi',
+      full_name: 'Multi User',
+      roles: ['Member', 'Admin'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Multi User')).toBeTruthy()
+    })
+    screen.getByRole('button', { name: /Multi User/ }).click()
+    await waitFor(() => {
+      expect(screen.getByText('Member / Admin')).toBeTruthy()
+    })
+    expect(screen.getByText('@multi')).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+  })
+
+  it.each([['Member'], ['Buddy'], ['Leader']])(
+    'hides system admin section for %s',
+    async (role) => {
+      vi.spyOn(accessApi, 'me').mockResolvedValue({
+        id: 1,
+        username: role.toLowerCase(),
+        full_name: role,
+        roles: [role],
+      })
+      const routes: Record<string, string> = {
+        Member: '/dashboard/member',
+        Buddy: '/mentoring/dashboard',
+        // ponytail: /capability/model avoids TeamAnalyticsPage which needs shaped mock
+        Leader: '/capability/model',
+      }
+      render(
+        <MemoryRouter initialEntries={[routes[role]]}>
+          <App />
+        </MemoryRouter>,
+      )
+      await waitFor(() => {
+        expect(screen.getByText(role)).toBeTruthy()
+      })
+      expect(screen.queryByText('系统管理')).toBeNull()
+    },
+  )
+
+  it('shows system admin section for Admin role', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'admin',
+      full_name: 'Admin',
+      roles: ['Admin'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/system/users']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      // Sidebar label + page h1 both contain "系统管理"
+      const elements = screen.getAllByText('系统管理')
+      expect(elements.length).toBeGreaterThanOrEqual(2)
+    })
+    // Sidebar link to /system/users
+    const sidebarLinks = screen.getAllByRole('link', { name: '用户管理' })
+    expect(sidebarLinks.length).toBeGreaterThanOrEqual(1)
+    expect(sidebarLinks[0].getAttribute('href')).toContain('/system/users')
+  })
+
+  it('shows system admin section for multi-role with Admin', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'multi',
+      full_name: 'Multi User',
+      roles: ['Member', 'Admin'],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('系统管理')).toBeTruthy()
+    })
+  })
+
+  it('logout button clears auth and redirects to /login', async () => {
+    const mockLogout = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : ''
+        if (url === '/api/auth/me')
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                id: 1,
+                username: 'member',
+                full_name: 'Member User',
+                roles: ['Member'],
+              }),
+          })
+        if (init?.method === 'POST' && url === '/api/auth/logout')
+          return mockLogout()
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Member User')).toBeTruthy()
+    })
+    // Open user menu
+    screen.getByRole('button', { name: /Member User/ }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+    // Click logout
+    screen.getByRole('menuitem', { name: '退出登录' }).click()
+    await waitFor(() => {
+      expect(mockLogout).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
+  })
+
+  it('logout button is disabled while request in flight', async () => {
+    let resolveLogout: () => void
+    const mockLogout = vi.fn(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveLogout = () =>
+            resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+        }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : ''
+        if (url === '/api/auth/me')
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                id: 1,
+                username: 'member',
+                full_name: 'Member User',
+                roles: ['Member'],
+              }),
+          })
+        if (init?.method === 'POST' && url === '/api/auth/logout')
+          return mockLogout()
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Member User')).toBeTruthy()
+    })
+    screen.getByRole('button', { name: /Member User/ }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+    screen.getByRole('menuitem', { name: '退出登录' }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出中…' })).toBeTruthy()
+    })
+    // Button should be disabled
+    const btn = screen.getByRole('menuitem', { name: '退出中…' })
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    // Resolve
+    resolveLogout!()
+  })
+
+  it('shows error message when logout fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : ''
+        if (url === '/api/auth/me')
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                id: 1,
+                username: 'member',
+                full_name: 'Member User',
+                roles: ['Member'],
+              }),
+          })
+        if (init?.method === 'POST' && url === '/api/auth/logout')
+          return Promise.reject(new Error('Network error'))
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Member User')).toBeTruthy()
+    })
+    screen.getByRole('button', { name: /Member User/ }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    })
+    screen.getByRole('menuitem', { name: '退出登录' }).click()
+    await waitFor(() => {
+      expect(screen.getByText('退出失败，请重试')).toBeTruthy()
+    })
+    // Button should be re-enabled
+    expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+  })
+})

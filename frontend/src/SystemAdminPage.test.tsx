@@ -68,8 +68,8 @@ it('renders the Admin system management workspace', async () => {
   await waitFor(() => {
     expect(screen.getByRole('heading', { name: '系统管理' })).toBeTruthy()
   })
-  expect(screen.getByText('用户管理')).toBeTruthy()
-  expect(screen.getByText('系统配置')).toBeTruthy()
+  expect(screen.getByRole('heading', { name: '用户管理' })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: '系统配置' })).toBeTruthy()
   await waitFor(() => {
     expect(screen.getByText(/Admin · admin · 启用/)).toBeTruthy()
   })

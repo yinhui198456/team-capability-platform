@@ -6,13 +6,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { me, type User } from './access'
+import { me, logout as logoutApi, type User } from './access'
 
 type AuthContextValue = {
   user: User | null
   loading: boolean
   hasProvider: boolean
   refresh: () => Promise<void>
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -20,6 +21,7 @@ const AuthContext = createContext<AuthContextValue>({
   loading: false,
   hasProvider: false,
   refresh: async () => {},
+  logout: async () => {},
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -38,12 +40,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const logout = useCallback(async () => {
+    await logoutApi()
+    setUser(null)
+  }, [])
+
   useEffect(() => {
     refresh()
   }, [refresh])
 
   return (
-    <AuthContext.Provider value={{ user, loading, hasProvider: true, refresh }}>
+    <AuthContext.Provider
+      value={{ user, loading, hasProvider: true, refresh, logout }}
+    >
       {children}
     </AuthContext.Provider>
   )

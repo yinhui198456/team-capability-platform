@@ -111,6 +111,104 @@ button {
   white-space: nowrap;
 }
 
+/* ── User menu ── */
+.user-menu {
+  position: relative;
+}
+
+.user-menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--color-white);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+.user-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.user-menu-trigger:focus-visible {
+  outline: 2px solid var(--color-white);
+  outline-offset: 2px;
+}
+
+.user-menu-arrow {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+.user-menu-arrow.open {
+  transform: rotate(180deg);
+}
+
+.user-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 200px;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  z-index: 50;
+}
+
+.user-menu-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.user-menu-info strong {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+.user-menu-username {
+  font-size: var(--text-xs);
+  color: var(--color-gray-600);
+}
+.user-menu-roles {
+  font-size: var(--text-xs);
+  color: var(--color-brand-600);
+  font-weight: 500;
+}
+
+.user-menu-separator {
+  border: 0;
+  border-top: 1px solid var(--color-gray-200);
+  margin: var(--space-2) 0;
+}
+
+.user-menu-error {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  margin: 0 0 var(--space-1);
+}
+
+.user-menu-logout {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-error);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.user-menu-logout:hover {
+  background: var(--color-gray-100);
+}
+.user-menu-logout:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .year-selector {
   background: rgba(255, 255, 255, 0.1);
   color: var(--color-white);
