@@ -540,14 +540,27 @@ describe('user menu and admin navigation', () => {
       'fetch',
       vi.fn((input: string): Promise<unknown> => {
         const url = typeof input === 'string' ? input : ''
-        // TeamAnalyticsPage needs a properly-shaped response.
-        if (url.startsWith('/api/planning/team-analytics'))
+        if (url.startsWith('/api/capability-model'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({ code: 'T', version: 'V1', domains: [] }),
+          })
+        if (url.includes('/api/assessment-reviews/pending'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.includes('/api/evidence-reviews/pending'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (
+          url.includes('/api/assessment-reviews/summary') ||
+          url.includes('/api/evidence-reviews/summary')
+        )
           return Promise.resolve({
             ok: true,
             json: () =>
               Promise.resolve({
-                member_attainment: [],
-                domain_aggregates: [],
+                assessment_pending: 0,
+                evidence_pending: 0,
+                completed_this_year: 0,
               }),
           })
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
