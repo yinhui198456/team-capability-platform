@@ -356,8 +356,9 @@ test.describe('buddy relationship admin management', () => {
     await page.getByRole('button', { name: '保存关系' }).click()
 
     // UI should show the new relationship
-    await expect(page.getByText(buddyOneFullName)).toBeVisible()
-    await expect(page.getByText('当前有效')).toBeVisible()
+    const card = page.locator('.buddy-relationship-card')
+    await expect(card.getByText(buddyOneFullName)).toBeVisible()
+    await expect(card.getByText('当前有效')).toBeVisible()
     await expect(page.getByText('该成员暂无 Buddy 关系。')).not.toBeVisible()
   })
 

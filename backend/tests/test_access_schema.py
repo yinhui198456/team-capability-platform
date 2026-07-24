@@ -151,8 +151,8 @@ def test_effective_date_is_not_null_after_migration(
     ).fetchone()
     assert row is not None
     assert row[0] is not None  # effective_date backfilled
-    assert row[0] == row[2]    # synced with effective_from
-    assert row[1] == row[3]    # expiry_date synced with effective_to
+    assert row[0] == row[2]  # synced with effective_from
+    assert row[1] == row[3]  # expiry_date synced with effective_to
 
     nullable = connection.execute(
         """
@@ -191,4 +191,3 @@ def test_member_cannot_be_own_buddy(connection: psycopg.Connection) -> None:
                 """,
                 (user_id, user_id),
             )
-

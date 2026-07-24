@@ -287,9 +287,7 @@ class TestBuddyValidation:
         assert status == 422
         assert "effective_date" in str(body) or "date" in str(body).lower()
 
-    def test_inverted_dates_return_422(
-        self, access_schema: psycopg.Connection
-    ) -> None:
+    def test_inverted_dates_return_422(self, access_schema: psycopg.Connection) -> None:
         admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
         member_id, buddy_id, _ = _create_member_and_buddies(access_schema)
         cookies = _cookies_for_user(access_schema, admin_id)
@@ -308,13 +306,9 @@ class TestBuddyValidation:
         )
         assert status == 422
 
-    def test_self_buddy_return_422(
-        self, access_schema: psycopg.Connection
-    ) -> None:
+    def test_self_buddy_return_422(self, access_schema: psycopg.Connection) -> None:
         admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
-        member_id = _create_user_with_roles(
-            access_schema, "solo", ["Member", "Buddy"]
-        )
+        member_id = _create_user_with_roles(access_schema, "solo", ["Member", "Buddy"])
         cookies = _cookies_for_user(access_schema, admin_id)
 
         status, _ = _request(
@@ -330,9 +324,7 @@ class TestBuddyValidation:
         )
         assert status == 422
 
-    def test_inactive_buddy_return_422(
-        self, access_schema: psycopg.Connection
-    ) -> None:
+    def test_inactive_buddy_return_422(self, access_schema: psycopg.Connection) -> None:
         admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
         member_id = _create_user_with_roles(access_schema, "member", ["Member"])
         buddy_id = _create_user_with_roles(
@@ -449,9 +441,7 @@ class TestBuddyOverlap:
         )
         assert status == 201
 
-    def test_adjacent_boundary_allowed(
-        self, access_schema: psycopg.Connection
-    ) -> None:
+    def test_adjacent_boundary_allowed(self, access_schema: psycopg.Connection) -> None:
         admin_id = _create_user_with_roles(access_schema, "admin", ["Admin"])
         member_id, buddy_one_id, buddy_two_id = _create_member_and_buddies(
             access_schema
