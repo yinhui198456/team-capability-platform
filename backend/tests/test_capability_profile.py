@@ -619,7 +619,13 @@ def test_selectable_members_for_member_returns_only_self(
     assert status == 200
     assert body is not None
     assert body["members"] == [
-        {"id": member_id, "username": "member_select", "full_name": "member_select"}
+        {
+            "id": member_id,
+            "username": "member_select",
+            "full_name": "member_select",
+            "current_level": None,
+            "target_level": None,
+        }
     ]
 
 

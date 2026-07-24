@@ -25,6 +25,8 @@ const baseProfile: planningApi.CapabilityProfile = {
     id: 1,
     username: 'member',
     full_name: 'Member',
+    current_level: null,
+    target_level: null,
   },
   assessments: [
     {
@@ -261,7 +263,15 @@ describe('ProfilePage', () => {
       ],
     })
     vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
-      members: [{ id: 1, username: 'member', full_name: 'Member' }],
+      members: [
+        {
+          id: 1,
+          username: 'member',
+          full_name: 'Member',
+          current_level: null,
+          target_level: null,
+        },
+      ],
     })
     vi.spyOn(planningApi, 'getCapabilityProfileForMember').mockResolvedValue({
       id: 1,
@@ -309,8 +319,20 @@ describe('ProfilePage', () => {
     })
     vi.spyOn(planningApi, 'getSelectableMembersForProfile').mockResolvedValue({
       members: [
-        { id: 1, username: 'member', full_name: 'Member' },
-        { id: 2, username: 'member2', full_name: 'Member Two' },
+        {
+          id: 1,
+          username: 'member',
+          full_name: 'Member',
+          current_level: null,
+          target_level: null,
+        },
+        {
+          id: 2,
+          username: 'member2',
+          full_name: 'Member Two',
+          current_level: null,
+          target_level: null,
+        },
       ],
     })
     vi.spyOn(planningApi, 'getCapabilityProfileForMember').mockResolvedValue({
