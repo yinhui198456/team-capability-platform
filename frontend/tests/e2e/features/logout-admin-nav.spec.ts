@@ -12,7 +12,9 @@ test.describe('logout and admin navigation', () => {
     // Open user menu
     await page.getByRole('button', { name: /Member User/ }).click()
     const dropdown = page.locator('.user-menu-dropdown')
-    await expect(dropdown.getByRole('menuitem', { name: '退出登录' })).toBeVisible()
+    await expect(
+      dropdown.getByRole('menuitem', { name: '退出登录' }),
+    ).toBeVisible()
     // Check role label inside dropdown
     await expect(dropdown.locator('.user-menu-roles')).toContainText('Member')
 
@@ -29,9 +31,7 @@ test.describe('logout and admin navigation', () => {
   test('Admin can navigate to system users via sidebar', async ({ page }) => {
     await loginAs(page, 'admin')
     await page.goto('/capability/model')
-    await expect(
-      page.getByRole('heading', { name: '能力地图' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '能力地图' })).toBeVisible()
 
     // Sidebar should have 系统管理 section
     await expect(page.getByText('系统管理')).toBeVisible()
@@ -41,27 +41,23 @@ test.describe('logout and admin navigation', () => {
     // Click sidebar link
     await sidebarLink.click()
     await expect(page).toHaveURL(/\/system\/users/)
-    await expect(
-      page.getByRole('heading', { name: '系统管理' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
 
     // Admin user menu shows role in dropdown
     await page.getByRole('button', { name: /Admin User/ }).click()
     const dropdown = page.locator('.user-menu-dropdown')
     await expect(dropdown.locator('.user-menu-roles')).toContainText('Admin')
-    await expect(dropdown.getByRole('menuitem', { name: '退出登录' })).toBeVisible()
+    await expect(
+      dropdown.getByRole('menuitem', { name: '退出登录' }),
+    ).toBeVisible()
   })
 
-  test('non-Admin users do not see admin sidebar entry', async ({
-    page,
-  }) => {
+  test('non-Admin users do not see admin sidebar entry', async ({ page }) => {
     await loginAs(page, 'member')
     await expect(page.getByText('我的成长总览')).toBeVisible()
 
     await expect(page.getByText('系统管理')).not.toBeVisible()
-    await expect(
-      page.getByRole('link', { name: '用户管理' }),
-    ).not.toBeVisible()
+    await expect(page.getByRole('link', { name: '用户管理' })).not.toBeVisible()
 
     // Direct URL access is blocked by route guard
     await page.goto('/system/users')
@@ -113,9 +109,7 @@ test.describe('logout and admin navigation', () => {
 
     // Admin priority: default route is /system/users
     await page.goto('/system/users')
-    await expect(
-      page.getByRole('heading', { name: '系统管理' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
 
     // Sidebar must show 系统管理 label
     await expect(
@@ -123,9 +117,7 @@ test.describe('logout and admin navigation', () => {
     ).toBeVisible()
 
     // User menu shows both roles in dropdown
-    await page
-      .getByRole('button', { name: new RegExp(fullName) })
-      .click()
+    await page.getByRole('button', { name: new RegExp(fullName) }).click()
     const dropdown = page.locator('.user-menu-dropdown')
     await expect(dropdown.locator('.user-menu-roles')).toContainText(
       'Admin / Member',
@@ -141,10 +133,11 @@ test.describe('logout and admin navigation', () => {
     ).toBeVisible()
 
     // Logout
+    await page.getByRole('button', { name: new RegExp(fullName) }).click()
     await page
-      .getByRole('button', { name: new RegExp(fullName) })
+      .locator('.user-menu-dropdown')
+      .getByRole('menuitem', { name: '退出登录' })
       .click()
-    await page.locator('.user-menu-dropdown').getByRole('menuitem', { name: '退出登录' }).click()
     await expect(page).toHaveURL(/\/login/)
   })
 })
