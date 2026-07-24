@@ -862,9 +862,7 @@ describe('user menu and admin navigation', () => {
   })
 
   it('failed logout allows retry', async () => {
-    
     const mockLogout = vi.fn(() => {
-      
       return Promise.resolve({
         ok: false,
         status: 500,
