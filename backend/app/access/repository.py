@@ -170,11 +170,12 @@ def _require_role(
         raise ValueError(f"{param_name} {user_id} does not have the {role_code} role")
 
 
-def _effective_today_condition() -> str:
+def _effective_today_condition(alias: str = "") -> str:
     # ponytail: closed interval; expiry_date IS NULL = open-ended
+    prefix = f"{alias}." if alias else ""
     return (
-        "br.effective_date <= CURRENT_DATE"
-        " AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)"
+        f"{prefix}effective_date <= CURRENT_DATE"
+        f" AND ({prefix}expiry_date IS NULL OR {prefix}expiry_date >= CURRENT_DATE)"
     )
 
 
@@ -270,7 +271,7 @@ def get_primary_buddy(
             FROM tcp_user u
             JOIN buddy_relationship br ON br.buddy_id = u.id
             WHERE br.member_id = %s AND br.is_primary = TRUE
-              AND {_effective_today_condition()}
+              AND {_effective_today_condition('br')}
             LIMIT 1""",
         (member_id,),
     ).fetchone()
@@ -292,7 +293,7 @@ def get_assigned_members(
             FROM tcp_user u
             JOIN buddy_relationship br ON br.member_id = u.id
             WHERE br.buddy_id = %s AND br.is_primary = TRUE
-              AND {_effective_today_condition()}
+              AND {_effective_today_condition('br')}
             ORDER BY u.username""",
         (buddy_id,),
     ).fetchall()
@@ -308,7 +309,7 @@ def is_member_assigned_to_buddy(
     row = connection.execute(
         f"""SELECT 1 FROM buddy_relationship
             WHERE member_id = %s AND buddy_id = %s
-              AND is_primary = TRUE AND {_effective_today_condition()}""",
+              AND is_primary = TRUE AND {_effective_today_condition('br')}""",
         (member_id, buddy_id),
     ).fetchone()
     return row is not None

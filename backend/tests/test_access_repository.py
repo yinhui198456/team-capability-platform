@@ -286,9 +286,8 @@ def test_primary_buddy_unique_index_enforced(
     assign_role(access_schema, buddy_id, "Buddy")
     create_buddy_relationship(access_schema, member_id, buddy_id)
 
-    with pytest.raises(psycopg.errors.UniqueViolation):
-        with access_schema.transaction():
-            create_buddy_relationship(access_schema, member_id, buddy_id)
+    with pytest.raises(ValueError, match="日期不可重叠"):
+        create_buddy_relationship(access_schema, member_id, buddy_id)
 
 
 def test_member_cannot_be_own_buddy(access_schema: psycopg.Connection) -> None:

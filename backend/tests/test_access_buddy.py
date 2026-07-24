@@ -47,9 +47,8 @@ def test_second_primary_buddy_rejected_by_unique_constraint(
     buddy_two_id = _create_user_with_roles(access_schema, "buddy2", ["Buddy"])
     create_buddy_relationship(access_schema, member_id, buddy_one_id)
 
-    with pytest.raises(psycopg.errors.UniqueViolation):
-        with access_schema.transaction():
-            create_buddy_relationship(access_schema, member_id, buddy_two_id)
+    with pytest.raises(ValueError, match="日期不可重叠"):
+        create_buddy_relationship(access_schema, member_id, buddy_two_id)
 
 
 def test_member_queries_primary_buddy(access_schema: psycopg.Connection) -> None:
