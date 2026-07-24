@@ -1806,7 +1806,8 @@ def get_capability_profile(
     year: int,
 ) -> dict[str, object] | None:
     member_row = connection.execute(
-        "SELECT id, username, full_name, current_level, target_level FROM tcp_user WHERE id = %s",
+        """SELECT id, username, full_name, current_level, target_level
+           FROM tcp_user WHERE id = %s""",
         (member_id,),
     ).fetchone()
     if member_row is None:
@@ -2002,7 +2003,8 @@ def list_selectable_members_for_profile(
             for m in assigned
         ]
     row = connection.execute(
-        "SELECT id, username, full_name, current_level, target_level FROM tcp_user WHERE id = %s",
+        """SELECT id, username, full_name, current_level, target_level
+           FROM tcp_user WHERE id = %s""",
         (viewer_id,),
     ).fetchone()
     if row is None:

@@ -419,7 +419,8 @@ export function ProfilePage() {
               成员：{profile.member.full_name}（{profile.member.username}）
               {profile.member.current_level != null && (
                 <>
-                  {' '}· 职级：{profile.member.current_level}
+                  {' '}
+                  · 职级：{profile.member.current_level}
                   {profile.member.target_level != null
                     ? ` → ${profile.member.target_level}`
                     : ''}
