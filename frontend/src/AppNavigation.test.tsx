@@ -404,11 +404,13 @@ describe('authenticated route guard', () => {
       name: 'Team Capability Platform',
     })
     expect(brandLink.classList.contains('app-topbar-brand')).toBe(true)
-    // Primary CTA in the dashboard header must have .primary-link class
-    const primaryLinks = document.querySelectorAll('a.primary-link')
-    expect(primaryLinks.length).toBeGreaterThan(0)
-    primaryLinks.forEach((link) => {
-      expect(link.classList.contains('primary-link')).toBe(true)
+    // Primary CTA renders asynchronously after dashboard data loads
+    await waitFor(() => {
+      const primaryLinks = document.querySelectorAll('a.primary-link')
+      expect(primaryLinks.length).toBeGreaterThan(0)
+      primaryLinks.forEach((link) => {
+        expect(link.classList.contains('primary-link')).toBe(true)
+      })
     })
   })
 })

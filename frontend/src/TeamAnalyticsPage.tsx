@@ -451,7 +451,8 @@ export function TeamAnalyticsPage() {
               />
               <div className="detail-drawer-panel" role="document">
                 <div className="card-heading">
-                  <h2>计划项详情（只读）</h2>
+                  <h2>延期计划项详情</h2>
+                  <span className="readonly-badge">只读</span>
                   <button
                     ref={closeButtonRef}
                     aria-label="关闭详情"
