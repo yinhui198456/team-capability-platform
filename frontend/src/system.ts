@@ -112,15 +112,15 @@ export function getBuddyRelationships(
 }
 
 export function getAvailableBuddies(): Promise<AvailableBuddy[]> {
-  return request<AvailableBuddy[]>("/api/system/available-buddies")
+  return request<AvailableBuddy[]>('/api/system/available-buddies')
 }
 
 export function createBuddyRelationship(
   body: BuddyRelationshipCreateInput,
 ): Promise<BuddyRelationship> {
   return request<BuddyRelationship>(
-    "/api/system/buddy-relationships",
-    { method: "POST" },
+    '/api/system/buddy-relationships',
+    { method: 'POST' },
     body,
   )
 }
@@ -131,7 +131,7 @@ export function updateBuddyRelationship(
 ): Promise<BuddyRelationship> {
   return request<BuddyRelationship>(
     `/api/system/buddy-relationships/${relationshipId}`,
-    { method: "PUT" },
+    { method: 'PUT' },
     body,
   )
 }
@@ -142,7 +142,7 @@ export function endBuddyRelationship(
 ): Promise<BuddyRelationship> {
   return request<BuddyRelationship>(
     `/api/system/buddy-relationships/${relationshipId}/end`,
-    { method: "POST" },
+    { method: 'POST' },
     { end_date: endDate },
   )
 }
