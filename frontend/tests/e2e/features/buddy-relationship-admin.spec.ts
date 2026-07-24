@@ -312,8 +312,6 @@ test.describe('buddy relationship admin management', () => {
 
   test('admin assigns buddy through browser UI form', async ({ page }) => {
     const {
-      memberId,
-      buddyOneId,
       memberUsername,
       memberFullName,
       buddyOneFullName,
