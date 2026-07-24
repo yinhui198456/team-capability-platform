@@ -228,15 +228,11 @@ def test_system_api_is_admin_only_and_never_exposes_password_hash(
     assert body == {"detail": "insufficient permissions"}
 
 
-def _setup_admin(connection: psycopg.Connection) -> dict[str, str]:
-    admin_id = create_user(connection, "admin", "Admin", "secret")
-    assign_role(connection, admin_id, "Admin")
-    connection.commit()
-    return _cookies_for_user(connection, admin_id)
-
-
 def test_admin_can_create_user_with_p_levels(access_schema: psycopg.Connection) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
@@ -258,7 +254,10 @@ def test_admin_can_create_user_with_p_levels(access_schema: psycopg.Connection) 
 
 
 def test_admin_can_update_user_levels(access_schema: psycopg.Connection) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
@@ -293,7 +292,10 @@ def test_admin_can_update_user_levels(access_schema: psycopg.Connection) -> None
 
 
 def test_null_levels_can_be_saved(access_schema: psycopg.Connection) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
@@ -316,7 +318,10 @@ def test_null_levels_can_be_saved(access_schema: psycopg.Connection) -> None:
 def test_invalid_level_rejected_and_no_user_left_behind(
     access_schema: psycopg.Connection,
 ) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     users_before = _request("GET", "/api/system/users", cookies=admin_cookies)[1]
     count_before = len(users_before)
 
@@ -347,7 +352,10 @@ def test_invalid_level_rejected_and_no_user_left_behind(
 
 
 def test_empty_string_level_rejected(access_schema: psycopg.Connection) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
@@ -366,7 +374,10 @@ def test_empty_string_level_rejected(access_schema: psycopg.Connection) -> None:
 
 
 def test_non_admin_cannot_modify_levels(access_schema: psycopg.Connection) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
@@ -414,7 +425,10 @@ def test_non_admin_cannot_modify_levels(access_schema: psycopg.Connection) -> No
 def test_existing_roles_unaffected_by_level_update(
     access_schema: psycopg.Connection,
 ) -> None:
-    admin_cookies = _setup_admin(access_schema)
+    admin_id = create_user(access_schema, "admin", "Admin", "secret")
+    assign_role(access_schema, admin_id, "Admin")
+    admin_cookies = _cookies_for_user(access_schema, admin_id)
+    access_schema.commit()
     status, body = _request(
         "POST",
         "/api/system/users",
