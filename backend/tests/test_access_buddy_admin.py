@@ -252,7 +252,11 @@ class TestBuddyAdminPermissions:
                     "expiry_date": None,
                 },
             ),
-            ("POST", "/api/system/buddy-relationships/1/end", {"end_date": str(date.today())}),
+            (
+                "POST",
+                "/api/system/buddy-relationships/1/end",
+                {"end_date": str(date.today())},
+            ),
         ]
 
         for method, path, *payload in endpoints:

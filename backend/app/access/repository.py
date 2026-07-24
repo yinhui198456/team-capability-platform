@@ -450,7 +450,14 @@ def update_buddy_relationship(
                SET buddy_id = %s, effective_date = %s, expiry_date = %s,
                    effective_from = %s, effective_to = %s, updated_at = NOW()
                WHERE id = %s""",
-            (buddy_id, effective_date, expiry_date, effective_date, expiry_date, relationship_id),
+            (
+                buddy_id,
+                effective_date,
+                expiry_date,
+                effective_date,
+                expiry_date,
+                relationship_id,
+            ),
         )
     rel = _fetch_buddy_relationship(connection, relationship_id)
     assert rel is not None

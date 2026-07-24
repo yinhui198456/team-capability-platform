@@ -199,7 +199,8 @@ export function SystemAdminPage() {
   async function endRelationship(rel: BuddyRelationship) {
     if (!selectedId) return
     const today = new Date().toISOString().split('T')[0]
-    if (!window.confirm(`确认将 “${rel.buddy_name}” 的关系结束于 ${today}？`)) return
+    if (!window.confirm(`确认将 “${rel.buddy_name}” 的关系结束于 ${today}？`))
+      return
     setSaving(true)
     setError('')
     try {
@@ -534,7 +535,9 @@ export function SystemAdminPage() {
                       {formatDate(rel.effective_date)} ~{' '}
                       {formatDate(rel.expiry_date)}
                     </span>
-                    <span className={`buddy-status status-${relationshipStatus(rel)}`}>
+                    <span
+                      className={`buddy-status status-${relationshipStatus(rel)}`}
+                    >
                       {relationshipStatus(rel)}
                     </span>
                   </div>

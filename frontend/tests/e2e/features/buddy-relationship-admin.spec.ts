@@ -137,19 +137,17 @@ test.describe('buddy relationship admin management', () => {
         name: new RegExp(`${memberFullName} · ${memberUsername}`),
       })
       .click()
-    await expect(page.getByRole('heading', { name: '主 Buddy 关系' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '主 Buddy 关系' }),
+    ).toBeVisible()
     const card = page.locator('.buddy-relationship-card')
     await expect(card.getByText(buddyOneFullName)).toBeVisible()
     await expect(card.getByText('当前有效')).toBeVisible()
   })
 
   test('assigned buddy sees and can access member', async ({ page }) => {
-    const {
-      memberId,
-      buddyOneId,
-      buddyOneUsername,
-      memberFullName,
-    } = await createTestUsers(page, 'access')
+    const { memberId, buddyOneId, buddyOneUsername, memberFullName } =
+      await createTestUsers(page, 'access')
 
     await loginWithCredentials(page, 'admin', '123456')
     const adminCookie = (await page.context().cookies()).find(
@@ -176,7 +174,9 @@ test.describe('buddy relationship admin management', () => {
     const meResp = await page.request.get('/api/auth/me')
     expect(meResp.ok()).toBeTruthy()
     const me = await meResp.json()
-    expect(me.assigned_members.some((m: { id: number }) => m.id === memberId)).toBe(true)
+    expect(
+      me.assigned_members.some((m: { id: number }) => m.id === memberId),
+    ).toBe(true)
 
     const profileResp = await page.request.get(
       `/api/planning/profiles?year=${new Date().getFullYear()}&member_id=${memberId}`,
@@ -187,12 +187,8 @@ test.describe('buddy relationship admin management', () => {
   test('non-responsible buddy cannot access member via UI or API', async ({
     page,
   }) => {
-    const {
-      memberId,
-      buddyOneId,
-      buddyTwoUsername,
-      memberFullName,
-    } = await createTestUsers(page, 'block')
+    const { memberId, buddyOneId, buddyTwoUsername, memberFullName } =
+      await createTestUsers(page, 'block')
 
     await loginWithCredentials(page, 'admin', '123456')
     const adminCookie = (await page.context().cookies()).find(
@@ -219,7 +215,9 @@ test.describe('buddy relationship admin management', () => {
     const meResp = await page.request.get('/api/auth/me')
     expect(meResp.ok()).toBeTruthy()
     const me = await meResp.json()
-    expect(me.assigned_members.some((m: { id: number }) => m.id === memberId)).toBe(false)
+    expect(
+      me.assigned_members.some((m: { id: number }) => m.id === memberId),
+    ).toBe(false)
 
     const profileResp = await page.request.get(
       `/api/planning/profiles?year=${new Date().getFullYear()}&member_id=${memberId}`,
@@ -240,17 +238,50 @@ test.describe('buddy relationship admin management', () => {
       memberFullName,
     } = await createTestUsers(page, 'swap')
 
-    const oldResp = await page.request.post('/api/system/buddy-relationships', {
-      headers: { cookie },
-      data: {
-        member_id: memberId,
-        buddy_id: buddyOneId,
-        effective_date: yesterday,
-        expiry_date: yesterday,
+    // 1. Create relationship that started yesterday (so we can end on yesterday)
+    const activeResp = await page.request.post(
+      '/api/system/buddy-relationships',
+      {
+        headers: { cookie },
+        data: {
+          member_id: memberId,
+          buddy_id: buddyOneId,
+          effective_date: yesterday,
+          expiry_date: null,
+        },
       },
-    })
-    expect(oldResp.ok()).toBeTruthy()
+    )
+    expect(activeResp.ok()).toBeTruthy()
+    const activeRel = await activeResp.json()
 
+    // 2. End it via /end with end_date=yesterday (valid: end >= effective)
+    const endResp = await page.request.post(
+      `/api/system/buddy-relationships/${activeRel.id}/end`,
+      {
+        headers: { cookie },
+        data: { end_date: yesterday },
+      },
+    )
+    expect(endResp.ok()).toBeTruthy()
+
+    // 3. Old buddy immediately loses access (expired as of today)
+    await loginWithCredentials(page, buddyOneUsername, '123456')
+    const oldMeResp = await page.request.get('/api/auth/me')
+    const oldMe = await oldMeResp.json()
+    expect(
+      oldMe.assigned_members.some((m: { id: number }) => m.id === memberId),
+    ).toBe(false)
+
+    await page.goto('/mentoring/dashboard')
+    await expect(page.getByText(memberFullName)).not.toBeVisible()
+
+    // Old buddy cannot access member profile
+    const blockedResp = await page.request.get(
+      `/api/planning/profiles?year=${new Date().getFullYear()}&member_id=${memberId}`,
+    )
+    expect(blockedResp.status()).toBe(403)
+
+    // 4. Create new relationship for buddyTwo (effective_date=today)
     const newResp = await page.request.post('/api/system/buddy-relationships', {
       headers: { cookie },
       data: {
@@ -262,17 +293,77 @@ test.describe('buddy relationship admin management', () => {
     })
     expect(newResp.ok()).toBeTruthy()
 
-    await loginWithCredentials(page, buddyOneUsername, '123456')
-    const meResp = await page.request.get('/api/auth/me')
-    const me = await meResp.json()
-    expect(me.assigned_members.some((m: { id: number }) => m.id === memberId)).toBe(false)
-
-    await page.goto('/mentoring/dashboard')
-    await expect(page.getByText(memberFullName)).not.toBeVisible()
-
+    // 5. New buddy gains access
     await loginWithCredentials(page, buddyTwoUsername, '123456')
+    const newMeResp = await page.request.get('/api/auth/me')
+    const newMe = await newMeResp.json()
+    expect(
+      newMe.assigned_members.some((m: { id: number }) => m.id === memberId),
+    ).toBe(true)
+
     await page.goto('/mentoring/dashboard')
     await expect(page.getByText(memberFullName)).toBeVisible()
+
+    const profileResp = await page.request.get(
+      `/api/planning/profiles?year=${new Date().getFullYear()}&member_id=${memberId}`,
+    )
+    expect(profileResp.status()).toBe(200)
+  })
+
+  test('admin assigns buddy through browser UI form', async ({ page }) => {
+    const {
+      memberId,
+      buddyOneId,
+      memberUsername,
+      memberFullName,
+      buddyOneFullName,
+    } = await createTestUsers(page, 'ui')
+
+    await loginAs(page, 'admin')
+    await page.goto('/system/users')
+
+    // Select member in user list
+    await page
+      .getByRole('button', {
+        name: new RegExp(`${memberFullName} · ${memberUsername}`),
+      })
+      .click()
+
+    await expect(
+      page.getByRole('heading', { name: '主 Buddy 关系' }),
+    ).toBeVisible()
+    // Empty state
+    await expect(page.getByText('该成员暂无 Buddy 关系。')).toBeVisible()
+
+    // Click "新增关系"
+    await page.getByRole('button', { name: '新增关系' }).click()
+    await expect(page.getByRole('heading', { name: '新增关系' })).toBeVisible()
+
+    // Select buddy from dropdown by value (the option's value is buddy's id)
+    const buddySelect = page.getByRole('combobox', { name: 'Buddy' })
+    const options = await buddySelect.locator('option').all()
+    let targetValue = ''
+    for (const opt of options) {
+      const text = (await opt.textContent()) ?? ''
+      if (text.includes(buddyOneFullName)) {
+        targetValue = (await opt.getAttribute('value')) ?? ''
+        break
+      }
+    }
+    expect(targetValue).toBeTruthy()
+    await buddySelect.selectOption(targetValue)
+
+    // Fill effective_date
+    const dateInput = page.getByLabel('生效日期')
+    await dateInput.fill(today)
+
+    // Submit
+    await page.getByRole('button', { name: '保存关系' }).click()
+
+    // UI should show the new relationship
+    await expect(page.getByText(buddyOneFullName)).toBeVisible()
+    await expect(page.getByText('当前有效')).toBeVisible()
+    await expect(page.getByText('该成员暂无 Buddy 关系。')).not.toBeVisible()
   })
 
   test('admin page shows relationship history and status', async ({ page }) => {
@@ -315,7 +406,9 @@ test.describe('buddy relationship admin management', () => {
         name: new RegExp(`${memberFullName} · ${memberUsername}`),
       })
       .click()
-    await expect(page.getByRole('heading', { name: '主 Buddy 关系' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '主 Buddy 关系' }),
+    ).toBeVisible()
 
     const list = page.locator('.buddy-relationship-list')
     await expect(list.getByText(buddyOneFullName)).toBeVisible()

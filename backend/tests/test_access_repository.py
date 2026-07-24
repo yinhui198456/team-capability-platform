@@ -288,7 +288,8 @@ def test_primary_buddy_unique_index_enforced(
     assign_role(access_schema, buddy_id, "Buddy")
     create_buddy_relationship(access_schema, member_id, buddy_id)
 
-    with pytest.raises(ValueError, match="该成员在所选日期区间内已有主 Buddy 关系，日期不可重叠。"):
+    msg = "该成员在所选日期区间内已有主 Buddy 关系，日期不可重叠。"
+    with pytest.raises(ValueError, match=msg):
         create_buddy_relationship(access_schema, member_id, buddy_id)
 
 
@@ -297,7 +298,8 @@ def test_member_cannot_be_own_buddy(access_schema: psycopg.Connection) -> None:
     assign_role(access_schema, user_id, "Member")
     assign_role(access_schema, user_id, "Buddy")
 
-    with pytest.raises(ValueError, match="member_id and buddy_id cannot be the same user"):
+    msg = "member_id and buddy_id cannot be the same user"
+    with pytest.raises(ValueError, match=msg):
         create_buddy_relationship(access_schema, user_id, user_id)
 
 
