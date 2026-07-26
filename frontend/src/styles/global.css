@@ -57,12 +57,12 @@ button {
 /* ── App Shell ── */
 .app-shell {
   display: grid;
-  grid-template-rows: var(--topbar-height) 1fr;
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   grid-template-columns: var(--sidebar-width) 1fr;
   grid-template-areas:
     'topbar topbar'
     'sidebar content';
-  min-height: 100vh;
+  height: 100vh;
   background: var(--color-shell-bg);
 }
 
@@ -236,6 +236,7 @@ button {
   background: var(--color-white);
   border-right: 1px solid var(--color-gray-200);
   overflow-y: auto;
+  min-height: 0;
 }
 
 .app-sidebar-section {
@@ -284,6 +285,7 @@ button {
   grid-area: content;
   padding: var(--space-6);
   overflow-y: auto;
+  min-height: 0;
 }
 
 /* ── Shared Components ── */

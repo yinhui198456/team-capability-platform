@@ -57,7 +57,7 @@ for (const viewport of VIEWPORTS) {
     test('full page screenshot', async ({ page }) => {
       await expect(page).toHaveScreenshot(
         `member-dashboard-full-${viewport.name}.png`,
-        { maxDiffPixelRatio: 0.05, fullPage: true },
+        { maxDiffPixelRatio: 0.05, fullPage: false },
       )
     })
 

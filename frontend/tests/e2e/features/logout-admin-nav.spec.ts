@@ -37,32 +37,84 @@ test.describe('logout and admin navigation', () => {
   })
 
   test('Admin can navigate to system users via sidebar', async ({ page }) => {
+    // Desktop viewport at 1280×720 so sidebar content overflows
+    await page.setViewportSize({ width: 1280, height: 720 })
+
     await loginAs(page, 'admin')
     await page.goto('/capability/model')
     await expect(page.getByRole('heading', { name: '能力地图' })).toBeVisible()
 
-    // Sidebar is independently scrollable (overflow-y:auto in grid row)
     const sidebar = page.locator('.app-sidebar')
     await expect(sidebar).toBeVisible()
 
-    // Scroll the 系统管理 link into view if needed
-    const adminLink = sidebar.getByRole('link', { name: '用户管理' })
-    await adminLink.scrollIntoViewIfNeeded()
-    await expect(adminLink).toBeVisible()
-
-    // Sidebar has scrollable overflow (its scrollHeight > clientHeight when content exceeds viewport)
-    const hasScroll = await sidebar.evaluate(
-      (el) => el.scrollHeight > el.clientHeight,
+    // 1. Sidebar overflow-y is auto or scroll
+    const overflowY = await sidebar.evaluate(
+      (el) => getComputedStyle(el).overflowY,
     )
-    // Either scrollable or all content fits — both are valid configurations
-    expect(typeof hasScroll).toBe('boolean')
+    expect(['auto', 'scroll']).toContain(overflowY)
 
+    // 2. Sidebar has scrollable overflow (content taller than visible area)
+    const scrollHeight = await sidebar.evaluate((el) => el.scrollHeight)
+    const clientHeight = await sidebar.evaluate((el) => el.clientHeight)
+    expect(scrollHeight).toBeGreaterThan(clientHeight)
+
+    // 3. Record window and content positions before sidebar scrolling.
+    //    Content may legitimately be 0 when this page does not overflow.
+    const content = page.locator('.app-content')
+    const windowScrollYBefore = await page.evaluate(() => window.scrollY)
+    const contentScrollTopBefore = await content.evaluate((el) => el.scrollTop)
+
+    // 4. Actively scroll the sidebar to reveal lower items
+    await sidebar.evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+
+    // 5. Sidebar scrollTop > 0 after active scroll
+    const sidebarScrollTopAfter = await sidebar.evaluate((el) => el.scrollTop)
+    expect(sidebarScrollTopAfter).toBeGreaterThan(0)
+
+    // 6. window.scrollY unchanged by sidebar scroll
+    const windowScrollYAfter = await page.evaluate(() => window.scrollY)
+    expect(windowScrollYAfter).toBe(windowScrollYBefore)
+
+    // 7. .app-content.scrollTop unchanged by sidebar scroll
+    const contentScrollTopAfter = await content.evaluate((el) => el.scrollTop)
+    expect(contentScrollTopAfter).toBe(contentScrollTopBefore)
+
+    // 8. 用户管理 is visible and clickable after sidebar scroll
+    const adminLink = sidebar.getByRole('link', { name: '用户管理' })
+    await expect(adminLink).toBeVisible()
     await adminLink.click()
-    await expect(page).toHaveURL(/\/system\/users/)
+
+    // 9. URL navigates to /system/users (exact pathname, no sub-paths)
+    await page.waitForURL((url) => url.pathname === '/system/users')
+    expect(new URL(page.url()).pathname).toBe('/system/users')
     await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
 
+    // 10. Re-scroll sidebar for screenshot — show 系统管理 section in view
+    await sidebar.evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+    // Stability: heading, sidebar admin section label and items visible,
+    // sidebar still at scrolled position (scrollTop > 0)
+    await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
+    await expect(
+      page.locator('.app-sidebar-section-label').getByText('系统管理'),
+    ).toBeVisible()
+    await expect(sidebar.getByRole('link', { name: '用户管理' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible()
+    const sidebarStillScrolled = await sidebar.evaluate((el) => el.scrollTop)
+    expect(sidebarStillScrolled).toBeGreaterThan(0)
+
+    // 11. Screenshot: sidebar with 系统管理/用户管理, /system/users content,
+    //     sidebar at scrolled position
+    await page.screenshot({
+      path: 'screenshots/admin-sidebar-nav.png',
+      fullPage: false,
+    })
+
     // Admin user menu shows role in dropdown
-    await page.getByRole('button', { name: /Admin User/ }).click()
+    await page.getByRole('button', { name: 'Admin User', exact: true }).click()
     const dropdown = page.locator('.user-menu-dropdown')
     await expect(dropdown.locator('.user-menu-roles')).toContainText('Admin')
     await expect(
