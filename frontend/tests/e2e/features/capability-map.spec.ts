@@ -147,11 +147,58 @@ test.describe('Issue #52 capability map', () => {
     await row.click()
     const dialog = page.getByRole('dialog', { name: 'P01.01.01' })
     await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('所属能力域P01 · P01 能力域')
+    await expect(dialog).toContainText('所属能力组P01.01 · P01 分组 1')
+    await expect(dialog).toContainText('P01.01.01')
     await expect(dialog).toContainText('P01.01.01 P4 完整描述')
     await expect(dialog).toContainText('该能力项的 P4–P8 完整描述')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     await expect(row).toBeFocused()
+  })
+
+  test('keeps focus stable after search location and closes Drawer on domain collapse', async ({
+    page,
+  }) => {
+    await mockCapabilityMap(page)
+    await loginAs(page, 'member')
+    await page.goto('/capability/model')
+    const search = page.getByRole('combobox', { name: '搜索能力地图' })
+    await search.fill('跨域搜索目标能力')
+    await page.getByRole('option').click()
+    const focusedL3 = page.getByTestId('l3-row-P02.03.07')
+    await expect(focusedL3).toBeFocused()
+
+    await page.getByTestId('l2-toggle-P02.04').click()
+    await expect(page.getByTestId('l2-toggle-P02.04')).toBeFocused()
+    await focusedL3.click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    await page.getByRole('button', { name: '收起当前域' }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(0)
+    await expect(
+      page.getByTestId('capability-domain-content-P02'),
+    ).toBeFocused()
+  })
+
+  test('closes and reopens search results without changing the query', async ({
+    page,
+  }) => {
+    await mockCapabilityMap(page)
+    await loginAs(page, 'member')
+    await page.goto('/capability/model')
+    const search = page.getByRole('combobox', { name: '搜索能力地图' })
+    await search.fill('P02.03')
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await page.getByRole('option').first().click()
+    await expect(search).toHaveValue('P02.03')
+    await expect(search).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await search.focus()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
   })
 
   test('resolves the initial hash and keeps the resource reverse link compatible', async ({
@@ -202,7 +249,20 @@ test.describe('Issue #52 capability map', () => {
     await expect(page.locator('.edit-form')).toContainText('编辑 P01.01 (L2)')
     await page.getByRole('button', { name: '取消' }).click()
 
-    await page.getByTestId('l3-row-P01.01.01').click()
+    const l3Row = page.getByTestId('l3-row-P01.01.01')
+    const l3Edit = page.getByTestId('l3-edit-P01.01.01')
+    await expect(l3Edit).toBeVisible()
+    const rowBox = await l3Row.locator('..').boundingBox()
+    const editBox = await l3Edit.boundingBox()
+    expect(rowBox).not.toBeNull()
+    expect(editBox).not.toBeNull()
+    expect(editBox!.x).toBeGreaterThanOrEqual(
+      rowBox!.x + rowBox!.width - editBox!.width - 16,
+    )
+    expect(editBox!.x + editBox!.width).toBeLessThanOrEqual(
+      rowBox!.x + rowBox!.width + 1,
+    )
+    await l3Row.click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(
       page.getByRole('dialog').getByRole('button', { name: '编辑节点' }),

@@ -144,6 +144,16 @@ const model: CapabilityModel = {
             },
           ],
         },
+        {
+          code: 'P02.02',
+          name: 'Agent 扩展能力组',
+          p4_description: null,
+          p5_description: null,
+          p6_description: null,
+          p7_description: null,
+          p8_description: null,
+          children: [],
+        },
       ],
     },
     emptyDomain('P03'),
@@ -244,6 +254,20 @@ function stubMember() {
         username: 'member',
         full_name: 'Member User',
         roles: ['Member'],
+      }),
+    ),
+  )
+}
+
+function stubLeader() {
+  vi.stubGlobal(
+    'fetch',
+    mockFetchWithAuth(
+      response({
+        id: 1,
+        username: 'leader',
+        full_name: 'Leader User',
+        roles: ['Leader'],
       }),
     ),
   )
@@ -350,6 +374,37 @@ describe('catalog routes', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('selects L1 and L2 results only after an explicit choice', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tab', { name: /P01/ })
+    const search = screen.getByRole('combobox', { name: '搜索能力地图' })
+
+    fireEvent.change(search, { target: { value: 'AI Infra 能力' } })
+    expect(
+      screen.getByRole('tab', { name: /P01/ }).getAttribute('aria-selected'),
+    ).toBe('true')
+    fireEvent.click(screen.getByRole('option', { name: /L1.*P02/ }))
+    expect(
+      screen.getByRole('tab', { name: /P02/ }).getAttribute('aria-selected'),
+    ).toBe('true')
+    expect(document.activeElement).toBe(
+      screen.getByTestId('capability-domain-content-P02'),
+    )
+
+    fireEvent.change(search, { target: { value: 'P02.02' } })
+    fireEvent.click(screen.getByRole('option', { name: /L2.*P02\.02/ }))
+    expect(
+      screen.getByTestId('l2-toggle-P02.02').getAttribute('aria-expanded'),
+    ).toBe('true')
+    expect(document.activeElement).toBe(screen.getByTestId('l2-toggle-P02.02'))
+  })
+
   it('opens the L3 Drawer with its own level descriptions and restores focus on close', async () => {
     stubMember()
     render(
@@ -364,6 +419,11 @@ describe('catalog routes', () => {
     fireEvent.click(row)
 
     const dialog = await screen.findByRole('dialog', { name: /P01\.01\.01/ })
+    expect(within(dialog).getByText(/P01 · Data Infra 能力/)).toBeTruthy()
+    expect(
+      within(dialog).getByText(/P01\.01 · Data Infra 产品体系认知/),
+    ).toBeTruthy()
+    expect(within(dialog).getByText(/P01\.01\.01 · TDC/)).toBeTruthy()
     expect(within(dialog).getByText('L3 P4 完整描述')).toBeTruthy()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -416,6 +476,94 @@ describe('catalog routes', () => {
       .mocked(fetch)
       .mock.calls.filter(([url]) => url === '/api/capability-model')
     expect(modelCalls).toHaveLength(1)
+  })
+
+  it('consumes a search focus target before later L2 state changes', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.change(screen.getByRole('combobox', { name: '搜索能力地图' }), {
+      target: { value: 'Agent 编排能力' },
+    })
+    fireEvent.click(
+      screen.getByRole('option', {
+        name: /L3.*P02\.01\.01.*Agent 编排能力/,
+      }),
+    )
+    const focusedL3 = screen.getByTestId('l3-row-P02.01.01')
+    expect(document.activeElement).toBe(focusedL3)
+
+    const otherL2 = screen.getByTestId('l2-toggle-P02.02')
+    otherL2.focus()
+    fireEvent.click(otherL2)
+    expect(document.activeElement).toBe(otherL2)
+  })
+
+  it('closes the Drawer before collapsing the current domain or its parent L2', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(await screen.findByTestId('l3-row-P01.01.01'))
+    fireEvent.click(screen.getByRole('button', { name: '收起当前域' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByTestId('l3-row-P01.01.01')).toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByTestId('capability-domain-content-P01'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开当前域' }))
+    fireEvent.click(await screen.findByTestId('l3-row-P01.01.01'))
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByTestId('l3-row-P01.01.01')).toBeNull()
+  })
+
+  it('closes and reopens the search result panel without clearing the query', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tab', { name: /P01/ })
+    const search = screen.getByRole('combobox', { name: '搜索能力地图' })
+    fireEvent.change(search, { target: { value: 'P02.02' } })
+    expect(search.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(screen.getByRole('option', { name: /L2.*P02\.02/ }))
+    expect((search as HTMLInputElement).value).toBe('P02.02')
+    expect(search.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('listbox')).toBeNull()
+
+    fireEvent.focus(search)
+    expect(screen.getByRole('listbox')).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(search.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('uses a page-local class for the Leader L3 edit action', async () => {
+    stubLeader()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    const editButton = await screen.findByTestId('l3-edit-P01.01.01')
+    expect(editButton.className).not.toBe('inline-edit')
   })
 
   it('filters resources by name, status, and L3 then links reverse L3 details', async () => {

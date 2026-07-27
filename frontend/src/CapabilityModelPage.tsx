@@ -17,6 +17,8 @@ import {
   updateLearningResource,
   useCatalog,
   useMe,
+  type Domain,
+  type L2Node,
   type L3Node,
   type CapabilityModel,
   type Resource,
@@ -487,11 +489,23 @@ function searchResultsFor(model: CapabilityModel | null): SearchResult[] {
   ])
 }
 
-function findL3(model: CapabilityModel | null, code: string) {
-  return enabledDomains(model)
-    .flatMap((domain) => domain.children)
-    .flatMap((l2) => l2.children)
-    .find((l3) => l3.code === code)
+type SelectedL3Context = {
+  domain: Domain
+  l2: L2Node
+  l3: L3Node
+}
+
+function findSelectedL3Context(
+  model: CapabilityModel | null,
+  code: string,
+): SelectedL3Context | null {
+  for (const domain of enabledDomains(model)) {
+    for (const l2 of domain.children) {
+      const l3 = l2.children.find((candidate) => candidate.code === code)
+      if (l3) return { domain, l2, l3 }
+    }
+  }
+  return null
 }
 
 function levelDescription(
@@ -525,14 +539,17 @@ export function CapabilityModelPage() {
     Record<string, Set<string>>
   >({})
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [selectedLevel, setSelectedLevel] = useState<LevelKey | null>(null)
   const [selectedL3, setSelectedL3] = useState<string | null>(null)
   const [focusTarget, setFocusTarget] = useState('')
+  const [focusRequestId, setFocusRequestId] = useState(0)
   const [editingNode, setEditingNode] = useState<EditableNode | null>(null)
   const drawerRef = useRef<HTMLElement | null>(null)
   const returnFocusCode = useRef<string | null>(null)
   const restoreFocus = useRef(false)
   const hashHandled = useRef(false)
+  const consumedFocusTarget = useRef('')
 
   const domains = useMemo(() => enabledDomains(model), [model])
   const currentDomain =
@@ -552,7 +569,8 @@ export function CapabilityModelPage() {
   const expandedL2 = currentDomain
     ? (expandedL2ByDomain[currentDomain.code] ?? new Set<string>())
     : new Set<string>()
-  const selectedNode = findL3(model, selectedL3 ?? '')
+  const selectedContext = findSelectedL3Context(model, selectedL3 ?? '')
+  const selectedNode = selectedContext?.l3
 
   useEffect(() => {
     if (!activeDomain && domains[0]) setActiveDomain(domains[0].code)
@@ -570,12 +588,14 @@ export function CapabilityModelPage() {
   }, [selectedL3])
 
   useEffect(() => {
-    if (!focusTarget) return
+    if (!focusTarget || focusTarget === consumedFocusTarget.current) return
     const target = document.getElementById(focusTarget)
     if (!target) return
+    consumedFocusTarget.current = focusTarget
     target.focus()
     target.scrollIntoView?.({ block: 'nearest' })
-  }, [activeDomain, expandedL2ByDomain, focusTarget])
+    setFocusTarget('')
+  }, [activeDomain, expandedL2ByDomain, focusRequestId, focusTarget])
 
   useEffect(() => {
     if (!model || hashHandled.current) return
@@ -590,7 +610,7 @@ export function CapabilityModelPage() {
       ...current,
       [result.l1Code]: new Set(current[result.l1Code]).add(result.l2Code!),
     }))
-    setFocusTarget(`l3-row-${result.code}`)
+    requestFocusTarget(`l3-row-${result.code}`)
   }, [index, model])
 
   useEffect(() => {
@@ -602,6 +622,15 @@ export function CapabilityModelPage() {
     return () => window.removeEventListener('keydown', handleEscape)
   }, [selectedL3])
 
+  useEffect(() => {
+    if (!searchOpen) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setSearchOpen(false)
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [searchOpen])
+
   function closeDrawer(shouldRestore = true) {
     restoreFocus.current = shouldRestore
     setSelectedL3(null)
@@ -612,16 +641,22 @@ export function CapabilityModelPage() {
     closeDrawer(false)
   }
 
+  function requestFocusTarget(target: string) {
+    consumedFocusTarget.current = ''
+    setFocusTarget(target)
+    setFocusRequestId((current) => current + 1)
+  }
+
   function selectDomain(code: string) {
     closeBeforeNavigation()
     setSelectedLevel(null)
     setActiveDomain(code)
-    setFocusTarget(`capability-domain-content-${code}`)
+    requestFocusTarget(`capability-domain-content-${code}`)
   }
 
   function toggleL2(domainCode: string, l2Code: string) {
     const isOpen = expandedL2ByDomain[domainCode]?.has(l2Code) ?? false
-    if (isOpen && selectedNode?.code.startsWith(`${l2Code}.`)) {
+    if (isOpen && selectedContext?.l2.code === l2Code) {
       closeDrawer(false)
     }
     setExpandedL2ByDomain((current) => {
@@ -634,6 +669,10 @@ export function CapabilityModelPage() {
 
   function setCurrentDomainL2(open: boolean) {
     if (!currentDomain) return
+    if (!open && selectedContext?.domain.code === currentDomain.code) {
+      closeDrawer(false)
+      requestFocusTarget(`capability-domain-content-${currentDomain.code}`)
+    }
     setExpandedL2ByDomain((current) => ({
       ...current,
       [currentDomain.code]: open
@@ -643,11 +682,12 @@ export function CapabilityModelPage() {
   }
 
   function selectResult(result: SearchResult) {
+    setSearchOpen(false)
     closeBeforeNavigation()
     if (result.kind === 'L1') {
       setSelectedLevel(null)
       setActiveDomain(result.l1Code)
-      setFocusTarget(`capability-domain-content-${result.l1Code}`)
+      requestFocusTarget(`capability-domain-content-${result.l1Code}`)
       return
     }
     if (!result.l2Code) return
@@ -656,7 +696,7 @@ export function CapabilityModelPage() {
       ...current,
       [result.l1Code]: new Set(current[result.l1Code]).add(result.l2Code!),
     }))
-    setFocusTarget(
+    requestFocusTarget(
       result.kind === 'L2'
         ? `l2-toggle-${result.l2Code}`
         : `l3-row-${result.l3Code}`,
@@ -675,7 +715,10 @@ export function CapabilityModelPage() {
   }
 
   return (
-    <section className={`page ${styles.page}`}>
+    <section
+      className={`page ${styles.page}`}
+      data-testid="capability-map-page"
+    >
       <header className={styles.header}>
         <div>
           <p className="eyebrow">查看团队能力等级与能力项标准</p>
@@ -695,10 +738,17 @@ export function CapabilityModelPage() {
               id="capability-search"
               aria-label="搜索能力地图"
               role="combobox"
-              aria-expanded={Boolean(searchQuery.trim())}
+              aria-expanded={searchOpen}
               aria-controls="capability-search-results"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value
+                setSearchQuery(value)
+                setSearchOpen(Boolean(value.trim()))
+              }}
+              onFocus={() => {
+                if (searchQuery.trim()) setSearchOpen(true)
+              }}
               placeholder="搜索 L1 / L2 / L3 编号或名称"
             />
             {searchQuery && (
@@ -706,13 +756,16 @@ export function CapabilityModelPage() {
                 type="button"
                 className={styles.clearSearch}
                 aria-label="清除搜索"
-                onClick={() => setSearchQuery('')}
+                onClick={() => {
+                  setSearchQuery('')
+                  setSearchOpen(false)
+                }}
               >
                 清除
               </button>
             )}
           </div>
-          {searchQuery.trim() && (
+          {searchOpen && searchQuery.trim() && (
             <div
               id="capability-search-results"
               className={styles.searchResults}
@@ -992,7 +1045,7 @@ export function CapabilityModelPage() {
                             {isLeader && (
                               <button
                                 type="button"
-                                className="inline-edit"
+                                className={`inline-edit ${styles.l3Edit}`}
                                 data-testid={`l3-edit-${l3.code}`}
                                 onClick={() =>
                                   startEdit({
@@ -1061,7 +1114,27 @@ export function CapabilityModelPage() {
           <dl className={styles.contextList}>
             <div>
               <dt>所属能力域</dt>
-              <dd>{currentDomain?.name ?? '未提供'}</dd>
+              <dd>
+                {selectedContext
+                  ? `${selectedContext.domain.code} · ${selectedContext.domain.name}`
+                  : '未提供'}
+              </dd>
+            </div>
+            <div>
+              <dt>所属能力组</dt>
+              <dd>
+                {selectedContext
+                  ? `${selectedContext.l2.code} · ${selectedContext.l2.name}`
+                  : '未提供'}
+              </dd>
+            </div>
+            <div>
+              <dt>L3 能力项</dt>
+              <dd>
+                {selectedContext
+                  ? `${selectedContext.l3.code} · ${selectedContext.l3.name}`
+                  : '未提供'}
+              </dd>
             </div>
             <div>
               <dt>建议起始等级</dt>
