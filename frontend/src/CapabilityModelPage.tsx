@@ -12,7 +12,18 @@ import {
   type CapabilityModel,
   type Resource,
   type ResourceDetail,
+  type JobLevel,
 } from './catalog'
+
+const JOB_LEVELS: JobLevel[] = ['P4', 'P5', 'P6', 'P7', 'P8']
+
+function earliestJobLevel(value?: string | null): number | null {
+  const match = value?.match(/^\s*P([4-8])(?:\s*[-–—]\s*P([4-8]))?\s*$/)
+  if (!match) return null
+  const start = Number(match[1])
+  const end = Number(match[2] ?? match[1])
+  return end >= start ? start : null
+}
 
 type EditableNode = {
   code: string
@@ -29,6 +40,7 @@ type EditableNode = {
   expected_output?: string | null
   estimated_hours?: string | null
   resource_codes?: string[]
+  standard_target_overrides?: Partial<Record<JobLevel, number | null>>
 }
 
 function L3Details({ node }: { node: L3Node }) {
@@ -128,6 +140,10 @@ function NodeEditForm({
   const [resourceCodes, setResourceCodes] = useState<Iterable<string>>(
     new Set(node.resource_codes ?? []),
   )
+  const [standardTargets, setStandardTargets] = useState<
+    Partial<Record<JobLevel, number | null>>
+  >(node.standard_target_overrides ?? {})
+  const [standardTargetNotice, setStandardTargetNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -152,6 +168,7 @@ function NodeEditForm({
       body.expected_output = expectedOutput || null
       body.estimated_hours = estimatedHours || null
       body.resource_codes = Array.from(resourceCodes)
+      body.standard_target_overrides = standardTargets
     }
     try {
       await updateCapabilityNode(node.code, body)
@@ -168,6 +185,36 @@ function NodeEditForm({
     if (next.has(code)) next.delete(code)
     else next.add(code)
     setResourceCodes(next)
+  }
+
+  function updateStandardTarget(level: JobLevel, value: string) {
+    setStandardTargets((current) => {
+      const next = { ...current }
+      if (value === '__default__') delete next[level]
+      else next[level] = value === '__na__' ? null : Number(value)
+      return next
+    })
+  }
+
+  function updateRecommended(value: string) {
+    setRecommended(value)
+    const earliest = earliestJobLevel(value)
+    const removedLevels = JOB_LEVELS.filter(
+      (level) =>
+        earliest !== null &&
+        Number(level.slice(1)) < earliest &&
+        Object.prototype.hasOwnProperty.call(standardTargets, level),
+    )
+    if (removedLevels.length === 0) {
+      setStandardTargetNotice('')
+      return
+    }
+    setStandardTargets((current) => {
+      const next = { ...current }
+      for (const level of removedLevels) delete next[level]
+      return next
+    })
+    setStandardTargetNotice(`已移除不适用的覆盖项：${removedLevels.join('、')}`)
   }
 
   return (
@@ -196,7 +243,53 @@ function NodeEditForm({
       {textField('P8 描述', p8, setP8)}
       {isL3 && (
         <>
-          {textField('建议起始等级', recommended, setRecommended)}
+          {textField('建议起始等级', recommended, updateRecommended)}
+          {standardTargetNotice && (
+            <p className="warning" role="status">
+              {standardTargetNotice}
+            </p>
+          )}
+          <fieldset className="link-set">
+            <legend>P4–P8 标准目标覆盖</legend>
+            <p className="muted">
+              未设置时使用默认映射；不适用与使用默认是不同状态。
+            </p>
+            {JOB_LEVELS.map((level) => {
+              const earliest = earliestJobLevel(recommended)
+              const disabled =
+                earliest === null || Number(level.slice(1)) < earliest
+              const configured = Object.prototype.hasOwnProperty.call(
+                standardTargets,
+                level,
+              )
+              const value = !configured
+                ? '__default__'
+                : standardTargets[level] === null
+                  ? '__na__'
+                  : String(standardTargets[level])
+              return (
+                <label key={level}>
+                  {level} 标准目标
+                  <select
+                    aria-label={`${level} 标准目标`}
+                    value={value}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      updateStandardTarget(level, event.target.value)
+                    }
+                  >
+                    <option value="__default__">使用默认</option>
+                    {[1, 2, 3, 4, 5].map((target) => (
+                      <option key={target} value={target}>
+                        {target}
+                      </option>
+                    ))}
+                    <option value="__na__">不适用</option>
+                  </select>
+                </label>
+              )
+            })}
+          </fieldset>
           {textField('原始学习材料', materialsText, setMaterialsText)}
           {textField('预期输出', expectedOutput, setExpectedOutput)}
           {textField('预计时长', estimatedHours, setEstimatedHours)}
@@ -502,6 +595,8 @@ export function CapabilityModelPage() {
                             resource_codes: l3.resources.map(
                               (resource) => resource.material_code,
                             ),
+                            standard_target_overrides:
+                              l3.standard_target_overrides,
                           })
                         }
                       >

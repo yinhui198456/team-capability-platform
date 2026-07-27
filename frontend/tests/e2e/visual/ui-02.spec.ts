@@ -44,7 +44,9 @@ for (const viewport of VIEWPORTS) {
       await expect(firstTable).toContainText('L3 能力项')
       await expect(firstTable).toContainText('建议起始')
       await expect(firstTable).toContainText('当前 (1-5)')
-      await expect(firstTable).toContainText('目标 (1-5)')
+      await expect(firstTable).toContainText('标准目标')
+      await expect(firstTable).toContainText('个人调整')
+      await expect(firstTable).toContainText('最终目标')
       await expect(firstTable).toContainText('Gap')
       await expect(firstTable).toContainText('优先级')
 

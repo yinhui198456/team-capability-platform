@@ -480,7 +480,14 @@ export function BuddyReviewCenter() {
                       {assessmentDetails.map((detail) => (
                         <li key={detail.l3_code}>
                           {detail.l3_code}：当前 {detail.current_level ?? '—'} →
-                          目标 {detail.target_level ?? '—'}（Gap{' '}
+                          标准{' '}
+                          {detail.standard_target_applicable === false
+                            ? '不适用'
+                            : (detail.standard_target_level ?? '历史保留')}
+                          {detail.target_adjusted
+                            ? `；个人调整 ${detail.adjusted_target_level ?? '—'}（${detail.target_adjustment_reason ?? '未填写原因'}）`
+                            : '；未调整'}
+                          ；最终 {detail.target_level ?? '—'}（Gap{' '}
                           {detail.gap_value ??
                             (detail.current_level != null &&
                             detail.target_level != null

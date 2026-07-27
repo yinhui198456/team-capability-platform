@@ -1,7 +1,7 @@
 import psycopg
-from conftest import ADMIN_DATABASE_URL, TEST_DATABASE_LOCK_KEY
 
 from app.settings import settings
+from tests.conftest import ADMIN_DATABASE_URL, TEST_DATABASE_LOCK_KEY
 
 
 def test_catalog_tests_use_the_isolated_database() -> None:

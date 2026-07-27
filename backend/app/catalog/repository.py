@@ -5,6 +5,8 @@ import re
 import psycopg
 from psycopg.rows import dict_row
 
+from .standard_targets import parse_earliest_level
+
 DOMAIN_CODES = ("P01", "P02", "P03", "C01", "C02", "C03")
 MATERIAL_CODE = re.compile(r"(?:P|C)\d{2}-M\d{3}")
 
@@ -103,7 +105,23 @@ def get_capability_model(
     resources_by_node: dict[object, list[dict[str, object]]] = {
         row["id"]: [] for row in l3_rows
     }
+    overrides_by_node: dict[object, dict[str, int | None]] = {
+        row["id"]: {} for row in l3_rows
+    }
     if l3_rows:
+        for override in _fetchall(
+            connection,
+            """
+            SELECT node_id, job_level, target_level
+            FROM capability_standard_target_override
+            WHERE node_id = ANY(%s)
+            ORDER BY job_level
+            """,
+            ([row["id"] for row in l3_rows],),
+        ):
+            overrides_by_node[override["node_id"]][override["job_level"]] = override[
+                "target_level"
+            ]
         for resource in _fetchall(
             connection,
             """
@@ -129,6 +147,7 @@ def get_capability_model(
                 "materials_text": row["materials_text"],
                 "expected_output": row["expected_output"],
                 "estimated_hours": row["estimated_hours"],
+                "standard_target_overrides": overrides_by_node[row["id"]],
                 "resources": resources,
                 "unmatched_materials": _unmatched_materials(
                     row["materials_text"],
@@ -248,6 +267,7 @@ _L3_ONLY_FIELDS = (
     "expected_output",
     "estimated_hours",
     "resource_codes",
+    "standard_target_overrides",
 )
 
 
@@ -306,6 +326,19 @@ def get_capability_node(
         """,
         (node["id"],),
     )
+    standard_target_overrides = {
+        row["job_level"]: row["target_level"]
+        for row in _fetchall(
+            connection,
+            """
+            SELECT job_level, target_level
+            FROM capability_standard_target_override
+            WHERE node_id = %s
+            ORDER BY job_level
+            """,
+            (node["id"],),
+        )
+    }
     return {
         "code": node["code"],
         "name": node["name"],
@@ -319,6 +352,7 @@ def get_capability_node(
         "materials_text": node["materials_text"],
         "expected_output": node["expected_output"],
         "estimated_hours": node["estimated_hours"],
+        "standard_target_overrides": standard_target_overrides,
         "resources": resources,
         "unmatched_materials": _unmatched_materials(
             node["materials_text"],
@@ -371,7 +405,8 @@ def update_capability_node(
     node = _fetchone(
         connection,
         """
-        SELECT id, node_type FROM capability_node WHERE code = %s
+        SELECT id, node_type, recommended_start_level
+        FROM capability_node WHERE code = %s
         """,
         (node_code,),
     )
@@ -383,6 +418,52 @@ def update_capability_node(
         for field in _L3_ONLY_FIELDS:
             if field in data:
                 raise ValueError(f"{field} is only allowed on L3 nodes")
+
+    standard_target_overrides: dict[str, int | None] | None = None
+    if node_type == "L3" and (
+        "standard_target_overrides" in data or "recommended_start_level" in data
+    ):
+        existing_overrides = {
+            row["job_level"]: row["target_level"]
+            for row in _fetchall(
+                connection,
+                """
+                SELECT job_level, target_level
+                FROM capability_standard_target_override
+                WHERE node_id = %s
+                """,
+                (node["id"],),
+            )
+        }
+        raw_overrides = data.get("standard_target_overrides", existing_overrides)
+        if not isinstance(raw_overrides, dict):
+            raise ValueError("standard_target_overrides must be an object")
+        standard_target_overrides = {}
+        for job_level, target_level in raw_overrides.items():
+            if job_level not in {"P4", "P5", "P6", "P7", "P8"}:
+                raise ValueError(f"invalid override job level: {job_level}")
+            if target_level is not None and (
+                isinstance(target_level, bool)
+                or not isinstance(target_level, int)
+                or not 1 <= target_level <= 5
+            ):
+                raise ValueError("override target must be between 1 and 5 or null")
+            standard_target_overrides[job_level] = target_level
+
+        recommended_start_level = data.get(
+            "recommended_start_level", node["recommended_start_level"]
+        )
+        if not isinstance(recommended_start_level, str):
+            raise ValueError("recommended_start_level is required for L3 nodes")
+        earliest = parse_earliest_level(recommended_start_level)
+        below_start = sorted(
+            level for level in standard_target_overrides if int(level[1:]) < earliest
+        )
+        if below_start:
+            raise ValueError(
+                "standard target override below recommended_start_level: "
+                + ", ".join(below_start)
+            )
 
     scalar_fields = [
         "name",
@@ -436,6 +517,23 @@ def update_capability_node(
                     SELECT %s, id FROM learning_resource WHERE material_code = ANY(%s)
                     """,
                     (node["id"], codes),
+                )
+
+        if node_type == "L3" and "standard_target_overrides" in data:
+            assert standard_target_overrides is not None
+            connection.execute(
+                "DELETE FROM capability_standard_target_override WHERE node_id = %s",
+                (node["id"],),
+            )
+            for job_level, target_level in standard_target_overrides.items():
+                connection.execute(
+                    """
+                    INSERT INTO capability_standard_target_override (
+                        node_id, job_level, target_level
+                    )
+                    VALUES (%s, %s, %s)
+                    """,
+                    (node["id"], job_level, target_level),
                 )
 
     return get_capability_node(connection, node_code)

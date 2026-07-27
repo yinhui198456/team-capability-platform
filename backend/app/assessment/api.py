@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
@@ -25,9 +25,13 @@ class CreateAssessmentRequest(BaseModel):
 
 
 class DetailItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     l3_code: str
-    current_level: int = Field(ge=1, le=5)
-    target_level: int = Field(ge=1, le=5)
+    current_level: int | None = Field(default=None, ge=1, le=5)
+    target_adjusted: bool = False
+    adjusted_target_level: int | None = Field(default=None, ge=1, le=5)
+    target_adjustment_reason: str | None = None
     evidence_note: str | None = None
     plan_candidate: bool = False
 
@@ -55,12 +59,18 @@ def create_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
-    assessment_id = create_assessment_draft(
-        connection,
-        int(user["id"]),
-        request.year,
-        request.assessment_type,
-    )
+    try:
+        assessment_id = create_assessment_draft(
+            connection,
+            int(user["id"]),
+            request.year,
+            request.assessment_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     return {"id": assessment_id}
 
 
@@ -204,7 +214,9 @@ def save_draft(
         {
             "l3_code": item.l3_code,
             "current_level": item.current_level,
-            "target_level": item.target_level,
+            "target_adjusted": item.target_adjusted,
+            "adjusted_target_level": item.adjusted_target_level,
+            "target_adjustment_reason": item.target_adjustment_reason,
             "evidence_note": item.evidence_note,
             "plan_candidate": item.plan_candidate,
         }

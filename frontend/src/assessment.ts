@@ -20,7 +20,14 @@ export type AssessmentDetail = {
   l3_name?: string
   current_level: number | null
   target_level: number | null
-  gap_value?: number
+  standard_target_applicable?: boolean | null
+  standard_target_level?: number | null
+  target_adjusted?: boolean
+  adjusted_target_level?: number | null
+  target_adjustment_reason?: string | null
+  target_snapshot_source?: string | null
+  target_compatibility_error?: string | null
+  gap_value?: number | null
   evidence_note?: string
   plan_candidate?: boolean
   recommended_start_level?: string
@@ -73,7 +80,17 @@ export async function saveDraft(
   return request<{ ok: boolean }>(
     `/api/assessments/${id}/draft`,
     { method: 'PUT' },
-    { details },
+    {
+      details: details.map((detail) => ({
+        l3_code: detail.l3_code,
+        current_level: detail.current_level,
+        target_adjusted: detail.target_adjusted ?? false,
+        adjusted_target_level: detail.adjusted_target_level ?? null,
+        target_adjustment_reason: detail.target_adjustment_reason ?? null,
+        evidence_note: detail.evidence_note ?? null,
+        plan_candidate: detail.plan_candidate ?? false,
+      })),
+    },
   )
 }
 

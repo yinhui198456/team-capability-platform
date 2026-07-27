@@ -64,7 +64,8 @@ const model: CapabilityModel = {
               p6_description: null,
               p7_description: null,
               p8_description: null,
-              recommended_start_level: 'L1',
+              recommended_start_level: 'P6',
+              standard_target_overrides: { P7: 3 },
               materials_text: 'P01-M001、A8',
               expected_output: '能力说明',
               estimated_hours: '8',
@@ -519,12 +520,109 @@ describe('Leader catalog controls', () => {
     expect(body).toMatchObject({
       name: 'TDC / TDH / ArgoDB / TDS 产品定位',
       enabled: true,
-      recommended_start_level: 'L1',
+      recommended_start_level: 'P6',
       materials_text: 'P01-M001',
       expected_output: '能力说明',
       estimated_hours: '8',
       resource_codes: ['P01-M001'],
     })
+  })
+
+  it('maintains three-state standard targets and disables levels below applicability', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText(/Data Infra 能力/)
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+
+    expect(
+      (screen.getByLabelText('P4 标准目标') as HTMLSelectElement).disabled,
+    ).toBe(true)
+    expect(
+      (screen.getByLabelText('P5 标准目标') as HTMLSelectElement).disabled,
+    ).toBe(true)
+    expect(
+      (screen.getByLabelText('P7 标准目标') as HTMLSelectElement).value,
+    ).toBe('3')
+
+    fireEvent.change(screen.getByLabelText('P6 标准目标'), {
+      target: { value: '__na__' },
+    })
+    fireEvent.change(screen.getByLabelText('P7 标准目标'), {
+      target: { value: '4' },
+    })
+    fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/capability-model/nodes/P01.01.01',
+        expect.objectContaining({ method: 'PUT' }),
+      ),
+    )
+    const putCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          url === '/api/capability-model/nodes/P01.01.01' &&
+          (init as RequestInit | undefined)?.method === 'PUT',
+      )
+    const body = JSON.parse((putCall![1] as RequestInit).body as string)
+    expect(body.standard_target_overrides).toEqual({ P6: null, P7: 4 })
+  })
+
+  it('removes low-level overrides when the recommended start level is raised', async () => {
+    const modelWithLowLevelOverrides = structuredClone(model)
+    const node = modelWithLowLevelOverrides.domains[0].children[0].children[0]
+    node.recommended_start_level = 'P4'
+    node.standard_target_overrides = { P4: 3, P5: null, P7: 4 }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input === '/api/auth/me') {
+          return response({
+            id: 1,
+            username: 'leader',
+            full_name: 'Leader User',
+            roles: ['Leader'],
+          })
+        }
+        if (input.startsWith('/api/capability-model')) {
+          return response(modelWithLowLevelOverrides)
+        }
+        return response(resources)
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText(/Data Infra 能力/)
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+
+    fireEvent.change(screen.getByLabelText('建议起始等级'), {
+      target: { value: 'P6' },
+    })
+    expect(screen.getByText(/已移除不适用的覆盖项：P4、P5/)).toBeTruthy()
+    fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/capability-model/nodes/P01.01.01',
+        expect.objectContaining({ method: 'PUT' }),
+      ),
+    )
+    const putCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          url === '/api/capability-model/nodes/P01.01.01' &&
+          (init as RequestInit | undefined)?.method === 'PUT',
+      )
+    const body = JSON.parse((putCall![1] as RequestInit).body as string)
+    expect(body.standard_target_overrides).toEqual({ P7: 4 })
   })
 
   it('shows create and edit controls on resources page for Leader', async () => {

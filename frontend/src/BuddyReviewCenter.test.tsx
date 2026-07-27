@@ -100,6 +100,11 @@ describe('BuddyReviewCenter', () => {
           l3_code: 'P01-L2A-L3A',
           current_level: 2,
           target_level: 4,
+          standard_target_applicable: true,
+          standard_target_level: 3,
+          target_adjusted: true,
+          adjusted_target_level: 4,
+          target_adjustment_reason: '岗位项目要求',
           gap_value: 2,
         },
       ],
@@ -160,6 +165,7 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByRole('tab', { name: '全部待处理' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '复核工作区' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/上一版反馈/)).toBeTruthy())
+    expect(screen.getByText(/标准 3；个人调整 4（岗位项目要求）/)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() =>
       expect(screen.getByText('数据建模 Evidence')).toBeTruthy(),

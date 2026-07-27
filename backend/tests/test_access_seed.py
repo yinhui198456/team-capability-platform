@@ -175,8 +175,11 @@ def test_seed_business_data_builds_repeatable_core_loop(
     access_schema.execute(
         """INSERT INTO capability_node
         (model_id, parent_node_id, node_type, code, name, sort_order,
-         source_workbook, source_sheet, source_row)
-        VALUES (%s, %s, 'L3', 'P01-L2A-L3A', 'Leaf', 1, 'demo.xlsx', 'sheet', 4)""",
+         recommended_start_level, source_workbook, source_sheet, source_row)
+        VALUES (
+            %s, %s, 'L3', 'P01-L2A-L3A', 'Leaf', 1,
+            'P4', 'demo.xlsx', 'sheet', 4
+        )""",
         (model_id, l2_id),
     )
     seed_demo_accounts(access_schema)

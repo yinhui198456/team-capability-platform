@@ -152,7 +152,7 @@ flowchart TD
 |---|---|---|---|---|---|
 | 我的成长看板 | /dashboard/member | Member | Growth | 查看年度进度、待办、完成情况 | Annual Growth Plan / Plan Item / Learning Task / Learning Progress Log / Evidence |
 | 能力模型 | /capability/model | 全员 | Capability | 查看一级 / 二级 / 三级能力项及等级描述 | Capability Model |
-| 能力自评 | /capability/assessment | Member | Capability | 填写当前掌握度、目标掌握度、自评依据 | Assessment |
+| 能力自评 | /capability/assessment | Member | Capability | 填写当前掌握度与依据，查看标准目标，按需申请个人调整 | Assessment |
 | Gap 分析 | /capability/gap | Member / Buddy | Capability | 查看 Gap 值、分级、优先级，选择纳入计划项 | Gap |
 | 评估历史 | /capability/assessment/history | Member / Buddy | Capability | 查看历次评估快照与成长曲线 | Assessment |
 | 成长目标 | /growth/goals | Member | Growth | 确认年度补齐目标 | Growth Goal / Gap |
@@ -181,8 +181,11 @@ flowchart TD
 ```mermaid
 flowchart LR
     A[查看能力模型] --> B[开始年度自评]
-    B --> C[填写当前掌握度与目标掌握度]
-    C --> D[提交自评]
+    B --> C[填写当前掌握度并查看标准目标]
+    C --> C1{是否申请个人调整}
+    C1 -->|是| C2[填写调整值与原因]
+    C1 -->|否| D[提交自评]
+    C2 --> D
     D --> E[立即查看 Gap]
     E --> F[等待 / 完成 Buddy 复核]
     F --> G[选择纳入计划的能力项]
@@ -240,6 +243,8 @@ flowchart LR
     H --> I[制定下一年度规划]
 ```
 
+Leader 维护 L3 标准目标时，页面按 P4～P8 分别提供「使用默认 / 指定 1～5 / 不适用」。系统先解析 `recommended_start_level`；低于最早适用职级的输入禁用，API 同时拒绝越界覆盖。调整适用范围必须先修改建议起始职级。
+
 ### 5.4 Admin 管理流程
 
 ```mermaid
@@ -256,6 +261,14 @@ flowchart LR
 ### 6.1 Assessment 状态机
 
 Assessment 指一次完整的能力评估记录，按年度或晋升 / 转岗触发。每次 Assessment 可包含多条 Assessment Review 记录：Member 每次提交自评时生成一条待复核记录，Buddy 给出复核结论后该记录闭环；Member 调整后重新提交时创建新的 Assessment Review，历史记录不覆盖。
+
+Assessment 创建时，系统按以下顺序为全部启用 L3 生成一次标准目标快照：
+
+1. 解析 `recommended_start_level` 并判断 Member 目标职级是否已进入适用范围；未进入时标记「不适用」。
+2. 已适用时读取对应职级 Leader 覆盖；数值覆盖取 1～5，空值覆盖表示明确「不适用」。
+3. 无覆盖时按 P4=2、P5=3、P6=4、P7=5、P8=5 生成标准目标。
+
+该快照创建后不再随能力模型、覆盖值或 Member 目标职级变化。Member 只能提交当前掌握度、自评依据、计划候选和个人调整；服务端从快照重新计算最终有效目标与 Gap。标准目标为「不适用」时禁止个人调整改变适用范围。
 
 ```mermaid
 stateDiagram-v2
@@ -287,7 +300,8 @@ stateDiagram-v2
 
 Gap 生成时点：
 
-- Member 提交自评后，系统立即基于当前掌握度与目标掌握度生成 Gap。
+- Member 提交自评后，系统立即基于当前掌握度与服务端确认的最终有效目标生成 Gap。
+- 标准目标为「不适用」的 L3 不参与 Gap、不生成 Gap 记录、不能成为计划候选，也不允许个人调整改变适用范围。
 - Member 无需等待 Buddy 复核即可查看 Gap、设置优先级。
 - 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。
 - Buddy 的复核结论（认可 / 建议调整）用于反馈与历史记录。
@@ -630,7 +644,7 @@ flowchart TD
 |---|---|---|
 | 我的成长看板 | Annual Growth Plan / Plan Item / Learning Task / Learning Progress Log / Evidence | 查看进度、待办提醒与学习时长 |
 | 能力模型 | Capability Model / Capability Domain / Capability Item | 查看、按域筛选、展开能力项 |
-| 能力自评 | Assessment / Capability Item L3 | 填写掌握度、目标、依据、提交 |
+| 能力自评 | Assessment / Capability Item L3 | 填写当前掌握度与依据、查看标准目标、申请个人调整、提交 |
 | Gap 分析 | Gap / Capability Item L3 | 查看 Gap、设置优先级、选择纳入计划 |
 | 评估历史 | Assessment | 查看快照、成长曲线 |
 | 成长目标 | Growth Goal / Gap | 确认年度补齐目标 |

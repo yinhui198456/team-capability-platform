@@ -121,12 +121,14 @@
 | 项目 | 说明 |
 |---|---|
 | 业务定义 | 三级能力项，评估、计划与跟踪的最小单元 |
-| 业务字段 | 三级编码、三级能力项名称、所属 L2 编码、建议起始职级、学习材料编码、预期输出 / 验收方式、预计耗时、排序 |
+| 业务字段 | 三级编码、三级能力项名称、所属 L2 编码、建议起始职级、P4～P8 标准目标覆盖、学习材料编码、预期输出 / 验收方式、预计耗时、排序 |
 | 状态 | 启用 / 禁用 |
 | 版本 / 年度 | 随 Capability Model 版本管理 |
 | 关联关系 | N:1 Capability Item L2；N:M Learning Resource；N:M Assessment（按次评分）；1:N Plan Item（同一 Annual Growth Plan 内同一 L3 唯一） |
 | 唯一性约束 | 同一模型内三级编码唯一 |
 | 维护角色 | Leader |
+
+标准目标覆盖采用独立关联对象：同一 L3 + 职级最多一条。无记录表示使用默认映射；记录值为 1～5 表示指定覆盖；记录值为空表示明确「不适用」。低于建议起始职级不得存在覆盖记录，数据库约束之外仍由服务端按解析后的适用范围校验。
 
 ### 3.8 Learning Resource
 
@@ -157,12 +159,14 @@
 | 项目 | 说明 |
 |---|---|
 | 业务定义 | Assessment 中针对单个 L3 能力项的评分记录 |
-| 业务字段 | 明细编码、评估编码、L3 编码、当前掌握度、目标掌握度、Gap 值、自评依据、是否纳入计划 |
+| 业务字段 | 明细编码、评估编码、L3 编码、当前掌握度、标准目标是否适用、标准目标快照、是否个人调整、调整目标、调整原因、最终有效目标（兼容字段 `target_level`）、快照来源、兼容提示、Gap 值、自评依据、是否纳入计划 |
 | 状态 | 无独立状态，随 Assessment 状态变化 |
 | 版本 / 年度 | 随 Assessment 版本化 |
 | 关联关系 | N:1 Assessment；N:1 Capability Item L3；1:1 Gap（当 Gap > 0） |
 | 唯一性约束 | 同一 Assessment 内同一 L3 编码唯一 |
-| 维护角色 | Member |
+| 维护角色 | 系统生成标准与最终目标；Member 仅维护当前掌握度、自评依据、计划候选和合法个人调整 |
+
+约束：不适用项的标准目标、最终有效目标和 Gap 为空，不能个人调整或纳入计划；适用项个人调整必须同时包含 1～5 的调整值与非空原因。标准目标、最终有效目标和 Gap 均由服务端计算，Member 请求不得直接覆盖。
 
 ### 3.11 Assessment Review
 
@@ -181,7 +185,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 业务定义 | Assessment Detail 中目标掌握度与当前掌握度的差距；Member 提交自评后立即生成，无需等待 Buddy 复核 |
+| 业务定义 | Assessment Detail 中服务端确认的最终有效目标与当前掌握度的差距；Member 提交自评后立即生成，无需等待 Buddy 复核；不适用项不生成 Gap |
 | 业务字段 | Gap 编码、评估编码、L3 编码、当前掌握度、目标掌握度、Gap 值、优先级、是否纳入计划 |
 | 状态 | 无独立状态；以是否纳入计划作为计划判定依据 |
 | 版本 / 年度 | 随 Assessment 版本化；新 Assessment 版本可能产生新的 Gap |
@@ -397,6 +401,14 @@ flowchart TD
 - 跨年度时，未完成的 Plan Item 可由 Member 选择延续或取消；延续时在新年度创建新的 Plan Item 与 Learning Task。
 - 历史评估、计划、Evidence、Review 记录按年度归档保留，不自动清理，不预设永久留存期限。
 
+### 5.4 Issue #49 迁移与兼容规则
+
+- 使用轻量、版本化、幂等迁移执行器记录并按顺序执行迁移；不重新 seed、不删除历史数据。
+- 已有明细只要 `target_level` 非空，原目标和原 Gap 原样保留，快照来源标记为 `legacy_preserved`；不得声称还原了当时并未保存的标准目标来源。
+- 仅对状态仍可编辑且目标为空的旧草稿，在迁移时按当时数据库中可见的 Member 目标职级与当前能力模型生成一次快照，并标记迁移来源。
+- 缺少 Member 目标职级或建议起始职级无法解析时，记录明确兼容提示并阻止提交；读取草稿、待复核和已归档记录不得产生 500。
+- 后续能力模型、覆盖值或 Member 目标职级变化不得回写任何已有 Assessment Detail 快照。
+
 ---
 
 ## 6. 业务规则—对象—页面追溯表
@@ -413,6 +425,9 @@ flowchart TD
 | Member 自评后进入待复核，Buddy 复核 | Assessment / Assessment Review | 能力自评、自评复核 |
 | Buddy 复核结论：认可 / 建议调整 | Assessment Review | 自评复核 |
 | Gap = 目标掌握度 - 当前掌握度 | Gap | Gap 分析 |
+| 标准目标按目标职级生成，适用范围优先于 Leader 覆盖 | Capability Item L3 / Standard Target Override / Assessment Detail | 能力模型、能力自评 |
+| 个人调整仅适用于已适用项，需合法值与非空原因 | Assessment Detail / Assessment Review | 能力自评、自评复核 |
+| Assessment 保存标准、调整和最终有效目标快照，后续模型变化不回写 | Assessment / Assessment Detail | 能力自评、评估历史、自评复核 |
 | Member 提交自评后立即生成 Gap，无需等待 Buddy 复核 | Assessment / Gap | 能力自评、Gap 分析 |
 | Gap 分级与优先级设置 | Gap | Gap 分析 |
 | 纳入计划的 Gap 形成成长目标 | Gap / Growth Goal | 成长目标 |

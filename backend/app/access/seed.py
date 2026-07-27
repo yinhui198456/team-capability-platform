@@ -14,26 +14,36 @@ _DEMO_ACCOUNTS = [
         "username": "admin",
         "full_name": "Admin User",
         "roles": ["Admin", "Leader", "Member"],
+        "current_level": "P7",
+        "target_level": "P8",
     },
     {
         "username": "leader",
         "full_name": "Leader User",
         "roles": ["Leader", "Member"],
+        "current_level": "P6",
+        "target_level": "P7",
     },
     {
         "username": "buddy",
         "full_name": "Buddy User",
         "roles": ["Buddy", "Member"],
+        "current_level": "P5",
+        "target_level": "P6",
     },
     {
         "username": "member",
         "full_name": "Member User",
         "roles": ["Member"],
+        "current_level": "P4",
+        "target_level": "P5",
     },
     {
         "username": "member2",
         "full_name": "Member Two",
         "roles": ["Member"],
+        "current_level": "P5",
+        "target_level": "P6",
     },
 ]
 
@@ -69,6 +79,14 @@ def seed_demo_accounts(connection: psycopg.Connection) -> None:
         user_ids[account["username"]] = user_id
         for role_code in account["roles"]:
             assign_role(connection, user_id, role_code)
+        connection.execute(
+            """
+            UPDATE tcp_user
+            SET current_level = %s, target_level = %s
+            WHERE id = %s
+            """,
+            (account["current_level"], account["target_level"], user_id),
+        )
 
     for member_username, buddy_username in _BUDDY_LINKS:
         create_buddy_relationship(
@@ -98,6 +116,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
 
     from ..assessment.repository import (
         create_assessment_draft,
+        get_assessment,
         save_assessment_draft,
         submit_assessment,
         submit_assessment_review,
@@ -119,19 +138,31 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
     year = date.today().year
     with connection.transaction():
         assessment_id = create_assessment_draft(connection, member_id, year)
+        assessment = get_assessment(connection, assessment_id)
+        assert assessment is not None
+        details = []
+        for detail in assessment["details"]:
+            applicable = detail["standard_target_applicable"] is True
+            is_demo_gap = detail["l3_code"] == l3[0]
+            details.append(
+                {
+                    "l3_code": detail["l3_code"],
+                    "current_level": (
+                        2
+                        if is_demo_gap
+                        else detail["target_level"] if applicable else None
+                    ),
+                    "evidence_note": (
+                        "本地演示自评" if is_demo_gap else "本地演示已达标项"
+                    ),
+                    "plan_candidate": is_demo_gap,
+                }
+            )
         save_assessment_draft(
             connection,
             assessment_id,
             member_id,
-            [
-                {
-                    "l3_code": l3[0],
-                    "current_level": 2,
-                    "target_level": 3,
-                    "evidence_note": "本地演示自评",
-                    "plan_candidate": True,
-                }
-            ],
+            details,
         )
         submit_assessment(connection, assessment_id, member_id)
         assessment_review_id = connection.execute(

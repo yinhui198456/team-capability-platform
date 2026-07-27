@@ -12,6 +12,7 @@ from .access.seed import seed_demo_accounts, seed_demo_business_data
 from .assessment import assessment_router, create_assessment_schema, gap_router
 from .catalog.api import router as catalog_router
 from .catalog.importer import ensure_catalog_initialized, resolve_workbook_dir
+from .migrations import run_migrations
 from .planning import create_planning_schema, planning_router
 from .settings import settings
 
@@ -23,6 +24,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         create_access_schema(connection)
         create_assessment_schema(connection)
         create_planning_schema(connection)
+        run_migrations(connection)
         seed_demo_accounts(connection)
         seed_demo_business_data(connection)
     yield

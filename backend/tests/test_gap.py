@@ -11,6 +11,10 @@ from app.access.schema import create_access_schema
 from app.assessment.repository import list_gaps
 from app.assessment.schema import create_assessment_schema
 from app.main import app
+from tests.standard_target_support import (
+    ensure_capability_nodes,
+    standard_target_payload,
+)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -46,6 +50,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 
@@ -161,6 +168,18 @@ def _create_and_submit_assessment(
     username: str,
     details: list[dict[str, object]] | None = None,
 ) -> int:
+    desired_details = details or [
+        {
+            "l3_code": "P01-L2A-L3A",
+            "current_level": 2,
+            "target_level": 4,
+            "evidence_note": "测试中",
+            "plan_candidate": True,
+        }
+    ]
+    ensure_capability_nodes(
+        connection, [str(detail["l3_code"]) for detail in desired_details]
+    )
     cookies = _login(connection, username)
     status, body, _ = _request(
         "POST", "/api/assessments", {"year": 2026}, cookies=cookies
@@ -172,16 +191,9 @@ def _create_and_submit_assessment(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": details
-            or [
-                {
-                    "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
-                    "evidence_note": "测试中",
-                    "plan_candidate": True,
-                }
-            ]
+            "details": standard_target_payload(
+                connection, assessment_id, desired_details
+            )
         },
         cookies=cookies,
     )
@@ -349,15 +361,19 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [
-                {
-                    "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 5,
-                    "evidence_note": "已补充",
-                    "plan_candidate": True,
-                }
-            ]
+            "details": standard_target_payload(
+                assessment_schema,
+                assessment_id,
+                [
+                    {
+                        "l3_code": "P01-L2A-L3A",
+                        "current_level": 2,
+                        "target_level": 5,
+                        "evidence_note": "已补充",
+                        "plan_candidate": True,
+                    }
+                ],
+            )
         },
         cookies=member_cookies,
     )

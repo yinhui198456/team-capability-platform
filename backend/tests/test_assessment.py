@@ -12,6 +12,7 @@ from app.assessment.repository import (
     get_assessment,
 )
 from app.assessment.schema import create_assessment_schema
+from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.main import app
 
 SESSION_COOKIE = "tcp_session"
@@ -48,6 +49,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 
@@ -56,7 +60,8 @@ def _create_test_user(
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
-    # Catalog tables are already recreated by the global connection fixture.
+    import_catalog(resolve_workbook_dir(), connection)
+    connection.commit()
     return connection
 
 
@@ -161,6 +166,13 @@ def test_create_draft_save_details_submit_review(
     member_id = _create_test_user(assessment_schema, "member_a", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_a", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
+    assessment_schema.execute(
+        """
+        UPDATE capability_node
+        SET enabled = (code = 'C01.01.01')
+        WHERE node_type = 'L3'
+        """
+    )
     assessment_schema.commit()
 
     cookies = _login(assessment_schema, "member_a")
@@ -187,7 +199,9 @@ def test_create_draft_save_details_submit_review(
                 {
                     "l3_code": "C01.01.01",
                     "current_level": 2,
-                    "target_level": 4,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 4,
+                    "target_adjustment_reason": "岗位项目要求",
                     "evidence_note": "测试中",
                     "plan_candidate": True,
                 }

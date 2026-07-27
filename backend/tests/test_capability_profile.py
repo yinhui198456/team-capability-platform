@@ -16,6 +16,10 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.standard_target_support import (
+    ensure_capability_nodes,
+    standard_target_payload,
+)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -66,6 +70,7 @@ def _reset_catalog_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
         connection.execute("DROP TABLE IF EXISTS capability_node")
         connection.execute("DROP TABLE IF EXISTS capability_model")
     create_catalog_schema(connection)
@@ -77,6 +82,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 
@@ -245,6 +253,16 @@ def _login(
 
 
 def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+    desired_details = [
+        {
+            "l3_code": "P01-L2A-L3A",
+            "current_level": 2,
+            "target_level": 4,
+            "evidence_note": "测试中",
+            "plan_candidate": True,
+        }
+    ]
+    ensure_capability_nodes(connection, ["P01-L2A-L3A"])
     cookies = _login(connection, username)
     status, body, _ = _request(
         "POST", "/api/assessments", {"year": 2026}, cookies=cookies
@@ -256,15 +274,9 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [
-                {
-                    "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
-                    "evidence_note": "测试中",
-                    "plan_candidate": True,
-                }
-            ]
+            "details": standard_target_payload(
+                connection, assessment_id, desired_details
+            )
         },
         cookies=cookies,
     )
@@ -610,6 +622,9 @@ def test_selectable_members_for_member_returns_only_self(
     profile_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(profile_schema, "member_select", ["Member"])
+    profile_schema.execute(
+        "UPDATE tcp_user SET target_level = NULL WHERE id = %s", (member_id,)
+    )
     profile_schema.commit()
     cookies = _login(profile_schema, "member_select")
 
@@ -750,7 +765,10 @@ def test_member_profile_includes_levels(
 def test_member_profile_levels_null(
     profile_schema: psycopg.Connection,
 ) -> None:
-    _create_test_user(profile_schema, "profile_none", ["Member"])
+    member_id = _create_test_user(profile_schema, "profile_none", ["Member"])
+    profile_schema.execute(
+        "UPDATE tcp_user SET target_level = NULL WHERE id = %s", (member_id,)
+    )
     profile_schema.commit()
     cookies = _login(profile_schema, "profile_none")
 
@@ -787,7 +805,8 @@ def test_member_profile_level_only_current(
 ) -> None:
     member_id = _create_test_user(profile_schema, "profile_current", ["Member"])
     profile_schema.execute(
-        "UPDATE tcp_user SET current_level = %s WHERE id = %s", ("P6", member_id)
+        "UPDATE tcp_user SET current_level = %s, target_level = NULL WHERE id = %s",
+        ("P6", member_id),
     )
     profile_schema.commit()
     cookies = _login(profile_schema, "profile_current")

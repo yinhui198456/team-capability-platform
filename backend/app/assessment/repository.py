@@ -3,6 +3,7 @@ from typing import Any
 import psycopg
 
 from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
+from ..catalog.standard_targets import resolve_standard_target
 
 
 def _now(connection: psycopg.Connection) -> Any:
@@ -16,6 +17,54 @@ def create_assessment_draft(
     assessment_type: str = "年度",
 ) -> int:
     with connection.transaction():
+        member_row = connection.execute(
+            "SELECT target_level FROM tcp_user WHERE id = %s",
+            (member_id,),
+        ).fetchone()
+        if member_row is None:
+            raise ValueError("member not found")
+        member_target_level = member_row[0]
+        if member_target_level is None:
+            raise ValueError("member target_level is required")
+
+        capability_rows = connection.execute(
+            """
+            SELECT c.code, c.recommended_start_level,
+                   o.node_id IS NOT NULL AS override_present,
+                   o.target_level AS override_value
+            FROM capability_node c
+            LEFT JOIN capability_standard_target_override o
+              ON o.node_id = c.id AND o.job_level = %s
+            WHERE c.node_type = 'L3' AND c.enabled = TRUE
+            ORDER BY c.code
+            """,
+            (member_target_level,),
+        ).fetchall()
+        snapshots = []
+        for (
+            code,
+            recommended_start_level,
+            override_present,
+            override_value,
+        ) in capability_rows:
+            if recommended_start_level is None:
+                raise ValueError(f"recommended_start_level is required for {code}")
+            resolved = resolve_standard_target(
+                member_target_level,
+                recommended_start_level,
+                override_present=override_present,
+                override_value=override_value,
+            )
+            snapshots.append(
+                (
+                    code,
+                    resolved.applicable,
+                    resolved.target_level,
+                    resolved.target_level,
+                    resolved.source,
+                )
+            )
+
         row = connection.execute(
             """
             SELECT COALESCE(MAX(version), 0) + 1
@@ -38,32 +87,27 @@ def create_assessment_draft(
         assert row is not None
         assessment_id = row[0]
 
-        # Pre-populate detail rows from capability model. Use a savepoint
-        # so that missing catalog tables (e.g. test DB) don't abort the
-        # outer transaction.
-        try:
-            with connection.transaction():
-                connection.execute(
-                    """
-                    INSERT INTO assessment_detail (
-                        assessment_id, l3_code, current_level, target_level,
-                        gap_value, evidence_note, plan_candidate
-                    )
-                    SELECT
-                        %s,
-                        c.code,
-                        NULL,
-                        NULL,
-                        0,
-                        NULL,
-                        FALSE
-                    FROM capability_node c
-                    WHERE c.node_type = 'L3' AND c.enabled = TRUE
-                    """,
-                    (assessment_id,),
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO assessment_detail (
+                    assessment_id, l3_code, current_level, target_level,
+                    standard_target_applicable, standard_target_level,
+                    target_adjusted, adjusted_target_level,
+                    target_adjustment_reason, target_snapshot_source,
+                    target_compatibility_error, gap_value, evidence_note,
+                    plan_candidate
                 )
-        except psycopg.errors.UndefinedTable:
-            pass  # capability_node doesn't exist (e.g. test DB without catalog)
+                VALUES (
+                    %s, %s, NULL, %s, %s, %s, FALSE, NULL, NULL, %s,
+                    NULL, NULL, NULL, FALSE
+                )
+                """,
+                [
+                    (assessment_id, code, target, applicable, standard, source)
+                    for code, applicable, standard, target, source in snapshots
+                ],
+            )
 
     return assessment_id
 
@@ -107,6 +151,10 @@ def _get_assessment_details(
         """
         SELECT ad.id, ad.l3_code, ad.current_level, ad.target_level, ad.gap_value,
                ad.evidence_note, ad.plan_candidate,
+               ad.standard_target_applicable, ad.standard_target_level,
+               ad.target_adjusted, ad.adjusted_target_level,
+               ad.target_adjustment_reason, ad.target_snapshot_source,
+               ad.target_compatibility_error,
                c.name AS l3_name,
                c.recommended_start_level,
                l1.code AS l1_code, l1.name AS l1_name
@@ -128,10 +176,17 @@ def _get_assessment_details(
             "gap_value": row[4],
             "evidence_note": row[5],
             "plan_candidate": row[6],
-            "l3_name": row[7],
-            "recommended_start_level": row[8],
-            "l1_code": row[9],
-            "l1_name": row[10],
+            "standard_target_applicable": row[7],
+            "standard_target_level": row[8],
+            "target_adjusted": row[9],
+            "adjusted_target_level": row[10],
+            "target_adjustment_reason": row[11],
+            "target_snapshot_source": row[12],
+            "target_compatibility_error": row[13],
+            "l3_name": row[14],
+            "recommended_start_level": row[15],
+            "l1_code": row[16],
+            "l1_name": row[17],
         }
         for row in rows
     ]
@@ -208,7 +263,7 @@ def save_assessment_draft(
 ) -> None:
     with connection.transaction():
         row = connection.execute(
-            "SELECT status, member_id FROM assessment WHERE id = %s",
+            "SELECT status, member_id FROM assessment WHERE id = %s FOR UPDATE",
             (assessment_id,),
         ).fetchone()
         if row is None:
@@ -219,35 +274,148 @@ def save_assessment_draft(
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
 
-        connection.execute(
-            "DELETE FROM assessment_detail WHERE assessment_id = %s",
+        snapshot_rows = connection.execute(
+            """
+            SELECT id, l3_code, standard_target_applicable,
+                   standard_target_level, target_compatibility_error,
+                   target_level, gap_value, target_snapshot_source
+            FROM assessment_detail
+            WHERE assessment_id = %s
+            ORDER BY l3_code
+            """,
             (assessment_id,),
-        )
+        ).fetchall()
+        snapshots = {row[1]: row for row in snapshot_rows}
+        submitted_codes = [str(detail.get("l3_code", "")) for detail in details]
+        if len(submitted_codes) != len(set(submitted_codes)):
+            raise ValueError("duplicate assessment detail")
+        if set(submitted_codes) != set(snapshots):
+            raise ValueError("batch must include every assessment detail")
+
+        forbidden_fields = {
+            "target_level",
+            "standard_target_applicable",
+            "standard_target_level",
+            "target_snapshot_source",
+            "target_compatibility_error",
+            "gap_value",
+        }
         for detail in details:
+            forbidden = forbidden_fields.intersection(detail)
+            if forbidden:
+                raise ValueError(
+                    "member cannot set calculated target fields: "
+                    + ", ".join(sorted(forbidden))
+                )
+            (
+                detail_id,
+                code,
+                applicable,
+                standard_target,
+                compatibility_error,
+                existing_target,
+                existing_gap,
+                snapshot_source,
+            ) = snapshots[str(detail["l3_code"])]
+            if compatibility_error:
+                raise ValueError(
+                    f"assessment detail {code} requires compatibility repair"
+                )
+
             cl = detail.get("current_level")
-            tl = detail.get("target_level")
             current_level = int(cl) if cl is not None else None
-            target_level = int(tl) if tl is not None else None
-            if current_level is not None and not (1 <= current_level <= 5):
+            if current_level is not None and (
+                isinstance(cl, bool) or not 1 <= current_level <= 5
+            ):
                 raise ValueError("current_level must be between 1 and 5")
-            if target_level is not None and not (1 <= target_level <= 5):
-                raise ValueError("target_level must be between 1 and 5")
+
+            target_adjusted = detail.get("target_adjusted", False)
+            if not isinstance(target_adjusted, bool):
+                raise ValueError("target_adjusted must be boolean")
+            adjusted = detail.get("adjusted_target_level")
+            reason = detail.get("target_adjustment_reason")
+            plan_candidate = detail.get("plan_candidate", False)
+            if not isinstance(plan_candidate, bool):
+                raise ValueError("plan_candidate must be boolean")
+
+            legacy_preserved = (
+                snapshot_source == "legacy_preserved"
+                and applicable is None
+                and existing_target is not None
+            )
+            if legacy_preserved:
+                if target_adjusted or adjusted is not None or reason is not None:
+                    raise ValueError(
+                        f"legacy preserved target {code} cannot be adjusted"
+                    )
+                final_target = int(existing_target)
+                gap_value = (
+                    max(final_target - current_level, 0)
+                    if current_level is not None
+                    else existing_gap
+                )
+            elif applicable is not True:
+                if (
+                    target_adjusted
+                    or adjusted is not None
+                    or reason is not None
+                    or plan_candidate
+                ):
+                    raise ValueError(
+                        f"not applicable item {code} cannot be adjusted or planned"
+                    )
+                current_level = None
+                final_target = None
+                gap_value = None
+            else:
+                if standard_target is None:
+                    raise ValueError(f"assessment detail {code} has no standard target")
+                if target_adjusted:
+                    if (
+                        isinstance(adjusted, bool)
+                        or not isinstance(adjusted, int)
+                        or not 1 <= adjusted <= 5
+                    ):
+                        raise ValueError(
+                            "adjusted_target_level must be between 1 and 5"
+                        )
+                    if not isinstance(reason, str) or not reason.strip():
+                        raise ValueError("adjustment reason is required")
+                    final_target = adjusted
+                    reason = reason.strip()
+                else:
+                    if adjusted is not None or reason is not None:
+                        raise ValueError("adjustment fields require target_adjusted")
+                    final_target = int(standard_target)
+                gap_value = (
+                    max(final_target - current_level, 0)
+                    if current_level is not None
+                    else None
+                )
+
             connection.execute(
                 """
-                INSERT INTO assessment_detail (
-                    assessment_id, l3_code, current_level, target_level,
-                    gap_value, evidence_note, plan_candidate
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                UPDATE assessment_detail
+                SET current_level = %s,
+                    target_adjusted = %s,
+                    adjusted_target_level = %s,
+                    target_adjustment_reason = %s,
+                    target_level = %s,
+                    gap_value = %s,
+                    evidence_note = %s,
+                    plan_candidate = %s
+                WHERE id = %s
                 """,
                 (
-                    assessment_id,
-                    detail["l3_code"],
                     current_level,
-                    target_level,
-                    target_level - current_level,
+                    target_adjusted,
+                    adjusted if target_adjusted else None,
+                    reason if target_adjusted else None,
+                    final_target,
+                    gap_value,
                     detail.get("evidence_note"),
-                    detail.get("plan_candidate", False),
+                    plan_candidate,
+                    detail_id,
                 ),
             )
 
@@ -257,7 +425,7 @@ def submit_assessment(
 ) -> None:
     with connection.transaction():
         row = connection.execute(
-            "SELECT status, member_id FROM assessment WHERE id = %s",
+            "SELECT status, member_id FROM assessment WHERE id = %s FOR UPDATE",
             (assessment_id,),
         ).fetchone()
         if row is None:
@@ -267,6 +435,24 @@ def submit_assessment(
             raise ValueError("assessment is not submittable")
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
+
+        incompatible_detail = connection.execute(
+            """
+            SELECT l3_code, target_compatibility_error
+            FROM assessment_detail
+            WHERE assessment_id = %s
+              AND target_compatibility_error IS NOT NULL
+            ORDER BY l3_code
+            LIMIT 1
+            """,
+            (assessment_id,),
+        ).fetchone()
+        if incompatible_detail is not None:
+            code, compatibility_error = incompatible_detail
+            raise ValueError(
+                f"assessment detail {code} requires compatibility repair: "
+                f"{compatibility_error}"
+            )
 
         submitted_at = _now(connection)
         connection.execute(
@@ -300,7 +486,17 @@ def generate_gaps_for_assessment(
 ) -> None:
     details = _get_assessment_details(connection, assessment_id)
     for detail in details:
-        gap_value = int(detail["gap_value"])
+        raw_gap_value = detail["gap_value"]
+        if raw_gap_value is None:
+            connection.execute(
+                """
+                DELETE FROM gap
+                WHERE assessment_id = %s AND l3_code = %s
+                """,
+                (assessment_id, detail["l3_code"]),
+            )
+            continue
+        gap_value = int(raw_gap_value)
         if gap_value > 0:
             connection.execute(
                 """
