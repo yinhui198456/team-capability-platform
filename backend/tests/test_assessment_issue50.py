@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import psycopg
 import pytest
 
@@ -15,6 +17,7 @@ from app.assessment.repository import (
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.migrations import run_migrations
+from app.settings import settings
 
 
 @pytest.fixture
@@ -217,6 +220,55 @@ def test_patch_requires_revision_and_preserves_omitted_details(
         )
 
 
+@pytest.mark.parametrize("same_l3", [True, False])
+def test_concurrent_patches_allow_one_revision_and_do_not_lose_or_cross_write(
+    issue50_schema: psycopg.Connection, same_l3: bool
+) -> None:
+    connection = issue50_schema
+    member_id = _member(connection)
+    codes = _enable_two_nodes(connection)
+    assessment_id = create_assessment_draft(connection, member_id, 2026)
+
+    first_code = codes[0]
+    second_code = codes[0] if same_l3 else codes[1]
+
+    def write(code: str, level: int) -> tuple[str, object]:
+        try:
+            with psycopg.connect(settings.database_url) as concurrent_connection:
+                return (
+                    "ok",
+                    patch_assessment_draft(
+                        concurrent_connection,
+                        assessment_id,
+                        member_id,
+                        1,
+                        [{"l3_code": code, "current_level": level}],
+                    ),
+                )
+        except ValueError as exc:
+            return ("error", str(exc))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda item: write(*item),
+                [(first_code, 1), (second_code, 2)],
+            )
+        )
+
+    assert [result[0] for result in results].count("ok") == 1
+    assert [result[0] for result in results].count("error") == 1
+    assert any(result[1] == "revision conflict" for result in results)
+    assessment = get_assessment(connection, assessment_id)
+    assert assessment is not None
+    assert assessment["revision"] == 2
+    saved = {row["l3_code"]: row["current_level"] for row in assessment["details"]}
+    if same_l3:
+        assert saved[first_code] in (1, 2)
+    else:
+        assert (saved[first_code], saved[second_code]) in ((1, None), (None, 2))
+
+
 def test_batch_fill_only_writes_empty_l2_values_and_uses_single_revision(
     issue50_schema: psycopg.Connection,
 ) -> None:
@@ -236,6 +288,10 @@ def test_batch_fill_only_writes_empty_l2_values_and_uses_single_revision(
     assert result["revision"] == 3
     assert result["updated_l3_codes"] == [codes[1]]
     assert result["skipped_l3_codes"] == [codes[0]]
+    assert (
+        result["gap_summary"]
+        == get_assessment(connection, assessment_id)["gap_summary"]
+    )
     assert get_assessment(connection, assessment_id)["revision"] == 3
 
 
@@ -264,6 +320,10 @@ def test_batch_fill_does_not_refill_explicitly_cleared_or_inherited_values(
     assert result["updated_l3_codes"] == [codes[1]]
     assert result["skipped_l3_codes"] == [codes[0]]
     assert result["revision"] == 3
+    assert (
+        result["gap_summary"]
+        == get_assessment(connection, assessment_id)["gap_summary"]
+    )
     detail = next(
         row
         for row in get_assessment(connection, assessment_id)["details"]
@@ -275,11 +335,140 @@ def test_batch_fill_does_not_refill_explicitly_cleared_or_inherited_values(
 
 def test_evidence_validator_covers_optional_levels_and_all_increases() -> None:
     assert _evidence_is_valid(1, None, None, None)
+    assert _evidence_is_valid(1, "old", 1, "old")
     assert _evidence_is_valid(2, "old", 1, "old") is False
     assert _evidence_is_valid(2, "new", 1, "old")
     assert _evidence_is_valid(4, "old", 3, "old") is False
     assert _evidence_is_valid(4, "new", 3, "old")
     assert _evidence_is_valid(3, "", None, None) is False
+
+
+@pytest.mark.parametrize("inherited_level,current_level", [(1, 2), (3, 4)])
+def test_plan_candidate_rejects_any_inherited_level_increase_without_new_evidence(
+    issue50_schema: psycopg.Connection,
+    inherited_level: int,
+    current_level: int,
+) -> None:
+    connection = issue50_schema
+    member_id = _member(connection)
+    codes = _enable_two_nodes(connection)
+    previous = create_assessment_draft(connection, member_id, 2025, "年度")
+    patch_assessment_draft(
+        connection,
+        previous,
+        member_id,
+        1,
+        [
+            {
+                "l3_code": codes[0],
+                "current_level": inherited_level,
+                "evidence_note": "继承依据",
+            },
+            {"l3_code": codes[1], "current_level": 1},
+        ],
+    )
+    _mark_approved(connection, previous, "2026-01-01T00:00:00Z")
+    current = create_assessment_draft(connection, member_id, 2026, "晋升复核")
+
+    with pytest.raises(ValueError, match="invalid plan candidate"):
+        patch_assessment_draft(
+            connection,
+            current,
+            member_id,
+            1,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": current_level,
+                    "evidence_note": "继承依据",
+                    "plan_candidate": True,
+                },
+                {"l3_code": codes[1], "current_level": 1},
+            ],
+        )
+
+    accepted = patch_assessment_draft(
+        connection,
+        current,
+        member_id,
+        1,
+        [
+            {
+                "l3_code": codes[0],
+                "current_level": inherited_level,
+                "evidence_note": "继承依据",
+                "target_adjusted": True,
+                "adjusted_target_level": 5,
+                "target_adjustment_reason": "晋升目标",
+                "plan_candidate": True,
+            },
+            {"l3_code": codes[1], "current_level": 1},
+        ],
+    )
+    assert accepted["revision"] == 2
+
+
+def test_batch_fill_excludes_na_compatibility_inherited_and_cleared_items(
+    issue50_schema: psycopg.Connection,
+) -> None:
+    connection = issue50_schema
+    member_id = _member(connection)
+    l2_row = connection.execute(
+        """
+        SELECT l2.code, array_agg(l3.code ORDER BY l3.code)
+        FROM capability_node l2
+        JOIN capability_node l3 ON l3.parent_node_id = l2.id
+        WHERE l2.node_type = 'L2' AND l3.node_type = 'L3'
+        GROUP BY l2.code
+        HAVING count(*) >= 4
+        ORDER BY l2.code
+        LIMIT 1
+        """
+    ).fetchone()
+    assert l2_row is not None
+    l2_code, codes = str(l2_row[0]), [str(code) for code in l2_row[1][:4]]
+    connection.execute(
+        "UPDATE capability_node SET enabled = (code = ANY(%s)) WHERE node_type = 'L3'",
+        (codes,),
+    )
+    connection.commit()
+    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    connection.execute(
+        """
+        UPDATE assessment_detail
+        SET standard_target_applicable = FALSE,
+            standard_target_level = NULL,
+            target_level = NULL
+        WHERE assessment_id = %s AND l3_code = %s
+        """,
+        (assessment_id, codes[0]),
+    )
+    connection.execute(
+        """
+        UPDATE assessment_detail
+        SET target_compatibility_error = 'legacy target error'
+        WHERE assessment_id = %s AND l3_code = %s
+        """,
+        (assessment_id, codes[1]),
+    )
+    connection.execute(
+        """
+        UPDATE assessment_detail
+        SET current_level = 2,
+            inherited_current_level = 2,
+            inherited_evidence_note = '历史依据',
+            evidence_note = '历史依据'
+        WHERE assessment_id = %s AND l3_code = %s
+        """,
+        (assessment_id, codes[2]),
+    )
+    connection.commit()
+
+    result = batch_fill_l2(
+        connection, assessment_id, member_id, l2_code, 1, expected_revision=1
+    )
+    assert result["updated_l3_codes"] == [codes[3]]
+    assert set(result["skipped_l3_codes"]) == set(codes[:3])
 
 
 def test_invalid_candidate_is_rejected_and_existing_candidate_is_auto_cancelled(

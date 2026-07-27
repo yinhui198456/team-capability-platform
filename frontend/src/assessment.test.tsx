@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -100,6 +101,13 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('标准 4')
     expect(screen.queryByTestId('gap-sidebar')).toBeNull()
     expect(screen.queryByTestId('gap-drawer')).toBeNull()
+    const content = screen.getByTestId('assessment-content-area')
+    expect(
+      within(content).getByRole('heading', {
+        name: '能力自评与 Gap 分析',
+      }),
+    ).toBeTruthy()
+    expect(within(content).getByTestId('assessment-main-area')).toBeTruthy()
     expect(screen.getByRole('button', { name: /P01/ })).toBeTruthy()
   })
 
@@ -208,6 +216,61 @@ describe('AssessmentGapPage', () => {
     },
   )
 
+  it('allows an unchanged inherited value with valid inherited evidence', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '继承依据',
+          inherited_from_assessment_id: 6,
+          inherited_current_level: 2,
+          inherited_evidence_note: '继承依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('沿用上次评估')
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+    expect(
+      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('does not offer L2 batch fill when the visible item is not applicable', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+          target_level: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '批量填 2' })).toBeNull()
+  })
+
   it('saves dirty details with PATCH before direct submit', async () => {
     const draft = mockDraft({
       details: [
@@ -241,6 +304,88 @@ describe('AssessmentGapPage', () => {
       submit.mock.invocationCallOrder[0],
     )
     expect(submit).toHaveBeenCalledWith(7, 2)
+  })
+
+  it('replaces the Gap summary after draft save', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          gap_value: 2,
+        },
+      ],
+      gap_summary: {
+        total_gaps: 1,
+        avg_gap: 2,
+        high_priority: 0,
+        medium_priority: 1,
+        low_priority: 0,
+      },
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({
+      ok: true,
+      revision: 2,
+      gap_summary: {
+        total_gaps: 0,
+        avg_gap: 0,
+        high_priority: 0,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '4' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 0')
+    })
+  })
+
+  it('replaces the Gap summary after L2 batch fill', async () => {
+    const draft = mockDraft({
+      gap_summary: {
+        total_gaps: 0,
+        avg_gap: 0,
+        high_priority: 0,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'batchFillL2').mockResolvedValue({
+      revision: 2,
+      updated_l3_codes: ['P01.01.01'],
+      skipped_l3_codes: [],
+      gap_summary: {
+        total_gaps: 1,
+        avg_gap: 4,
+        high_priority: 1,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 1')
+    })
   })
 
   it('sends a personal adjustment without calculated target fields', async () => {

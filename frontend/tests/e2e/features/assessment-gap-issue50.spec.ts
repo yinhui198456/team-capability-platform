@@ -2,6 +2,44 @@ import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
+type AssessmentDetail = {
+  l3_code: string
+  current_level: number | null
+  target_level: number | null
+  standard_target_applicable?: boolean | null
+  standard_target_level?: number | null
+  evidence_note?: string | null
+  plan_candidate?: boolean
+  inherited_current_level?: number | null
+  inherited_evidence_note?: string | null
+  inherited_from_assessment_id?: number | null
+}
+
+type Assessment = {
+  id: number
+  revision: number
+  details: AssessmentDetail[]
+}
+
+async function currentDraft(
+  page: Parameters<typeof loginAs>[0],
+): Promise<Assessment> {
+  const response = await page.request.get('/api/assessments')
+  expect(response.ok()).toBeTruthy()
+  const assessments = (await response.json()) as Array<{
+    id: number
+    status: string
+  }>
+  const draft = assessments.find(
+    (assessment) =>
+      assessment.status === '草稿' || assessment.status === '建议调整',
+  )
+  expect(draft).toBeDefined()
+  const detailResponse = await page.request.get(`/api/assessments/${draft!.id}`)
+  expect(detailResponse.ok()).toBeTruthy()
+  return (await detailResponse.json()) as Assessment
+}
+
 test.describe('Issue #50 assessment gap workflow', () => {
   test.beforeEach(async ({ page }) => {
     test.skip(
@@ -110,23 +148,312 @@ test.describe('Issue #50 assessment gap workflow', () => {
   test('partial save keeps the page dense and avoids viewport overflow', async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     await expect(page.getByRole('button', { name: '保存草稿' })).toBeVisible()
     const metrics = await page
-      .getByTestId('assessment-main-area')
-      .evaluate((element) => {
-        const main = element.getBoundingClientRect()
-        const table = element.querySelector('table')?.getBoundingClientRect()
-        const rows = [...element.querySelectorAll('tbody tr')].filter((row) => {
+      .getByTestId('assessment-content-area')
+      .evaluate((content) => {
+        const visible = (rect: DOMRect) => {
+          const left = Math.max(0, rect.left)
+          const top = Math.max(0, rect.top)
+          const right = Math.min(window.innerWidth, rect.right)
+          const bottom = Math.min(window.innerHeight, rect.bottom)
+          return {
+            width: Math.max(0, right - left),
+            height: Math.max(0, bottom - top),
+          }
+        }
+        const contentRect = visible(content.getBoundingClientRect())
+        const main = content.querySelector(
+          '[data-testid="assessment-main-area"]',
+        )
+        const mainRect = main
+          ? visible(main.getBoundingClientRect())
+          : { width: 0, height: 0 }
+        const rows = [...content.querySelectorAll('tbody tr')].filter((row) => {
           const rect = row.getBoundingClientRect()
           return rect.top >= 0 && rect.bottom <= window.innerHeight
         }).length
-        return { mainWidth: main.width, tableWidth: table?.width ?? 0, rows }
+        return {
+          contentArea: contentRect.width * contentRect.height,
+          tableArea: mainRect.width * mainRect.height,
+          rows,
+        }
       })
-    expect(metrics.tableWidth / metrics.mainWidth).toBeGreaterThanOrEqual(0.7)
+    expect(metrics.tableArea / metrics.contentArea).toBeGreaterThanOrEqual(0.7)
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(viewport!.width)
+  })
+
+  test('sparse PATCH preserves a hidden L1 detail', async ({ page }) => {
+    const before = await currentDraft(page)
+    const first = before.details.find(
+      (detail) => detail.standard_target_applicable !== false,
+    )!
+    const untouched = before.details.find(
+      (detail) => detail.l3_code !== first.l3_code,
+    )!
+    const response = await page.request.patch(
+      `/api/assessments/${before.id}/draft`,
+      {
+        data: {
+          expected_revision: before.revision,
+          details: [{ l3_code: first.l3_code, current_level: 1 }],
+        },
+      },
+    )
+    expect(response.ok()).toBeTruthy()
+    const after = await currentDraft(page)
+    expect(
+      after.details.find((detail) => detail.l3_code === untouched.l3_code)
+        ?.current_level,
+    ).toBe(untouched.current_level)
+  })
+
+  test('two PATCH requests use revision conflict instead of last-write-wins', async ({
+    page,
+  }) => {
+    const before = await currentDraft(page)
+    const detail = before.details.find(
+      (item) => item.standard_target_applicable !== false,
+    )!
+    const requests = [1, 2].map((level) =>
+      page.request.patch(`/api/assessments/${before.id}/draft`, {
+        data: {
+          expected_revision: before.revision,
+          details: [{ l3_code: detail.l3_code, current_level: level }],
+        },
+      }),
+    )
+    const responses = await Promise.all(requests)
+    expect(responses.map((response) => response.status()).sort()).toEqual([
+      200, 409,
+    ])
+    const after = await currentDraft(page)
+    expect(after.revision).toBe(before.revision + 1)
+    expect(
+      after.details.find((item) => item.l3_code === detail.l3_code)
+        ?.current_level,
+    ).toBeGreaterThanOrEqual(1)
+  })
+
+  test('a legal level increase to the target cancels an existing plan candidate', async ({
+    page,
+  }) => {
+    const before = await currentDraft(page)
+    const candidate = before.details.find(
+      (item) =>
+        item.standard_target_applicable !== false &&
+        item.target_level != null &&
+        item.target_level > 1,
+    )!
+    const first = await page.request.patch(
+      `/api/assessments/${before.id}/draft`,
+      {
+        data: {
+          expected_revision: before.revision,
+          details: [
+            {
+              l3_code: candidate.l3_code,
+              current_level: 1,
+              plan_candidate: true,
+            },
+          ],
+        },
+      },
+    )
+    expect(first.ok()).toBeTruthy()
+    const firstBody = (await first.json()) as { revision: number }
+    const second = await page.request.patch(
+      `/api/assessments/${before.id}/draft`,
+      {
+        data: {
+          expected_revision: firstBody.revision,
+          details: [
+            {
+              l3_code: candidate.l3_code,
+              current_level: candidate.target_level,
+            },
+          ],
+        },
+      },
+    )
+    expect(second.ok()).toBeTruthy()
+    const secondBody = (await second.json()) as {
+      auto_cancelled_plan_candidates: string[]
+      gap_summary: { total_gaps: number }
+    }
+    expect(secondBody.auto_cancelled_plan_candidates).toContain(
+      candidate.l3_code,
+    )
+    expect(secondBody.gap_summary.total_gaps).toBeGreaterThanOrEqual(0)
+    const after = await currentDraft(page)
+    expect(
+      after.details.find((item) => item.l3_code === candidate.l3_code)
+        ?.plan_candidate,
+    ).toBe(false)
+    const gaps = await page.request.get(`/api/gaps?assessment_id=${before.id}`)
+    expect(gaps.ok()).toBeTruthy()
+    expect(
+      ((await gaps.json()) as Array<{ l3_code: string }>).some(
+        (gap) => gap.l3_code === candidate.l3_code,
+      ),
+    ).toBe(false)
+  })
+})
+
+test.describe('Issue #50 historical inheritance and evidence gates', () => {
+  test('creates a cross-year snapshot and rejects unchanged evidence for 1→2 and 3→4', async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(120_000)
+    test.skip(
+      !process.env.TCP_E2E_ISOLATED,
+      'Issue #50 writes assessment data and requires an isolated database',
+    )
+    await loginAs(page, 'member2')
+    const previousCreated = await page.request.post('/api/assessments', {
+      data: { year: 2025, assessment_type: '年度' },
+    })
+    expect(previousCreated.ok()).toBeTruthy()
+    const previousId = ((await previousCreated.json()) as { id: number }).id
+    const previousResponse = await page.request.get(
+      `/api/assessments/${previousId}`,
+    )
+    const previous = (await previousResponse.json()) as Assessment
+    const applicable = previous.details.filter(
+      (detail) =>
+        detail.standard_target_applicable !== false &&
+        detail.target_level != null,
+    )
+    const low = applicable.find((detail) => (detail.target_level ?? 0) >= 2)!
+    const high =
+      applicable.find(
+        (detail) =>
+          detail.l3_code !== low.l3_code && (detail.target_level ?? 0) >= 4,
+      ) ?? applicable.find((detail) => detail.l3_code !== low.l3_code)!
+    const details = previous.details.map((detail) => {
+      if (detail.standard_target_applicable === false) {
+        return { l3_code: detail.l3_code, current_level: null }
+      }
+      const current =
+        detail.l3_code === low.l3_code
+          ? 1
+          : detail.l3_code === high.l3_code
+            ? 3
+            : (detail.target_level ?? 1)
+      return {
+        l3_code: detail.l3_code,
+        current_level: current,
+        evidence_note: `历史依据-${detail.l3_code}`,
+      }
+    })
+    const saved = await page.request.put(
+      `/api/assessments/${previousId}/draft`,
+      {
+        data: { expected_revision: previous.revision, details },
+      },
+    )
+    expect(saved.ok()).toBeTruthy()
+    const submitted = await page.request.post(
+      `/api/assessments/${previousId}/submit`,
+      { data: { expected_revision: 2 } },
+    )
+    expect(submitted.ok()).toBeTruthy()
+
+    const buddy = await browser.newContext()
+    await loginAs(buddy.pages()[0] ?? (await buddy.newPage()), 'buddy')
+    const pending = await buddy.request.get('/api/assessments/reviews/pending')
+    expect(pending.ok()).toBeTruthy()
+    const review = (
+      (await pending.json()) as Array<{
+        assessment_id: number
+        id: number
+      }>
+    ).find((item) => item.assessment_id === previousId)!
+    const reviewed = await buddy.request.post(
+      `/api/assessments/${previousId}/reviews/${review.id}`,
+      { data: { conclusion: '认可', feedback: 'E2E 认可' } },
+    )
+    expect(reviewed.ok()).toBeTruthy()
+    await buddy.close()
+
+    const currentCreated = await page.request.post('/api/assessments', {
+      data: { year: 2026, assessment_type: '晋升复核' },
+    })
+    expect(currentCreated.ok()).toBeTruthy()
+    const currentId = ((await currentCreated.json()) as { id: number }).id
+    const currentResponse = await page.request.get(
+      `/api/assessments/${currentId}`,
+    )
+    const current = (await currentResponse.json()) as Assessment
+    const inheritedLow = current.details.find(
+      (detail) => detail.l3_code === low.l3_code,
+    )!
+    const inheritedHigh = current.details.find(
+      (detail) => detail.l3_code === high.l3_code,
+    )!
+    expect(inheritedLow.inherited_from_assessment_id).toBe(previousId)
+    expect(inheritedLow.current_level).toBe(1)
+    expect(inheritedLow.target_level).toBe(low.target_level)
+    expect(inheritedLow.inherited_evidence_note).toBe(
+      inheritedLow.evidence_note,
+    )
+    expect(inheritedHigh.current_level).toBe(3)
+
+    await page.goto('/capability/assessment')
+    await expect(page.getByText('沿用上次评估').first()).toBeVisible()
+    const lowSelect = page.getByLabel(`当前等级 ${low.l3_code}`)
+    if (await lowSelect.isVisible()) {
+      await lowSelect.selectOption('2')
+      await expect(page.getByText('本次已更新').first()).toBeVisible()
+    }
+
+    const lowUpdate = await page.request.patch(
+      `/api/assessments/${currentId}/draft`,
+      {
+        data: {
+          expected_revision: current.revision,
+          details: [
+            {
+              l3_code: low.l3_code,
+              current_level: 2,
+              evidence_note: inheritedLow.evidence_note,
+            },
+          ],
+        },
+      },
+    )
+    expect(lowUpdate.ok()).toBeTruthy()
+    const lowBody = (await lowUpdate.json()) as { revision: number }
+    const highUpdate = await page.request.patch(
+      `/api/assessments/${currentId}/draft`,
+      {
+        data: {
+          expected_revision: lowBody.revision,
+          details: [
+            {
+              l3_code: high.l3_code,
+              current_level: 4,
+              evidence_note: inheritedHigh.evidence_note,
+            },
+          ],
+        },
+      },
+    )
+    expect(highUpdate.ok()).toBeTruthy()
+    const highBody = (await highUpdate.json()) as { revision: number }
+    const rejected = await page.request.post(
+      `/api/assessments/${currentId}/submit`,
+      {
+        data: { expected_revision: highBody.revision },
+      },
+    )
+    expect(rejected.status()).toBe(400)
+    expect(await rejected.text()).toContain('requires updated evidence')
   })
 })

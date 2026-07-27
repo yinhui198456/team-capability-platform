@@ -436,7 +436,7 @@ def save_assessment_draft(
                 inherited_evidence,
                 existing_explicitly_cleared,
             ) = snapshots[str(detail["l3_code"])]
-            if compatibility_error:
+            if compatibility_error and detail.get("_detail_present", True):
                 raise ValueError(
                     f"assessment detail {code} requires compatibility repair"
                 )
@@ -530,7 +530,7 @@ def save_assessment_draft(
                     and final_target is not None
                     and gap_value > 0
                     and not compatibility_error
-                    and (current_level < 3 or valid_evidence)
+                    and valid_evidence
                 )
                 if not candidate_valid:
                     if existing_plan_candidate:
@@ -576,6 +576,7 @@ def save_assessment_draft(
         return {
             "revision": next_revision,
             "auto_cancelled_plan_candidates": auto_cancelled,
+            "gap_summary": _get_gap_summary(connection, assessment_id),
         }
 
 
@@ -609,6 +610,7 @@ def patch_assessment_draft(
             "plan_candidate": row[6],
             "current_level_explicitly_cleared": row[7],
             "_current_level_present": False,
+            "_detail_present": False,
         }
         for row in rows
     }
@@ -629,6 +631,7 @@ def patch_assessment_draft(
             raise ValueError("member cannot set calculated target fields")
         if "current_level" in detail:
             merged[code]["_current_level_present"] = True
+        merged[code]["_detail_present"] = True
         merged[code].update({key: detail[key] for key in allowed if key in detail})
     return save_assessment_draft(
         connection,
@@ -659,6 +662,8 @@ def batch_fill_l2(
           AND ad.current_level IS NULL
           AND ad.current_level_explicitly_cleared = FALSE
           AND ad.inherited_current_level IS NULL
+          AND ad.standard_target_applicable = TRUE
+          AND ad.target_compatibility_error IS NULL
         ORDER BY ad.l3_code
         """,
         (assessment_id, l2_code),
@@ -700,6 +705,7 @@ def batch_fill_l2(
             "skipped_l3_codes": [row[0] for row in all_rows],
             "revision": expected_revision,
             "auto_cancelled_plan_candidates": [],
+            "gap_summary": _get_gap_summary(connection, assessment_id),
         }
     result = patch_assessment_draft(
         connection,

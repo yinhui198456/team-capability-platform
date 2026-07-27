@@ -88,11 +88,13 @@ export async function saveDraft(
   ok: boolean
   revision?: number
   auto_cancelled_plan_candidates?: string[]
+  gap_summary?: GapSummary
 }> {
   return request<{
     ok: boolean
     revision?: number
     auto_cancelled_plan_candidates?: string[]
+    gap_summary?: GapSummary
   }>(
     `/api/assessments/${id}/draft`,
     { method: 'PATCH' },
@@ -120,11 +122,15 @@ export async function batchFillL2(
   revision: number
   updated_l3_codes: string[]
   skipped_l3_codes: string[]
+  auto_cancelled_plan_candidates?: string[]
+  gap_summary?: GapSummary
 }> {
   return request<{
     revision: number
     updated_l3_codes: string[]
     skipped_l3_codes: string[]
+    auto_cancelled_plan_candidates?: string[]
+    gap_summary?: GapSummary
   }>(
     `/api/assessments/${id}/draft/batch-level`,
     { method: 'POST' },

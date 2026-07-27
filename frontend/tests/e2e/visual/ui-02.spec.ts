@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
@@ -65,8 +67,8 @@ for (const viewport of VIEWPORTS) {
       await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
 
       const metrics = await page
-        .getByTestId('assessment-main-area')
-        .evaluate((element) => {
+        .getByTestId('assessment-content-area')
+        .evaluate((content) => {
           const visible = (rect: DOMRect) => {
             const left = Math.max(0, rect.left)
             const top = Math.max(0, rect.top)
@@ -77,35 +79,49 @@ for (const viewport of VIEWPORTS) {
               height: Math.max(0, bottom - top),
             }
           }
-          const main = visible(element.getBoundingClientRect())
-          const tableElement = element.querySelector('table')
-          const table = tableElement
-            ? visible(tableElement.getBoundingClientRect())
+          const contentRect = visible(content.getBoundingClientRect())
+          const mainElement = content.querySelector(
+            '[data-testid="assessment-main-area"]',
+          )
+          const main = mainElement
+            ? visible(mainElement.getBoundingClientRect())
             : { width: 0, height: 0 }
-          const rows = [...element.querySelectorAll('tbody tr')].filter(
-            (row) => {
-              const rect = row.getBoundingClientRect()
-              return rect.top >= 0 && rect.bottom <= window.innerHeight
-            },
-          ).length
           const sticky = document.querySelector('[class*="stickyActions"]')
           const stickyRect = sticky?.getBoundingClientRect()
-          const visibleRows = [...element.querySelectorAll('tbody tr')].filter(
+          const stickyTop = stickyRect?.top ?? window.innerHeight
+          const rows = [...content.querySelectorAll('tbody tr')].filter(
             (row) => {
               const rect = row.getBoundingClientRect()
-              return rect.top < window.innerHeight && rect.bottom > 0
+              return rect.top >= 0 && rect.bottom <= stickyTop
+            },
+          ).length
+          const visibleRows = [...content.querySelectorAll('tbody tr')].filter(
+            (row) => {
+              const rect = row.getBoundingClientRect()
+              return rect.top >= 0 && rect.bottom <= stickyTop
             },
           )
           const lastVisibleRow = visibleRows.at(-1)?.getBoundingClientRect()
           return {
-            mainArea: main.width * main.height,
-            tableArea: table.width * table.height,
+            contentArea: contentRect.width * contentRect.height,
+            tableArea: main.width * main.height,
             rows,
             lastVisibleRowBottom: lastVisibleRow?.bottom ?? 0,
-            stickyTop: stickyRect?.top ?? window.innerHeight,
+            stickyTop,
           }
         })
-      expect(metrics.tableArea / metrics.mainArea).toBeGreaterThanOrEqual(0.7)
+      const areaRatio = metrics.tableArea / metrics.contentArea
+      console.log(`DOM_METRICS ${JSON.stringify(metrics)}`)
+      console.log(
+        JSON.stringify({
+          viewport: viewport.name,
+          contentArea: metrics.contentArea,
+          tableArea: metrics.tableArea,
+          areaRatio,
+          completeRows: metrics.rows,
+        }),
+      )
+      expect(areaRatio).toBeGreaterThanOrEqual(0.7)
       expect(metrics.rows).toBeGreaterThanOrEqual(
         viewport.name === '1920x1080'
           ? 8
@@ -132,6 +148,13 @@ for (const viewport of VIEWPORTS) {
         `ui-02-assessment-overview-${viewport.name}.png`,
         { maxDiffPixelRatio: 0.05 },
       )
+      const evidenceDir = process.env.ISSUE50_SCREENSHOT_DIR
+      if (evidenceDir) {
+        await page.screenshot({
+          path: path.join(evidenceDir, `assessment-${viewport.name}.png`),
+          fullPage: false,
+        })
+      }
     })
   })
 }
