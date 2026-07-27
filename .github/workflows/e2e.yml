@@ -13,8 +13,6 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: tcp-e2e-${{ github.run_id }}-${{ github.run_attempt }}
       PLAYWRIGHT_NO_WEBSERVER: "1"
-      PLAYWRIGHT_BASE_URL: http://127.0.0.1:18081
-      PLAYWRIGHT_BACKEND_URL: http://127.0.0.1:18001
       TCP_E2E_ISOLATED: "1"
     steps:
       - name: Checkout repository
@@ -74,8 +72,6 @@ jobs:
             -v "$PWD/frontend:/app" \
             -w /app \
             -e PLAYWRIGHT_NO_WEBSERVER=1 \
-            -e PLAYWRIGHT_BASE_URL="$PLAYWRIGHT_BASE_URL" \
-            -e PLAYWRIGHT_BACKEND_URL="$PLAYWRIGHT_BACKEND_URL" \
             -e TCP_E2E_ISOLATED=1 \
             mcr.microsoft.com/playwright:v1.61.1-jammy \
             bash -c "apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test"
