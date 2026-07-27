@@ -71,6 +71,37 @@ describe('AssessmentGapPage', () => {
     vi.restoreAllMocks()
   })
 
+  it('uses a single L1 view and keeps Gap details in a closed drawer', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        ...mockDraft(),
+        details: undefined,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            l2_name: '数据基础',
+            current_level: 2,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    expect(screen.queryByTestId('gap-sidebar')).toBeNull()
+    expect(screen.queryByTestId('gap-drawer')).toBeNull()
+    expect(screen.getByRole('button', { name: /P01/ })).toBeTruthy()
+  })
+
   it('renders create button', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>

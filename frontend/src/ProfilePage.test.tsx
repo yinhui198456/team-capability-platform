@@ -171,7 +171,9 @@ describe('ProfilePage', () => {
       ).toBeTruthy()
     })
 
-    expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
+    await waitFor(() => {
+      expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
+    })
     expect(screen.getByText(/年度：2026/)).toBeTruthy()
     expect(screen.getByText(/数据范围：本人/, { selector: 'p' })).toBeTruthy()
     const kpiRegion = screen.getByRole('region', { name: '年度成长闭环摘要' })

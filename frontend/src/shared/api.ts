@@ -17,7 +17,11 @@ export async function request<T>(
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: '请求失败' }))
-    throw new Error(payload.detail ?? '请求失败')
+    const error = new Error(payload.detail ?? '请求失败') as Error & {
+      status?: number
+    }
+    error.status = response.status
+    throw error
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
