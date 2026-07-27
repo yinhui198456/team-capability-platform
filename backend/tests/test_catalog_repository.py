@@ -21,6 +21,32 @@ def initialize_catalog(connection: psycopg.Connection) -> None:
 def test_capability_model_returns_only_the_six_enabled_domains(
     connection: psycopg.Connection,
 ) -> None:
+    connection.execute(
+        """
+        UPDATE capability_node
+        SET p4_description = CASE code
+                WHEN 'P01.01' THEN 'L2 P4 description'
+                WHEN 'P01.01.01' THEN 'L3 P4 description'
+            END,
+            p5_description = CASE code
+                WHEN 'P01.01' THEN 'L2 P5 description'
+                WHEN 'P01.01.01' THEN 'L3 P5 description'
+            END,
+            p6_description = CASE code
+                WHEN 'P01.01' THEN 'L2 P6 description'
+                WHEN 'P01.01.01' THEN 'L3 P6 description'
+            END,
+            p7_description = CASE code
+                WHEN 'P01.01' THEN 'L2 P7 description'
+                WHEN 'P01.01.01' THEN 'L3 P7 description'
+            END,
+            p8_description = CASE code
+                WHEN 'P01.01' THEN 'L2 P8 description'
+                WHEN 'P01.01.01' THEN 'L3 P8 description'
+            END
+        WHERE code IN ('P01.01', 'P01.01.01')
+        """
+    )
     model = get_capability_model(connection, None)
 
     assert model is not None
@@ -32,7 +58,29 @@ def test_capability_model_returns_only_the_six_enabled_domains(
         "C02",
         "C03",
     }
-    l3 = model["domains"][0]["children"][0]["children"][0]
+    l2 = model["domains"][0]["children"][0]
+    l3 = l2["children"][0]
+    levels = {
+        "p4_description",
+        "p5_description",
+        "p6_description",
+        "p7_description",
+        "p8_description",
+    }
+    assert {l2[level] for level in levels} == {
+        "L2 P4 description",
+        "L2 P5 description",
+        "L2 P6 description",
+        "L2 P7 description",
+        "L2 P8 description",
+    }
+    assert {l3[level] for level in levels} == {
+        "L3 P4 description",
+        "L3 P5 description",
+        "L3 P6 description",
+        "L3 P7 description",
+        "L3 P8 description",
+    }
     assert {"materials_text", "resources", "unmatched_materials"} <= set(l3)
 
 

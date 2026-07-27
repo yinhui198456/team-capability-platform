@@ -83,7 +83,9 @@ def get_capability_model(
     l2_rows = _fetchall(
         connection,
         """
-        SELECT id, parent_node_id, code, name
+        SELECT id, parent_node_id, code, name,
+               p4_description, p5_description, p6_description,
+               p7_description, p8_description
         FROM capability_node
         WHERE node_type = 'L2' AND parent_node_id = ANY(%s)
         ORDER BY sort_order
@@ -94,7 +96,9 @@ def get_capability_model(
     l3_rows = _fetchall(
         connection,
         """
-        SELECT id, parent_node_id, code, name, recommended_start_level,
+        SELECT id, parent_node_id, code, name,
+               p4_description, p5_description, p6_description,
+               p7_description, p8_description, recommended_start_level,
                materials_text, expected_output, estimated_hours
         FROM capability_node
         WHERE node_type = 'L3' AND parent_node_id = ANY(%s)
@@ -143,6 +147,11 @@ def get_capability_model(
             {
                 "code": row["code"],
                 "name": row["name"],
+                "p4_description": row["p4_description"],
+                "p5_description": row["p5_description"],
+                "p6_description": row["p6_description"],
+                "p7_description": row["p7_description"],
+                "p8_description": row["p8_description"],
                 "recommended_start_level": row["recommended_start_level"],
                 "materials_text": row["materials_text"],
                 "expected_output": row["expected_output"],
@@ -161,6 +170,11 @@ def get_capability_model(
             {
                 "code": row["code"],
                 "name": row["name"],
+                "p4_description": row["p4_description"],
+                "p5_description": row["p5_description"],
+                "p6_description": row["p6_description"],
+                "p7_description": row["p7_description"],
+                "p8_description": row["p8_description"],
                 "children": l3_by_l2[row["id"]],
             }
         )

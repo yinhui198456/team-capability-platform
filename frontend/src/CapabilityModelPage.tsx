@@ -1,4 +1,13 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
+
+import styles from './CapabilityModelPage.module.css'
 
 import {
   archiveLearningResource,
@@ -41,53 +50,6 @@ type EditableNode = {
   estimated_hours?: string | null
   resource_codes?: string[]
   standard_target_overrides?: Partial<Record<JobLevel, number | null>>
-}
-
-function L3Details({ node }: { node: L3Node }) {
-  return (
-    <article className="l3-node" id={node.code}>
-      <h4>
-        {node.code} · {node.name}
-      </h4>
-      <dl className="metadata">
-        <div>
-          <dt>建议起始等级</dt>
-          <dd>{node.recommended_start_level ?? '未提供'}</dd>
-        </div>
-        <div>
-          <dt>预期输出</dt>
-          <dd>{node.expected_output ?? '未提供'}</dd>
-        </div>
-        <div>
-          <dt>预计时长</dt>
-          <dd>
-            {node.estimated_hours ?? '未提供'}
-            {node.estimated_hours === null ? '' : ' 小时'}
-          </dd>
-        </div>
-      </dl>
-      <p>
-        <strong>原始学习材料：</strong>
-        {node.materials_text || '未提供'}
-      </p>
-      <p>
-        <strong>已关联资源：</strong>
-        {node.resources.length
-          ? node.resources.map((resource) => (
-              <span className="resource-summary" key={resource.material_code}>
-                {resource.material_code} · {resource.name}（
-                {resource.material_type} / {resource.status}）
-              </span>
-            ))
-          : '暂无已关联资源'}
-      </p>
-      {node.unmatched_materials.length > 0 && (
-        <p className="warning" role="status">
-          来源待补充 / 未关联：{node.unmatched_materials.join('；')}
-        </p>
-      )}
-    </article>
-  )
 }
 
 function textField(
@@ -468,6 +430,88 @@ export function ResourceForm({
   )
 }
 
+const LEVELS = [
+  { key: 'p4', label: 'P4' },
+  { key: 'p5', label: 'P5' },
+  { key: 'p6', label: 'P6' },
+  { key: 'p7', label: 'P7' },
+  { key: 'p8', label: 'P8' },
+] as const
+
+type LevelKey = (typeof LEVELS)[number]['key']
+type SearchResultKind = 'L1' | 'L2' | 'L3'
+
+type SearchResult = {
+  kind: SearchResultKind
+  code: string
+  name: string
+  l1Code: string
+  l1Name: string
+  l2Code?: string
+  l2Name?: string
+  l3Code?: string
+  l3Name?: string
+}
+
+function searchResultsFor(model: CapabilityModel | null): SearchResult[] {
+  return enabledDomains(model).flatMap((domain) => [
+    {
+      kind: 'L1' as const,
+      code: domain.code,
+      name: domain.name,
+      l1Code: domain.code,
+      l1Name: domain.name,
+    },
+    ...domain.children.flatMap((l2) => [
+      {
+        kind: 'L2' as const,
+        code: l2.code,
+        name: l2.name,
+        l1Code: domain.code,
+        l1Name: domain.name,
+        l2Code: l2.code,
+        l2Name: l2.name,
+      },
+      ...l2.children.map((l3) => ({
+        kind: 'L3' as const,
+        code: l3.code,
+        name: l3.name,
+        l1Code: domain.code,
+        l1Name: domain.name,
+        l2Code: l2.code,
+        l2Name: l2.name,
+        l3Code: l3.code,
+        l3Name: l3.name,
+      })),
+    ]),
+  ])
+}
+
+function findL3(model: CapabilityModel | null, code: string) {
+  return enabledDomains(model)
+    .flatMap((domain) => domain.children)
+    .flatMap((l2) => l2.children)
+    .find((l3) => l3.code === code)
+}
+
+function levelDescription(
+  node: {
+    p4_description: string | null
+    p5_description: string | null
+    p6_description: string | null
+    p7_description: string | null
+    p8_description: string | null
+  },
+  key: LevelKey,
+) {
+  return node[`${key}_description`]
+}
+
+function levelSummary(value: string | null) {
+  const text = value?.trim() || '未提供等级说明'
+  return text.length > 72 ? `${text.slice(0, 72)}…` : text
+}
+
 export function CapabilityModelPage() {
   const {
     data: model,
@@ -476,140 +520,606 @@ export function CapabilityModelPage() {
   } = useCatalog<CapabilityModel>('/api/capability-model')
   const { data: resources } = useCatalog<Resource[]>('/api/learning-resources')
   const { isLeader } = useMe()
-  const targetCode = window.location.hash.slice(1)
+  const [activeDomain, setActiveDomain] = useState('')
+  const [expandedL2ByDomain, setExpandedL2ByDomain] = useState<
+    Record<string, Set<string>>
+  >({})
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedLevel, setSelectedLevel] = useState<LevelKey | null>(null)
+  const [selectedL3, setSelectedL3] = useState<string | null>(null)
+  const [focusTarget, setFocusTarget] = useState('')
   const [editingNode, setEditingNode] = useState<EditableNode | null>(null)
+  const drawerRef = useRef<HTMLElement | null>(null)
+  const returnFocusCode = useRef<string | null>(null)
+  const restoreFocus = useRef(false)
+  const hashHandled = useRef(false)
+
+  const domains = useMemo(() => enabledDomains(model), [model])
+  const currentDomain =
+    domains.find((domain) => domain.code === activeDomain) ?? domains[0]
+  const index = useMemo(() => searchResultsFor(model), [model])
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase()
+  const searchResults = useMemo(() => {
+    if (!normalizedQuery) return []
+    return index
+      .filter(
+        (result) =>
+          result.code.toLocaleLowerCase().includes(normalizedQuery) ||
+          result.name.toLocaleLowerCase().includes(normalizedQuery),
+      )
+      .slice(0, 30)
+  }, [index, normalizedQuery])
+  const expandedL2 = currentDomain
+    ? (expandedL2ByDomain[currentDomain.code] ?? new Set<string>())
+    : new Set<string>()
+  const selectedNode = findL3(model, selectedL3 ?? '')
 
   useEffect(() => {
-    if (model && targetCode)
-      document.getElementById(targetCode)?.scrollIntoView?.()
-  }, [model, targetCode])
+    if (!activeDomain && domains[0]) setActiveDomain(domains[0].code)
+  }, [activeDomain, domains])
+
+  useLayoutEffect(() => {
+    if (selectedL3) {
+      drawerRef.current?.focus()
+      return
+    }
+    if (restoreFocus.current && returnFocusCode.current) {
+      document.getElementById(`l3-row-${returnFocusCode.current}`)?.focus()
+      restoreFocus.current = false
+    }
+  }, [selectedL3])
+
+  useEffect(() => {
+    if (!focusTarget) return
+    const target = document.getElementById(focusTarget)
+    if (!target) return
+    target.focus()
+    target.scrollIntoView?.({ block: 'nearest' })
+  }, [activeDomain, expandedL2ByDomain, focusTarget])
+
+  useEffect(() => {
+    if (!model || hashHandled.current) return
+    hashHandled.current = true
+    const code = decodeURIComponent(window.location.hash.slice(1))
+    const result = index.find(
+      (item) => item.kind === 'L3' && item.code === code,
+    )
+    if (!result || !result.l2Code) return
+    setActiveDomain(result.l1Code)
+    setExpandedL2ByDomain((current) => ({
+      ...current,
+      [result.l1Code]: new Set(current[result.l1Code]).add(result.l2Code!),
+    }))
+    setFocusTarget(`l3-row-${result.code}`)
+  }, [index, model])
+
+  useEffect(() => {
+    if (!selectedL3) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeDrawer()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [selectedL3])
+
+  function closeDrawer(shouldRestore = true) {
+    restoreFocus.current = shouldRestore
+    setSelectedL3(null)
+  }
+
+  function closeBeforeNavigation() {
+    if (!selectedL3) return
+    closeDrawer(false)
+  }
+
+  function selectDomain(code: string) {
+    closeBeforeNavigation()
+    setSelectedLevel(null)
+    setActiveDomain(code)
+    setFocusTarget(`capability-domain-content-${code}`)
+  }
+
+  function toggleL2(domainCode: string, l2Code: string) {
+    const isOpen = expandedL2ByDomain[domainCode]?.has(l2Code) ?? false
+    if (isOpen && selectedNode?.code.startsWith(`${l2Code}.`)) {
+      closeDrawer(false)
+    }
+    setExpandedL2ByDomain((current) => {
+      const next = new Set(current[domainCode] ?? [])
+      if (next.has(l2Code)) next.delete(l2Code)
+      else next.add(l2Code)
+      return { ...current, [domainCode]: next }
+    })
+  }
+
+  function setCurrentDomainL2(open: boolean) {
+    if (!currentDomain) return
+    setExpandedL2ByDomain((current) => ({
+      ...current,
+      [currentDomain.code]: open
+        ? new Set(currentDomain.children.map((l2) => l2.code))
+        : new Set(),
+    }))
+  }
+
+  function selectResult(result: SearchResult) {
+    closeBeforeNavigation()
+    if (result.kind === 'L1') {
+      setSelectedLevel(null)
+      setActiveDomain(result.l1Code)
+      setFocusTarget(`capability-domain-content-${result.l1Code}`)
+      return
+    }
+    if (!result.l2Code) return
+    setActiveDomain(result.l1Code)
+    setExpandedL2ByDomain((current) => ({
+      ...current,
+      [result.l1Code]: new Set(current[result.l1Code]).add(result.l2Code!),
+    }))
+    setFocusTarget(
+      result.kind === 'L2'
+        ? `l2-toggle-${result.l2Code}`
+        : `l3-row-${result.l3Code}`,
+    )
+  }
 
   function startEdit(node: EditableNode) {
+    closeBeforeNavigation()
     setEditingNode(node)
   }
 
+  function openDrawer(node: L3Node) {
+    returnFocusCode.current = node.code
+    restoreFocus.current = false
+    setSelectedL3(node.code)
+  }
+
   return (
-    <section className="page">
-      <header>
-        <p className="eyebrow">查看团队能力等级与能力项标准</p>
-        <h1>能力地图</h1>
-        {model && (
-          <p className="muted">
-            {model.code} · {model.version}
-          </p>
-        )}
+    <section className={`page ${styles.page}`}>
+      <header className={styles.header}>
+        <div>
+          <p className="eyebrow">查看团队能力等级与能力项标准</p>
+          <h1>能力地图</h1>
+          {model && (
+            <p className="muted">
+              {model.code} · {model.version}
+            </p>
+          )}
+        </div>
+        <div className={styles.headerActions}>
+          <label className={styles.searchLabel} htmlFor="capability-search">
+            搜索能力地图
+          </label>
+          <div className={styles.searchBox}>
+            <input
+              id="capability-search"
+              aria-label="搜索能力地图"
+              role="combobox"
+              aria-expanded={Boolean(searchQuery.trim())}
+              aria-controls="capability-search-results"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索 L1 / L2 / L3 编号或名称"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className={styles.clearSearch}
+                aria-label="清除搜索"
+                onClick={() => setSearchQuery('')}
+              >
+                清除
+              </button>
+            )}
+          </div>
+          {searchQuery.trim() && (
+            <div
+              id="capability-search-results"
+              className={styles.searchResults}
+              role="listbox"
+              aria-label="能力地图搜索结果"
+            >
+              {searchResults.length ? (
+                searchResults.map((result) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    className={styles.searchResult}
+                    key={`${result.kind}-${result.code}`}
+                    onClick={() => selectResult(result)}
+                  >
+                    <span className={styles.resultKind}>{result.kind}</span>
+                    <span>
+                      <strong>{result.code}</strong> · {result.name}
+                    </span>
+                    <small>
+                      {result.kind === 'L1'
+                        ? '能力域概览'
+                        : `${result.l1Code} · ${result.l1Name}${
+                            result.l2Code && result.kind === 'L3'
+                              ? ` / ${result.l2Code} · ${result.l2Name}`
+                              : ''
+                          }`}
+                    </small>
+                  </button>
+                ))
+              ) : (
+                <p className={styles.emptySearch} role="status">
+                  未找到 L1、L2 或 L3 编号/名称
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </header>
+
       {error && (
         <p className="error" role="alert">
-          {error}
+          目录数据暂不可用，请稍后重试。
+          <button type="button" onClick={refreshModel}>
+            重试
+          </button>
         </p>
       )}
       {!model && !error && <p className="muted">正在加载能力模型…</p>}
-      <div className="catalog-tree">
-        {enabledDomains(model).map((domain) => (
-          <details key={domain.code} open>
-            <summary>
-              {domain.code} · {domain.name}
+
+      {domains.length > 0 && currentDomain && (
+        <>
+          <nav
+            className={styles.domainTabs}
+            aria-label="能力域导航"
+            role="tablist"
+          >
+            {domains.map((domain) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={domain.code === currentDomain.code}
+                aria-controls={`capability-domain-content-${domain.code}`}
+                data-testid={`capability-domain-tab-${domain.code}`}
+                className={
+                  domain.code === currentDomain.code
+                    ? styles.domainTabActive
+                    : styles.domainTab
+                }
+                key={domain.code}
+                onClick={() => selectDomain(domain.code)}
+              >
+                <strong>{domain.code}</strong>
+                <span>{domain.name}</span>
+                <small>
+                  {domain.children.length} 个 L2 ·{' '}
+                  {domain.children.reduce(
+                    (count, l2) => count + l2.children.length,
+                    0,
+                  )}{' '}
+                  个 L3
+                </small>
+              </button>
+            ))}
+          </nav>
+
+          <section
+            id={`capability-domain-content-${currentDomain.code}`}
+            data-testid={`capability-domain-content-${currentDomain.code}`}
+            className={styles.domainContent}
+            tabIndex={-1}
+          >
+            <div className={styles.domainHeading}>
+              <div>
+                <p className={styles.sectionKicker}>当前能力域</p>
+                <h2>{currentDomain.name}</h2>
+              </div>
               {isLeader && (
                 <button
                   type="button"
                   className="inline-edit"
                   onClick={() =>
                     startEdit({
-                      code: domain.code,
+                      code: currentDomain.code,
                       nodeType: 'L1',
-                      name: domain.name,
+                      name: currentDomain.name,
                       enabled: true,
-                      p4_description: domain.p4_description,
-                      p5_description: domain.p5_description,
-                      p6_description: domain.p6_description,
-                      p7_description: domain.p7_description,
-                      p8_description: domain.p8_description,
+                      p4_description: currentDomain.p4_description,
+                      p5_description: currentDomain.p5_description,
+                      p6_description: currentDomain.p6_description,
+                      p7_description: currentDomain.p7_description,
+                      p8_description: currentDomain.p8_description,
                     })
                   }
                 >
                   编辑
                 </button>
               )}
-            </summary>
-            <dl className="level-descriptions">
-              {(['p4', 'p5', 'p6', 'p7', 'p8'] as const).map((level) => (
-                <div key={level}>
-                  <dt>{level.toUpperCase()}</dt>
-                  <dd>{domain[`${level}_description`] ?? '未提供'}</dd>
-                </div>
-              ))}
-            </dl>
-            {domain.children.map((l2) => (
-              <details
-                className="l2-node"
-                key={l2.code}
-                open={l2.children.some((l3) => l3.code === targetCode)}
-              >
-                <summary>
-                  {l2.code} · {l2.name}
-                  {isLeader && (
+            </div>
+
+            <section
+              className={styles.levelSection}
+              aria-label="P4-P8 等级标准"
+            >
+              <div className={styles.levelGrid}>
+                {LEVELS.map(({ key, label }) => {
+                  const selected = selectedLevel === key
+                  return (
                     <button
                       type="button"
-                      className="inline-edit"
-                      onClick={() =>
-                        startEdit({
-                          code: l2.code,
-                          nodeType: 'L2',
-                          name: l2.name,
-                          enabled: true,
-                          p4_description: l2.p4_description,
-                          p5_description: l2.p5_description,
-                          p6_description: l2.p6_description,
-                          p7_description: l2.p7_description,
-                          p8_description: l2.p8_description,
-                        })
+                      className={
+                        selected ? styles.levelCardActive : styles.levelCard
                       }
+                      aria-expanded={selected}
+                      data-testid={`level-summary-${label}`}
+                      key={key}
+                      onClick={() => setSelectedLevel(selected ? null : key)}
                     >
-                      编辑
+                      <strong>{label}</strong>
+                      <span>
+                        {levelSummary(levelDescription(currentDomain, key))}
+                      </span>
                     </button>
-                  )}
-                </summary>
-                {l2.children.map((l3) => (
-                  <div key={l3.code} className="l3-wrapper">
-                    <L3Details node={l3} />
-                    {isLeader && (
+                  )
+                })}
+              </div>
+              {selectedLevel && (
+                <div
+                  className={styles.inlineLevelDescription}
+                  data-testid={`level-inline-description-${selectedLevel.toUpperCase()}`}
+                  role="region"
+                  aria-label={`${selectedLevel.toUpperCase()} 完整等级说明`}
+                >
+                  <strong>{selectedLevel.toUpperCase()} 完整说明</strong>
+                  <p>
+                    {levelDescription(currentDomain, selectedLevel) ??
+                      '未提供等级说明'}
+                  </p>
+                </div>
+              )}
+            </section>
+
+            <div className={styles.l2Toolbar}>
+              <div>
+                <h3>能力组</h3>
+                <span>{currentDomain.children.length} 个 L2 能力组</span>
+              </div>
+              <div className={styles.toolbarActions}>
+                <button type="button" onClick={() => setCurrentDomainL2(true)}>
+                  展开当前域
+                </button>
+                <button type="button" onClick={() => setCurrentDomainL2(false)}>
+                  收起当前域
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.l2List}>
+              {currentDomain.children.map((l2) => {
+                const expanded = expandedL2.has(l2.code)
+                return (
+                  <section
+                    key={l2.code}
+                    className={styles.l2Group}
+                    data-testid={`l2-group-${l2.code}`}
+                  >
+                    <div className={styles.l2Header}>
                       <button
                         type="button"
-                        className="inline-edit"
-                        onClick={() =>
-                          startEdit({
-                            code: l3.code,
-                            nodeType: 'L3',
-                            name: l3.name,
-                            enabled: true,
-                            p4_description: l3.p4_description,
-                            p5_description: l3.p5_description,
-                            p6_description: l3.p6_description,
-                            p7_description: l3.p7_description,
-                            p8_description: l3.p8_description,
-                            recommended_start_level: l3.recommended_start_level,
-                            materials_text: l3.materials_text,
-                            expected_output: l3.expected_output,
-                            estimated_hours: l3.estimated_hours,
-                            resource_codes: l3.resources.map(
-                              (resource) => resource.material_code,
-                            ),
-                            standard_target_overrides:
-                              l3.standard_target_overrides,
-                          })
-                        }
+                        id={`l2-toggle-${l2.code}`}
+                        data-testid={`l2-toggle-${l2.code}`}
+                        className={styles.l2Toggle}
+                        aria-expanded={expanded}
+                        onClick={() => toggleL2(currentDomain.code, l2.code)}
                       >
-                        编辑节点
+                        <span className={styles.expandIcon} aria-hidden="true">
+                          {expanded ? '−' : '+'}
+                        </span>
+                        <span>
+                          <strong>{l2.code}</strong> · {l2.name}
+                        </span>
+                        <small>{l2.children.length} 个 L3</small>
                       </button>
+                      {isLeader && (
+                        <button
+                          type="button"
+                          className="inline-edit"
+                          data-testid={`l2-edit-${l2.code}`}
+                          onClick={() =>
+                            startEdit({
+                              code: l2.code,
+                              nodeType: 'L2',
+                              name: l2.name,
+                              enabled: true,
+                              p4_description: l2.p4_description,
+                              p5_description: l2.p5_description,
+                              p6_description: l2.p6_description,
+                              p7_description: l2.p7_description,
+                              p8_description: l2.p8_description,
+                            })
+                          }
+                        >
+                          编辑
+                        </button>
+                      )}
+                    </div>
+                    {expanded && (
+                      <div
+                        className={styles.l3List}
+                        data-testid={`l3-list-${l2.code}`}
+                      >
+                        {l2.children.map((l3) => (
+                          <div className={styles.l3Row} key={l3.code}>
+                            <button
+                              type="button"
+                              id={`l3-row-${l3.code}`}
+                              data-testid={`l3-row-${l3.code}`}
+                              className={styles.l3Trigger}
+                              onClick={() => openDrawer(l3)}
+                            >
+                              <span>
+                                <strong>{l3.name}</strong>
+                                <small>{l3.code}</small>
+                              </span>
+                              <span className={styles.l3Meta}>
+                                {l3.recommended_start_level ?? '起始等级未提供'}
+                                <span aria-hidden="true">查看详情 →</span>
+                              </span>
+                            </button>
+                            <div className={styles.l3Summary}>
+                              <span>
+                                {l3.expected_output ?? '预期输出未提供'}
+                              </span>
+                              <span>
+                                {l3.estimated_hours
+                                  ? `${l3.estimated_hours} 小时`
+                                  : '预计时长未提供'}
+                              </span>
+                              <span>
+                                {l3.resources.length
+                                  ? `已关联资源：${l3.resources
+                                      .map((resource) => resource.name)
+                                      .join('、')}`
+                                  : '暂无已关联资源'}
+                              </span>
+                              {l3.unmatched_materials.length > 0 && (
+                                <span
+                                  className={styles.l3Warning}
+                                  role="status"
+                                >
+                                  来源待补充 / 未关联：
+                                  {l3.unmatched_materials.join('；')}
+                                </span>
+                              )}
+                            </div>
+                            {isLeader && (
+                              <button
+                                type="button"
+                                className="inline-edit"
+                                data-testid={`l3-edit-${l3.code}`}
+                                onClick={() =>
+                                  startEdit({
+                                    code: l3.code,
+                                    nodeType: 'L3',
+                                    name: l3.name,
+                                    enabled: true,
+                                    p4_description: l3.p4_description,
+                                    p5_description: l3.p5_description,
+                                    p6_description: l3.p6_description,
+                                    p7_description: l3.p7_description,
+                                    p8_description: l3.p8_description,
+                                    recommended_start_level:
+                                      l3.recommended_start_level,
+                                    materials_text: l3.materials_text,
+                                    expected_output: l3.expected_output,
+                                    estimated_hours: l3.estimated_hours,
+                                    resource_codes: l3.resources.map(
+                                      (resource) => resource.material_code,
+                                    ),
+                                    standard_target_overrides:
+                                      l3.standard_target_overrides,
+                                  })
+                                }
+                              >
+                                编辑节点
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     )}
-                  </div>
-                ))}
-              </details>
-            ))}
-          </details>
-        ))}
-      </div>
+                  </section>
+                )
+              })}
+            </div>
+          </section>
+        </>
+      )}
+
+      {selectedNode && (
+        <aside
+          ref={drawerRef}
+          className={styles.drawer}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="l3-drawer-title"
+          data-testid="l3-drawer"
+          tabIndex={-1}
+        >
+          <div className={styles.drawerHeader}>
+            <div>
+              <p className={styles.sectionKicker}>L3 能力项详情</p>
+              <h2 id="l3-drawer-title">{selectedNode.code}</h2>
+              <p>{selectedNode.name}</p>
+            </div>
+            <button
+              type="button"
+              className={styles.drawerClose}
+              aria-label="关闭 L3 详情"
+              onClick={() => closeDrawer()}
+            >
+              ×
+            </button>
+          </div>
+          <dl className={styles.contextList}>
+            <div>
+              <dt>所属能力域</dt>
+              <dd>{currentDomain?.name ?? '未提供'}</dd>
+            </div>
+            <div>
+              <dt>建议起始等级</dt>
+              <dd>{selectedNode.recommended_start_level ?? '未提供'}</dd>
+            </div>
+            <div>
+              <dt>预期输出</dt>
+              <dd>{selectedNode.expected_output ?? '未提供'}</dd>
+            </div>
+            <div>
+              <dt>预计时长</dt>
+              <dd>
+                {selectedNode.estimated_hours ?? '未提供'}
+                {selectedNode.estimated_hours ? ' 小时' : ''}
+              </dd>
+            </div>
+          </dl>
+          <section className={styles.drawerSection}>
+            <h3>该能力项的 P4–P8 完整描述</h3>
+            <div className={styles.drawerLevels}>
+              {LEVELS.map(({ key, label }) => (
+                <div key={key}>
+                  <strong>{label}</strong>
+                  <p>{levelDescription(selectedNode, key) ?? '未提供'}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className={styles.drawerSection}>
+            <h3>材料与资源</h3>
+            <p>
+              <strong>原始学习材料：</strong>
+              {selectedNode.materials_text || '未提供'}
+            </p>
+            <p>
+              <strong>已关联资源：</strong>
+              {selectedNode.resources.length
+                ? selectedNode.resources.map((resource) => (
+                    <span
+                      className={styles.resourceSummary}
+                      key={resource.material_code}
+                    >
+                      {resource.material_code} · {resource.name}（
+                      {resource.material_type} / {resource.status}）
+                    </span>
+                  ))
+                : '暂无已关联资源'}
+            </p>
+            {selectedNode.unmatched_materials.length > 0 && (
+              <p className="warning" role="status">
+                来源待补充 / 未关联：
+                {selectedNode.unmatched_materials.join('；')}
+              </p>
+            )}
+          </section>
+        </aside>
+      )}
+
       {editingNode && (
         <NodeEditForm
           node={editingNode}

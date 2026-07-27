@@ -63,6 +63,33 @@ def test_capability_model_returns_the_six_enabled_domains(
     connection: psycopg.Connection,
 ) -> None:
     assert router
+    connection.execute(
+        """
+        UPDATE capability_node
+        SET p4_description = CASE code
+                WHEN 'P01.01' THEN 'API L2 P4'
+                WHEN 'P01.01.01' THEN 'API L3 P4'
+            END,
+            p5_description = CASE code
+                WHEN 'P01.01' THEN 'API L2 P5'
+                WHEN 'P01.01.01' THEN 'API L3 P5'
+            END,
+            p6_description = CASE code
+                WHEN 'P01.01' THEN 'API L2 P6'
+                WHEN 'P01.01.01' THEN 'API L3 P6'
+            END,
+            p7_description = CASE code
+                WHEN 'P01.01' THEN 'API L2 P7'
+                WHEN 'P01.01.01' THEN 'API L3 P7'
+            END,
+            p8_description = CASE code
+                WHEN 'P01.01' THEN 'API L2 P8'
+                WHEN 'P01.01.01' THEN 'API L3 P8'
+            END
+        WHERE code IN ('P01.01', 'P01.01.01')
+        """
+    )
+    connection.commit()
     status, payload = request("GET", "/api/capability-model")
 
     assert status == 200
@@ -75,7 +102,17 @@ def test_capability_model_returns_the_six_enabled_domains(
         "C02",
         "C03",
     }
-    l3 = domains[0]["children"][0]["children"][0]
+    l2 = domains[0]["children"][0]
+    l3 = l2["children"][0]
+    for level in (
+        "p4_description",
+        "p5_description",
+        "p6_description",
+        "p7_description",
+        "p8_description",
+    ):
+        assert l2[level].startswith("API L2")
+        assert l3[level].startswith("API L3")
     assert {"materials_text", "resources", "unmatched_materials"} <= set(l3)
 
 
