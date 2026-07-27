@@ -250,6 +250,7 @@ def _get_assessment_details(
                ad.inherited_from_assessment_id,
                ad.inherited_current_level,
                ad.inherited_evidence_note,
+               ad.current_level_explicitly_cleared,
                c.name AS l3_name,
                c.recommended_start_level,
                l2.code AS l2_code, l2.name AS l2_name,
@@ -282,12 +283,13 @@ def _get_assessment_details(
             "inherited_from_assessment_id": row[14],
             "inherited_current_level": row[15],
             "inherited_evidence_note": row[16],
-            "l3_name": row[17],
-            "recommended_start_level": row[18],
-            "l2_code": row[19],
-            "l2_name": row[20],
-            "l1_code": row[21],
-            "l1_name": row[22],
+            "current_level_explicitly_cleared": row[17],
+            "l3_name": row[18],
+            "recommended_start_level": row[19],
+            "l2_code": row[20],
+            "l2_name": row[21],
+            "l1_code": row[22],
+            "l1_name": row[23],
         }
         for row in rows
     ]
@@ -362,7 +364,7 @@ def save_assessment_draft(
     assessment_id: int,
     member_id: int,
     details: list[dict[str, object]],
-    expected_revision: int | None = None,
+    expected_revision: int,
 ) -> dict[str, object]:
     with connection.transaction():
         row = connection.execute(
@@ -381,7 +383,7 @@ def save_assessment_draft(
             raise ValueError("assessment is not editable")
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
-        if expected_revision is not None and int(revision) != expected_revision:
+        if int(revision) != expected_revision:
             raise ValueError("revision conflict")
 
         snapshot_rows = connection.execute(
@@ -389,7 +391,8 @@ def save_assessment_draft(
             SELECT id, l3_code, standard_target_applicable,
                    standard_target_level, target_compatibility_error,
                    target_level, gap_value, target_snapshot_source, plan_candidate,
-                   inherited_current_level, inherited_evidence_note
+                   inherited_current_level, inherited_evidence_note,
+                   current_level_explicitly_cleared
             FROM assessment_detail
             WHERE assessment_id = %s
             ORDER BY l3_code
@@ -431,6 +434,7 @@ def save_assessment_draft(
                 existing_plan_candidate,
                 inherited_current_level,
                 inherited_evidence,
+                existing_explicitly_cleared,
             ) = snapshots[str(detail["l3_code"])]
             if compatibility_error:
                 raise ValueError(
@@ -439,6 +443,10 @@ def save_assessment_draft(
 
             cl = detail.get("current_level")
             current_level = int(cl) if cl is not None else None
+            current_level_present = bool(detail.get("_current_level_present", True))
+            explicitly_cleared = current_level is None and current_level_present
+            if current_level is None and not current_level_present:
+                explicitly_cleared = bool(existing_explicitly_cleared)
             if current_level is not None and (
                 isinstance(cl, bool) or not 1 <= current_level <= 5
             ):
@@ -510,19 +518,11 @@ def save_assessment_draft(
 
             if plan_candidate:
                 evidence = detail.get("evidence_note")
-                valid_evidence = (
-                    isinstance(evidence, str)
-                    and bool(evidence.strip())
-                    and (
-                        current_level is None
-                        or current_level <= 2
-                        or (
-                            inherited_current_level is not None
-                            and current_level > inherited_current_level
-                            and evidence.strip() != (inherited_evidence or "").strip()
-                        )
-                        or inherited_current_level is None
-                    )
+                valid_evidence = _evidence_is_valid(
+                    current_level,
+                    evidence,
+                    inherited_current_level,
+                    inherited_evidence,
                 )
                 candidate_valid = (
                     (applicable is True or legacy_preserved)
@@ -543,6 +543,7 @@ def save_assessment_draft(
                 """
                 UPDATE assessment_detail
                 SET current_level = %s,
+                    current_level_explicitly_cleared = %s,
                     target_adjusted = %s,
                     adjusted_target_level = %s,
                     target_adjustment_reason = %s,
@@ -554,6 +555,7 @@ def save_assessment_draft(
                 """,
                 (
                     current_level,
+                    explicitly_cleared,
                     target_adjusted,
                     adjusted if target_adjusted else None,
                     reason if target_adjusted else None,
@@ -565,6 +567,7 @@ def save_assessment_draft(
                 ),
             )
 
+        generate_gaps_for_assessment(connection, assessment_id)
         next_revision = int(revision) + 1
         connection.execute(
             "UPDATE assessment SET revision = %s WHERE id = %s",
@@ -587,7 +590,8 @@ def patch_assessment_draft(
         """
         SELECT l3_code, current_level, target_adjusted,
                adjusted_target_level, target_adjustment_reason,
-               evidence_note, plan_candidate
+               evidence_note, plan_candidate,
+               current_level_explicitly_cleared
         FROM assessment_detail
         WHERE assessment_id = %s
         ORDER BY l3_code
@@ -603,6 +607,8 @@ def patch_assessment_draft(
             "target_adjustment_reason": row[4],
             "evidence_note": row[5],
             "plan_candidate": row[6],
+            "current_level_explicitly_cleared": row[7],
+            "_current_level_present": False,
         }
         for row in rows
     }
@@ -621,6 +627,8 @@ def patch_assessment_draft(
         forbidden = set(detail) - (allowed | {"l3_code"})
         if forbidden:
             raise ValueError("member cannot set calculated target fields")
+        if "current_level" in detail:
+            merged[code]["_current_level_present"] = True
         merged[code].update({key: detail[key] for key in allowed if key in detail})
     return save_assessment_draft(
         connection,
@@ -647,7 +655,10 @@ def batch_fill_l2(
         FROM assessment_detail ad
         JOIN capability_node l3 ON l3.code = ad.l3_code AND l3.node_type = 'L3'
         JOIN capability_node l2 ON l2.id = l3.parent_node_id
-        WHERE ad.assessment_id = %s AND l2.code = %s AND ad.current_level IS NULL
+        WHERE ad.assessment_id = %s AND l2.code = %s
+          AND ad.current_level IS NULL
+          AND ad.current_level_explicitly_cleared = FALSE
+          AND ad.inherited_current_level IS NULL
         ORDER BY ad.l3_code
         """,
         (assessment_id, l2_code),
@@ -705,6 +716,22 @@ def batch_fill_l2(
     }
 
 
+def _evidence_is_valid(
+    current_level: int | None,
+    evidence: object,
+    inherited_current: int | None,
+    inherited_evidence: str | None,
+) -> bool:
+    text = evidence.strip() if isinstance(evidence, str) else ""
+    if current_level is None:
+        return True
+    if current_level >= 3 and not text:
+        return False
+    if inherited_current is not None and current_level > inherited_current:
+        return bool(text) and text != (inherited_evidence or "").strip()
+    return True
+
+
 def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> None:
     rows = connection.execute(
         """
@@ -738,12 +765,15 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
             continue
         if current_level is None or target_level is None:
             raise ValueError(f"assessment detail {code} requires current level")
-        text = evidence.strip() if isinstance(evidence, str) else ""
-        if current_level >= 3 and not text:
-            raise ValueError(f"assessment detail {code} requires evidence")
-        if inherited_current is not None and current_level > inherited_current:
-            if not text or text == (inherited_evidence or "").strip():
-                raise ValueError(f"assessment detail {code} requires updated evidence")
+        if not _evidence_is_valid(
+            current_level, evidence, inherited_current, inherited_evidence
+        ):
+            reason = (
+                "requires updated evidence"
+                if inherited_current is not None and current_level > inherited_current
+                else "requires evidence"
+            )
+            raise ValueError(f"assessment detail {code} {reason}")
         if plan_candidate and (target_level - current_level) <= 0:
             raise ValueError(f"invalid plan candidate for {code}")
 
@@ -752,7 +782,7 @@ def submit_assessment(
     connection: psycopg.Connection,
     assessment_id: int,
     member_id: int,
-    expected_revision: int | None = None,
+    expected_revision: int,
 ) -> dict[str, object]:
     with connection.transaction():
         row = connection.execute(
@@ -771,15 +801,10 @@ def submit_assessment(
             raise ValueError("assessment is not submittable")
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
-        if expected_revision is not None and int(revision) != expected_revision:
+        if int(revision) != expected_revision:
             raise ValueError("revision conflict")
 
-        # Direct repository callers predating Issue #50 may omit the revision
-        # token; API writes always derive and pass it, so formal submissions
-        # retain the complete validation gate while old internal lifecycle
-        # tests remain compatible.
-        if expected_revision is not None:
-            _validate_submission(connection, assessment_id)
+        _validate_submission(connection, assessment_id)
 
         incompatible_detail = connection.execute(
             """

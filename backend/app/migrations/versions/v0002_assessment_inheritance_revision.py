@@ -14,7 +14,9 @@ def upgrade(connection: psycopg.Connection) -> None:
         ADD COLUMN IF NOT EXISTS inherited_from_assessment_id BIGINT
             REFERENCES assessment(id) ON DELETE SET NULL,
         ADD COLUMN IF NOT EXISTS inherited_current_level INT,
-        ADD COLUMN IF NOT EXISTS inherited_evidence_note TEXT
+        ADD COLUMN IF NOT EXISTS inherited_evidence_note TEXT,
+        ADD COLUMN IF NOT EXISTS current_level_explicitly_cleared BOOLEAN
+            NOT NULL DEFAULT FALSE
         """
     )
     connection.execute(

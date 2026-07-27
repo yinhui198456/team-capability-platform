@@ -4,6 +4,7 @@ import pytest
 from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
+    _evidence_is_valid,
     batch_fill_l2,
     create_assessment_draft,
     get_assessment,
@@ -107,12 +108,13 @@ def test_v0002_is_idempotent_and_preserves_legacy_rows(
     detail = connection.execute(
         """
         SELECT target_level, gap_value, target_snapshot_source,
-               inherited_from_assessment_id, inherited_current_level
+               inherited_from_assessment_id, inherited_current_level,
+               current_level_explicitly_cleared
         FROM assessment_detail WHERE assessment_id = %s
         """,
         (assessment_id,),
     ).fetchone()
-    assert detail == (4, 2, "legacy_preserved", None, None)
+    assert detail == (4, 2, "legacy_preserved", None, None, False)
     assert (
         connection.execute(
             """
@@ -235,6 +237,49 @@ def test_batch_fill_only_writes_empty_l2_values_and_uses_single_revision(
     assert result["updated_l3_codes"] == [codes[1]]
     assert result["skipped_l3_codes"] == [codes[0]]
     assert get_assessment(connection, assessment_id)["revision"] == 3
+
+
+def test_batch_fill_does_not_refill_explicitly_cleared_or_inherited_values(
+    issue50_schema: psycopg.Connection,
+) -> None:
+    connection = issue50_schema
+    member_id = _member(connection)
+    codes = _enable_two_nodes(connection)
+    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    patch_assessment_draft(
+        connection,
+        assessment_id,
+        member_id,
+        1,
+        [{"l3_code": codes[0], "current_level": None}],
+    )
+    result = batch_fill_l2(
+        connection,
+        assessment_id,
+        member_id,
+        codes[0].rsplit(".", 1)[0],
+        2,
+        2,
+    )
+    assert result["updated_l3_codes"] == [codes[1]]
+    assert result["skipped_l3_codes"] == [codes[0]]
+    assert result["revision"] == 3
+    detail = next(
+        row
+        for row in get_assessment(connection, assessment_id)["details"]
+        if row["l3_code"] == codes[0]
+    )
+    assert detail["current_level"] is None
+    assert detail["current_level_explicitly_cleared"] is True
+
+
+def test_evidence_validator_covers_optional_levels_and_all_increases() -> None:
+    assert _evidence_is_valid(1, None, None, None)
+    assert _evidence_is_valid(2, "old", 1, "old") is False
+    assert _evidence_is_valid(2, "new", 1, "old")
+    assert _evidence_is_valid(4, "old", 3, "old") is False
+    assert _evidence_is_valid(4, "new", 3, "old")
+    assert _evidence_is_valid(3, "", None, None) is False
 
 
 def test_invalid_candidate_is_rejected_and_existing_candidate_is_auto_cancelled(

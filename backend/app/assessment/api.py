@@ -40,17 +40,17 @@ class DetailItem(BaseModel):
 
 class SaveDraftRequest(BaseModel):
     details: list[DetailItem]
-    expected_revision: int | None = None
+    expected_revision: int = Field(ge=1)
 
 
 class BatchLevelRequest(BaseModel):
     l2_code: str
     current_level: int = Field(ge=1, le=2)
-    expected_revision: int | None = None
+    expected_revision: int = Field(ge=1)
 
 
 class SubmitRequest(BaseModel):
-    expected_revision: int | None = None
+    expected_revision: int = Field(ge=1)
 
 
 class SubmitReviewRequest(BaseModel):
@@ -237,16 +237,13 @@ def save_draft(
         }
         for item in request.details
     ]
-    expected_revision = request.expected_revision
-    if expected_revision is None:
-        expected_revision = int(assessment["revision"])
     try:
         result = save_assessment_draft(
             connection,
             assessment_id,
             int(user["id"]),
             details,
-            expected_revision=expected_revision,
+            expected_revision=request.expected_revision,
         )
     except ValueError as exc:
         if str(exc) == "revision conflict":
@@ -276,9 +273,6 @@ def patch_draft(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions"
         )
-    expected_revision = request.expected_revision
-    if expected_revision is None:
-        expected_revision = int(assessment["revision"])
     details = [
         {
             key: value
@@ -296,11 +290,11 @@ def patch_draft(
         for item in request.details
     ]
     try:
-        return patch_assessment_draft(
+        result = patch_assessment_draft(
             connection,
             assessment_id,
             int(user["id"]),
-            expected_revision,
+            request.expected_revision,
             details,
         )
     except ValueError as exc:
@@ -310,6 +304,7 @@ def patch_draft(
             else status.HTTP_400_BAD_REQUEST
         )
         raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @assessment_router.post("/{assessment_id}/draft/batch-level")
@@ -328,9 +323,6 @@ def batch_level(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions"
         )
-    expected_revision = request.expected_revision
-    if expected_revision is None:
-        expected_revision = int(assessment["revision"])
     try:
         return batch_fill_l2(
             connection,
@@ -338,7 +330,7 @@ def batch_level(
             int(user["id"]),
             request.l2_code,
             request.current_level,
-            expected_revision,
+            request.expected_revision,
         )
     except ValueError as exc:
         code = (
@@ -357,9 +349,8 @@ def submit(
     assessment_id: int,
     user: CurrentUser,
     connection: Connection,
-    request: SubmitRequest | None = None,
+    request: SubmitRequest,
 ) -> dict[str, object]:
-    request = request or SubmitRequest()
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -372,14 +363,11 @@ def submit(
             detail="insufficient permissions",
         )
     try:
-        expected_revision = request.expected_revision
-        if expected_revision is None:
-            expected_revision = int(assessment["revision"])
         result = submit_assessment(
             connection,
             assessment_id,
             int(user["id"]),
-            expected_revision=expected_revision,
+            expected_revision=request.expected_revision,
         )
     except ValueError as exc:
         if str(exc) == "revision conflict":

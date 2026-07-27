@@ -30,6 +30,7 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             current_level INT CHECK (
                 current_level IS NULL OR current_level BETWEEN 1 AND 5
             ),
+            current_level_explicitly_cleared BOOLEAN NOT NULL DEFAULT FALSE,
             target_level INT CHECK (
                 target_level IS NULL OR target_level BETWEEN 1 AND 5
             ),
