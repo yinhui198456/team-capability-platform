@@ -16,6 +16,7 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             submitted_at TIMESTAMPTZ,
             archived_at TIMESTAMPTZ,
+            revision BIGINT NOT NULL DEFAULT 1,
             UNIQUE(member_id, year, version)
         )
         """
@@ -48,6 +49,13 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             gap_value INT,
             evidence_note TEXT,
             plan_candidate BOOLEAN NOT NULL DEFAULT FALSE,
+            inherited_from_assessment_id BIGINT
+                REFERENCES assessment(id) ON DELETE SET NULL,
+            inherited_current_level INT CHECK (
+                inherited_current_level IS NULL
+                OR inherited_current_level BETWEEN 1 AND 5
+            ),
+            inherited_evidence_note TEXT,
             CHECK (
                 standard_target_applicable IS DISTINCT FROM FALSE
                 OR standard_target_level IS NULL

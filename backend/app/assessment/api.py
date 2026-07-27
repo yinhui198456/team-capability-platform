@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
+    batch_fill_l2,
     create_assessment_draft,
     get_assessment,
     get_assessment_review_summary_for_buddy,
@@ -12,6 +13,7 @@ from .repository import (
     get_pending_reviews_for_buddy,
     list_gaps,
     list_member_assessments,
+    patch_assessment_draft,
     save_assessment_draft,
     submit_assessment,
     submit_assessment_review,
@@ -38,6 +40,17 @@ class DetailItem(BaseModel):
 
 class SaveDraftRequest(BaseModel):
     details: list[DetailItem]
+    expected_revision: int | None = None
+
+
+class BatchLevelRequest(BaseModel):
+    l2_code: str
+    current_level: int = Field(ge=1, le=2)
+    expected_revision: int | None = None
+
+
+class SubmitRequest(BaseModel):
+    expected_revision: int | None = None
 
 
 class SubmitReviewRequest(BaseModel):
@@ -71,7 +84,7 @@ def create_assessment(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
-    return {"id": assessment_id}
+    return {"id": assessment_id, "revision": 1}
 
 
 @assessment_router.get("")
@@ -86,7 +99,7 @@ def list_assessments(
         rows = connection.execute(
             """
             SELECT id, member_id, year, version, assessment_type, status,
-                   created_at, submitted_at, archived_at
+                   created_at, submitted_at, archived_at, revision
             FROM assessment
             ORDER BY created_at DESC
             """
@@ -102,6 +115,7 @@ def list_assessments(
                 "created_at": row[6],
                 "submitted_at": row[7],
                 "archived_at": row[8],
+                "revision": row[9],
             }
             for row in rows
         ]
@@ -119,7 +133,7 @@ def list_assessments(
         rows = connection.execute(
             """
             SELECT id, member_id, year, version, assessment_type, status,
-                   created_at, submitted_at, archived_at
+                   created_at, submitted_at, archived_at, revision
             FROM assessment
             WHERE member_id = ANY(%s)
             ORDER BY created_at DESC
@@ -137,6 +151,7 @@ def list_assessments(
                 "created_at": row[6],
                 "submitted_at": row[7],
                 "archived_at": row[8],
+                "revision": row[9],
             }
             for row in rows
         ]
@@ -198,7 +213,7 @@ def save_draft(
     request: SaveDraftRequest,
     user: CurrentUser,
     connection: Connection,
-) -> dict[str, bool]:
+) -> dict[str, object]:
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -222,14 +237,116 @@ def save_draft(
         }
         for item in request.details
     ]
+    expected_revision = request.expected_revision
+    if expected_revision is None:
+        expected_revision = int(assessment["revision"])
     try:
-        save_assessment_draft(connection, assessment_id, int(user["id"]), details)
+        result = save_assessment_draft(
+            connection,
+            assessment_id,
+            int(user["id"]),
+            details,
+            expected_revision=expected_revision,
+        )
     except ValueError as exc:
+        if str(exc) == "revision conflict":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return {"ok": True}
+    return {"ok": True, **result}
+
+
+@assessment_router.patch("/{assessment_id}/draft")
+def patch_draft(
+    assessment_id: int,
+    request: SaveDraftRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="assessment not found"
+        )
+    if not policies.can_member_edit(user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions"
+        )
+    expected_revision = request.expected_revision
+    if expected_revision is None:
+        expected_revision = int(assessment["revision"])
+    details = [
+        {
+            key: value
+            for key, value in {
+                "l3_code": item.l3_code,
+                "current_level": item.current_level,
+                "target_adjusted": item.target_adjusted,
+                "adjusted_target_level": item.adjusted_target_level,
+                "target_adjustment_reason": item.target_adjustment_reason,
+                "evidence_note": item.evidence_note,
+                "plan_candidate": item.plan_candidate,
+            }.items()
+            if key == "l3_code" or key in item.model_fields_set
+        }
+        for item in request.details
+    ]
+    try:
+        return patch_assessment_draft(
+            connection,
+            assessment_id,
+            int(user["id"]),
+            expected_revision,
+            details,
+        )
+    except ValueError as exc:
+        code = (
+            status.HTTP_409_CONFLICT
+            if str(exc) == "revision conflict"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@assessment_router.post("/{assessment_id}/draft/batch-level")
+def batch_level(
+    assessment_id: int,
+    request: BatchLevelRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="assessment not found"
+        )
+    if not policies.can_member_edit(user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions"
+        )
+    expected_revision = request.expected_revision
+    if expected_revision is None:
+        expected_revision = int(assessment["revision"])
+    try:
+        return batch_fill_l2(
+            connection,
+            assessment_id,
+            int(user["id"]),
+            request.l2_code,
+            request.current_level,
+            expected_revision,
+        )
+    except ValueError as exc:
+        code = (
+            status.HTTP_409_CONFLICT
+            if str(exc) == "revision conflict"
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @assessment_router.post(
@@ -240,7 +357,9 @@ def submit(
     assessment_id: int,
     user: CurrentUser,
     connection: Connection,
-) -> dict[str, bool]:
+    request: SubmitRequest | None = None,
+) -> dict[str, object]:
+    request = request or SubmitRequest()
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -253,13 +372,25 @@ def submit(
             detail="insufficient permissions",
         )
     try:
-        submit_assessment(connection, assessment_id, int(user["id"]))
+        expected_revision = request.expected_revision
+        if expected_revision is None:
+            expected_revision = int(assessment["revision"])
+        result = submit_assessment(
+            connection,
+            assessment_id,
+            int(user["id"]),
+            expected_revision=expected_revision,
+        )
     except ValueError as exc:
+        if str(exc) == "revision conflict":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return {"ok": True}
+    return {"ok": True, **result}
 
 
 @assessment_router.get("/{assessment_id}/history")
@@ -289,7 +420,7 @@ def submit_review(
     request: SubmitReviewRequest,
     user: CurrentUser,
     connection: Connection,
-) -> dict[str, bool]:
+) -> dict[str, object]:
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
