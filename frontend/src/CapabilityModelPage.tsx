@@ -143,6 +143,7 @@ function NodeEditForm({
   const [standardTargets, setStandardTargets] = useState<
     Partial<Record<JobLevel, number | null>>
   >(node.standard_target_overrides ?? {})
+  const [standardTargetNotice, setStandardTargetNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -195,6 +196,27 @@ function NodeEditForm({
     })
   }
 
+  function updateRecommended(value: string) {
+    setRecommended(value)
+    const earliest = earliestJobLevel(value)
+    const removedLevels = JOB_LEVELS.filter(
+      (level) =>
+        earliest !== null &&
+        Number(level.slice(1)) < earliest &&
+        Object.prototype.hasOwnProperty.call(standardTargets, level),
+    )
+    if (removedLevels.length === 0) {
+      setStandardTargetNotice('')
+      return
+    }
+    setStandardTargets((current) => {
+      const next = { ...current }
+      for (const level of removedLevels) delete next[level]
+      return next
+    })
+    setStandardTargetNotice(`已移除不适用的覆盖项：${removedLevels.join('、')}`)
+  }
+
   return (
     <form className="edit-form" onSubmit={handleSubmit}>
       <h3>
@@ -221,7 +243,12 @@ function NodeEditForm({
       {textField('P8 描述', p8, setP8)}
       {isL3 && (
         <>
-          {textField('建议起始等级', recommended, setRecommended)}
+          {textField('建议起始等级', recommended, updateRecommended)}
+          {standardTargetNotice && (
+            <p className="warning" role="status">
+              {standardTargetNotice}
+            </p>
+          )}
           <fieldset className="link-set">
             <legend>P4–P8 标准目标覆盖</legend>
             <p className="muted">
