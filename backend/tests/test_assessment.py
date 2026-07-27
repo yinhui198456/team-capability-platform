@@ -274,6 +274,50 @@ def test_assessment_writes_require_expected_revision_token(
     assert assessment["revision"] == 1
 
 
+def test_submit_validation_returns_structured_l3_error(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(assessment_schema, "member_structured_error", ["Member"])
+    assessment_schema.execute(
+        """
+        UPDATE capability_node
+        SET enabled = (code = 'C01.01.01')
+        WHERE node_type = 'L3'
+        """
+    )
+    assessment_schema.commit()
+    cookies = _login(assessment_schema, "member_structured_error")
+    status, body, _ = _request(
+        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+    )
+    assert status == 200
+    assessment_id = body["id"]
+
+    status, _, _ = _request(
+        "PUT",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_code": "C01.01.01", "current_level": 3}],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=cookies,
+    )
+    assert status == 400
+    assert body["detail"] == {
+        "code": "assessment_validation_failed",
+        "l3_code": "C01.01.01",
+        "reason": "requires_evidence",
+        "message": "assessment detail C01.01.01 requires evidence",
+    }
+
+
 def test_member_cannot_view_or_edit_other_draft(
     assessment_schema: psycopg.Connection,
 ) -> None:

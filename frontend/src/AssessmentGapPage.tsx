@@ -48,7 +48,7 @@ function defaultL2(details: AssessmentDetail[], domain: string) {
 
 function defaultDomain(details: AssessmentDetail[]) {
   const counts = new Map<string, number>()
-  for (const detail of details) {
+  for (const detail of details.filter(isApplicableDetail)) {
     const domain = l1Of(detail)
     counts.set(domain, (counts.get(domain) ?? 0) + 1)
   }
@@ -63,14 +63,76 @@ function domainLabel(code: string) {
 }
 
 function effectiveTarget(detail: AssessmentDetail): number | null {
-  if (detail.standard_target_applicable === false) return null
+  if (!isApplicableDetail(detail)) return null
   return detail.target_adjusted
     ? (detail.adjusted_target_level ?? null)
     : (detail.standard_target_level ?? detail.target_level ?? null)
 }
 
 function isFilled(detail: AssessmentDetail) {
-  return !unfilledReason(detail)
+  return isApplicableDetail(detail) && !unfilledReason(detail)
+}
+
+function isApplicableDetail(detail: AssessmentDetail) {
+  return detail.standard_target_applicable !== false
+}
+
+function normalizeEvidence(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function isValidLevel(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= 5
+  )
+}
+
+function isEvidenceValid(detail: AssessmentDetail) {
+  const current = detail.current_level
+  if (current == null) return true
+  const evidence = normalizeEvidence(detail.evidence_note)
+  if (
+    detail.inherited_current_level != null &&
+    current > detail.inherited_current_level
+  ) {
+    return (
+      evidence.length > 0 &&
+      evidence !== normalizeEvidence(detail.inherited_evidence_note)
+    )
+  }
+  return current < 3 || evidence.length > 0
+}
+
+function adjustmentReason(detail: AssessmentDetail) {
+  if (!detail.target_adjusted) {
+    return detail.adjusted_target_level != null ||
+      normalizeEvidence(detail.target_adjustment_reason)
+      ? '需取消个人调整'
+      : ''
+  }
+  if (!isValidLevel(detail.adjusted_target_level)) return '需填写调整目标'
+  if (!normalizeEvidence(detail.target_adjustment_reason)) {
+    return '需填写调整原因'
+  }
+  return ''
+}
+
+function isInheritedUpdate(detail: AssessmentDetail) {
+  if (detail.inherited_from_assessment_id == null) return false
+  const changed =
+    detail.current_level !== detail.inherited_current_level ||
+    normalizeEvidence(detail.evidence_note) !==
+      normalizeEvidence(detail.inherited_evidence_note)
+  if (!changed) return false
+  return (
+    detail.current_level == null ||
+    detail.inherited_current_level == null ||
+    detail.current_level <= detail.inherited_current_level ||
+    isEvidenceValid(detail)
+  )
 }
 
 function canBatchFill(detail: AssessmentDetail) {
@@ -85,21 +147,42 @@ function canBatchFill(detail: AssessmentDetail) {
 
 function unfilledReason(detail: AssessmentDetail) {
   if (detail.target_compatibility_error) return '需兼容修复'
-  if (detail.standard_target_applicable === false) return ''
+  if (!isApplicableDetail(detail)) return ''
+  const adjustment = adjustmentReason(detail)
+  if (adjustment) return adjustment
   if (detail.current_level == null || effectiveTarget(detail) == null) {
     return '需评估等级'
   }
-  if (
-    detail.inherited_current_level != null &&
-    detail.current_level > detail.inherited_current_level &&
-    detail.evidence_note?.trim() === detail.inherited_evidence_note?.trim()
-  ) {
-    return '需更新依据'
-  }
-  if (detail.current_level >= 3 && !detail.evidence_note?.trim()) {
-    return '需自评依据'
+  if (!isEvidenceValid(detail)) {
+    if (
+      detail.inherited_current_level != null &&
+      detail.current_level > detail.inherited_current_level
+    ) {
+      return '需更新依据'
+    }
+    if (detail.current_level >= 3) return '需自评依据'
   }
   return ''
+}
+
+function progressDetails(details: AssessmentDetail[]) {
+  return details.filter(isApplicableDetail)
+}
+
+function isStructuredAssessmentError(value: unknown): value is {
+  code: string
+  l3_code: string
+  reason: string
+  message: string
+} {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { code?: unknown }).code === 'string' &&
+    typeof (value as { l3_code?: unknown }).l3_code === 'string' &&
+    typeof (value as { reason?: unknown }).reason === 'string' &&
+    typeof (value as { message?: unknown }).message === 'string'
+  )
 }
 
 function levelSelect(
@@ -372,12 +455,21 @@ export function AssessmentGapPage() {
       )
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
+      const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
           ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
-          : err instanceof Error
-            ? err.message
-            : '提交失败',
+          : isStructuredAssessmentError(detail)
+            ? (() => {
+                const target = details.find(
+                  (item) => item.l3_code === detail.l3_code,
+                )
+                if (target) locateDetail(target)
+                return detail.message
+              })()
+            : err instanceof Error
+              ? err.message
+              : '提交失败',
       )
     }
   }
@@ -398,7 +490,7 @@ export function AssessmentGapPage() {
   }
 
   function locateNextUnfilled() {
-    const detail = details.find((item) => !isFilled(item))
+    const detail = progressDetails(details).find((item) => !isFilled(item))
     if (detail) locateDetail(detail)
   }
 
@@ -409,8 +501,12 @@ export function AssessmentGapPage() {
 
   const editable =
     assessment?.status === '草稿' || assessment?.status === '建议调整'
-  const filled = useMemo(() => details.filter(isFilled).length, [details])
-  const unfilled = details.length - filled
+  const assessedDetails = useMemo(() => progressDetails(details), [details])
+  const filled = useMemo(
+    () => assessedDetails.filter(isFilled).length,
+    [assessedDetails],
+  )
+  const unfilled = assessedDetails.length - filled
   const domains = useMemo(
     () => [...new Set(details.map(l1Of))].filter(Boolean),
     [details],
@@ -418,7 +514,9 @@ export function AssessmentGapPage() {
   const filtered = useMemo(() => {
     let list = details.filter((detail) => l1Of(detail) === activeDomain)
     if (statusFilter === '未完成')
-      list = list.filter((detail) => !isFilled(detail))
+      list = list.filter(
+        (detail) => isApplicableDetail(detail) && !isFilled(detail),
+      )
     if (statusFilter === '有Gap') {
       list = list.filter(
         (detail) =>
@@ -497,7 +595,7 @@ export function AssessmentGapPage() {
           <span>
             进度{' '}
             <strong>
-              {filled}/{details.length}
+              {filled}/{assessedDetails.length}
             </strong>
           </span>
           <span>
@@ -539,7 +637,11 @@ export function AssessmentGapPage() {
                 >
                   {domainLabel(domain)}{' '}
                   <small>
-                    {domainItems.filter(isFilled).length}/{domainItems.length}
+                    {
+                      domainItems.filter(isApplicableDetail).filter(isFilled)
+                        .length
+                    }
+                    /{domainItems.filter(isApplicableDetail).length}
                   </small>
                 </button>
               )
@@ -657,7 +759,11 @@ export function AssessmentGapPage() {
                     </button>
                     <span className={s.groupActions}>
                       <small>
-                        {items.filter(isFilled).length}/{items.length}
+                        {
+                          items.filter(isApplicableDetail).filter(isFilled)
+                            .length
+                        }
+                        /{items.filter(isApplicableDetail).length}
                       </small>
                       {editable &&
                         items.some(canBatchFill) &&
@@ -720,20 +826,14 @@ export function AssessmentGapPage() {
                               ? Math.max(target - detail.current_level, 0)
                               : null
                           const reason = unfilledReason(detail)
-                          const applicable =
-                            detail.standard_target_applicable !== false
+                          const applicable = isApplicableDetail(detail)
                           const adjustable =
                             applicable &&
                             detail.standard_target_level != null &&
                             !detail.target_compatibility_error
                           const inherited =
                             detail.inherited_from_assessment_id != null
-                          const updated =
-                            inherited &&
-                            (detail.current_level !==
-                              detail.inherited_current_level ||
-                              detail.evidence_note?.trim() !==
-                                detail.inherited_evidence_note?.trim())
+                          const updated = inherited && isInheritedUpdate(detail)
                           return (
                             <Fragment key={detail.id}>
                               <tr

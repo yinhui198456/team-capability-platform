@@ -6,6 +6,14 @@ from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 from ..catalog.standard_targets import resolve_standard_target
 
 
+class AssessmentValidationError(ValueError):
+    def __init__(self, l3_code: str, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.code = "assessment_validation_failed"
+        self.l3_code = l3_code
+        self.reason = reason
+
+
 def _now(connection: psycopg.Connection) -> Any:
     return connection.execute("SELECT NOW()").fetchone()[0]
 
@@ -764,24 +772,45 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
         inherited_evidence,
     ) in rows:
         if compatibility_error:
-            raise ValueError(f"assessment detail {code} requires compatibility repair")
+            raise AssessmentValidationError(
+                code,
+                "compatibility_repair_required",
+                f"assessment detail {code} requires compatibility repair",
+            )
         if applicable is False:
             if current_level is not None or target_level is not None or plan_candidate:
-                raise ValueError(f"not applicable item {code} is incomplete")
+                raise AssessmentValidationError(
+                    code,
+                    "not_applicable_incomplete",
+                    f"not applicable item {code} is incomplete",
+                )
             continue
         if current_level is None or target_level is None:
-            raise ValueError(f"assessment detail {code} requires current level")
+            raise AssessmentValidationError(
+                code,
+                "requires_current_level",
+                f"assessment detail {code} requires current level",
+            )
         if not _evidence_is_valid(
             current_level, evidence, inherited_current, inherited_evidence
         ):
             reason = (
-                "requires updated evidence"
+                "requires_updated_evidence"
                 if inherited_current is not None and current_level > inherited_current
-                else "requires evidence"
+                else "requires_evidence"
             )
-            raise ValueError(f"assessment detail {code} {reason}")
+            message = (
+                f"assessment detail {code} requires updated evidence"
+                if reason == "requires_updated_evidence"
+                else f"assessment detail {code} requires evidence"
+            )
+            raise AssessmentValidationError(code, reason, message)
         if plan_candidate and (target_level - current_level) <= 0:
-            raise ValueError(f"invalid plan candidate for {code}")
+            raise AssessmentValidationError(
+                code,
+                "invalid_plan_candidate",
+                f"invalid plan candidate for {code}",
+            )
 
 
 def submit_assessment(

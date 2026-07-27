@@ -216,6 +216,200 @@ describe('AssessmentGapPage', () => {
     },
   )
 
+  it.each([
+    [null, ''],
+    [null, '   '],
+    ['旧依据', ' 旧依据 '],
+  ])(
+    'requires normalized new evidence for an inherited increase (%s → %s)',
+    async (inheritedEvidence, evidence) => {
+      const draft = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            evidence_note: evidence as string,
+            inherited_from_assessment_id: 6,
+            inherited_current_level: 1,
+            inherited_evidence_note: inheritedEvidence as string | null,
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByText('需更新依据')
+      expect(
+        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+      expect(
+        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+          .disabled,
+      ).toBe(true)
+    },
+  )
+
+  it('allows an inherited increase with a non-empty normalized new evidence', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: ' 新依据 ',
+          inherited_from_assessment_id: 6,
+          inherited_current_level: 1,
+          inherited_evidence_note: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('本次已更新')
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+    expect(
+      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('excludes not-applicable items from page, L1, and L2 progress', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
+          current_level: 2,
+        },
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_code: 'P01.01.02',
+          current_level: null,
+          target_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 1/1')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
+    expect(screen.getByRole('button', { name: /P01/ }).textContent).toContain(
+      '1/1',
+    )
+    expect(
+      within(screen.getByTestId('assessment-main-area')).getByText('1/1'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
+    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+  })
+
+  it('does not block progress or locate when every item is not applicable', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: null,
+          target_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 0/0')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
+    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
+    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+  })
+
+  it('blocks incomplete personal adjustments and unblocks after canceling them', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    const submit = screen.getByRole('button', { name: '提交自评' })
+    const adjustment = screen.getByLabelText('申请调整 P01.01.01')
+    fireEvent.click(adjustment)
+    expect(screen.getByText('需填写调整原因')).toBeTruthy()
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(adjustment)
+    await waitFor(() =>
+      expect((submit as HTMLButtonElement).disabled).toBe(false),
+    )
+  })
+
+  it('supports a valid personal adjustment target and reason', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.click(screen.getByLabelText('申请调整 P01.01.01'))
+    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
+      target: { value: '调整原因' },
+    })
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+  })
+
   it('allows an unchanged inherited value with valid inherited evidence', async () => {
     const draft = mockDraft({
       details: [

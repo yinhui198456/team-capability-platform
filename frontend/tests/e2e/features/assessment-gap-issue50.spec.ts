@@ -3,7 +3,10 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 type AssessmentDetail = {
+  id?: number
   l3_code: string
+  l1_code?: string
+  l2_code?: string
   current_level: number | null
   target_level: number | null
   standard_target_applicable?: boolean | null
@@ -21,8 +24,11 @@ type Assessment = {
   details: AssessmentDetail[]
 }
 
+let activeDraftId: number | null = null
+
 async function currentDraft(
   page: Parameters<typeof loginAs>[0],
+  assessmentId = activeDraftId,
 ): Promise<Assessment> {
   const response = await page.request.get('/api/assessments')
   expect(response.ok()).toBeTruthy()
@@ -30,14 +36,38 @@ async function currentDraft(
     id: number
     status: string
   }>
-  const draft = assessments.find(
-    (assessment) =>
-      assessment.status === '草稿' || assessment.status === '建议调整',
-  )
+  const draft = assessmentId
+    ? assessments.find((assessment) => assessment.id === assessmentId)
+    : assessments
+        .filter(
+          (assessment) =>
+            assessment.status === '草稿' || assessment.status === '建议调整',
+        )
+        .sort((left, right) => right.id - left.id)[0]
   expect(draft).toBeDefined()
   const detailResponse = await page.request.get(`/api/assessments/${draft!.id}`)
   expect(detailResponse.ok()).toBeTruthy()
   return (await detailResponse.json()) as Assessment
+}
+
+async function fillAllApplicable(page: Parameters<typeof loginAs>[0]) {
+  const draft = await currentDraft(page)
+  const response = await page.request.put(
+    `/api/assessments/${draft.id}/draft`,
+    {
+      data: {
+        expected_revision: draft.revision,
+        details: draft.details.map((detail) => ({
+          l3_code: detail.l3_code,
+          current_level: detail.standard_target_applicable === false ? null : 1,
+        })),
+      },
+    },
+  )
+  expect(response.ok()).toBeTruthy()
+  await page.reload()
+  await expect(page.getByLabel('评估摘要')).toBeVisible()
+  return currentDraft(page)
 }
 
 test.describe('Issue #50 assessment gap workflow', () => {
@@ -51,6 +81,15 @@ test.describe('Issue #50 assessment gap workflow', () => {
       data: { year: 2026, assessment_type: '年度' },
     })
     expect(created.ok()).toBeTruthy()
+    activeDraftId = ((await created.json()) as { id: number }).id
+    await page.route('**/api/assessments', async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: activeDraftId, status: '草稿' }]),
+      })
+    })
     await page.goto('/capability/assessment')
     const createDraft = page.getByRole('button', { name: '创建年度自评草稿' })
     const summary = page.getByLabel('评估摘要')
@@ -110,8 +149,85 @@ test.describe('Issue #50 assessment gap workflow', () => {
   }) => {
     const current = page.getByRole('combobox', { name: /当前等级/ }).first()
     await current.selectOption('3')
+    const row = current.locator('xpath=ancestor::tr')
+    await row.getByRole('button', { name: /^(编辑|填写)$/ }).click()
+    await page.locator('textarea').fill('')
+    await page.getByRole('button', { name: '确认依据' }).click()
     await expect(page.getByText('需自评依据').first()).toBeVisible()
     await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+  })
+
+  test('excludes N/A items from progress and unfinished-item location', async ({
+    page,
+  }) => {
+    const draft = await fillAllApplicable(page)
+    const applicable = draft.details.filter(
+      (detail) => detail.standard_target_applicable !== false,
+    )
+    const summary = page.getByLabel('评估摘要')
+    await expect(summary).toContainText(
+      `进度 ${applicable.length}/${applicable.length}`,
+    )
+    await expect(summary).toContainText('未完成 0')
+    await page.getByRole('button', { name: '定位未完成' }).click()
+    await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
+  })
+
+  test('personal adjustment requires a valid target and reason, and cancel unblocks submit', async ({
+    page,
+  }) => {
+    await fillAllApplicable(page)
+    const code = 'P01.01.01'
+    const search = page.getByLabel('搜索全部能力项')
+    await search.fill(code)
+    await search.press('Enter')
+    const current = page.getByLabel(`当前等级 ${code}`)
+    if ((await current.inputValue()) === '') await current.selectOption('1')
+    const adjustment = page.getByLabel(`申请调整 ${code}`)
+    await adjustment.click()
+    await page.getByLabel(`调整目标 ${code}`).selectOption('')
+    await expect(page.getByText('需填写调整目标')).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+    await page.getByLabel(`调整目标 ${code}`).selectOption('4')
+    await expect(page.getByText('需填写调整原因')).toBeVisible()
+    await page.getByLabel(`调整原因 ${code}`).fill('合法调整原因')
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
+    await adjustment.click()
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
+  })
+
+  test('structured submit validation switches domain and focuses the failing L3', async ({
+    page,
+  }) => {
+    const draft = await fillAllApplicable(page)
+    const target = draft.details.find(
+      (detail) =>
+        detail.standard_target_applicable !== false &&
+        (detail.l1_code ?? detail.l3_code.split('.')[0]) !== 'P01',
+    )!
+    await page.getByRole('button', { name: /P01/ }).click()
+    await page.route('**/api/assessments/*/submit', async (route) => {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          detail: {
+            code: 'assessment_validation_failed',
+            l3_code: target.l3_code,
+            reason: 'requires_evidence',
+            message: `${target.l3_code} requires evidence`,
+          },
+        }),
+      })
+    })
+    await page.getByRole('button', { name: '提交自评' }).click()
+    await expect(
+      page.getByText(`${target.l3_code} requires evidence`),
+    ).toBeVisible()
+    await expect(page.locator(`#row-${target.id}`)).toBeFocused()
+    await expect(
+      page.getByRole('button', { name: new RegExp(target.l1_code ?? 'P02') }),
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('first evaluation fills all domains and submits dirty input', async ({
@@ -349,7 +465,8 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
       return {
         l3_code: detail.l3_code,
         current_level: current,
-        evidence_note: `历史依据-${detail.l3_code}`,
+        evidence_note:
+          detail.l3_code === low.l3_code ? null : `历史依据-${detail.l3_code}`,
       }
     })
     const saved = await page.request.put(
@@ -410,7 +527,20 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     const lowSelect = page.getByLabel(`当前等级 ${low.l3_code}`)
     if (await lowSelect.isVisible()) {
       await lowSelect.selectOption('2')
-      await expect(page.getByText('本次已更新').first()).toBeVisible()
+      const lowRow = page.locator(`#row-${inheritedLow.id}`)
+      await expect(lowRow.getByText('需更新依据')).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: '提交自评' }),
+      ).toBeDisabled()
+      await lowRow.getByRole('button', { name: '填写' }).click()
+      await lowRow.locator('textarea').fill('   ')
+      await lowRow.getByRole('button', { name: '确认依据' }).click()
+      await expect(lowRow.getByText('需更新依据')).toBeVisible()
+      await lowRow.getByRole('button', { name: '填写' }).click()
+      await lowRow.locator('textarea').fill('本次新依据')
+      await lowRow.getByRole('button', { name: '确认依据' }).click()
+      await expect(lowRow.getByText('需更新依据')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
     }
 
     const lowUpdate = await page.request.patch(

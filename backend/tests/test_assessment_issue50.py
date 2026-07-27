@@ -6,6 +6,7 @@ import pytest
 from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
+    AssessmentValidationError,
     _evidence_is_valid,
     batch_fill_l2,
     create_assessment_draft,
@@ -529,5 +530,8 @@ def test_submit_enforces_full_detail_and_evidence_gate(
             {"l3_code": codes[1], "current_level": 2},
         ],
     )
-    with pytest.raises(ValueError, match="requires evidence"):
+    with pytest.raises(AssessmentValidationError) as error:
         submit_assessment(connection, assessment_id, member_id, expected_revision=2)
+    assert error.value.code == "assessment_validation_failed"
+    assert error.value.l3_code == codes[0]
+    assert error.value.reason == "requires_evidence"
