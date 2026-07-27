@@ -1,6 +1,16 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:18251'
+const composeArgs = [
+  process.env.COMPOSE_PROJECT_NAME
+    ? `-p ${process.env.COMPOSE_PROJECT_NAME}`
+    : '',
+  process.env.TCP_ENV_FILE ? `--env-file ${process.env.TCP_ENV_FILE}` : '',
+]
+  .filter(Boolean)
+  .join(' ')
+const composeCommand =
+  `cd .. && docker compose ${composeArgs} up -d --build`.trim()
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -26,8 +36,7 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_NO_WEBSERVER
     ? undefined
     : {
-        command:
-          'cd .. && docker compose -p tcp52 --env-file .env.compose up -d --build',
+        command: composeCommand,
         url: `${baseURL}/api/capability-model`,
         reuseExistingServer: true,
         timeout: 180000,
