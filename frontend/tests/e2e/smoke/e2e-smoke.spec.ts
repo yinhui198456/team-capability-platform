@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 const backendURL =
-  process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://localhost:18001'
+  process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://127.0.0.1:18250'
 const year = new Date().getFullYear()
 
 test.describe('e2e smoke', () => {

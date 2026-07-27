@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:18081'
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:18251'
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -26,7 +26,8 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_NO_WEBSERVER
     ? undefined
     : {
-        command: 'cd .. && docker compose up -d --build',
+        command:
+          'cd .. && docker compose -p tcp52 --env-file .env.compose up -d --build',
         url: `${baseURL}/api/capability-model`,
         reuseExistingServer: true,
         timeout: 180000,
