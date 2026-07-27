@@ -14,6 +14,7 @@ from app.access.repository import (
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
     create_assessment_draft,
+    get_assessment,
     get_pending_reviews_for_buddy,
     save_assessment_draft,
     submit_assessment,
@@ -56,6 +57,7 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS tcp_user")
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
         connection.execute("DROP TABLE IF EXISTS capability_node")
         connection.execute("DROP TABLE IF EXISTS capability_model")
 
@@ -76,6 +78,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 
@@ -136,11 +141,13 @@ def _ensure_l3_nodes(connection: psycopg.Connection, l3_codes: list[str]) -> Non
             """
             INSERT INTO capability_node (
                 model_id, parent_node_id, node_type, code, name, sort_order,
+                recommended_start_level,
                 materials_text, expected_output, estimated_hours,
                 source_workbook, source_sheet, source_row
             )
             VALUES (
                 %s, %s, 'L3', %s, %s, %s,
+                'P4',
                 'test materials', 'test output', '10',
                 'test.xlsx', 'sheet', %s
             )
@@ -258,7 +265,31 @@ def _submit_and_approve_assessment(
     details: list[dict[str, object]],
 ) -> int:
     assessment_id = create_assessment_draft(connection, member_id, year)
-    save_assessment_draft(connection, assessment_id, member_id, details)
+    assessment = get_assessment(connection, assessment_id)
+    assert assessment is not None
+    supplied = {detail["l3_code"]: detail for detail in details}
+    migrated_details = []
+    for snapshot in assessment["details"]:
+        detail = supplied.get(snapshot["l3_code"])
+        if detail is None:
+            migrated = {
+                "l3_code": snapshot["l3_code"],
+                "current_level": None,
+                "evidence_note": "非本场景能力项",
+                "plan_candidate": False,
+            }
+        else:
+            migrated = dict(detail)
+            target_level = migrated.pop("target_level")
+            migrated.update(
+                {
+                    "target_adjusted": True,
+                    "adjusted_target_level": target_level,
+                    "target_adjustment_reason": "测试场景目标",
+                }
+            )
+        migrated_details.append(migrated)
+    save_assessment_draft(connection, assessment_id, member_id, migrated_details)
     submit_assessment(connection, assessment_id, member_id)
     pending = get_pending_reviews_for_buddy(connection, buddy_id)
     review = next(r for r in pending if r["assessment_id"] == assessment_id)

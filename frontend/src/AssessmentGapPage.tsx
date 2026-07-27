@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
 import {
@@ -22,12 +22,14 @@ function levelSelect(
   value: number | null,
   onChange: (v: number | null) => void,
   disabled: boolean,
+  ariaLabel?: string,
 ) {
   return (
     <select
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value ? +e.target.value : null)}
       disabled={disabled}
+      aria-label={ariaLabel}
     >
       <option value="">请选择</option>
       {LEVELS.map((l) => (
@@ -54,14 +56,25 @@ function domainLabel(code: string): string {
   return DOMAIN_LABELS[p] ? `${p} · ${DOMAIN_LABELS[p]}` : code
 }
 function isFilled(d: AssessmentDetail) {
+  if (d.target_compatibility_error) return false
+  if (d.standard_target_applicable === false) return true
   return (
     d.current_level != null &&
-    d.target_level != null &&
+    effectiveTarget(d) != null &&
     (d.evidence_note ?? '').trim().length > 0
   )
 }
-function unfilledReason(d: AssessmentDetail): '' | '需评估等级' | '需自评依据' {
-  const hasLevel = d.current_level != null && d.target_level != null
+function effectiveTarget(d: AssessmentDetail): number | null {
+  if (d.standard_target_applicable === false) return null
+  if (d.target_adjusted) return d.adjusted_target_level ?? null
+  return d.standard_target_level ?? d.target_level
+}
+function unfilledReason(
+  d: AssessmentDetail,
+): '' | '需评估等级' | '需自评依据' | '需兼容修复' {
+  if (d.target_compatibility_error) return '需兼容修复'
+  if (d.standard_target_applicable === false) return ''
+  const hasLevel = d.current_level != null && effectiveTarget(d) != null
   const hasEvidence = (d.evidence_note ?? '').trim().length > 0
   if (!hasLevel) return '需评估等级'
   if (!hasEvidence) return '需自评依据'
@@ -191,7 +204,7 @@ export function AssessmentGapPage() {
   const isEditable =
     assessment?.status === '草稿' || assessment?.status === '建议调整'
   const filled = useMemo(() => details.filter(isFilled).length, [details])
-  const unfilled = useMemo(() => details.length - filled, [details])
+  const unfilled = details.length - filled
   const reviewLabel =
     assessment?.status === '已复核' || assessment?.status === '已归档'
       ? '认可闭环'
@@ -215,8 +228,8 @@ export function AssessmentGapPage() {
       list = list.filter(
         (d) =>
           d.current_level != null &&
-          d.target_level != null &&
-          d.target_level - d.current_level > 0,
+          effectiveTarget(d) != null &&
+          effectiveTarget(d)! - d.current_level > 0,
       )
     if (statusFilter === '计划候选') list = list.filter((d) => d.plan_candidate)
     if (search.trim()) {
@@ -397,7 +410,9 @@ export function AssessmentGapPage() {
                     <th>L3 能力项</th>
                     <th>建议起始</th>
                     <th>当前 (1-5)</th>
-                    <th>目标 (1-5)</th>
+                    <th>标准目标</th>
+                    <th>个人调整</th>
+                    <th>最终目标</th>
                     <th>Gap</th>
                     <th>优先级</th>
                     <th style={{ width: '80px' }}>计划候选</th>
@@ -407,10 +422,16 @@ export function AssessmentGapPage() {
                 <tbody>
                   {items.map((d) => {
                     const gIdx = details.indexOf(d)
+                    const applicable = d.standard_target_applicable !== false
+                    const adjustable =
+                      applicable &&
+                      d.standard_target_level != null &&
+                      !d.target_compatibility_error
+                    const finalTarget = effectiveTarget(d)
                     const hasLevels =
-                      d.current_level != null && d.target_level != null
+                      d.current_level != null && finalTarget != null
                     const gap = hasLevels
-                      ? Math.max(d.target_level! - d.current_level!, 0)
+                      ? Math.max(finalTarget! - d.current_level!, 0)
                       : null
                     const pri = hasLevels ? priority(gap!) : null
                     const filled = isFilled(d)
@@ -433,8 +454,8 @@ export function AssessmentGapPage() {
                             ? s.priorityLow
                             : ''
                     return (
-                      <>
-                        <tr className={rowCls} key={d.id} id={`row-${d.id}`}>
+                      <Fragment key={d.id}>
+                        <tr className={rowCls} id={`row-${d.id}`}>
                           <td>
                             <span className={s.code}>{d.l3_code}</span>
                             <span className={s.l3name}>{d.l3_name ?? ''}</span>
@@ -451,16 +472,77 @@ export function AssessmentGapPage() {
                             {levelSelect(
                               d.current_level,
                               (v) => updateDetail(gIdx, { current_level: v }),
-                              !isEditable,
+                              !isEditable || !applicable,
                             )}
                           </td>
                           <td>
-                            {levelSelect(
-                              d.target_level,
-                              (v) => updateDetail(gIdx, { target_level: v }),
-                              !isEditable,
+                            <span className={s.recommend}>
+                              {applicable
+                                ? d.standard_target_level != null
+                                  ? `标准 ${d.standard_target_level}`
+                                  : d.target_snapshot_source ===
+                                      'legacy_preserved'
+                                    ? '历史保留'
+                                    : '—'
+                                : '不适用'}
+                            </span>
+                            {d.target_compatibility_error && (
+                              <span className={s.reasonTag}>
+                                {d.target_compatibility_error}
+                              </span>
                             )}
                           </td>
+                          <td>
+                            <label className="checkbox">
+                              <input
+                                type="checkbox"
+                                aria-label={`申请调整 ${d.l3_code}`}
+                                checked={d.target_adjusted ?? false}
+                                disabled={!isEditable || !adjustable}
+                                onChange={(event) =>
+                                  updateDetail(gIdx, {
+                                    target_adjusted: event.target.checked,
+                                    adjusted_target_level: event.target.checked
+                                      ? (d.adjusted_target_level ??
+                                        d.standard_target_level ??
+                                        d.target_level)
+                                      : null,
+                                    target_adjustment_reason: event.target
+                                      .checked
+                                      ? (d.target_adjustment_reason ?? '')
+                                      : null,
+                                  })
+                                }
+                              />
+                              申请调整
+                            </label>
+                            {d.target_adjusted && adjustable && (
+                              <div className={s.adjustmentEditor}>
+                                {levelSelect(
+                                  d.adjusted_target_level ?? null,
+                                  (value) =>
+                                    updateDetail(gIdx, {
+                                      adjusted_target_level: value,
+                                    }),
+                                  !isEditable,
+                                  `调整目标 ${d.l3_code}`,
+                                )}
+                                <input
+                                  aria-label={`调整原因 ${d.l3_code}`}
+                                  placeholder="填写调整原因"
+                                  value={d.target_adjustment_reason ?? ''}
+                                  onChange={(event) =>
+                                    updateDetail(gIdx, {
+                                      target_adjustment_reason:
+                                        event.target.value,
+                                    })
+                                  }
+                                  disabled={!isEditable}
+                                />
+                              </div>
+                            )}
+                          </td>
+                          <td>{finalTarget ?? '—'}</td>
                           <td className={s.gapCell}>
                             <span className={gapCls}>
                               {gap != null ? gap : '—'}
@@ -480,7 +562,7 @@ export function AssessmentGapPage() {
                                   plan_candidate: e.target.checked,
                                 })
                               }
-                              disabled={!isEditable}
+                              disabled={!isEditable || !applicable}
                             />
                           </td>
                           <td>
@@ -499,7 +581,7 @@ export function AssessmentGapPage() {
                         </tr>
                         {editingId === d.id && isEditable && (
                           <tr className={s.evidenceRow} key={`ev-${d.id}`}>
-                            <td colSpan={8}>
+                            <td colSpan={10}>
                               <div className={s.evidenceEditor}>
                                 <textarea
                                   value={editingText}
@@ -525,7 +607,7 @@ export function AssessmentGapPage() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     )
                   })}
                 </tbody>

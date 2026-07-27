@@ -164,6 +164,118 @@ class TestPublicGetRemainsOpen:
 
 
 class TestUpdateCapabilityNode:
+    def test_leader_sets_numeric_and_explicit_na_standard_targets(
+        self, connection: psycopg.Connection, leader_cookie: str
+    ) -> None:
+        status, body = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"standard_target_overrides": {"P4": 3, "P5": None}},
+            cookies={SESSION_COOKIE: leader_cookie},
+        )
+
+        assert status == 200
+        assert body["standard_target_overrides"] == {"P4": 3, "P5": None}
+
+        status, model = _request("GET", "/api/capability-model")
+        assert status == 200
+        node = next(
+            l3
+            for domain in model["domains"]
+            for l2 in domain["children"]
+            for l3 in l2["children"]
+            if l3["code"] == "P01.01.01"
+        )
+        assert node["standard_target_overrides"] == {"P4": 3, "P5": None}
+
+    def test_replacing_standard_targets_with_empty_map_clears_overrides(
+        self, connection: psycopg.Connection, leader_cookie: str
+    ) -> None:
+        cookie = {SESSION_COOKIE: leader_cookie}
+        status, _ = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"standard_target_overrides": {"P4": 3}},
+            cookies=cookie,
+        )
+        assert status == 200
+
+        status, body = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"standard_target_overrides": {}},
+            cookies=cookie,
+        )
+        assert status == 200
+        assert body["standard_target_overrides"] == {}
+
+    def test_override_below_recommended_start_level_is_rejected(
+        self, connection: psycopg.Connection, leader_cookie: str
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT code FROM capability_node
+            WHERE node_type = 'L3' AND recommended_start_level = 'P6'
+            ORDER BY code LIMIT 1
+            """
+        ).fetchone()
+        assert row is not None
+
+        status, body = _request(
+            "PUT",
+            f"/api/capability-model/nodes/{row[0]}",
+            {"standard_target_overrides": {"P5": 4}},
+            cookies={SESSION_COOKIE: leader_cookie},
+        )
+
+        assert status == 422
+        assert "below recommended_start_level" in body["detail"]
+
+    def test_start_level_cannot_move_above_existing_override(
+        self, connection: psycopg.Connection, leader_cookie: str
+    ) -> None:
+        cookie = {SESSION_COOKIE: leader_cookie}
+        status, _ = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"standard_target_overrides": {"P4": 3}},
+            cookies=cookie,
+        )
+        assert status == 200
+
+        status, body = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"recommended_start_level": "P5"},
+            cookies=cookie,
+        )
+
+        assert status == 422
+        assert "below recommended_start_level" in body["detail"]
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"P3": 3},
+            {"P4": 0},
+            {"P4": 6},
+            {"P4": True},
+        ],
+    )
+    def test_invalid_standard_target_override_is_rejected(
+        self,
+        connection: psycopg.Connection,
+        leader_cookie: str,
+        overrides: dict[str, object],
+    ) -> None:
+        status, _ = _request(
+            "PUT",
+            "/api/capability-model/nodes/P01.01.01",
+            {"standard_target_overrides": overrides},
+            cookies={SESSION_COOKIE: leader_cookie},
+        )
+        assert status == 422
+
     def test_leader_updates_l3_node(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:

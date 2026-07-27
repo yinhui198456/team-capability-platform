@@ -75,6 +75,20 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
     )
     connection.execute(
         """
+        CREATE TABLE IF NOT EXISTS capability_standard_target_override (
+            node_id BIGINT NOT NULL
+                REFERENCES capability_node(id) ON DELETE CASCADE,
+            job_level TEXT NOT NULL
+                CHECK (job_level IN ('P4', 'P5', 'P6', 'P7', 'P8')),
+            target_level INT CHECK (
+                target_level IS NULL OR target_level BETWEEN 1 AND 5
+            ),
+            PRIMARY KEY (node_id, job_level)
+        )
+        """
+    )
+    connection.execute(
+        """
         CREATE OR REPLACE FUNCTION validate_capability_node_hierarchy()
         RETURNS TRIGGER
         LANGUAGE plpgsql

@@ -14,6 +14,10 @@ from app.assessment.repository import (
 )
 from app.assessment.schema import create_assessment_schema
 from app.main import app
+from tests.standard_target_support import (
+    ensure_capability_nodes,
+    standard_target_payload,
+)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -49,6 +53,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 
@@ -162,6 +169,16 @@ def _login(
 def _create_and_submit_assessment(
     connection: psycopg.Connection, username: str, year: int = 2026
 ) -> int:
+    desired_details = [
+        {
+            "l3_code": "P01-L2A-L3A",
+            "current_level": 2,
+            "target_level": 4,
+            "evidence_note": "测试中",
+            "plan_candidate": True,
+        }
+    ]
+    ensure_capability_nodes(connection, ["P01-L2A-L3A"])
     cookies = _login(connection, username)
     status, body, _ = _request(
         "POST", "/api/assessments", {"year": year}, cookies=cookies
@@ -173,15 +190,9 @@ def _create_and_submit_assessment(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [
-                {
-                    "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
-                    "evidence_note": "测试中",
-                    "plan_candidate": True,
-                }
-            ]
+            "details": standard_target_payload(
+                connection, assessment_id, desired_details
+            )
         },
         cookies=cookies,
     )
@@ -269,15 +280,19 @@ def test_buddy_request_adjustment_and_resubmit(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [
-                {
-                    "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
-                    "evidence_note": "已补充项目实践依据",
-                    "plan_candidate": True,
-                }
-            ]
+            "details": standard_target_payload(
+                assessment_schema,
+                assessment_id,
+                [
+                    {
+                        "l3_code": "P01-L2A-L3A",
+                        "current_level": 2,
+                        "target_level": 4,
+                        "evidence_note": "已补充项目实践依据",
+                        "plan_candidate": True,
+                    }
+                ],
+            )
         },
         cookies=member_cookies,
     )

@@ -40,6 +40,7 @@ def _reset_team_annual_plan_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS tcp_user")
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
         connection.execute("DROP TABLE IF EXISTS capability_node")
         connection.execute("DROP TABLE IF EXISTS capability_model")
 
@@ -92,6 +93,9 @@ def _create_test_user(
     user_id = create_user(connection, username, username, "secret")
     for role_code in roles:
         assign_role(connection, user_id, role_code)
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+    )
     connection.commit()
     return user_id
 

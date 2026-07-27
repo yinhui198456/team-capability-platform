@@ -2289,7 +2289,9 @@ def _team_analytics_assessment_kpi(
             FROM member_scope ms
             JOIN latest_assessments la ON la.member_id = ms.id
             JOIN assessment_detail ad ON ad.assessment_id = la.id
-            WHERE (%s::TEXT IS NULL OR LEFT(ad.l3_code, 3) = %s::TEXT)
+            WHERE ad.current_level IS NOT NULL
+              AND ad.target_level IS NOT NULL
+              AND (%s::TEXT IS NULL OR LEFT(ad.l3_code, 3) = %s::TEXT)
         )
         SELECT
             (SELECT COUNT(*) FROM completed_members) AS completed,
@@ -2426,6 +2428,8 @@ def _team_analytics_domain_averages(
         JOIN tcp_user_role ur ON ur.user_id = u.id
         JOIN tcp_role r ON r.id = ur.role_id
         WHERE r.code = 'Member'
+          AND ad.current_level IS NOT NULL
+          AND ad.target_level IS NOT NULL
           AND (%s::BIGINT IS NULL OR la.member_id = %s::BIGINT)
           AND LEFT(ad.l3_code, 3) = ANY(%s)
         GROUP BY LEFT(ad.l3_code, 3)
@@ -2479,6 +2483,8 @@ def _team_analytics_member_attainment(
         JOIN tcp_user_role ur ON ur.user_id = u.id
         JOIN tcp_role r ON r.id = ur.role_id
         WHERE r.code = 'Member'
+          AND ad.current_level IS NOT NULL
+          AND ad.target_level IS NOT NULL
           AND (%s::BIGINT IS NULL OR la.member_id = %s::BIGINT)
           AND LEFT(ad.l3_code, 3) = ANY(%s)
         GROUP BY la.member_id, LEFT(ad.l3_code, 3)

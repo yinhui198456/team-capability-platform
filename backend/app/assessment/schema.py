@@ -32,9 +32,36 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             target_level INT CHECK (
                 target_level IS NULL OR target_level BETWEEN 1 AND 5
             ),
-            gap_value INT NOT NULL,
+            standard_target_applicable BOOLEAN,
+            standard_target_level INT CHECK (
+                standard_target_level IS NULL
+                OR standard_target_level BETWEEN 1 AND 5
+            ),
+            target_adjusted BOOLEAN NOT NULL DEFAULT FALSE,
+            adjusted_target_level INT CHECK (
+                adjusted_target_level IS NULL
+                OR adjusted_target_level BETWEEN 1 AND 5
+            ),
+            target_adjustment_reason TEXT,
+            target_snapshot_source TEXT,
+            target_compatibility_error TEXT,
+            gap_value INT,
             evidence_note TEXT,
             plan_candidate BOOLEAN NOT NULL DEFAULT FALSE,
+            CHECK (
+                standard_target_applicable IS DISTINCT FROM FALSE
+                OR standard_target_level IS NULL
+            ),
+            CHECK (
+                (target_adjusted = FALSE
+                 AND adjusted_target_level IS NULL
+                 AND target_adjustment_reason IS NULL)
+                OR
+                (target_adjusted = TRUE
+                 AND standard_target_applicable = TRUE
+                 AND adjusted_target_level BETWEEN 1 AND 5
+                 AND BTRIM(target_adjustment_reason) <> '')
+            ),
             UNIQUE(assessment_id, l3_code)
         )
         """

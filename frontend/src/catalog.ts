@@ -13,6 +13,8 @@ export type ResourceSummary = {
   status: string
 }
 
+export type JobLevel = 'P4' | 'P5' | 'P6' | 'P7' | 'P8'
+
 export type L3Node = {
   code: string
   name: string
@@ -22,6 +24,7 @@ export type L3Node = {
   p7_description: string | null
   p8_description: string | null
   recommended_start_level: string | null
+  standard_target_overrides?: Partial<Record<JobLevel, number | null>>
   materials_text: string
   expected_output: string | null
   estimated_hours: string | null

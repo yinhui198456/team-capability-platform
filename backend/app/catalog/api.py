@@ -1,9 +1,9 @@
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, Literal
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from ..access.policies import require_any_role
 from ..settings import settings
@@ -35,6 +35,9 @@ class CapabilityNodeUpdate(BaseModel):
     expected_output: str | None = None
     estimated_hours: str | None = None
     resource_codes: list[str] | None = None
+    standard_target_overrides: (
+        dict[Literal["P4", "P5", "P6", "P7", "P8"], StrictInt | None] | None
+    ) = None
 
 
 class LearningResourceBase(BaseModel):

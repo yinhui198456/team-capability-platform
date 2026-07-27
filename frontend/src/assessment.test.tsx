@@ -45,8 +45,13 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
         l1_code: 'P01',
         l1_name: '数据基础设施',
         current_level: null,
-        target_level: null,
-        gap_value: 0,
+        target_level: 4,
+        standard_target_applicable: true,
+        standard_target_level: 4,
+        target_adjusted: false,
+        adjusted_target_level: null,
+        target_adjustment_reason: null,
+        gap_value: null,
         evidence_note: '',
         plan_candidate: false,
         recommended_start_level: 'P4',
@@ -79,7 +84,7 @@ describe('AssessmentGapPage', () => {
     })
   })
 
-  it('creates draft with null levels', async () => {
+  it('creates draft with a read-only standard target and null current level', async () => {
     vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({ id: 7 })
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(mockDraft())
     render(
@@ -101,7 +106,8 @@ describe('AssessmentGapPage', () => {
     const levelSelects = selects.filter(
       (s) => (s as HTMLSelectElement).value === '',
     )
-    expect(levelSelects.length).toBeGreaterThanOrEqual(2)
+    expect(levelSelects.length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('标准 4')).toBeTruthy()
   })
 
   it('submit disabled when null levels', async () => {
@@ -129,6 +135,144 @@ describe('AssessmentGapPage', () => {
     })
     expect(
       (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+  })
+
+  it('sends a personal adjustment without calculated target fields', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '草稿',
+        created_at: '',
+        submitted_at: null,
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            evidence_note: '已有依据',
+          },
+        ],
+      }),
+    )
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+
+    fireEvent.click(screen.getByLabelText('申请调整 P01.01.01'))
+    fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
+      target: { value: '5' },
+    })
+    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
+      target: { value: '晋升准备' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    const detail = save.mock.calls[0][1][0]
+    expect(detail).toMatchObject({
+      target_adjusted: true,
+      adjusted_target_level: 5,
+      target_adjustment_reason: '晋升准备',
+    })
+  })
+
+  it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '草稿',
+        created_at: '',
+        submitted_at: null,
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            target_level: null,
+            standard_target_applicable: false,
+            standard_target_level: null,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('不适用')
+    expect(
+      (screen.getByLabelText('申请调整 P01.01.01') as HTMLInputElement)
+        .disabled,
+    ).toBe(true)
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('keeps a legacy-preserved target visible but not adjustable', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        id: 7,
+        member_id: 1,
+        year: 2026,
+        version: 1,
+        assessment_type: '年度',
+        status: '草稿',
+        created_at: '',
+        submitted_at: null,
+        archived_at: null,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            target_level: 5,
+            standard_target_applicable: null,
+            standard_target_level: null,
+            target_snapshot_source: 'legacy_preserved',
+            evidence_note: '历史依据',
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('历史保留')
+    expect(
+      (screen.getByLabelText('申请调整 P01.01.01') as HTMLInputElement)
         .disabled,
     ).toBe(true)
   })
@@ -230,5 +374,33 @@ describe('assessment api helpers', () => {
   it('createAssessment', async () => {
     await assessmentApi.createAssessment(2026)
     expect(fetch).toHaveBeenCalled()
+  })
+
+  it('saveDraft omits server-calculated target fields', async () => {
+    await assessmentApi.saveDraft(7, [
+      {
+        l3_code: 'P01.01.01',
+        current_level: 2,
+        target_level: 5,
+        standard_target_applicable: true,
+        standard_target_level: 4,
+        target_adjusted: true,
+        adjusted_target_level: 5,
+        target_adjustment_reason: '晋升准备',
+        gap_value: 3,
+      },
+    ])
+    const body = JSON.parse(
+      (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
+    )
+    expect(body.details[0]).toEqual({
+      l3_code: 'P01.01.01',
+      current_level: 2,
+      target_adjusted: true,
+      adjusted_target_level: 5,
+      target_adjustment_reason: '晋升准备',
+      evidence_note: null,
+      plan_candidate: false,
+    })
   })
 })

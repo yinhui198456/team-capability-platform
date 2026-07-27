@@ -1,10 +1,11 @@
 import psycopg
 import pytest
-from test_capability_profile import (
+
+from tests.test_capability_profile import (
     _build_full_profile,
     _request,
 )
-from test_capability_profile import (
+from tests.test_capability_profile import (
     profile_schema as _initialize_profile_schema,
 )
 
@@ -58,7 +59,7 @@ def test_member_dashboard_rejects_non_members(
     profile_schema: psycopg.Connection,
 ) -> None:
     _build_full_profile(profile_schema, "dashboard_member", "dashboard_buddy")
-    from test_capability_profile import _login
+    from tests.test_capability_profile import _login
 
     status, _, _ = _request(
         "GET",

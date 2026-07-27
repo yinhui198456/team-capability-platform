@@ -65,6 +65,9 @@ for (const viewport of VIEWPORTS) {
       await expect(
         workspace.getByRole('heading', { name: '复核工作区' }),
       ).toBeVisible()
+      await expect(workspace).toContainText(
+        '标准 3；个人调整 4（岗位项目要求）',
+      )
     })
 
     test('default all members screenshot', async ({ page }) => {
