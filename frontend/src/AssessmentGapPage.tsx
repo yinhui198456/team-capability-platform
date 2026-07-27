@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
 import {
@@ -70,11 +70,7 @@ function effectiveTarget(detail: AssessmentDetail): number | null {
 }
 
 function isFilled(detail: AssessmentDetail) {
-  if (detail.target_compatibility_error) return false
-  if (detail.standard_target_applicable === false) return true
-  if (detail.current_level == null || effectiveTarget(detail) == null)
-    return false
-  return detail.current_level <= 2 || Boolean(detail.evidence_note?.trim())
+  return !unfilledReason(detail)
 }
 
 function unfilledReason(detail: AssessmentDetail) {
@@ -141,7 +137,12 @@ export function AssessmentGapPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [batchConfirmL2, setBatchConfirmL2] = useState<string | null>(null)
+  const [batchConfirm, setBatchConfirm] = useState<{
+    l2Code: string
+    level: 1 | 2
+  } | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
 
   function loadAssessment(value: Assessment) {
     setAssessment(value)
@@ -259,7 +260,7 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleBatchFill(l2Code: string) {
+  async function handleBatchFill(l2Code: string, currentLevel: 1 | 2) {
     if (!assessment) return
     setError('')
     setMessage('')
@@ -267,13 +268,13 @@ export function AssessmentGapPage() {
       const result = await batchFillL2(
         assessment.id,
         l2Code,
-        1,
+        currentLevel,
         assessment.revision ?? 1,
       )
       setDetails((current) =>
         current.map((detail) =>
-          l2Of(detail) === l2Code && detail.current_level == null
-            ? { ...detail, current_level: 1 }
+          result.updated_l3_codes.includes(detail.l3_code)
+            ? { ...detail, current_level: currentLevel }
             : detail,
         ),
       )
@@ -282,8 +283,10 @@ export function AssessmentGapPage() {
           ? { ...current, revision: result.revision ?? current.revision }
           : current,
       )
-      setBatchConfirmL2(null)
-      setMessage('已将本 L2 未填写项批量设为 1；已有值保持不变。')
+      setBatchConfirm(null)
+      setMessage(
+        `已将本 L2 真正空值批量设为 ${currentLevel}；已有值、沿用值和显式清空项保持不变。`,
+      )
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       setError(
@@ -306,10 +309,27 @@ export function AssessmentGapPage() {
         setMessage('已提交，Gap 即时生成。等待 Buddy 复核。')
         return
       }
-      const result = await submitAssessment(
-        assessment.id,
-        assessment.revision ?? 1,
+      let revision = assessment.revision ?? 1
+      const changed = details.filter(
+        (detail) => detail.id != null && dirtyIds.has(detail.id),
       )
+      if (changed.length) {
+        const saved = await saveDraft(assessment.id, changed, revision)
+        revision = saved.revision ?? revision + 1
+        const autoCancelled = saved.auto_cancelled_plan_candidates ?? []
+        setDetails((current) =>
+          current.map((detail) =>
+            autoCancelled.includes(detail.l3_code)
+              ? { ...detail, plan_candidate: false }
+              : detail,
+          ),
+        )
+        setAssessment((current) =>
+          current ? { ...current, revision } : current,
+        )
+        setDirtyIds(new Set())
+      }
+      const result = await submitAssessment(assessment.id, revision)
       loadAssessment(await getAssessment(assessment.id))
       setMessage(
         (result.auto_cancelled_plan_candidates ?? []).length
@@ -332,6 +352,8 @@ export function AssessmentGapPage() {
     setActiveDomain(l1Of(detail))
     setExpandedL2((current) => new Set(current).add(l2Of(detail)))
     setSearch('')
+    setSearchActiveIndex(-1)
+    searchInputRef.current?.focus()
     setTimeout(() => {
       const row = document.getElementById(
         `row-${detail.id}`,
@@ -500,11 +522,45 @@ export function AssessmentGapPage() {
             <option value="计划候选">计划候选</option>
           </select>
           <input
+            ref={searchInputRef}
             className={s.searchBox}
             aria-label="搜索全部能力项"
             placeholder="搜索全部 L3"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              setSearchActiveIndex(event.target.value.trim() ? 0 : -1)
+            }}
+            role="combobox"
+            aria-expanded={searchResults.length > 0}
+            aria-controls="assessment-search-results"
+            aria-activedescendant={
+              searchActiveIndex >= 0
+                ? `search-result-${searchResults[searchActiveIndex]?.id}`
+                : undefined
+            }
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setSearch('')
+                setSearchActiveIndex(-1)
+                searchInputRef.current?.focus()
+                return
+              }
+              if (!searchResults.length) return
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault()
+                setSearchActiveIndex((current) => {
+                  const base = current < 0 ? 0 : current
+                  return event.key === 'ArrowDown'
+                    ? (base + 1) % searchResults.length
+                    : (base - 1 + searchResults.length) % searchResults.length
+                })
+              } else if (event.key === 'Enter' && searchActiveIndex >= 0) {
+                event.preventDefault()
+                locateDetail(searchResults[searchActiveIndex])
+              }
+            }}
           />
           <button
             type="button"
@@ -516,13 +572,19 @@ export function AssessmentGapPage() {
           {searchResults.length > 0 && (
             <div
               className={s.searchResults}
+              id="assessment-search-results"
               role="listbox"
               aria-label="搜索结果"
             >
-              {searchResults.map((detail) => (
+              {searchResults.map((detail, resultIndex) => (
                 <button
                   type="button"
                   key={detail.id}
+                  id={`search-result-${detail.id}`}
+                  role="option"
+                  aria-selected={searchActiveIndex === resultIndex}
+                  tabIndex={-1}
+                  onMouseEnter={() => setSearchActiveIndex(resultIndex)}
                   onClick={() => locateDetail(detail)}
                 >
                   {detail.l3_name ?? detail.l3_code} ·{' '}
@@ -563,27 +625,38 @@ export function AssessmentGapPage() {
                     </small>
                     {editable &&
                       items.some((item) => item.current_level == null) &&
-                      (batchConfirmL2 === l2Code ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            void handleBatchFill(l2Code)
-                          }}
-                        >
-                          确认填 1
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setBatchConfirmL2(l2Code)
-                          }}
-                        >
-                          批量填空值
-                        </button>
-                      ))}
+                      [1, 2].map((level) => {
+                        const typedLevel = level as 1 | 2
+                        const confirming =
+                          batchConfirm?.l2Code === l2Code &&
+                          batchConfirm?.level === typedLevel
+                        return confirming ? (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void handleBatchFill(l2Code, typedLevel)
+                            }}
+                          >
+                            确认填 {level}
+                          </button>
+                        ) : (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setBatchConfirm({
+                                l2Code,
+                                level: typedLevel,
+                              })
+                            }}
+                          >
+                            批量填 {level}
+                          </button>
+                        )
+                      })}
                   </span>
                 </div>
                 {open && (
@@ -744,7 +817,8 @@ export function AssessmentGapPage() {
                                     !applicable ||
                                     detail.current_level == null ||
                                     target == null ||
-                                    (gap != null && gap <= 0)
+                                    (gap != null && gap <= 0) ||
+                                    Boolean(reason)
                                   }
                                   onChange={(event) =>
                                     updateDetail(index, {

@@ -39,6 +39,7 @@ export type AssessmentDetail = {
   inherited_from_assessment_id?: number | null
   inherited_current_level?: number | null
   inherited_evidence_note?: string | null
+  current_level_explicitly_cleared?: boolean
 }
 
 export type GapSummary = {
@@ -82,7 +83,7 @@ export async function getAssessment(id: number): Promise<Assessment> {
 export async function saveDraft(
   id: number,
   details: AssessmentDetail[],
-  expectedRevision?: number,
+  expectedRevision: number,
 ): Promise<{
   ok: boolean
   revision?: number
@@ -137,7 +138,7 @@ export async function batchFillL2(
 
 export async function submitAssessment(
   id: number,
-  expectedRevision?: number,
+  expectedRevision: number,
 ): Promise<{
   ok: boolean
   revision?: number

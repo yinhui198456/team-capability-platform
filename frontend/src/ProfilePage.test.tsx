@@ -306,7 +306,9 @@ describe('ProfilePage', () => {
       expect(screen.getByLabelText('查看成员')).toBeTruthy()
     })
 
-    expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
+    await waitFor(() => {
+      expect(screen.getByText(/成员：Member（member）/)).toBeTruthy()
+    })
     expect(
       screen.getByText(/数据范围：负责成员/, { selector: 'p' }),
     ).toBeTruthy()

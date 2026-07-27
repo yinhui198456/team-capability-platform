@@ -17,6 +17,10 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
+      const created = await page.request.post('/api/assessments', {
+        data: { year: 2026, assessment_type: '年度' },
+      })
+      expect(created.ok()).toBeTruthy()
       await page.goto('/capability/assessment')
       await expect(
         page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
@@ -63,17 +67,45 @@ for (const viewport of VIEWPORTS) {
       const metrics = await page
         .getByTestId('assessment-main-area')
         .evaluate((element) => {
-          const main = element.getBoundingClientRect()
-          const table = element.querySelector('table')?.getBoundingClientRect()
+          const visible = (rect: DOMRect) => {
+            const left = Math.max(0, rect.left)
+            const top = Math.max(0, rect.top)
+            const right = Math.min(window.innerWidth, rect.right)
+            const bottom = Math.min(window.innerHeight, rect.bottom)
+            return {
+              width: Math.max(0, right - left),
+              height: Math.max(0, bottom - top),
+            }
+          }
+          const main = visible(element.getBoundingClientRect())
+          const tableElement = element.querySelector('table')
+          const table = tableElement
+            ? visible(tableElement.getBoundingClientRect())
+            : { width: 0, height: 0 }
           const rows = [...element.querySelectorAll('tbody tr')].filter(
             (row) => {
               const rect = row.getBoundingClientRect()
               return rect.top >= 0 && rect.bottom <= window.innerHeight
             },
           ).length
-          return { mainWidth: main.width, tableWidth: table?.width ?? 0, rows }
+          const sticky = document.querySelector('[class*="stickyActions"]')
+          const stickyRect = sticky?.getBoundingClientRect()
+          const visibleRows = [...element.querySelectorAll('tbody tr')].filter(
+            (row) => {
+              const rect = row.getBoundingClientRect()
+              return rect.top < window.innerHeight && rect.bottom > 0
+            },
+          )
+          const lastVisibleRow = visibleRows.at(-1)?.getBoundingClientRect()
+          return {
+            mainArea: main.width * main.height,
+            tableArea: table.width * table.height,
+            rows,
+            lastVisibleRowBottom: lastVisibleRow?.bottom ?? 0,
+            stickyTop: stickyRect?.top ?? window.innerHeight,
+          }
         })
-      expect(metrics.tableWidth / metrics.mainWidth).toBeGreaterThanOrEqual(0.7)
+      expect(metrics.tableArea / metrics.mainArea).toBeGreaterThanOrEqual(0.7)
       expect(metrics.rows).toBeGreaterThanOrEqual(
         viewport.name === '1920x1080'
           ? 8
@@ -84,6 +116,9 @@ for (const viewport of VIEWPORTS) {
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(viewport.width)
+      expect(metrics.lastVisibleRowBottom).toBeLessThanOrEqual(
+        metrics.stickyTop + 1,
+      )
 
       await page.goto('/capability/gap')
       await expect(

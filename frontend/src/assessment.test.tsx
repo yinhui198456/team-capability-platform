@@ -37,6 +37,7 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
     created_at: '',
     submitted_at: null,
     archived_at: null,
+    revision: 1,
     details: [
       {
         id: 1,
@@ -168,6 +169,78 @@ describe('AssessmentGapPage', () => {
       (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true)
+  })
+
+  it.each([
+    [1, 2, 'old evidence'],
+    [3, 4, 'old evidence'],
+  ])(
+    'requires new evidence when inherited level increases from %s to %s',
+    async (inheritedLevel, currentLevel, evidence) => {
+      const draft = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: currentLevel,
+            evidence_note: evidence,
+            inherited_from_assessment_id: 6,
+            inherited_current_level: inheritedLevel,
+            inherited_evidence_note: evidence,
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByText('需更新依据')
+      expect(
+        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+      expect(
+        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+          .disabled,
+      ).toBe(true)
+    },
+  )
+
+  it('saves dirty details with PATCH before direct submit', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 1,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '2' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() => expect(submit).toHaveBeenCalled())
+    expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+      submit.mock.invocationCallOrder[0],
+    )
+    expect(submit).toHaveBeenCalledWith(7, 2)
   })
 
   it('sends a personal adjustment without calculated target fields', async () => {
@@ -408,19 +481,23 @@ describe('assessment api helpers', () => {
   })
 
   it('saveDraft omits server-calculated target fields', async () => {
-    await assessmentApi.saveDraft(7, [
-      {
-        l3_code: 'P01.01.01',
-        current_level: 2,
-        target_level: 5,
-        standard_target_applicable: true,
-        standard_target_level: 4,
-        target_adjusted: true,
-        adjusted_target_level: 5,
-        target_adjustment_reason: '晋升准备',
-        gap_value: 3,
-      },
-    ])
+    await assessmentApi.saveDraft(
+      7,
+      [
+        {
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 5,
+          standard_target_applicable: true,
+          standard_target_level: 4,
+          target_adjusted: true,
+          adjusted_target_level: 5,
+          target_adjustment_reason: '晋升准备',
+          gap_value: 3,
+        },
+      ],
+      1,
+    )
     const body = JSON.parse(
       (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
     )
@@ -433,5 +510,6 @@ describe('assessment api helpers', () => {
       evidence_note: null,
       plan_candidate: false,
     })
+    expect(body.expected_revision).toBe(1)
   })
 })
