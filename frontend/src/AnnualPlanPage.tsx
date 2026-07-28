@@ -88,6 +88,7 @@ export function AnnualPlanPage() {
   const totalEstimatedHours = formatEstimatedHoursSummary(
     plan?.estimated_hours_summary,
   )
+  const hasUnparsedHours = plan?.estimated_hours_summary?.has_unparsed ?? false
   const totalActualHours = monthlyHours.reduce(
     (sum, item) => sum + item.total_hours,
     0,
@@ -164,7 +165,10 @@ export function AnnualPlanPage() {
         </div>
         <div>
           <span>预计时长</span>
-          <strong>{totalEstimatedHours}</strong>
+          <strong>
+            {totalEstimatedHours}
+            {hasUnparsedHours && '（部分计划项耗时为文本，未计入汇总）'}
+          </strong>
         </div>
         <div>
           <span>实际时长</span>

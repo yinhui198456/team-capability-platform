@@ -129,6 +129,7 @@ export function AnnualPlanTaskPage() {
   const totalEstimated = formatEstimatedHoursSummary(
     plan?.estimated_hours_summary,
   )
+  const hasUnparsedHours = plan?.estimated_hours_summary?.has_unparsed ?? false
   const totalActual = Object.values(tasks).reduce(
     (sum, t) => sum + (t.task.actual_hours ?? 0),
     0,
@@ -181,7 +182,10 @@ export function AnnualPlanTaskPage() {
         </div>
         <div className={s.summaryCard}>
           <dt>预计时长</dt>
-          <dd>{totalEstimated}</dd>
+          <dd>
+            {totalEstimated}
+            {hasUnparsedHours && '（部分计划项耗时为文本，未计入汇总）'}
+          </dd>
         </div>
         <div className={s.summaryCard}>
           <dt>实际时长</dt>

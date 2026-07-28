@@ -5,12 +5,14 @@ import { mockBuddyReviewData } from '../fixtures/buddy-review-mock'
 import { mockTeamAnalyticsData } from '../fixtures/team-analytics-mock'
 
 const rangeHours = {
-  raw: '4–6',
+  raw: '4–6h',
   min_hours: 4,
   max_hours: 6,
   is_valid: true,
   is_range: true,
 }
+
+const unparsedHours = '约半天'
 
 test.describe('Issue #52 P1 regressions', () => {
   test('keeps an unmapped historic L3 in the Buddy review workspace', async ({
@@ -110,7 +112,7 @@ test.describe('Issue #52 P1 regressions', () => {
                 plan_item_learning_material: null,
                 plan_item_learning_task_content: '区间任务',
                 plan_item_expected_output: null,
-                plan_item_estimated_hours: '4–6',
+                plan_item_estimated_hours: '4–6h',
                 plan_item_estimated_hours_parsed: rangeHours,
                 plan_item_target_month: 7,
               },
@@ -153,7 +155,7 @@ test.describe('Issue #52 P1 regressions', () => {
                 learning_material: null,
                 learning_task_content: '区间任务',
                 expected_output: null,
-                estimated_hours: '4–6',
+                estimated_hours: '4–6h',
                 estimated_hours_parsed: rangeHours,
                 plan_start_date: null,
                 plan_end_date: null,
@@ -177,6 +179,74 @@ test.describe('Issue #52 P1 regressions', () => {
       page.getByRole('heading', { name: '年度成长计划' }),
     ).toBeVisible()
     await expect(page.getByText('4–6 h').first()).toBeVisible()
+    await expect(page.getByText('46 h', { exact: true })).not.toBeVisible()
+  })
+
+  test('shows raw text and unparsed warning for unparseable estimated hours', async ({
+    page,
+  }) => {
+    await page.route(
+      /\/api\/planning\/annual-plan\?year=\d+$/,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 1,
+            member_id: 3,
+            year: 2026,
+            plan_cycle: 12,
+            status: '执行中',
+            start_date: null,
+            end_date: null,
+            created_at: '2026-01-01T00:00:00Z',
+            estimated_hours_summary: {
+              min_hours: 0,
+              max_hours: 0,
+              has_values: false,
+              has_unparsed: true,
+            },
+            items: [
+              {
+                id: 1,
+                annual_growth_plan_id: 1,
+                growth_goal_id: 1,
+                l3_code: 'P01.01.01',
+                l3_name: '文本耗时路径',
+                current_level: 1,
+                target_level: 3,
+                priority: '中',
+                learning_material: null,
+                learning_task_content: '文本任务',
+                expected_output: null,
+                estimated_hours: unparsedHours,
+                estimated_hours_parsed: {
+                  raw: unparsedHours,
+                  min_hours: null,
+                  max_hours: null,
+                  is_valid: false,
+                  is_range: false,
+                },
+                plan_start_date: null,
+                plan_end_date: null,
+                target_month: 7,
+                status: '进行中',
+              },
+            ],
+          }),
+        })
+      },
+    )
+
+    await loginAs(page, 'member')
+    await page.goto('/growth/annual-plan')
+    await expect(
+      page.getByRole('heading', { name: '年度成长计划' }),
+    ).toBeVisible()
+    await expect(page.getByText(unparsedHours)).toBeVisible()
+    await expect(
+      page.getByText('部分计划项耗时为文本，未计入汇总'),
+    ).toBeVisible()
     await expect(page.getByText('46 h', { exact: true })).not.toBeVisible()
   })
 })

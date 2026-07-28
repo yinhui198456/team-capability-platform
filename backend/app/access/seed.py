@@ -150,7 +150,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
                     "current_level": (
                         2
                         if is_demo_gap
-                        else detail["target_level"] if applicable else None
+                        else detail["target_level"]
+                        if applicable
+                        else None
                     ),
                     "evidence_note": (
                         "本地演示自评" if is_demo_gap else "本地演示已达标项"

@@ -3,7 +3,9 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 
 _HOURS_PATTERN = re.compile(
-    r"^\s*(?P<minimum>\d+(?:\.\d+)?)\s*(?:(?:-|–|—|~|～)\s*(?P<maximum>\d+(?:\.\d+)?))?\s*$"
+    r"^\s*(?P<minimum>\d+(?:\.\d+)?)\s*"
+    r"(?:(?:-|–|—|~|～)\s*(?P<maximum>\d+(?:\.\d+)?))?\s*"
+    r"(?P<unit>[hH])?\s*$"
 )
 
 

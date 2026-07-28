@@ -234,6 +234,67 @@ describe('ProfilePage', () => {
     ).toBeTruthy()
   })
 
+  it('renders hour-suffix estimated hours as normalized ranges', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    const profileWithRange: planningApi.CapabilityProfile = {
+      ...baseProfile,
+      annual_plan: {
+        ...baseProfile.annual_plan!,
+        items: [
+          {
+            ...baseProfile.annual_plan!.items[0],
+            estimated_hours: '4–6h',
+            estimated_hours_parsed: {
+              raw: '4–6h',
+              min_hours: 4,
+              max_hours: 6,
+              is_valid: true,
+              is_range: true,
+            },
+            learning_task: {
+              ...baseProfile.annual_plan!.items[0].learning_task!,
+              plan_item_estimated_hours: '4–6h',
+              plan_item_estimated_hours_parsed: {
+                raw: '4–6h',
+                min_hours: 4,
+                max_hours: 6,
+                is_valid: true,
+                is_range: true,
+              },
+            },
+          },
+        ],
+      },
+    }
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue(
+      profileWithRange,
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(
+        screen.getAllByText((content) => content.includes('4–6 h')).length,
+      ).toBeGreaterThanOrEqual(1)
+    })
+    expect(screen.queryByText('46 h')).toBeNull()
+    expect(screen.queryByText('4–6h h')).toBeNull()
+  })
+
   it('shows empty state when profile data is missing', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 1,

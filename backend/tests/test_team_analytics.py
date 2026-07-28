@@ -613,7 +613,7 @@ def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
     team_analytics_schema.execute(
         """
         UPDATE plan_item
-        SET estimated_hours = '4–6'
+        SET estimated_hours = '4–6h'
         WHERE target_month = 3
         """
     )

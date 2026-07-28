@@ -15,6 +15,36 @@ def profile_schema(connection: psycopg.Connection) -> psycopg.Connection:
     return _initialize_profile_schema.__wrapped__(connection)
 
 
+def test_member_dashboard_aggregates_hour_suffix_ranges(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+
+    profile_schema.execute(
+        """
+        UPDATE plan_item
+        SET estimated_hours = '4–6h'
+        WHERE annual_growth_plan_id IN (
+            SELECT id FROM annual_growth_plan
+            WHERE member_id = (
+                SELECT id FROM tcp_user WHERE username = 'member_profile'
+            )
+        )
+        """
+    )
+    profile_schema.commit()
+
+    status, body, _ = _request(
+        "GET", "/api/planning/member-dashboard?year=2026", cookies=member_cookies
+    )
+
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["annual_planned_hours_min"] == 4
+    assert body["summary"]["annual_planned_hours_max"] == 6
+    assert body["summary"]["annual_planned_hours_has_unparsed"] is False
+
+
 def test_member_dashboard_aggregates_only_current_member_data(
     profile_schema: psycopg.Connection,
 ) -> None:
