@@ -1,9 +1,12 @@
+import path from 'node:path'
+
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
+  { name: '1920x1080', width: 1920, height: 1080 },
   { name: '1280x800', width: 1280, height: 800 },
 ] as const
 
@@ -16,6 +19,10 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
+      const created = await page.request.post('/api/assessments', {
+        data: { year: 2026, assessment_type: '年度' },
+      })
+      expect(created.ok()).toBeTruthy()
       await page.goto('/capability/assessment')
       await expect(
         page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
@@ -23,59 +30,117 @@ for (const viewport of VIEWPORTS) {
       const createDraft = page.getByRole('button', {
         name: '创建年度自评草稿',
       })
+      const summary = page.getByLabel('评估摘要')
+      await expect(createDraft.or(summary)).toBeVisible()
       if (await createDraft.isVisible()) {
         await createDraft.click()
       }
-      await expect(page.getByLabel('评估摘要')).toBeVisible()
-      // Wait for assessment tables and Gap sidebar to render before screenshots
-      await expect(page.getByTestId('assessment-table')).toHaveCount(6)
-      await expect(page.getByTestId('gap-sidebar')).toBeVisible()
+      await expect(summary).toBeVisible({ timeout: 10000 })
+      await expect(page.getByTestId('assessment-table').first()).toBeVisible()
+      await expect(page.getByTestId('gap-sidebar')).toHaveCount(0)
     })
 
     test('semantic alignment', async ({ page }) => {
       const summary = page.getByLabel('评估摘要')
-      await expect(summary).toContainText('评估进度')
+      await expect(summary).toContainText('进度')
       await expect(summary).toContainText('未完成')
-      await expect(summary).toContainText('最新 Review')
+      await expect(summary).toContainText('Review')
 
       const tables = page.getByTestId('assessment-table')
-      await expect(tables).toHaveCount(6)
+      await expect(tables.first()).toBeVisible()
       const firstTable = tables.first()
       await expect(firstTable).toContainText('L3 能力项')
-      await expect(firstTable).toContainText('建议起始')
-      await expect(firstTable).toContainText('当前 (1-5)')
+      await expect(firstTable).toContainText('当前')
       await expect(firstTable).toContainText('标准目标')
       await expect(firstTable).toContainText('个人调整')
       await expect(firstTable).toContainText('最终目标')
       await expect(firstTable).toContainText('Gap')
       await expect(firstTable).toContainText('优先级')
 
-      const domainLabels = page.getByTestId('domain-label')
-      const domains = await domainLabels.allTextContents()
-      expect(domains).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining('P01 · 数据基础设施'),
-          expect.stringContaining('P02 · AI Infra / Agent'),
-          expect.stringContaining('P03 · 工程编码'),
-          expect.stringContaining('C01 · 基本办公能力'),
-          expect.stringContaining('C02 · 沟通协作'),
-          expect.stringContaining('C03 · 学习创新'),
-        ]),
-      )
+      await expect(
+        page.getByRole('navigation', { name: '一级能力域导航' }),
+      ).toBeVisible()
+      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
+      await page.getByRole('button', { name: '查看 Gap 摘要' }).click()
+      await expect(page.getByTestId('gap-drawer')).toBeVisible()
+      await page.getByRole('button', { name: '关闭' }).click()
+      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
 
-      const gapSidebar = page.getByTestId('gap-sidebar')
-      await expect(gapSidebar).toContainText('本次评估整体 Gap')
-      await expect(gapSidebar).toContainText('Gap 总数')
-      await expect(gapSidebar).toContainText('平均 Gap')
-      await expect(gapSidebar).toContainText('高')
-      await expect(gapSidebar).toContainText('中')
-      await expect(gapSidebar).toContainText('低')
+      const metrics = await page
+        .getByTestId('assessment-content-area')
+        .evaluate((content) => {
+          const visible = (rect: DOMRect) => {
+            const left = Math.max(0, rect.left)
+            const top = Math.max(0, rect.top)
+            const right = Math.min(window.innerWidth, rect.right)
+            const bottom = Math.min(window.innerHeight, rect.bottom)
+            return {
+              width: Math.max(0, right - left),
+              height: Math.max(0, bottom - top),
+            }
+          }
+          const contentRect = visible(content.getBoundingClientRect())
+          const mainElement = content.querySelector(
+            '[data-testid="assessment-main-area"]',
+          )
+          const main = mainElement
+            ? visible(mainElement.getBoundingClientRect())
+            : { width: 0, height: 0 }
+          const sticky = document.querySelector('[class*="stickyActions"]')
+          const stickyRect = sticky?.getBoundingClientRect()
+          const stickyTop = stickyRect?.top ?? window.innerHeight
+          const rows = [...content.querySelectorAll('tbody tr')].filter(
+            (row) => {
+              const rect = row.getBoundingClientRect()
+              return rect.top >= 0 && rect.bottom <= stickyTop
+            },
+          ).length
+          const visibleRows = [...content.querySelectorAll('tbody tr')].filter(
+            (row) => {
+              const rect = row.getBoundingClientRect()
+              return rect.top >= 0 && rect.bottom <= stickyTop
+            },
+          )
+          const lastVisibleRow = visibleRows.at(-1)?.getBoundingClientRect()
+          return {
+            contentArea: contentRect.width * contentRect.height,
+            tableArea: main.width * main.height,
+            rows,
+            lastVisibleRowBottom: lastVisibleRow?.bottom ?? 0,
+            stickyTop,
+          }
+        })
+      const areaRatio = metrics.tableArea / metrics.contentArea
+      console.log(`DOM_METRICS ${JSON.stringify(metrics)}`)
+      console.log(
+        JSON.stringify({
+          viewport: viewport.name,
+          contentArea: metrics.contentArea,
+          tableArea: metrics.tableArea,
+          areaRatio,
+          completeRows: metrics.rows,
+        }),
+      )
+      expect(areaRatio).toBeGreaterThanOrEqual(0.7)
+      expect(metrics.rows).toBeGreaterThanOrEqual(
+        viewport.name === '1920x1080'
+          ? 8
+          : viewport.name === '1440x900'
+            ? 6
+            : 1,
+      )
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(viewport.width)
+      expect(metrics.lastVisibleRowBottom).toBeLessThanOrEqual(
+        metrics.stickyTop + 1,
+      )
 
       await page.goto('/capability/gap')
       await expect(
         page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
       ).toBeVisible()
-      await expect(page.getByTestId('assessment-table')).toHaveCount(6)
+      await expect(page.getByTestId('assessment-table').first()).toBeVisible()
     })
 
     test('assessment overview screenshot', async ({ page }) => {
@@ -83,6 +148,13 @@ for (const viewport of VIEWPORTS) {
         `ui-02-assessment-overview-${viewport.name}.png`,
         { maxDiffPixelRatio: 0.05 },
       )
+      const evidenceDir = process.env.ISSUE50_SCREENSHOT_DIR
+      if (evidenceDir) {
+        await page.screenshot({
+          path: path.join(evidenceDir, `assessment-${viewport.name}.png`),
+          fullPage: false,
+        })
+      }
     })
   })
 }

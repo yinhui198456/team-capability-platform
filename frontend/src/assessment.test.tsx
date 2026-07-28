@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -37,6 +38,7 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
     created_at: '',
     submitted_at: null,
     archived_at: null,
+    revision: 1,
     details: [
       {
         id: 1,
@@ -69,6 +71,44 @@ describe('AssessmentGapPage', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('uses a single L1 view and keeps Gap details in a closed drawer', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        ...mockDraft(),
+        details: undefined,
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            l2_name: '数据基础',
+            current_level: 2,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    expect(screen.queryByTestId('gap-sidebar')).toBeNull()
+    expect(screen.queryByTestId('gap-drawer')).toBeNull()
+    const content = screen.getByTestId('assessment-content-area')
+    expect(
+      within(content).getByRole('heading', {
+        name: '能力自评与 Gap 分析',
+      }),
+    ).toBeTruthy()
+    expect(within(content).getByTestId('assessment-main-area')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /P01/ })).toBeTruthy()
   })
 
   it('renders create button', async () => {
@@ -137,6 +177,409 @@ describe('AssessmentGapPage', () => {
       (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true)
+  })
+
+  it.each([
+    [1, 2, 'old evidence'],
+    [3, 4, 'old evidence'],
+  ])(
+    'requires new evidence when inherited level increases from %s to %s',
+    async (inheritedLevel, currentLevel, evidence) => {
+      const draft = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: currentLevel,
+            evidence_note: evidence,
+            inherited_from_assessment_id: 6,
+            inherited_current_level: inheritedLevel,
+            inherited_evidence_note: evidence,
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByText('需更新依据')
+      expect(
+        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+      expect(
+        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+          .disabled,
+      ).toBe(true)
+    },
+  )
+
+  it.each([
+    [null, ''],
+    [null, '   '],
+    ['旧依据', ' 旧依据 '],
+  ])(
+    'requires normalized new evidence for an inherited increase (%s → %s)',
+    async (inheritedEvidence, evidence) => {
+      const draft = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            evidence_note: evidence as string,
+            inherited_from_assessment_id: 6,
+            inherited_current_level: 1,
+            inherited_evidence_note: inheritedEvidence as string | null,
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByText('需更新依据')
+      expect(
+        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+      expect(
+        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+          .disabled,
+      ).toBe(true)
+    },
+  )
+
+  it('allows an inherited increase with a non-empty normalized new evidence', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: ' 新依据 ',
+          inherited_from_assessment_id: 6,
+          inherited_current_level: 1,
+          inherited_evidence_note: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('本次已更新')
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+    expect(
+      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('excludes not-applicable items from page, L1, and L2 progress', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
+          current_level: 2,
+        },
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_code: 'P01.01.02',
+          current_level: null,
+          target_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 1/1')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
+    expect(screen.getByRole('button', { name: /P01/ }).textContent).toContain(
+      '1/1',
+    )
+    expect(
+      within(screen.getByTestId('assessment-main-area')).getByText('1/1'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
+    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+  })
+
+  it('does not block progress or locate when every item is not applicable', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: null,
+          target_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 0/0')
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
+    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
+    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+  })
+
+  it('blocks incomplete personal adjustments and unblocks after canceling them', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    const submit = screen.getByRole('button', { name: '提交自评' })
+    const adjustment = screen.getByLabelText('申请调整 P01.01.01')
+    fireEvent.click(adjustment)
+    expect(screen.getByText('需填写调整原因')).toBeTruthy()
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(adjustment)
+    await waitFor(() =>
+      expect((submit as HTMLButtonElement).disabled).toBe(false),
+    )
+  })
+
+  it('supports a valid personal adjustment target and reason', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.click(screen.getByLabelText('申请调整 P01.01.01'))
+    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
+      target: { value: '调整原因' },
+    })
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('allows an unchanged inherited value with valid inherited evidence', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '继承依据',
+          inherited_from_assessment_id: 6,
+          inherited_current_level: 2,
+          inherited_evidence_note: '继承依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('沿用上次评估')
+    expect(
+      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
+    expect(
+      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+        .disabled,
+    ).toBe(false)
+  })
+
+  it('does not offer L2 batch fill when the visible item is not applicable', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: null,
+          standard_target_applicable: false,
+          standard_target_level: null,
+          target_level: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('不适用')
+    expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '批量填 2' })).toBeNull()
+  })
+
+  it('saves dirty details with PATCH before direct submit', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 1,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '2' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() => expect(submit).toHaveBeenCalled())
+    expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+      submit.mock.invocationCallOrder[0],
+    )
+    expect(submit).toHaveBeenCalledWith(7, 2)
+  })
+
+  it('replaces the Gap summary after draft save', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          gap_value: 2,
+        },
+      ],
+      gap_summary: {
+        total_gaps: 1,
+        avg_gap: 2,
+        high_priority: 0,
+        medium_priority: 1,
+        low_priority: 0,
+      },
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({
+      ok: true,
+      revision: 2,
+      gap_summary: {
+        total_gaps: 0,
+        avg_gap: 0,
+        high_priority: 0,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '4' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 0')
+    })
+  })
+
+  it('replaces the Gap summary after L2 batch fill', async () => {
+    const draft = mockDraft({
+      gap_summary: {
+        total_gaps: 0,
+        avg_gap: 0,
+        high_priority: 0,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'batchFillL2').mockResolvedValue({
+      revision: 2,
+      updated_l3_codes: ['P01.01.01'],
+      skipped_l3_codes: [],
+      gap_summary: {
+        total_gaps: 1,
+        avg_gap: 4,
+        high_priority: 1,
+        medium_priority: 0,
+        low_priority: 0,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('标准 4')
+    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 1')
+    })
   })
 
   it('sends a personal adjustment without calculated target fields', async () => {
@@ -377,19 +820,23 @@ describe('assessment api helpers', () => {
   })
 
   it('saveDraft omits server-calculated target fields', async () => {
-    await assessmentApi.saveDraft(7, [
-      {
-        l3_code: 'P01.01.01',
-        current_level: 2,
-        target_level: 5,
-        standard_target_applicable: true,
-        standard_target_level: 4,
-        target_adjusted: true,
-        adjusted_target_level: 5,
-        target_adjustment_reason: '晋升准备',
-        gap_value: 3,
-      },
-    ])
+    await assessmentApi.saveDraft(
+      7,
+      [
+        {
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 5,
+          standard_target_applicable: true,
+          standard_target_level: 4,
+          target_adjusted: true,
+          adjusted_target_level: 5,
+          target_adjustment_reason: '晋升准备',
+          gap_value: 3,
+        },
+      ],
+      1,
+    )
     const body = JSON.parse(
       (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
     )
@@ -402,5 +849,6 @@ describe('assessment api helpers', () => {
       evidence_note: null,
       plan_candidate: false,
     })
+    expect(body.expected_revision).toBe(1)
   })
 })

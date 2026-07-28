@@ -180,6 +180,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                     "target_adjustment_reason": " ",
                 }
             ],
+            expected_revision=1,
         )
 
     save_assessment_draft(
@@ -197,6 +198,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                 "plan_candidate": True,
             }
         ],
+        expected_revision=1,
     )
 
     detail = get_assessment(standard_target_schema, assessment_id)["details"][0]
@@ -232,6 +234,7 @@ def test_not_applicable_item_rejects_adjustment_and_plan_candidate(
                     "plan_candidate": True,
                 }
             ],
+            expected_revision=1,
         )
 
 
@@ -259,6 +262,7 @@ def test_batch_save_is_atomic_and_requires_every_snapshot_row(
             assessment_id,
             member_id,
             [{"l3_code": rows[0][1], "current_level": 2}],
+            expected_revision=1,
         )
 
     details = get_assessment(standard_target_schema, assessment_id)["details"]
@@ -285,6 +289,7 @@ def test_concurrent_save_waits_for_assessment_row_lock(
                 assessment_id,
                 member_id,
                 [{"l3_code": code, "current_level": 2}],
+                expected_revision=1,
             )
 
     executor = ThreadPoolExecutor(max_workers=1)
@@ -328,7 +333,9 @@ def test_unresolved_legacy_draft_cannot_be_submitted(
     standard_target_schema.commit()
 
     with pytest.raises(ValueError, match="requires compatibility repair"):
-        submit_assessment(standard_target_schema, assessment_id, member_id)
+        submit_assessment(
+            standard_target_schema, assessment_id, member_id, expected_revision=1
+        )
 
     status = standard_target_schema.execute(
         "SELECT status FROM assessment WHERE id = %s", (assessment_id,)

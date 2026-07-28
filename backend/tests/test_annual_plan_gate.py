@@ -179,13 +179,17 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         {
             "details": standard_target_payload(
                 connection, assessment_id, desired_details
-            )
+            ),
+            "expected_revision": 1,
         },
         cookies=cookies,
     )
     assert status == 200
     status, body, _ = _request(
-        "POST", f"/api/assessments/{assessment_id}/submit", {}, cookies=cookies
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=cookies,
     )
     assert status == 200
     return assessment_id
@@ -339,13 +343,17 @@ def test_new_pending_version_blocks_gate_again(
                         "plan_candidate": True,
                     }
                 ],
-            )
+            ),
+            "expected_revision": 1,
         },
         cookies=member_cookies,
     )
     assert status == 200
     status, _, _ = _request(
-        "POST", f"/api/assessments/{new_id}/submit", {}, cookies=member_cookies
+        "POST",
+        f"/api/assessments/{new_id}/submit",
+        {"expected_revision": 2},
+        cookies=member_cookies,
     )
     assert status == 200
 

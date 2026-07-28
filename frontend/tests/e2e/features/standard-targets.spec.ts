@@ -131,7 +131,7 @@ test.describe('capability standard targets', () => {
       route.fulfill({ status: 200, json: [assessment] }),
     )
     await page.route(/\/api\/assessments\/900(?:\/draft)?$/, async (route) => {
-      if (route.request().method() === 'PUT') {
+      if (route.request().method() === 'PATCH') {
         saved = route.request().postDataJSON()
         await route.fulfill({ status: 200, json: { ok: true } })
         return

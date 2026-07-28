@@ -10,6 +10,7 @@ export type Assessment = {
   created_at: string
   submitted_at: string | null
   archived_at: string | null
+  revision?: number
   details?: AssessmentDetail[]
   gap_summary?: GapSummary
 }
@@ -33,6 +34,12 @@ export type AssessmentDetail = {
   recommended_start_level?: string
   l1_code?: string
   l1_name?: string
+  l2_code?: string
+  l2_name?: string
+  inherited_from_assessment_id?: number | null
+  inherited_current_level?: number | null
+  inherited_evidence_note?: string | null
+  current_level_explicitly_cleared?: boolean
 }
 
 export type GapSummary = {
@@ -57,8 +64,8 @@ export type AssessmentReview = {
 export async function createAssessment(
   year: number,
   assessmentType = '年度',
-): Promise<{ id: number }> {
-  return request<{ id: number }>(
+): Promise<{ id: number; revision?: number }> {
+  return request<{ id: number; revision?: number }>(
     '/api/assessments',
     { method: 'POST' },
     { year, assessment_type: assessmentType },
@@ -76,11 +83,23 @@ export async function getAssessment(id: number): Promise<Assessment> {
 export async function saveDraft(
   id: number,
   details: AssessmentDetail[],
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
+  expectedRevision: number,
+): Promise<{
+  ok: boolean
+  revision?: number
+  auto_cancelled_plan_candidates?: string[]
+  gap_summary?: GapSummary
+}> {
+  return request<{
+    ok: boolean
+    revision?: number
+    auto_cancelled_plan_candidates?: string[]
+    gap_summary?: GapSummary
+  }>(
     `/api/assessments/${id}/draft`,
-    { method: 'PUT' },
+    { method: 'PATCH' },
     {
+      expected_revision: expectedRevision,
       details: details.map((detail) => ({
         l3_code: detail.l3_code,
         current_level: detail.current_level,
@@ -94,11 +113,51 @@ export async function saveDraft(
   )
 }
 
-export async function submitAssessment(id: number): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
+export async function batchFillL2(
+  id: number,
+  l2Code: string,
+  currentLevel: 1 | 2,
+  expectedRevision: number,
+): Promise<{
+  revision: number
+  updated_l3_codes: string[]
+  skipped_l3_codes: string[]
+  auto_cancelled_plan_candidates?: string[]
+  gap_summary?: GapSummary
+}> {
+  return request<{
+    revision: number
+    updated_l3_codes: string[]
+    skipped_l3_codes: string[]
+    auto_cancelled_plan_candidates?: string[]
+    gap_summary?: GapSummary
+  }>(
+    `/api/assessments/${id}/draft/batch-level`,
+    { method: 'POST' },
+    {
+      l2_code: l2Code,
+      current_level: currentLevel,
+      expected_revision: expectedRevision,
+    },
+  )
+}
+
+export async function submitAssessment(
+  id: number,
+  expectedRevision: number,
+): Promise<{
+  ok: boolean
+  revision?: number
+  auto_cancelled_plan_candidates?: string[]
+}> {
+  return request<{
+    ok: boolean
+    revision?: number
+    auto_cancelled_plan_candidates?: string[]
+  }>(
     `/api/assessments/${id}/submit`,
     { method: 'POST' },
-    {},
+    { expected_revision: expectedRevision },
   )
 }
 

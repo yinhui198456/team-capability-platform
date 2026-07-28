@@ -163,8 +163,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             assessment_id,
             member_id,
             details,
+            expected_revision=1,
         )
-        submit_assessment(connection, assessment_id, member_id)
+        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
         assessment_review_id = connection.execute(
             "SELECT id FROM assessment_review WHERE assessment_id = %s",
             (assessment_id,),

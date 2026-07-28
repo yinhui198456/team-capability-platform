@@ -205,7 +205,8 @@ def test_create_draft_save_details_submit_review(
                     "evidence_note": "测试中",
                     "plan_candidate": True,
                 }
-            ]
+            ],
+            "expected_revision": 1,
         },
         cookies=cookies,
     )
@@ -219,7 +220,10 @@ def test_create_draft_save_details_submit_review(
     assert details[0]["gap_value"] == 2
 
     status, body, _ = _request(
-        "POST", f"/api/assessments/{assessment_id}/submit", {}, cookies=cookies
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=cookies,
     )
     assert status == 200
 
@@ -240,6 +244,80 @@ def test_create_draft_save_details_submit_review(
     assert history[0]["conclusion"] is None
 
 
+def test_assessment_writes_require_expected_revision_token(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(assessment_schema, "member_revision_token", ["Member"])
+    cookies = _login(assessment_schema, "member_revision_token")
+    status, body, _ = _request(
+        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+    )
+    assert status == 200
+    assert body is not None
+    assessment_id = body["id"]
+
+    for method in ("PATCH", "PUT"):
+        status, _, _ = _request(
+            method,
+            f"/api/assessments/{assessment_id}/draft",
+            {"details": []},
+            cookies=cookies,
+        )
+        assert status == 422
+    status, _, _ = _request(
+        "POST", f"/api/assessments/{assessment_id}/submit", {}, cookies=cookies
+    )
+    assert status == 422
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["status"] == "草稿"
+    assert assessment["revision"] == 1
+
+
+def test_submit_validation_returns_structured_l3_error(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(assessment_schema, "member_structured_error", ["Member"])
+    assessment_schema.execute(
+        """
+        UPDATE capability_node
+        SET enabled = (code = 'C01.01.01')
+        WHERE node_type = 'L3'
+        """
+    )
+    assessment_schema.commit()
+    cookies = _login(assessment_schema, "member_structured_error")
+    status, body, _ = _request(
+        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+    )
+    assert status == 200
+    assessment_id = body["id"]
+
+    status, _, _ = _request(
+        "PUT",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_code": "C01.01.01", "current_level": 3}],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=cookies,
+    )
+    assert status == 400
+    assert body["detail"] == {
+        "code": "assessment_validation_failed",
+        "l3_code": "C01.01.01",
+        "reason": "requires_evidence",
+        "message": "assessment detail C01.01.01 requires evidence",
+    }
+
+
 def test_member_cannot_view_or_edit_other_draft(
     assessment_schema: psycopg.Connection,
 ) -> None:
@@ -258,7 +336,7 @@ def test_member_cannot_view_or_edit_other_draft(
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
-        {"details": []},
+        {"details": [], "expected_revision": 1},
         cookies=cookies_b,
     )
     assert status == 403
@@ -306,16 +384,16 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
     buddy_id = _create_test_user(assessment_schema, "buddy_a5", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
-    from app.assessment.repository import submit_assessment
-
-    submit_assessment(assessment_schema, assessment_id, member_id)
+    assessment_schema.execute(
+        "UPDATE assessment SET status = '待复核' WHERE id = %s", (assessment_id,)
+    )
     assessment_schema.commit()
 
     cookies = _login(assessment_schema, "member_a5")
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
-        {"details": []},
+        {"details": [], "expected_revision": 1},
         cookies=cookies,
     )
     assert status == 400

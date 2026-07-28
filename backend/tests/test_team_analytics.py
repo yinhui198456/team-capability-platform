@@ -274,10 +274,20 @@ def _submit_and_approve_assessment(
         if detail is None:
             migrated = {
                 "l3_code": snapshot["l3_code"],
-                "current_level": None,
+                "current_level": (
+                    1 if snapshot["standard_target_applicable"] is True else None
+                ),
                 "evidence_note": "非本场景能力项",
                 "plan_candidate": False,
             }
+            if snapshot["l3_code"] == "P02-L2B-L3A":
+                migrated.update(
+                    {
+                        "target_adjusted": True,
+                        "adjusted_target_level": 3,
+                        "target_adjustment_reason": "测试场景默认目标",
+                    }
+                )
         else:
             migrated = dict(detail)
             target_level = migrated.pop("target_level")
@@ -289,8 +299,10 @@ def _submit_and_approve_assessment(
                 }
             )
         migrated_details.append(migrated)
-    save_assessment_draft(connection, assessment_id, member_id, migrated_details)
-    submit_assessment(connection, assessment_id, member_id)
+    save_assessment_draft(
+        connection, assessment_id, member_id, migrated_details, expected_revision=1
+    )
+    submit_assessment(connection, assessment_id, member_id, expected_revision=2)
     pending = get_pending_reviews_for_buddy(connection, buddy_id)
     review = next(r for r in pending if r["assessment_id"] == assessment_id)
     submit_assessment_review(connection, review["id"], buddy_id, "认可", "符合预期")
@@ -571,7 +583,9 @@ def test_team_analytics_aggregates_match_data(
         100.0 / 3, rel=1e-3
     )
     assert attainment[(member_b_id, "P01")]["attainment"] == pytest.approx(75.0)
-    assert attainment[(member_b_id, "P02")]["attainment"] is None
+    assert attainment[(member_b_id, "P02")]["attainment"] == pytest.approx(
+        100.0 / 3, rel=1e-3
+    )
 
     trends = {row["month"]: row for row in body["monthly_trends"]}
     assert trends[3]["planned_count"] == 2
@@ -609,7 +623,7 @@ def test_team_analytics_domain_filter_restricts_aggregates(
 
     kpis = body["kpis"]
     assert kpis["assessment_total_count"] == 2
-    assert kpis["assessment_completion_rate"] == 0.5
+    assert kpis["assessment_completion_rate"] == 1.0
     assert kpis["plan_total_count"] == 1
     assert kpis["plan_completion_rate"] == 0.0
     assert kpis["evidence_total_count"] == 1
