@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useMe } from './catalog'
 import { useYear } from './YearContext'
-import { getTeamAnalytics, type TeamAnalytics } from './planning'
+import {
+  formatCapabilityPath,
+  getTeamAnalytics,
+  type TeamAnalytics,
+} from './planning'
 
 const domainLabels: Record<string, string> = {
   P01: 'Data Infra',
@@ -404,7 +408,7 @@ export function TeamAnalyticsPage() {
                 <thead>
                   <tr>
                     <th>成员</th>
-                    <th>L3 能力项</th>
+                    <th>二级能力标准 → 三级达成路径</th>
                     <th>计划截止日期</th>
                     <th>延期天数</th>
                     <th>状态</th>
@@ -426,10 +430,7 @@ export function TeamAnalyticsPage() {
                       }}
                     >
                       <td>{item.full_name}</td>
-                      <td>
-                        {item.l3_code}
-                        {item.l3_name ? ` · ${item.l3_name}` : ''}
-                      </td>
+                      <td>{formatCapabilityPath(item)}</td>
                       <td>{item.due_date}</td>
                       <td>{item.overdue_days}</td>
                       <td>{item.status}</td>
@@ -465,11 +466,8 @@ export function TeamAnalyticsPage() {
                 <dl>
                   <dt>成员</dt>
                   <dd>{drawerItem.full_name}</dd>
-                  <dt>能力项</dt>
-                  <dd>
-                    {drawerItem.l3_code}
-                    {drawerItem.l3_name ? ` · ${drawerItem.l3_name}` : ''}
-                  </dd>
+                  <dt>二级能力标准 → 三级达成路径</dt>
+                  <dd>{formatCapabilityPath(drawerItem)}</dd>
                   <dt>计划开始日期</dt>
                   <dd>{drawerItem.plan_start_date}</dd>
                   <dt>计划结束日期</dt>

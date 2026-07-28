@@ -363,6 +363,10 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert "P01-L2A-L3A" in items_by_code
     assert "P01-L2A-L3B" in items_by_code
     item = items_by_code["P01-L2A-L3A"]
+    assert item["l1_code"] == "P01"
+    assert item["l2_code"] == "P01-L2A"
+    assert item["l2_name"] is not None
+    assert item["l3_name"] is not None
     assert item["current_level"] == 2
     assert item["target_level"] == 4
     assert item["priority"] == "中"
@@ -378,6 +382,10 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert status == 200
     assert {task["plan_item_id"] for task in tasks} == {item["id"] for item in items}
     assert {task["status"] for task in tasks} == {"未开始"}
+    assert (
+        next(task for task in tasks if task["l3_code"] == "P01-L2A-L3A")["l2_code"]
+        == "P01-L2A"
+    )
 
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies

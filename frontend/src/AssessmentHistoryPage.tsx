@@ -85,7 +85,13 @@ export function AssessmentHistoryPage() {
                 <ul>
                   {(detailsMap[assessment.id] ?? []).map((detail) => (
                     <li key={detail.l3_code}>
-                      {detail.l3_code}：当前 {detail.current_level} → 目标{' '}
+                      当前模型映射上下文：
+                      {detail.l2_code && detail.l2_name
+                        ? `${detail.l2_code} · ${detail.l2_name} → `
+                        : ''}
+                      {detail.l3_code}
+                      {detail.l3_name ? ` · ${detail.l3_name}` : ''}
+                      ：当前掌握度 {detail.current_level} → 目标掌握度{' '}
                       {detail.target_level}（Gap {detail.gap_value}）
                       {detail.plan_candidate ? ' · 计划候选' : ''}
                     </li>

@@ -18,6 +18,10 @@ export type JobLevel = 'P4' | 'P5' | 'P6' | 'P7' | 'P8'
 export type L3Node = {
   code: string
   name: string
+  l1_code?: string
+  l1_name?: string
+  l2_code?: string
+  l2_name?: string
   recommended_start_level: string | null
   standard_target_overrides?: Partial<Record<JobLevel, number | null>>
   materials_text: string
@@ -148,6 +152,20 @@ export function enabledDomains(model: CapabilityModel | null) {
 export function allL3(model: CapabilityModel | null) {
   return enabledDomains(model).flatMap((domain) =>
     domain.children.flatMap((l2) => l2.children),
+  )
+}
+
+export function allL3WithContext(model: CapabilityModel | null): L3Node[] {
+  return enabledDomains(model).flatMap((domain) =>
+    domain.children.flatMap((l2) =>
+      l2.children.map((l3) => ({
+        ...l3,
+        l1_code: domain.code,
+        l1_name: domain.name,
+        l2_code: l2.code,
+        l2_name: l2.name,
+      })),
+    ),
   )
 }
 

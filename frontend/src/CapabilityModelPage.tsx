@@ -414,7 +414,7 @@ export function ResourceForm({
       {textField('用途', purpose, setPurpose)}
       {textField('状态', status, setStatus, { required: true })}
       <fieldset className="link-set">
-        <legend>关联 L3</legend>
+        <legend>关联三级达成路径</legend>
         {l3Nodes.map((node) => (
           <label className="checkbox" key={node.code}>
             <input
@@ -422,6 +422,9 @@ export function ResourceForm({
               checked={new Set(l3Codes).has(node.code)}
               onChange={() => toggleL3(node.code)}
             />
+            {node.l2_code && node.l2_name
+              ? `${node.l2_code} · ${node.l2_name} → `
+              : ''}
             {node.code} · {node.name}
           </label>
         ))}

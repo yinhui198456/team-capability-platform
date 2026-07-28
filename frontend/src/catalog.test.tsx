@@ -569,7 +569,7 @@ describe('catalog routes', () => {
       ),
     )
     fireEvent.change(screen.getByLabelText('状态'), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('L3'), {
+    fireEvent.change(screen.getByLabelText('三级达成路径'), {
       target: { value: 'P01.01.01' },
     })
     await waitFor(() =>
@@ -583,7 +583,7 @@ describe('catalog routes', () => {
     })
 
     const reverseLink = await screen.findByRole('link', {
-      name: 'P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位',
+      name: 'P01.01 · Data Infra 产品体系认知 → P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位',
     })
     expect(reverseLink.getAttribute('href')).toBe('/capability/model#P01.01.01')
   })

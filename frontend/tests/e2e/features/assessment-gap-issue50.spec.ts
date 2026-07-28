@@ -205,7 +205,10 @@ test.describe('Issue #50 assessment gap workflow', () => {
         detail.standard_target_applicable !== false &&
         (detail.l1_code ?? detail.l3_code.split('.')[0]) !== 'P01',
     )!
-    await page.getByRole('button', { name: /P01/ }).click()
+    await page
+      .getByRole('navigation', { name: '一级能力域导航' })
+      .getByRole('button', { name: /^P01 · / })
+      .click()
     await page.route('**/api/assessments/*/submit', async (route) => {
       await route.fulfill({
         status: 400,
@@ -226,7 +229,11 @@ test.describe('Issue #50 assessment gap workflow', () => {
     ).toBeVisible()
     await expect(page.locator(`#row-${target.id}`)).toBeFocused()
     await expect(
-      page.getByRole('button', { name: new RegExp(target.l1_code ?? 'P02') }),
+      page
+        .getByRole('navigation', { name: '一级能力域导航' })
+        .getByRole('button', {
+          name: new RegExp(`^${target.l1_code ?? 'P02'} · `),
+        }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 

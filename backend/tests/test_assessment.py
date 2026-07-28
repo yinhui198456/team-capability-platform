@@ -244,6 +244,47 @@ def test_create_draft_save_details_submit_review(
     assert history[0]["conclusion"] is None
 
 
+def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(assessment_schema, "member_l2_context", ["Member"])
+    assessment_schema.execute(
+        """
+        UPDATE tcp_user
+        SET current_level = 'P6', target_level = 'P8'
+        WHERE id = %s
+        """,
+        (member_id,),
+    )
+    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["member_current_level"] == "P6"
+    assert assessment["member_target_level"] == "P8"
+    groups = {group["l2_code"]: group for group in assessment["l2_groups"]}
+    assert groups["P01.01"]["l1_code"] == "P01"
+    assert groups["P01.01"]["requirements"]["P8"]
+    assert groups["P02.07"]["details"] == []
+    assert groups["P02.07"]["is_empty"] is True
+    assert not {
+        "p4_description",
+        "p5_description",
+        "p6_description",
+        "p7_description",
+        "p8_description",
+    } & set(assessment["details"][0])
+
+    assessment_schema.execute(
+        "UPDATE assessment SET status = '已归档' WHERE id = %s",
+        (assessment_id,),
+    )
+    assessment_schema.commit()
+    historical = get_assessment(assessment_schema, assessment_id)
+    assert historical is not None
+    assert "requirements" not in historical["l2_groups"][0]
+
+
 def test_assessment_writes_require_expected_revision_token(
     assessment_schema: psycopg.Connection,
 ) -> None:

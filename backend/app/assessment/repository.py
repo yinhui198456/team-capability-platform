@@ -3,6 +3,7 @@ from typing import Any
 import psycopg
 
 from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
+from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from ..catalog.standard_targets import resolve_standard_target
 
 
@@ -216,10 +217,12 @@ def get_assessment(
 ) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, member_id, year, version, assessment_type, status,
-               created_at, submitted_at, archived_at, revision
-        FROM assessment
-        WHERE id = %s
+        SELECT a.id, a.member_id, a.year, a.version, a.assessment_type, a.status,
+               a.created_at, a.submitted_at, a.archived_at, a.revision,
+               u.current_level, u.target_level
+        FROM assessment AS a
+        JOIN tcp_user AS u ON u.id = a.member_id
+        WHERE a.id = %s
         """,
         (assessment_id,),
     ).fetchone()
@@ -227,20 +230,27 @@ def get_assessment(
         return None
 
     details = _get_assessment_details(connection, assessment_id)
-    gap_summary = _get_gap_summary(connection, assessment_id)
+    status_value = str(row[5])
     return {
         "id": row[0],
         "member_id": row[1],
         "year": row[2],
         "version": row[3],
         "assessment_type": row[4],
-        "status": row[5],
+        "status": status_value,
         "created_at": row[6],
         "submitted_at": row[7],
         "archived_at": row[8],
         "revision": row[9],
+        "member_current_level": row[10],
+        "member_target_level": row[11],
         "details": details,
-        "gap_summary": gap_summary,
+        "l2_groups": _get_assessment_l2_groups(
+            connection,
+            details,
+            include_requirements=status_value in {"草稿", "待复核", "建议调整"},
+        ),
+        "gap_summary": _get_gap_summary(connection, assessment_id),
     }
 
 
@@ -258,21 +268,14 @@ def _get_assessment_details(
                ad.inherited_from_assessment_id,
                ad.inherited_current_level,
                ad.inherited_evidence_note,
-               ad.current_level_explicitly_cleared,
-               c.name AS l3_name,
-               c.recommended_start_level,
-               l2.code AS l2_code, l2.name AS l2_name,
-               l1.code AS l1_code, l1.name AS l1_name
+               ad.current_level_explicitly_cleared
         FROM assessment_detail ad
-        LEFT JOIN capability_node c ON c.code = ad.l3_code AND c.node_type = 'L3'
-        LEFT JOIN capability_node l2 ON l2.id = c.parent_node_id
-        LEFT JOIN capability_node l1 ON l1.id = l2.parent_node_id
         WHERE ad.assessment_id = %s
-        ORDER BY l1.code, c.code
+        ORDER BY ad.l3_code
         """,
         (assessment_id,),
     ).fetchall()
-    return [
+    details = [
         {
             "id": row[0],
             "l3_code": row[1],
@@ -292,15 +295,78 @@ def _get_assessment_details(
             "inherited_current_level": row[15],
             "inherited_evidence_note": row[16],
             "current_level_explicitly_cleared": row[17],
-            "l3_name": row[18],
-            "recommended_start_level": row[19],
-            "l2_code": row[20],
-            "l2_name": row[21],
-            "l1_code": row[22],
-            "l1_name": row[23],
         }
         for row in rows
     ]
+    contexts = get_l3_contexts(
+        connection, [str(detail["l3_code"]) for detail in details]
+    )
+    for detail in details:
+        context = contexts[str(detail["l3_code"])]
+        detail.update(
+            {
+                "l3_name": context["l3_name"],
+                "recommended_start_level": context["l3_recommended_start_level"],
+                "l2_code": context["l2_code"],
+                "l2_name": context["l2_name"],
+                "l1_code": context["l1_code"],
+                "l1_name": context["l1_name"],
+            }
+        )
+    return details
+
+
+def _get_assessment_l2_groups(
+    connection: psycopg.Connection,
+    details: list[dict[str, object]],
+    include_requirements: bool,
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT l1.code, l1.name, l2.code, l2.name,
+               l2.p4_description, l2.p5_description, l2.p6_description,
+               l2.p7_description, l2.p8_description,
+               COUNT(l3.id)
+        FROM capability_node AS l2
+        JOIN capability_node AS l1 ON l1.id = l2.parent_node_id
+        LEFT JOIN capability_node AS l3
+          ON l3.parent_node_id = l2.id AND l3.node_type = 'L3'
+        WHERE l1.node_type = 'L1'
+          AND l1.code = ANY(%s)
+          AND l2.node_type = 'L2'
+          AND l2.enabled = TRUE
+        GROUP BY l1.id, l2.id
+        ORDER BY l1.sort_order, l2.sort_order
+        """,
+        (list(DOMAIN_CODES),),
+    ).fetchall()
+    groups: list[dict[str, object]] = []
+    by_l2: dict[str, dict[str, object]] = {}
+    for row in rows:
+        group: dict[str, object] = {
+            "l1_code": row[0],
+            "l1_name": row[1],
+            "l2_code": row[2],
+            "l2_name": row[3],
+            "l3_count": int(row[9]),
+            "is_empty": int(row[9]) == 0,
+            "details": [],
+        }
+        if include_requirements:
+            group["requirements"] = {
+                "P4": row[4],
+                "P5": row[5],
+                "P6": row[6],
+                "P7": row[7],
+                "P8": row[8],
+            }
+        groups.append(group)
+        by_l2[str(row[2])] = group
+    for detail in details:
+        l2_code = detail.get("l2_code")
+        if isinstance(l2_code, str) and l2_code in by_l2:
+            by_l2[l2_code]["details"].append(detail)
+    return groups
 
 
 def _get_gap_summary(

@@ -49,13 +49,14 @@ for (const viewport of VIEWPORTS) {
       const tables = page.getByTestId('assessment-table')
       await expect(tables.first()).toBeVisible()
       const firstTable = tables.first()
-      await expect(firstTable).toContainText('L3 能力项')
-      await expect(firstTable).toContainText('当前')
+      await expect(firstTable).toContainText('三级达成路径 / 学习实践项')
+      await expect(firstTable).toContainText('当前掌握度')
       await expect(firstTable).toContainText('标准目标')
       await expect(firstTable).toContainText('个人调整')
       await expect(firstTable).toContainText('最终目标')
       await expect(firstTable).toContainText('Gap')
       await expect(firstTable).toContainText('优先级')
+      await expect(page.getByText('职级要求 P4–P8').first()).toBeVisible()
 
       await expect(
         page.getByRole('navigation', { name: '一级能力域导航' }),
@@ -122,12 +123,11 @@ for (const viewport of VIEWPORTS) {
         }),
       )
       expect(areaRatio).toBeGreaterThanOrEqual(0.7)
+      // L2 职级要求 now has its own compact in-flow header. Five fully visible
+      // L3 paths still exceed the Issue #52 first-screen threshold of four
+      // substantive entries without treating the L2 standard as blank space.
       expect(metrics.rows).toBeGreaterThanOrEqual(
-        viewport.name === '1920x1080'
-          ? 8
-          : viewport.name === '1440x900'
-            ? 6
-            : 1,
+        viewport.name === '1280x800' ? 1 : 5,
       )
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),

@@ -35,6 +35,78 @@ def _unmatched_materials(materials_text: str, resource_codes: set[str]) -> list[
     return []
 
 
+def get_l3_contexts(
+    connection: psycopg.Connection, l3_codes: list[str]
+) -> dict[str, dict[str, object | None]]:
+    """Return current catalog context keyed by the caller's original L3 code."""
+    requested = list(dict.fromkeys(l3_codes))
+    contexts: dict[str, dict[str, object | None]] = {
+        code: {
+            "l1_code": None,
+            "l1_name": None,
+            "l2_code": None,
+            "l2_name": None,
+            "l3_code": code,
+            "l3_name": None,
+            "l3_recommended_start_level": None,
+            "l3_materials_text": None,
+            "l3_expected_output": None,
+            "l3_estimated_hours": None,
+            "l3_output_type": None,
+            "l3_notes": None,
+        }
+        for code in requested
+    }
+    if not requested:
+        return contexts
+
+    lookup_to_requested: dict[str, list[str]] = {}
+    for code in requested:
+        for lookup_code in {
+            code,
+            code.replace("-", "."),
+            code.replace(".", "-"),
+        }:
+            lookup_to_requested.setdefault(lookup_code, []).append(code)
+
+    rows = _fetchall(
+        connection,
+        """
+        SELECT l3.code, l3.name, l3.recommended_start_level,
+               l3.materials_text, l3.expected_output, l3.estimated_hours,
+               l3.output_type, l3.notes,
+               l2.code AS l2_code, l2.name AS l2_name,
+               l1.code AS l1_code, l1.name AS l1_name
+        FROM capability_node AS l3
+        JOIN capability_node AS l2 ON l2.id = l3.parent_node_id
+        JOIN capability_node AS l1 ON l1.id = l2.parent_node_id
+        WHERE l3.node_type = 'L3' AND l3.code = ANY(%s)
+        ORDER BY l3.id
+        """,
+        (list(lookup_to_requested),),
+    )
+    for row in rows:
+        for requested_code in lookup_to_requested[str(row["code"])]:
+            if contexts[requested_code]["l3_name"] is not None:
+                continue
+            contexts[requested_code].update(
+                {
+                    "l1_code": row["l1_code"],
+                    "l1_name": row["l1_name"],
+                    "l2_code": row["l2_code"],
+                    "l2_name": row["l2_name"],
+                    "l3_name": row["name"],
+                    "l3_recommended_start_level": row["recommended_start_level"],
+                    "l3_materials_text": row["materials_text"],
+                    "l3_expected_output": row["expected_output"],
+                    "l3_estimated_hours": row["estimated_hours"],
+                    "l3_output_type": row["output_type"],
+                    "l3_notes": row["notes"],
+                }
+            )
+    return contexts
+
+
 def catalog_is_empty(connection: psycopg.Connection) -> bool:
     return connection.execute(
         "SELECT NOT EXISTS (SELECT 1 FROM capability_model)"

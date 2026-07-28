@@ -422,16 +422,20 @@ def test_member_views_own_profile_with_aggregation(
     assert len(body["annual_plan"]["items"]) == 1
     item = body["annual_plan"]["items"][0]
     assert item["l3_code"] == "P01-L2A-L3A"
+    assert item["l2_code"] == "P01-L2A"
+    assert item["l3_name"] == "Leaf"
 
     task = item["learning_task"]
     assert task is not None
     assert task["l3_code"] == "P01-L2A-L3A"
+    assert task["l2_code"] == "P01-L2A"
     assert len(task["progress_logs"]) == 1
     assert task["progress_logs"][0]["actual_hours"] == 5
 
     assert len(task["evidences"]) == 1
     evidence = task["evidences"][0]
     assert evidence["status"] == "已归档"
+    assert evidence["l2_code"] == "P01-L2A"
     assert evidence["review"] is not None
     assert evidence["review"]["conclusion"] == "通过"
 

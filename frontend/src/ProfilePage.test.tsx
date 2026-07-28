@@ -66,6 +66,8 @@ const baseProfile: planningApi.CapabilityProfile = {
         growth_goal_id: 40,
         l3_code: 'P01-L2A-L3A',
         l3_name: '测试能力项 P01',
+        l2_code: 'P01-L2A',
+        l2_name: '测试二级能力标准',
         current_level: 2,
         target_level: 4,
         priority: '中',
@@ -82,6 +84,8 @@ const baseProfile: planningApi.CapabilityProfile = {
           plan_item_id: 30,
           l3_code: 'P01-L2A-L3A',
           l3_name: '测试能力项 P01',
+          l2_code: 'P01-L2A',
+          l2_name: '测试二级能力标准',
           status: '进行中',
           actual_start_date: null,
           actual_end_date: null,
@@ -182,7 +186,9 @@ describe('ProfilePage', () => {
     expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
     expect(
-      screen.getAllByText(/测试能力项 P01（P01-L2A-L3A）/).length,
+      screen.getAllByText(
+        /P01-L2A · 测试二级能力标准 → P01-L2A-L3A · 测试能力项 P01/,
+      ).length,
     ).toBeGreaterThanOrEqual(2)
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()

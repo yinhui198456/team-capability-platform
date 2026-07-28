@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
 import {
-  formatL3Name,
+  formatCapabilityPath,
   getAnnualPlan,
   generatePlanItems,
   type AnnualPlan,
@@ -224,8 +224,8 @@ export function AnnualPlanTaskPage() {
             borderBottom: '2px solid var(--color-gray-200)',
           }}
         >
-          <strong>能力项</strong>
-          <strong>等级提升</strong>
+          <strong>二级能力标准 → 三级达成路径</strong>
+          <strong>掌握度提升</strong>
           <strong>计划时长</strong>
           <strong>实际时长</strong>
           <strong>月份</strong>
@@ -258,9 +258,7 @@ export function AnnualPlanTaskPage() {
                 }}
               >
                 <div>
-                  <span className={s.l3name}>
-                    {formatL3Name(item.l3_name, item.l3_code)}
-                  </span>
+                  <span className={s.l3name}>{formatCapabilityPath(item)}</span>
                 </div>
                 <span>
                   {item.current_level}→{item.target_level}

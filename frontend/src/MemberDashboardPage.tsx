@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { useYear } from './YearContext'
 import {
+  formatCapabilityPath,
   getMemberDashboard,
   type MemberDashboard,
   type MemberDashboardAssessment,
@@ -104,9 +105,7 @@ function Radar({
   gaps: MemberDashboard['gaps']
 }) {
   const targetScores = data.map((domain) => {
-    const domainGaps = gaps.filter((gap) =>
-      gap.l3_code.startsWith(domain.domain_code),
-    )
+    const domainGaps = gaps.filter((gap) => gap.l1_code === domain.domain_code)
     if (domainGaps.length === 0) return domain.score
     return Math.min(
       5,
@@ -357,15 +356,14 @@ function AbilitySection({
   setSelectedDomain: (domain: string) => void
 }) {
   const filteredGaps = dashboard.gaps.filter(
-    (gap) =>
-      selectedDomain === '全部' || gap.l3_code.startsWith(selectedDomain),
+    (gap) => selectedDomain === '全部' || gap.l1_code === selectedDomain,
   )
 
   return (
     <section className={`card ${styles.abilitySection}`}>
       <div className={styles.abilityHead}>
         <h2>能力分析</h2>
-        <span className="muted">选择能力域查看对应 Gap</span>
+        <span className="muted">L3 掌握度聚合；选择能力域查看对应 Gap</span>
       </div>
       <div className={styles.domainFilter} data-testid="domain-filter">
         {['全部', ...dashboard.domain_radar.map((d) => d.domain_code)].map(
@@ -395,22 +393,22 @@ function AbilitySection({
             <table className={styles.gapTable}>
               <thead>
                 <tr>
-                  <th>能力域 / L3</th>
-                  <th>当前</th>
-                  <th>目标</th>
+                  <th>二级能力标准 → 三级达成路径</th>
+                  <th>当前掌握度</th>
+                  <th>目标掌握度</th>
                   <th>Gap</th>
                   <th>优先级</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredGaps.slice(0, 8).map((gap) => {
-                  const dc = gap.l3_code.slice(0, 3)
+                  const dc = gap.l1_code ?? '未映射'
                   return (
                     <tr key={gap.id}>
                       <td>
                         <DomainBadge code={dc} />
                         <span className={styles.l3Name}>
-                          {gap.l3_name ?? gap.l3_code}
+                          {formatCapabilityPath(gap)}
                         </span>
                       </td>
                       <td>{gap.current_level}</td>
@@ -577,7 +575,7 @@ function PlanDashboard({
             <thead>
               <tr>
                 <th>任务名称</th>
-                <th>所属能力域 / L3</th>
+                <th>二级能力标准 → 三级达成路径</th>
                 <th>计划月份</th>
                 <th>预计时长</th>
                 <th>实际时长</th>
@@ -590,7 +588,7 @@ function PlanDashboard({
                 const est = Number(task.plan_item_estimated_hours ?? 0)
                 const prog =
                   est > 0 ? Math.round((task.actual_hours / est) * 100) : 0
-                const dc = task.l3_code.slice(0, 3)
+                const dc = task.l1_code ?? '未映射'
                 const name =
                   task.plan_item_learning_task_content?.trim() ||
                   task.l3_name ||
@@ -611,7 +609,7 @@ function PlanDashboard({
                     <td>
                       <DomainBadge code={dc} />
                       <span className={styles.l3Name}>
-                        {task.l3_name ?? task.l3_code}
+                        {formatCapabilityPath(task)}
                       </span>
                     </td>
                     <td>

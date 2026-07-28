@@ -6,7 +6,7 @@ import {
   createEvidence,
   createProgressLog,
   deleteProgressLog,
-  formatL3Name,
+  formatCapabilityPath,
   getAnnualPlan,
   getMonthlyHours,
   listEvidences,
@@ -352,10 +352,10 @@ export function LearningTaskPage({
             >
               <div className="learning-task-header">
                 <span className="learning-task-l3">
-                  {formatL3Name(task.l3_name, task.l3_code)}
+                  二级能力标准 → 三级达成路径：{formatCapabilityPath(task)}
                 </span>
                 <span className="learning-task-levels">
-                  当前 {task.plan_item_current_level} → 目标{' '}
+                  掌握度提升：当前 {task.plan_item_current_level} → 目标{' '}
                   {task.plan_item_target_level}
                 </span>
                 <span className="learning-task-priority">

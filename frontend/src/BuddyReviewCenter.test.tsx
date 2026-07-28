@@ -98,6 +98,8 @@ describe('BuddyReviewCenter', () => {
       details: [
         {
           l3_code: 'P01-L2A-L3A',
+          l2_code: 'P01-L2A',
+          l2_name: '数据基础',
           current_level: 2,
           target_level: 4,
           standard_target_applicable: true,
@@ -106,6 +108,40 @@ describe('BuddyReviewCenter', () => {
           adjusted_target_level: 4,
           target_adjustment_reason: '岗位项目要求',
           gap_value: 2,
+        },
+      ],
+      member_current_level: 'P5',
+      member_target_level: 'P6',
+      l2_groups: [
+        {
+          l1_code: 'P01',
+          l1_name: '数据基础设施',
+          l2_code: 'P01-L2A',
+          l2_name: '数据基础',
+          l3_count: 1,
+          is_empty: false,
+          requirements: {
+            P4: 'P4 要求',
+            P5: 'P5 要求',
+            P6: 'P6 职级要求',
+            P7: 'P7 要求',
+            P8: 'P8 要求',
+          },
+          details: [
+            {
+              l3_code: 'P01-L2A-L3A',
+              l2_code: 'P01-L2A',
+              l2_name: '数据基础',
+              current_level: 2,
+              target_level: 4,
+              standard_target_applicable: true,
+              standard_target_level: 3,
+              target_adjusted: true,
+              adjusted_target_level: 4,
+              target_adjustment_reason: '岗位项目要求',
+              gap_value: 2,
+            },
+          ],
         },
       ],
     })
@@ -165,6 +201,9 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByRole('tab', { name: '全部待处理' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '复核工作区' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/上一版反馈/)).toBeTruthy())
+    expect(screen.getByText(/二级能力标准：P01-L2A · 数据基础/)).toBeTruthy()
+    expect(screen.getByText(/目标职级 P6 要求：P6 职级要求/)).toBeTruthy()
+    expect(screen.getByText(/三级达成路径：P01-L2A-L3A/)).toBeTruthy()
     expect(screen.getByText(/标准 3；个人调整 4（岗位项目要求）/)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() =>

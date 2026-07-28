@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   getAssessment,
   getAssessmentHistory,
+  selectL2Requirement,
   type AssessmentDetail,
+  type AssessmentL2Group,
   type AssessmentReview,
 } from './assessment'
 import {
@@ -82,6 +84,13 @@ export function BuddyReviewCenter() {
   const [assessmentDetails, setAssessmentDetails] = useState<
     AssessmentDetail[]
   >([])
+  const [assessmentGroups, setAssessmentGroups] = useState<AssessmentL2Group[]>(
+    [],
+  )
+  const [memberLevels, setMemberLevels] = useState({
+    current: null as string | null,
+    target: null as string | null,
+  })
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [conclusion, setConclusion] = useState<
     '认可' | '建议调整' | EvidenceReviewConclusion | ''
@@ -181,6 +190,8 @@ export function BuddyReviewCenter() {
   useEffect(() => {
     // ponytail: clear immediately on switch so old item's data never bleeds through
     setAssessmentDetails([])
+    setAssessmentGroups([])
+    setMemberLevels({ current: null, target: null })
     setHistory([])
 
     if (!selected) return
@@ -195,8 +206,10 @@ export function BuddyReviewCenter() {
           details.map((detail, index) => ({
             ...detail,
             id: index + 1,
-            l1_code: detail.l3_code.slice(0, 3),
+            l1_code: undefined,
             l1_name: undefined,
+            l2_code: undefined,
+            l2_name: undefined,
             recommended_start_level: undefined,
             plan_candidate: false,
             evidence_note: detail.evidence_note ?? null,
@@ -223,6 +236,11 @@ export function BuddyReviewCenter() {
           ])
           if (!active) return
           setAssessmentDetails(assessment.details ?? [])
+          setAssessmentGroups(assessment.l2_groups ?? [])
+          setMemberLevels({
+            current: assessment.member_current_level ?? null,
+            target: assessment.member_target_level ?? null,
+          })
           setHistory(
             reviews.filter(
               (review: AssessmentReview) => review.status === '已闭环',
@@ -420,7 +438,7 @@ export function BuddyReviewCenter() {
                 <tr>
                   <th>成员</th>
                   <th>类型</th>
-                  <th>L3 / 依据</th>
+                  <th>二级能力标准 / 三级达成路径</th>
                   <th>提交时间</th>
                   <th>状态</th>
                 </tr>
@@ -447,7 +465,9 @@ export function BuddyReviewCenter() {
                     <td>
                       {item.kind === 'assessment'
                         ? `${item.review.year} 年度自评`
-                        : (item.review.l3_code ?? '未关联 L3')}
+                        : item.review.l3_code
+                          ? `${item.review.l2_code ?? '未映射'}${item.review.l2_name ? ` · ${item.review.l2_name}` : ''} → ${item.review.l3_code}${item.review.l3_name ? ` · ${item.review.l3_name}` : ''}`
+                          : '未关联三级达成路径'}
                     </td>
                     <td>{formatDateTime(item.review.submitted_at)}</td>
                     <td>{item.review.status}</td>
@@ -468,41 +488,91 @@ export function BuddyReviewCenter() {
                 <strong>{memberName(selected.memberId)}</strong> ·{' '}
                 {selected.kind === 'assessment'
                   ? `${selected.review.year} 年度自评`
-                  : selected.review.l3_code}
+                  : `${selected.review.l2_code ?? '未映射'}${selected.review.l2_name ? ` · ${selected.review.l2_name}` : ''} → ${selected.review.l3_code ?? '未关联三级达成路径'}${selected.review.l3_name ? ` · ${selected.review.l3_name}` : ''}`}
               </p>
               {selected.kind === 'assessment' ? (
                 <>
-                  <h3>自评依据与 Gap</h3>
-                  {assessmentDetails.length === 0 ? (
+                  <h3>二级能力标准下的三级达成路径自评</h3>
+                  {assessmentGroups.length === 0 &&
+                  assessmentDetails.length === 0 ? (
                     <p className="muted">暂无逐项自评依据。</p>
                   ) : (
-                    <ul className="compact-list">
-                      {assessmentDetails.map((detail) => (
-                        <li key={detail.l3_code}>
-                          {detail.l3_code}：当前 {detail.current_level ?? '—'} →
-                          标准{' '}
-                          {detail.standard_target_applicable === false
-                            ? '不适用'
-                            : (detail.standard_target_level ?? '历史保留')}
-                          {detail.target_adjusted
-                            ? `；个人调整 ${detail.adjusted_target_level ?? '—'}（${detail.target_adjustment_reason ?? '未填写原因'}）`
-                            : '；未调整'}
-                          ；最终 {detail.target_level ?? '—'}（Gap{' '}
-                          {detail.gap_value ??
-                            (detail.current_level != null &&
-                            detail.target_level != null
-                              ? detail.target_level - detail.current_level
-                              : 0)}
-                          ）
-                          {detail.evidence_note && (
-                            <span className="muted">
-                              {' '}
-                              · {detail.evidence_note}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="compact-list">
+                      {(assessmentGroups.length
+                        ? assessmentGroups
+                        : [
+                            {
+                              l1_code: '未映射',
+                              l1_name: null,
+                              l2_code: '未映射',
+                              l2_name: null,
+                              l3_count: assessmentDetails.length,
+                              is_empty: false,
+                              details: assessmentDetails,
+                            },
+                          ]
+                      ).map((group) => {
+                        const requirement = group.requirements
+                          ? selectL2Requirement(
+                              group.requirements,
+                              memberLevels.current,
+                              memberLevels.target,
+                            )
+                          : null
+                        return (
+                          <section key={group.l2_code}>
+                            <h4>
+                              二级能力标准：{group.l2_code}
+                              {group.l2_name ? ` · ${group.l2_name}` : ''}
+                            </h4>
+                            <p className="muted">
+                              {requirement
+                                ? `${requirement.label} ${requirement.level} 要求：${requirement.text}`
+                                : '职级要求暂不可用'}
+                            </p>
+                            {group.is_empty ? (
+                              <p className="muted">
+                                暂无三级达成路径，当前无可评估项。
+                              </p>
+                            ) : (
+                              <ul>
+                                {group.details.map((detail) => (
+                                  <li key={detail.l3_code}>
+                                    三级达成路径：{detail.l3_code}
+                                    {detail.l3_name
+                                      ? ` · ${detail.l3_name}`
+                                      : ''}
+                                    ：当前掌握度 {detail.current_level ?? '—'} →
+                                    标准{' '}
+                                    {detail.standard_target_applicable === false
+                                      ? '不适用'
+                                      : (detail.standard_target_level ??
+                                        '历史保留')}
+                                    {detail.target_adjusted
+                                      ? `；个人调整 ${detail.adjusted_target_level ?? '—'}（${detail.target_adjustment_reason ?? '未填写原因'}）`
+                                      : '；未调整'}
+                                    ；最终 {detail.target_level ?? '—'}（Gap{' '}
+                                    {detail.gap_value ??
+                                      (detail.current_level != null &&
+                                      detail.target_level != null
+                                        ? detail.target_level -
+                                          detail.current_level
+                                        : 0)}
+                                    ）
+                                    {detail.evidence_note && (
+                                      <span className="muted">
+                                        {' '}
+                                        · {detail.evidence_note}
+                                      </span>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </section>
+                        )
+                      })}
+                    </div>
                   )}
                   <fieldset>
                     <legend>复核结论</legend>

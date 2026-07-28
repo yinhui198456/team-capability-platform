@@ -70,6 +70,8 @@ const analytics: planningApi.TeamAnalytics = {
       member_id: 2,
       username: 'member',
       full_name: '成员甲',
+      l2_code: 'P01.01',
+      l2_name: '数据基础',
       l3_code: 'P01-L2A-L3A',
       l3_name: '数据开发',
       due_date: '2026-01-31',

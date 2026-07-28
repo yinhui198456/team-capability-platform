@@ -7,7 +7,7 @@ import {
   getCapabilityProfile,
   getCapabilityProfileForMember,
   getSelectableMembersForProfile,
-  formatL3Name,
+  formatCapabilityPath,
   type CapabilityProfile,
   type CapabilityProfilePlanItem,
   type SelectableMember,
@@ -93,14 +93,14 @@ function PlanItemCard({ item }: { item: CapabilityProfilePlanItem }) {
       <div className={styles.planItemHeader}>
         <div>
           <div className={styles.planItemName}>
-            {formatL3Name(item.l3_name, item.l3_code)}
+            {formatCapabilityPath(item)}
           </div>
         </div>
         <Badge>{item.status}</Badge>
       </div>
       <div className={styles.planItemDetails}>
         <span className={styles.taskMetaItem}>
-          L{item.current_level} → L{item.target_level}
+          掌握度 {item.current_level} → {item.target_level}
         </span>
         <Badge>{item.priority}</Badge>
         <span className={styles.taskMetaItem}>预计 {estimated}</span>
@@ -236,7 +236,10 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                 <div className={styles.taskItemHeader}>
                   <div>
                     <div className={styles.taskTitle}>
-                      {formatL3Name(item.l3_name ?? task.l3_name, item.l3_code)}
+                      {formatCapabilityPath({
+                        ...item,
+                        l3_name: item.l3_name ?? task.l3_name,
+                      })}
                     </div>
                   </div>
                   <Badge>{task.status}</Badge>

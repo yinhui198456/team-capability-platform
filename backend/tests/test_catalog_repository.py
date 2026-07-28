@@ -1,9 +1,11 @@
 import psycopg
 import pytest
 
+from app.catalog import repository as catalog_repository
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.catalog.repository import (
     get_capability_model,
+    get_l3_contexts,
     get_learning_resource,
     list_learning_resources,
 )
@@ -133,3 +135,73 @@ def test_valid_unlinked_resource_is_listed_and_has_no_reverse_links(
 
     assert detail is not None
     assert detail["l3_nodes"] == []
+
+
+def test_l3_contexts_batch_resolves_dot_and_legacy_dash_codes(
+    connection: psycopg.Connection,
+) -> None:
+    contexts = get_l3_contexts(
+        connection,
+        ["P01.01.01", "P01-01-01", "legacy-missing-code"],
+    )
+
+    expected = {
+        "l1_code": "P01",
+        "l1_name": "Data Infra 能力",
+        "l2_code": "P01.01",
+        "l2_name": "Data Infra 产品体系认知",
+        "l3_name": "TDC / TDH / ArgoDB / TDS 产品定位",
+    }
+    assert {key: contexts["P01.01.01"][key] for key in expected} == expected
+    assert {key: contexts["P01-01-01"][key] for key in expected} == expected
+    assert contexts["P01-01-01"]["l3_code"] == "P01-01-01"
+    assert contexts["legacy-missing-code"] == {
+        "l1_code": None,
+        "l1_name": None,
+        "l2_code": None,
+        "l2_name": None,
+        "l3_code": "legacy-missing-code",
+        "l3_name": None,
+        "l3_recommended_start_level": None,
+        "l3_materials_text": None,
+        "l3_expected_output": None,
+        "l3_estimated_hours": None,
+        "l3_output_type": None,
+        "l3_notes": None,
+    }
+
+
+def test_l3_contexts_keeps_legacy_dash_storage_compatible(
+    connection: psycopg.Connection,
+) -> None:
+    connection.execute(
+        """
+        UPDATE capability_node
+        SET code = 'P01-L2A-L3A'
+        WHERE code = 'P01.01.01'
+        """
+    )
+
+    context = get_l3_contexts(connection, ["P01-L2A-L3A"])["P01-L2A-L3A"]
+
+    assert context["l2_code"] == "P01.01"
+    assert context["l3_name"] == "TDC / TDH / ArgoDB / TDS 产品定位"
+
+
+def test_l3_contexts_uses_one_batch_lookup_for_many_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    def fake_fetchall(
+        connection: object, query: str, parameters: tuple[object, ...]
+    ) -> list[dict[str, object]]:
+        calls.append(parameters)
+        return []
+
+    monkeypatch.setattr(catalog_repository, "_fetchall", fake_fetchall)
+
+    contexts = get_l3_contexts(object(), ["P01.01.01", "P02-01-01", "legacy-unknown"])
+
+    assert len(calls) == 1
+    assert contexts["legacy-unknown"]["l3_code"] == "legacy-unknown"

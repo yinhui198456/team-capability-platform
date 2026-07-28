@@ -134,6 +134,14 @@ for (const viewport of VIEWPORTS) {
       )
       await expect(domainTable).toContainText('计划值')
       await expect(domainTable).not.toContainText('目标')
+
+      const overdueTable = page.locator(
+        '.dashboard-card:has-text("延期计划项明细") .analytics-table',
+      )
+      await expect(overdueTable).toContainText('二级能力标准 → 三级达成路径')
+      await expect(overdueTable).toContainText(
+        'P01-L2A · 数据建模标准 → P01-L2A-L3A · 数据建模与治理',
+      )
     })
 
     // Screenshot: default page (full viewport = Topbar + Sidebar + content)

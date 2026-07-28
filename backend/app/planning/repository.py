@@ -9,7 +9,7 @@ from ..access.repository import (
     is_member_assigned_to_buddy,
 )
 from ..assessment.repository import get_gap
-from ..catalog.repository import DOMAIN_CODES
+from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 
 
@@ -47,21 +47,17 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
-def _get_l3_names(
-    connection: psycopg.Connection, l3_codes: list[str]
-) -> dict[str, str | None]:
-    if not l3_codes:
-        return {}
-    # capability_node uses dots while task/gap codes use dashes.
-    code_map = {code.replace("-", "."): code for code in l3_codes}
-    rows = connection.execute(
-        """
-        SELECT code, name FROM capability_node
-        WHERE node_type = 'L3' AND code = ANY(%s)
-        """,
-        (list(code_map.keys()),),
-    ).fetchall()
-    return {code_map[str(row[0])]: row[1] for row in rows}
+def _attach_l3_contexts(
+    connection: psycopg.Connection, items: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    contexts = get_l3_contexts(
+        connection, [str(item["l3_code"]) for item in items if item.get("l3_code")]
+    )
+    for item in items:
+        code = item.get("l3_code")
+        if isinstance(code, str):
+            item.update(contexts[code])
+    return items
 
 
 _ALLOWED_TASK_STATUSES = {
@@ -166,19 +162,22 @@ def list_eligible_gaps(
         """,
         (latest["id"],),
     ).fetchall()
-    return [
-        {
-            "id": row[0],
-            "assessment_id": row[1],
-            "l3_code": row[2],
-            "current_level": row[3],
-            "target_level": row[4],
-            "gap_value": row[5],
-            "priority": row[6],
-            "plan_candidate": row[7],
-        }
-        for row in rows
-    ]
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "assessment_id": row[1],
+                "l3_code": row[2],
+                "current_level": row[3],
+                "target_level": row[4],
+                "gap_value": row[5],
+                "priority": row[6],
+                "plan_candidate": row[7],
+            }
+            for row in rows
+        ],
+    )
 
 
 def create_growth_goal(
@@ -231,15 +230,20 @@ def create_growth_goal(
         ),
     ).fetchone()
     assert row is not None
-    return {
-        "id": row[0],
-        "gap_id": row[1],
-        "annual_growth_plan_id": row[2],
-        "l3_code": row[3],
-        "year": row[4],
-        "target_level": row[5],
-        "priority": row[6],
-    }
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "gap_id": row[1],
+                "annual_growth_plan_id": row[2],
+                "l3_code": row[3],
+                "year": row[4],
+                "target_level": row[5],
+                "priority": row[6],
+            }
+        ],
+    )[0]
 
 
 def list_growth_goals(
@@ -256,18 +260,21 @@ def list_growth_goals(
         """,
         (member_id,),
     ).fetchall()
-    return [
-        {
-            "id": row[0],
-            "gap_id": row[1],
-            "annual_growth_plan_id": row[2],
-            "l3_code": row[3],
-            "year": row[4],
-            "target_level": row[5],
-            "priority": row[6],
-        }
-        for row in rows
-    ]
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "gap_id": row[1],
+                "annual_growth_plan_id": row[2],
+                "l3_code": row[3],
+                "year": row[4],
+                "target_level": row[5],
+                "priority": row[6],
+            }
+            for row in rows
+        ],
+    )
 
 
 def delete_growth_goal(
@@ -317,10 +324,9 @@ def get_annual_plan_with_items(
         """,
         (member_id, year),
     ).fetchall()
-    plan_items = [_plan_item_row(item) for item in items]
-    l3_names = _get_l3_names(connection, [item["l3_code"] for item in plan_items])
-    for item in plan_items:
-        item["l3_name"] = l3_names.get(item["l3_code"])
+    plan_items = _attach_l3_contexts(
+        connection, [_plan_item_row(item) for item in items]
+    )
 
     return {
         "id": row[0],
@@ -444,7 +450,7 @@ def generate_plan_items(
     ).fetchall()
     for plan_item_id, l3_code in missing_tasks:
         _insert_learning_task(connection, int(plan_item_id), str(l3_code))
-    return created
+    return _attach_l3_contexts(connection, created)
 
 
 def list_plan_items(
@@ -503,7 +509,9 @@ def create_learning_task(
     if existing is not None:
         raise ValueError("learning task already exists for this plan item")
 
-    return _insert_learning_task(connection, plan_item_id, str(row[1]))
+    return _attach_l3_contexts(
+        connection, [_insert_learning_task(connection, plan_item_id, str(row[1]))]
+    )[0]
 
 
 def _insert_learning_task(
@@ -595,7 +603,7 @@ def update_plan_item(
                 "UPDATE learning_task SET status = %s WHERE plan_item_id = %s",
                 (updates["status"], plan_item_id),
             )
-    return _plan_item_row(updated)
+    return _attach_l3_contexts(connection, [_plan_item_row(updated)])[0]
 
 
 def list_learning_tasks(
@@ -617,20 +625,23 @@ def list_learning_tasks(
         """,
         (member_id,),
     ).fetchall()
-    return [
-        {
-            **_learning_task_row(row[:10]),
-            "plan_item_current_level": row[10],
-            "plan_item_target_level": row[11],
-            "plan_item_priority": row[12],
-            "plan_item_learning_material": row[13],
-            "plan_item_learning_task_content": row[14],
-            "plan_item_expected_output": row[15],
-            "plan_item_estimated_hours": row[16],
-            "plan_item_target_month": row[17],
-        }
-        for row in rows
-    ]
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                **_learning_task_row(row[:10]),
+                "plan_item_current_level": row[10],
+                "plan_item_target_level": row[11],
+                "plan_item_priority": row[12],
+                "plan_item_learning_material": row[13],
+                "plan_item_learning_task_content": row[14],
+                "plan_item_expected_output": row[15],
+                "plan_item_estimated_hours": row[16],
+                "plan_item_target_month": row[17],
+            }
+            for row in rows
+        ],
+    )
 
 
 def get_learning_task(
@@ -653,17 +664,22 @@ def get_learning_task(
     ).fetchone()
     if row is None:
         return None
-    return {
-        **_learning_task_row(row[:10]),
-        "plan_item_current_level": row[10],
-        "plan_item_target_level": row[11],
-        "plan_item_priority": row[12],
-        "plan_item_learning_material": row[13],
-        "plan_item_learning_task_content": row[14],
-        "plan_item_expected_output": row[15],
-        "plan_item_estimated_hours": row[16],
-        "plan_item_target_month": row[17],
-    }
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                **_learning_task_row(row[:10]),
+                "plan_item_current_level": row[10],
+                "plan_item_target_level": row[11],
+                "plan_item_priority": row[12],
+                "plan_item_learning_material": row[13],
+                "plan_item_learning_task_content": row[14],
+                "plan_item_expected_output": row[15],
+                "plan_item_estimated_hours": row[16],
+                "plan_item_target_month": row[17],
+            }
+        ],
+    )[0]
 
 
 def update_learning_task(
@@ -1127,14 +1143,12 @@ def get_member_dashboard(
             for row in gap_rows
         ]
 
-    l3_codes = list(
-        {gap["l3_code"] for gap in gaps} | {task["l3_code"] for task in current_tasks}
+    contexts = get_l3_contexts(
+        connection,
+        [str(item["l3_code"]) for item in [*gaps, *current_tasks]],
     )
-    l3_names = _get_l3_names(connection, l3_codes)
-    for gap in gaps:
-        gap["l3_name"] = l3_names.get(gap["l3_code"])
-    for task in current_tasks:
-        task["l3_name"] = l3_names.get(task["l3_code"])
+    for item in [*gaps, *current_tasks]:
+        item.update(contexts[str(item["l3_code"])])
 
     assessment_out: dict[str, object] | None = None
     if latest_assessment is not None:
@@ -1224,7 +1238,7 @@ def _assert_evidence_ownership(
     ).fetchone()
     if row is None:
         raise PermissionError("evidence does not belong to member")
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def create_evidence_draft(
@@ -1278,7 +1292,7 @@ def create_evidence_draft(
         (learning_task_id, l3_code, version_number, content, evidence_link),
     ).fetchone()
     assert row is not None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def update_evidence_draft(
@@ -1316,7 +1330,7 @@ def update_evidence_draft(
         values,
     ).fetchone()
     assert row is not None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def submit_evidence(
@@ -1370,7 +1384,7 @@ def submit_evidence(
             (int(submitted["learning_task_id"]),),
         )
 
-    return submitted
+    return _attach_l3_contexts(connection, [submitted])[0]
 
 
 def list_evidences(
@@ -1387,7 +1401,7 @@ def list_evidences(
         """,
         (learning_task_id,),
     ).fetchall()
-    return [_evidence_row(row) for row in rows]
+    return _attach_l3_contexts(connection, [_evidence_row(row) for row in rows])
 
 
 def get_evidence(
@@ -1407,7 +1421,7 @@ def get_evidence(
     ).fetchone()
     if row is None:
         return None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -1442,7 +1456,7 @@ def list_pending_evidence_reviews_for_buddy(
         """,
         (buddy_id,),
     ).fetchall()
-    return [
+    items = [
         {
             "id": row[0],
             "evidence_id": row[1],
@@ -1457,6 +1471,7 @@ def list_pending_evidence_reviews_for_buddy(
         }
         for row in rows
     ]
+    return _attach_l3_contexts(connection, items)
 
 
 def get_evidence_review_for_buddy(
@@ -1484,22 +1499,27 @@ def get_evidence_review_for_buddy(
     member_id = int(row[13])
     if not is_member_assigned_to_buddy(connection, member_id, buddy_id):
         return None
-    return {
-        "id": row[0],
-        "evidence_id": row[1],
-        "buddy_id": row[2],
-        "status": row[3],
-        "conclusion": row[4],
-        "feedback": row[5],
-        "reviewed_at": row[6],
-        "created_at": row[7],
-        "learning_task_id": row[8],
-        "l3_code": row[9],
-        "version_number": row[10],
-        "content": row[11],
-        "evidence_link": row[12],
-        "member_id": member_id,
-    }
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "evidence_id": row[1],
+                "buddy_id": row[2],
+                "status": row[3],
+                "conclusion": row[4],
+                "feedback": row[5],
+                "reviewed_at": row[6],
+                "created_at": row[7],
+                "learning_task_id": row[8],
+                "l3_code": row[9],
+                "version_number": row[10],
+                "content": row[11],
+                "evidence_link": row[12],
+                "member_id": member_id,
+            }
+        ],
+    )[0]
 
 
 def submit_evidence_review(
@@ -1880,9 +1900,18 @@ def get_capability_profile(
         enriched_items = []
         for item in annual_plan["items"]:
             task = _learning_task_with_logs_and_evidences(connection, int(item["id"]))
-            if task is not None:
-                task["l3_name"] = item.get("l3_name")
             enriched_items.append({**item, "learning_task": task})
+        contexts = get_l3_contexts(
+            connection, [str(item["l3_code"]) for item in enriched_items]
+        )
+        for item in enriched_items:
+            context = contexts[str(item["l3_code"])]
+            item.update(context)
+            task = item["learning_task"]
+            if isinstance(task, dict):
+                task.update(context)
+                for evidence in task["evidences"]:
+                    evidence.update(context)
         annual_plan["items"] = enriched_items
 
     start_of_year = f"{year}-01-01"
@@ -2011,7 +2040,7 @@ def list_selectable_members_for_profile(
     ).fetchone()
     if row is None:
         return []
-    return [
+    items = [
         {
             "id": row[0],
             "username": row[1],
@@ -2020,6 +2049,7 @@ def list_selectable_members_for_profile(
             "target_level": row[4],
         }
     ]
+    return items
 
 
 _ALLOWED_TEAM_PLAN_STATUSES = {"已发布", "已归档"}
@@ -2379,29 +2409,28 @@ def _team_analytics_overdue_items(
               AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
         )
         SELECT d.member_id, u.username, u.full_name,
-               d.l3_code, cn.name AS l3_name,
+               d.l3_code,
                d.due_date, (CURRENT_DATE - d.due_date) AS overdue_days, d.status
         FROM due d
         JOIN tcp_user u ON u.id = d.member_id
-        LEFT JOIN capability_node cn ON cn.code = d.l3_code AND cn.node_type = 'L3'
         WHERE d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE
         ORDER BY overdue_days DESC, d.l3_code
         """,
         (year, year, member_id, member_id, domain_code, domain_code),
     ).fetchall()
-    return [
+    items = [
         {
             "member_id": row[0],
             "username": row[1],
             "full_name": row[2],
             "l3_code": row[3],
-            "l3_name": row[4],
-            "due_date": str(row[5]) if row[5] is not None else None,
-            "overdue_days": int(row[6]) if row[6] is not None else 0,
-            "status": row[7],
+            "due_date": str(row[4]) if row[4] is not None else None,
+            "overdue_days": int(row[5]) if row[5] is not None else 0,
+            "status": row[6],
         }
         for row in rows
     ]
+    return _attach_l3_contexts(connection, items)
 
 
 def _team_analytics_domain_averages(

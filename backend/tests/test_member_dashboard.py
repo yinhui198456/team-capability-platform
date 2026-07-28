@@ -46,6 +46,8 @@ def test_member_dashboard_aggregates_only_current_member_data(
     assert body["domain_radar"][0] == {"domain_code": "P01", "score": 2}
     assert len(body["gaps"]) == 1
     assert body["gaps"][0]["l3_code"] == "P01-L2A-L3A"
+    assert body["gaps"][0]["l2_code"] == "P01-L2A"
+    assert body["gaps"][0]["l3_name"] == "Leaf"
     assert body["current_tasks"] == []
     assert body["assessment"] is not None
     assert body["assessment"]["status"] == "已归档"

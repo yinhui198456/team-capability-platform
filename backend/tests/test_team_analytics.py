@@ -602,6 +602,8 @@ def test_team_analytics_aggregates_match_data(
     assert len(overdue) == 2
     overdue_members = {item["member_id"] for item in overdue}
     assert overdue_members == {member_a_id, member_b_id}
+    assert all(item["l2_code"] is not None for item in overdue)
+    assert all(item["l3_name"] is not None for item in overdue)
 
 
 def test_team_analytics_domain_filter_restricts_aggregates(

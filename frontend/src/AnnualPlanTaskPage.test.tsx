@@ -39,6 +39,8 @@ describe('AnnualPlanTaskPage', () => {
           id: 1,
           annual_growth_plan_id: 1,
           growth_goal_id: 1,
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
           l3_code: 'P01.01.01',
           l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
           current_level: 2,
@@ -82,12 +84,12 @@ describe('AnnualPlanTaskPage', () => {
     })
     expect(
       screen.getByText((content) =>
-        content.includes('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+        content.includes('P01.01 · 数据基础 → P01.01.01'),
       ),
     ).toBeTruthy()
     // Column headers
-    expect(screen.getByText('能力项')).toBeTruthy()
-    expect(screen.getByText('等级提升')).toBeTruthy()
+    expect(screen.getByText('二级能力标准 → 三级达成路径')).toBeTruthy()
+    expect(screen.getByText('掌握度提升')).toBeTruthy()
     expect(screen.getByText('计划时长')).toBeTruthy()
   })
 
@@ -161,7 +163,7 @@ describe('AnnualPlanTaskPage', () => {
     )
     await waitFor(() => {
       expect(
-        screen.getByText('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+        screen.getByText('P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位'),
       ).toBeTruthy()
     })
     expect(
