@@ -41,15 +41,18 @@ type EditableNode = {
   nodeType: 'L1' | 'L2' | 'L3'
   name: string
   enabled?: boolean
-  p4_description: string | null
-  p5_description: string | null
-  p6_description: string | null
-  p7_description: string | null
-  p8_description: string | null
+  overview?: string | null
+  p4_description?: string | null
+  p5_description?: string | null
+  p6_description?: string | null
+  p7_description?: string | null
+  p8_description?: string | null
   recommended_start_level?: string | null
   materials_text?: string
   expected_output?: string | null
   estimated_hours?: string | null
+  output_type?: string | null
+  notes?: string | null
   resource_codes?: string[]
   standard_target_overrides?: Partial<Record<JobLevel, number | null>>
 }
@@ -101,6 +104,9 @@ function NodeEditForm({
   const [estimatedHours, setEstimatedHours] = useState(
     node.estimated_hours ?? '',
   )
+  const [outputType, setOutputType] = useState(node.output_type ?? '')
+  const [notes, setNotes] = useState(node.notes ?? '')
+  const [overview, setOverview] = useState(node.overview ?? '')
   const [resourceCodes, setResourceCodes] = useState<Iterable<string>>(
     new Set(node.resource_codes ?? []),
   )
@@ -112,25 +118,28 @@ function NodeEditForm({
   const [error, setError] = useState('')
 
   const isL3 = node.nodeType === 'L3'
+  const isL2 = node.nodeType === 'L2'
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
     setError('')
-    const body: Record<string, unknown> = {
-      name,
-      enabled,
-      p4_description: p4 || null,
-      p5_description: p5 || null,
-      p6_description: p6 || null,
-      p7_description: p7 || null,
-      p8_description: p8 || null,
+    const body: Record<string, unknown> = { name, enabled }
+    if (node.nodeType === 'L1') body.overview = overview || null
+    if (isL2) {
+      body.p4_description = p4 || null
+      body.p5_description = p5 || null
+      body.p6_description = p6 || null
+      body.p7_description = p7 || null
+      body.p8_description = p8 || null
     }
     if (isL3) {
       body.recommended_start_level = recommended || null
       body.materials_text = materialsText
       body.expected_output = expectedOutput || null
       body.estimated_hours = estimatedHours || null
+      body.output_type = outputType || null
+      body.notes = notes || null
       body.resource_codes = Array.from(resourceCodes)
       body.standard_target_overrides = standardTargets
     }
@@ -200,11 +209,16 @@ function NodeEditForm({
         />
         启用
       </label>
-      {textField('P4 描述', p4, setP4)}
-      {textField('P5 描述', p5, setP5)}
-      {textField('P6 描述', p6, setP6)}
-      {textField('P7 描述', p7, setP7)}
-      {textField('P8 描述', p8, setP8)}
+      {node.nodeType === 'L1' && textField('一级概述', overview, setOverview)}
+      {isL2 && (
+        <>
+          {textField('P4 描述', p4, setP4)}
+          {textField('P5 描述', p5, setP5)}
+          {textField('P6 描述', p6, setP6)}
+          {textField('P7 描述', p7, setP7)}
+          {textField('P8 描述', p8, setP8)}
+        </>
+      )}
       {isL3 && (
         <>
           {textField('建议起始等级', recommended, updateRecommended)}
@@ -257,6 +271,8 @@ function NodeEditForm({
           {textField('原始学习材料', materialsText, setMaterialsText)}
           {textField('预期输出', expectedOutput, setExpectedOutput)}
           {textField('预计时长', estimatedHours, setEstimatedHours)}
+          {textField('输出类型', outputType, setOutputType)}
+          {textField('备注', notes, setNotes)}
           <fieldset className="link-set">
             <legend>关联资源</legend>
             {resources.map((resource) => (
@@ -455,6 +471,12 @@ type SearchResult = {
   l3Name?: string
 }
 
+const SEARCH_KIND_LABEL: Record<SearchResultKind, string> = {
+  L1: '能力域',
+  L2: '能力标准',
+  L3: '达成路径',
+}
+
 function searchResultsFor(model: CapabilityModel | null): SearchResult[] {
   return enabledDomains(model).flatMap((domain) => [
     {
@@ -540,7 +562,10 @@ export function CapabilityModelPage() {
   >({})
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
-  const [selectedLevel, setSelectedLevel] = useState<LevelKey | null>(null)
+  const [selectedL2Level, setSelectedL2Level] = useState<{
+    l2Code: string
+    level: LevelKey
+  } | null>(null)
   const [selectedL3, setSelectedL3] = useState<string | null>(null)
   const [focusTarget, setFocusTarget] = useState('')
   const [focusRequestId, setFocusRequestId] = useState(0)
@@ -649,7 +674,7 @@ export function CapabilityModelPage() {
 
   function selectDomain(code: string) {
     closeBeforeNavigation()
-    setSelectedLevel(null)
+    setSelectedL2Level(null)
     setActiveDomain(code)
     requestFocusTarget(`capability-domain-content-${code}`)
   }
@@ -685,7 +710,7 @@ export function CapabilityModelPage() {
     setSearchOpen(false)
     closeBeforeNavigation()
     if (result.kind === 'L1') {
-      setSelectedLevel(null)
+      setSelectedL2Level(null)
       setActiveDomain(result.l1Code)
       requestFocusTarget(`capability-domain-content-${result.l1Code}`)
       return
@@ -782,7 +807,9 @@ export function CapabilityModelPage() {
                     key={`${result.kind}-${result.code}`}
                     onClick={() => selectResult(result)}
                   >
-                    <span className={styles.resultKind}>{result.kind}</span>
+                    <span className={styles.resultKind}>
+                      {SEARCH_KIND_LABEL[result.kind]}
+                    </span>
                     <span>
                       <strong>{result.code}</strong> · {result.name}
                     </span>
@@ -874,11 +901,7 @@ export function CapabilityModelPage() {
                       nodeType: 'L1',
                       name: currentDomain.name,
                       enabled: true,
-                      p4_description: currentDomain.p4_description,
-                      p5_description: currentDomain.p5_description,
-                      p6_description: currentDomain.p6_description,
-                      p7_description: currentDomain.p7_description,
-                      p8_description: currentDomain.p8_description,
+                      overview: currentDomain.overview,
                     })
                   }
                 >
@@ -887,46 +910,16 @@ export function CapabilityModelPage() {
               )}
             </div>
 
-            <section
-              className={styles.levelSection}
-              aria-label="P4-P8 等级标准"
-            >
-              <div className={styles.levelGrid}>
-                {LEVELS.map(({ key, label }) => {
-                  const selected = selectedLevel === key
-                  return (
-                    <button
-                      type="button"
-                      className={
-                        selected ? styles.levelCardActive : styles.levelCard
-                      }
-                      aria-expanded={selected}
-                      data-testid={`level-summary-${label}`}
-                      key={key}
-                      onClick={() => setSelectedLevel(selected ? null : key)}
-                    >
-                      <strong>{label}</strong>
-                      <span>
-                        {levelSummary(levelDescription(currentDomain, key))}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-              {selectedLevel && (
-                <div
-                  className={styles.inlineLevelDescription}
-                  data-testid={`level-inline-description-${selectedLevel.toUpperCase()}`}
-                  role="region"
-                  aria-label={`${selectedLevel.toUpperCase()} 完整等级说明`}
-                >
-                  <strong>{selectedLevel.toUpperCase()} 完整说明</strong>
-                  <p>
-                    {levelDescription(currentDomain, selectedLevel) ??
-                      '未提供等级说明'}
-                  </p>
-                </div>
-              )}
+            <section className={styles.domainOverview} aria-label="能力域概述">
+              <p>{currentDomain.overview || '暂未提供一级概述。'}</p>
+              <span>
+                {currentDomain.children.length} 个能力标准 ·{' '}
+                {currentDomain.children.reduce(
+                  (count, l2) => count + l2.children.length,
+                  0,
+                )}{' '}
+                个达成路径
+              </span>
             </section>
 
             <div className={styles.l2Toolbar}>
@@ -968,7 +961,9 @@ export function CapabilityModelPage() {
                         <span>
                           <strong>{l2.code}</strong> · {l2.name}
                         </span>
-                        <small>{l2.children.length} 个 L3</small>
+                        <small>
+                          <b>能力标准</b> · {l2.children.length} 条达成路径
+                        </small>
                       </button>
                       {isLeader && (
                         <button
@@ -994,88 +989,154 @@ export function CapabilityModelPage() {
                       )}
                     </div>
                     {expanded && (
-                      <div
-                        className={styles.l3List}
-                        data-testid={`l3-list-${l2.code}`}
-                      >
-                        {l2.children.map((l3) => (
-                          <div className={styles.l3Row} key={l3.code}>
-                            <button
-                              type="button"
-                              id={`l3-row-${l3.code}`}
-                              data-testid={`l3-row-${l3.code}`}
-                              className={styles.l3Trigger}
-                              onClick={() => openDrawer(l3)}
-                            >
-                              <span>
-                                <strong>{l3.name}</strong>
-                                <small>{l3.code}</small>
-                              </span>
-                              <span className={styles.l3Meta}>
-                                {l3.recommended_start_level ?? '起始等级未提供'}
-                                <span aria-hidden="true">查看详情 →</span>
-                              </span>
-                            </button>
-                            <div className={styles.l3Summary}>
-                              <span>
-                                {l3.expected_output ?? '预期输出未提供'}
-                              </span>
-                              <span>
-                                {l3.estimated_hours
-                                  ? `${l3.estimated_hours} 小时`
-                                  : '预计时长未提供'}
-                              </span>
-                              <span>
-                                {l3.resources.length
-                                  ? `已关联资源：${l3.resources
-                                      .map((resource) => resource.name)
-                                      .join('、')}`
-                                  : '暂无已关联资源'}
-                              </span>
-                              {l3.unmatched_materials.length > 0 && (
-                                <span
-                                  className={styles.l3Warning}
-                                  role="status"
+                      <div className={styles.l2Expanded}>
+                        <section
+                          className={styles.levelSection}
+                          aria-label={`${l2.code} 职级要求 P4-P8`}
+                        >
+                          <h4>职级要求 P4–P8</h4>
+                          <div className={styles.levelGrid}>
+                            {LEVELS.map(({ key, label }) => {
+                              const selected =
+                                selectedL2Level?.l2Code === l2.code &&
+                                selectedL2Level.level === key
+                              return (
+                                <button
+                                  type="button"
+                                  className={
+                                    selected
+                                      ? styles.levelCardActive
+                                      : styles.levelCard
+                                  }
+                                  aria-expanded={selected}
+                                  data-testid={`l2-level-summary-${l2.code}-${label}`}
+                                  key={key}
+                                  onClick={() =>
+                                    setSelectedL2Level(
+                                      selected
+                                        ? null
+                                        : { l2Code: l2.code, level: key },
+                                    )
+                                  }
                                 >
-                                  来源待补充 / 未关联：
-                                  {l3.unmatched_materials.join('；')}
-                                </span>
-                              )}
-                            </div>
-                            {isLeader && (
-                              <button
-                                type="button"
-                                className={`inline-edit ${styles.l3Edit}`}
-                                data-testid={`l3-edit-${l3.code}`}
-                                onClick={() =>
-                                  startEdit({
-                                    code: l3.code,
-                                    nodeType: 'L3',
-                                    name: l3.name,
-                                    enabled: true,
-                                    p4_description: l3.p4_description,
-                                    p5_description: l3.p5_description,
-                                    p6_description: l3.p6_description,
-                                    p7_description: l3.p7_description,
-                                    p8_description: l3.p8_description,
-                                    recommended_start_level:
-                                      l3.recommended_start_level,
-                                    materials_text: l3.materials_text,
-                                    expected_output: l3.expected_output,
-                                    estimated_hours: l3.estimated_hours,
-                                    resource_codes: l3.resources.map(
-                                      (resource) => resource.material_code,
-                                    ),
-                                    standard_target_overrides:
-                                      l3.standard_target_overrides,
-                                  })
-                                }
-                              >
-                                编辑节点
-                              </button>
-                            )}
+                                  <strong>{label}</strong>
+                                  <span>
+                                    {levelSummary(levelDescription(l2, key))}
+                                  </span>
+                                </button>
+                              )
+                            })}
                           </div>
-                        ))}
+                          {selectedL2Level?.l2Code === l2.code && (
+                            <div
+                              className={styles.inlineLevelDescription}
+                              data-testid={`l2-level-inline-description-${l2.code}-${selectedL2Level.level.toUpperCase()}`}
+                              role="region"
+                              aria-label={`${l2.code} ${selectedL2Level.level.toUpperCase()} 完整职级要求`}
+                            >
+                              <strong>
+                                {selectedL2Level.level.toUpperCase()}{' '}
+                                完整职级要求
+                              </strong>
+                              <p>
+                                {levelDescription(l2, selectedL2Level.level) ??
+                                  '未提供等级说明'}
+                              </p>
+                            </div>
+                          )}
+                        </section>
+                        <div
+                          className={styles.l3List}
+                          data-testid={`l3-list-${l2.code}`}
+                        >
+                          <h4>达成路径 / 学习实践项</h4>
+                          {l2.children.length === 0 ? (
+                            <p className={styles.l3Empty} role="status">
+                              三级达成路径待补充
+                            </p>
+                          ) : (
+                            l2.children.map((l3) => (
+                              <div className={styles.l3Row} key={l3.code}>
+                                <button
+                                  type="button"
+                                  id={`l3-row-${l3.code}`}
+                                  data-testid={`l3-row-${l3.code}`}
+                                  className={styles.l3Trigger}
+                                  onClick={() => openDrawer(l3)}
+                                >
+                                  <span>
+                                    <strong>{l3.name}</strong>
+                                    <small>{l3.code}</small>
+                                  </span>
+                                  <span className={styles.l3Meta}>
+                                    {l3.recommended_start_level
+                                      ? `建议起始职级：${l3.recommended_start_level}`
+                                      : '建议起始职级未提供'}
+                                    <span aria-hidden="true">查看详情 →</span>
+                                  </span>
+                                </button>
+                                <div className={styles.l3Summary}>
+                                  <span>
+                                    {l3.expected_output ?? '预期输出未提供'}
+                                  </span>
+                                  <span>
+                                    {l3.estimated_hours
+                                      ? `预计耗时：${l3.estimated_hours}`
+                                      : '预计耗时未提供'}
+                                  </span>
+                                  {l3.output_type && (
+                                    <span>输出类型：{l3.output_type}</span>
+                                  )}
+                                  <span>
+                                    {l3.resources.length
+                                      ? `已关联资源：${l3.resources
+                                          .map((resource) => resource.name)
+                                          .join('、')}`
+                                      : '暂无已关联资源'}
+                                  </span>
+                                  {l3.unmatched_materials.length > 0 && (
+                                    <span
+                                      className={styles.l3Warning}
+                                      role="status"
+                                    >
+                                      来源待补充 / 未关联：
+                                      {l3.unmatched_materials.join('；')}
+                                    </span>
+                                  )}
+                                </div>
+                                {isLeader && (
+                                  <button
+                                    type="button"
+                                    className={`inline-edit ${styles.l3Edit}`}
+                                    data-testid={`l3-edit-${l3.code}`}
+                                    onClick={() =>
+                                      startEdit({
+                                        code: l3.code,
+                                        nodeType: 'L3',
+                                        name: l3.name,
+                                        enabled: true,
+                                        recommended_start_level:
+                                          l3.recommended_start_level,
+                                        materials_text: l3.materials_text,
+                                        expected_output: l3.expected_output,
+                                        estimated_hours: l3.estimated_hours,
+                                        output_type: l3.output_type,
+                                        notes: l3.notes,
+                                        resource_codes: l3.resources.map(
+                                          (resource) => resource.material_code,
+                                        ),
+                                        standard_target_overrides:
+                                          l3.standard_target_overrides,
+                                      })
+                                    }
+                                  >
+                                    编辑节点
+                                  </button>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     )}
                   </section>
@@ -1098,14 +1159,14 @@ export function CapabilityModelPage() {
         >
           <div className={styles.drawerHeader}>
             <div>
-              <p className={styles.sectionKicker}>L3 能力项详情</p>
+              <p className={styles.sectionKicker}>达成路径详情</p>
               <h2 id="l3-drawer-title">{selectedNode.code}</h2>
               <p>{selectedNode.name}</p>
             </div>
             <button
               type="button"
               className={styles.drawerClose}
-              aria-label="关闭 L3 详情"
+              aria-label="关闭达成路径详情"
               onClick={() => closeDrawer()}
             >
               ×
@@ -1129,7 +1190,7 @@ export function CapabilityModelPage() {
               </dd>
             </div>
             <div>
-              <dt>L3 能力项</dt>
+              <dt>达成路径</dt>
               <dd>
                 {selectedContext
                   ? `${selectedContext.l3.code} · ${selectedContext.l3.name}`
@@ -1137,7 +1198,7 @@ export function CapabilityModelPage() {
               </dd>
             </div>
             <div>
-              <dt>建议起始等级</dt>
+              <dt>建议起始职级</dt>
               <dd>{selectedNode.recommended_start_level ?? '未提供'}</dd>
             </div>
             <div>
@@ -1146,23 +1207,21 @@ export function CapabilityModelPage() {
             </div>
             <div>
               <dt>预计时长</dt>
-              <dd>
-                {selectedNode.estimated_hours ?? '未提供'}
-                {selectedNode.estimated_hours ? ' 小时' : ''}
-              </dd>
+              <dd>{selectedNode.estimated_hours ?? '未提供'}</dd>
             </div>
+            {selectedNode.output_type && (
+              <div>
+                <dt>输出类型</dt>
+                <dd>{selectedNode.output_type}</dd>
+              </div>
+            )}
+            {selectedNode.notes && (
+              <div>
+                <dt>备注</dt>
+                <dd>{selectedNode.notes}</dd>
+              </div>
+            )}
           </dl>
-          <section className={styles.drawerSection}>
-            <h3>该能力项的 P4–P8 完整描述</h3>
-            <div className={styles.drawerLevels}>
-              {LEVELS.map(({ key, label }) => (
-                <div key={key}>
-                  <strong>{label}</strong>
-                  <p>{levelDescription(selectedNode, key) ?? '未提供'}</p>
-                </div>
-              ))}
-            </div>
-          </section>
           <section className={styles.drawerSection}>
             <h3>材料与资源</h3>
             <p>

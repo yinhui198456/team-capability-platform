@@ -65,9 +65,7 @@ def get_capability_model(
     l1_rows = _fetchall(
         connection,
         f"""
-        SELECT id, code, name, l1_category, enabled,
-               p4_description, p5_description, p6_description,
-               p7_description, p8_description
+        SELECT id, code, name, l1_category, overview, enabled
         FROM capability_node
         WHERE model_id = (SELECT id FROM capability_model ORDER BY id LIMIT 1)
           AND node_type = 'L1'
@@ -96,10 +94,8 @@ def get_capability_model(
     l3_rows = _fetchall(
         connection,
         """
-        SELECT id, parent_node_id, code, name,
-               p4_description, p5_description, p6_description,
-               p7_description, p8_description, recommended_start_level,
-               materials_text, expected_output, estimated_hours
+        SELECT id, parent_node_id, code, name, recommended_start_level,
+               materials_text, expected_output, estimated_hours, output_type, notes
         FROM capability_node
         WHERE node_type = 'L3' AND parent_node_id = ANY(%s)
         ORDER BY sort_order
@@ -147,15 +143,12 @@ def get_capability_model(
             {
                 "code": row["code"],
                 "name": row["name"],
-                "p4_description": row["p4_description"],
-                "p5_description": row["p5_description"],
-                "p6_description": row["p6_description"],
-                "p7_description": row["p7_description"],
-                "p8_description": row["p8_description"],
                 "recommended_start_level": row["recommended_start_level"],
                 "materials_text": row["materials_text"],
                 "expected_output": row["expected_output"],
                 "estimated_hours": row["estimated_hours"],
+                "output_type": row["output_type"],
+                "notes": row["notes"],
                 "standard_target_overrides": overrides_by_node[row["id"]],
                 "resources": resources,
                 "unmatched_materials": _unmatched_materials(
@@ -183,12 +176,8 @@ def get_capability_model(
             "code": row["code"],
             "name": row["name"],
             "category": row["l1_category"],
+            "overview": row["overview"],
             "enabled": row["enabled"],
-            "p4_description": row["p4_description"],
-            "p5_description": row["p5_description"],
-            "p6_description": row["p6_description"],
-            "p7_description": row["p7_description"],
-            "p8_description": row["p8_description"],
             "children": l2_by_l1[row["id"]],
         }
         for row in l1_rows
@@ -232,7 +221,7 @@ def list_learning_resources(
                count(DISTINCT link.node_id) AS l3_count
         FROM learning_resource AS resource
         LEFT JOIN capability_node_resource AS link ON link.resource_id = resource.id
-        WHERE {' AND '.join(filters)}
+        WHERE {" AND ".join(filters)}
         GROUP BY resource.id
         ORDER BY resource.material_code
         """,
@@ -280,9 +269,22 @@ _L3_ONLY_FIELDS = (
     "materials_text",
     "expected_output",
     "estimated_hours",
+    "output_type",
+    "notes",
     "resource_codes",
     "standard_target_overrides",
 )
+_L1_FIELDS = {"name", "enabled", "overview"}
+_L2_FIELDS = {
+    "name",
+    "enabled",
+    "p4_description",
+    "p5_description",
+    "p6_description",
+    "p7_description",
+    "p8_description",
+}
+_L3_FIELDS = {"name", "enabled", *_L3_ONLY_FIELDS}
 
 
 def get_capability_node(
@@ -291,10 +293,12 @@ def get_capability_node(
     node = _fetchone(
         connection,
         """
-        SELECT id, node_type, code, name, l1_category, enabled,
+        SELECT id, node_type, code, name, l1_category, overview, enabled,
                p4_description, p5_description, p6_description,
                p7_description, p8_description,
-               recommended_start_level, materials_text, expected_output, estimated_hours
+               recommended_start_level, materials_text, expected_output,
+               estimated_hours,
+               output_type, notes
         FROM capability_node
         WHERE code = %s
         """,
@@ -310,11 +314,7 @@ def get_capability_node(
             "name": node["name"],
             "category": node["l1_category"],
             "enabled": node["enabled"],
-            "p4_description": node["p4_description"],
-            "p5_description": node["p5_description"],
-            "p6_description": node["p6_description"],
-            "p7_description": node["p7_description"],
-            "p8_description": node["p8_description"],
+            "overview": node["overview"],
         }
     if node_type == "L2":
         return {
@@ -357,15 +357,12 @@ def get_capability_node(
         "code": node["code"],
         "name": node["name"],
         "enabled": node["enabled"],
-        "p4_description": node["p4_description"],
-        "p5_description": node["p5_description"],
-        "p6_description": node["p6_description"],
-        "p7_description": node["p7_description"],
-        "p8_description": node["p8_description"],
         "recommended_start_level": node["recommended_start_level"],
         "materials_text": node["materials_text"],
         "expected_output": node["expected_output"],
         "estimated_hours": node["estimated_hours"],
+        "output_type": node["output_type"],
+        "notes": node["notes"],
         "standard_target_overrides": standard_target_overrides,
         "resources": resources,
         "unmatched_materials": _unmatched_materials(
@@ -428,10 +425,16 @@ def update_capability_node(
         return None
 
     node_type = node["node_type"]
-    if node_type != "L3":
-        for field in _L3_ONLY_FIELDS:
-            if field in data:
-                raise ValueError(f"{field} is only allowed on L3 nodes")
+    allowed_fields = {
+        "L1": _L1_FIELDS,
+        "L2": _L2_FIELDS,
+        "L3": _L3_FIELDS,
+    }[node_type]
+    invalid_fields = set(data) - allowed_fields
+    if invalid_fields:
+        raise ValueError(
+            f"invalid fields for {node_type}: {', '.join(sorted(invalid_fields))}"
+        )
 
     standard_target_overrides: dict[str, int | None] | None = None
     if node_type == "L3" and (
@@ -479,24 +482,9 @@ def update_capability_node(
                 + ", ".join(below_start)
             )
 
-    scalar_fields = [
-        "name",
-        "enabled",
-        "p4_description",
-        "p5_description",
-        "p6_description",
-        "p7_description",
-        "p8_description",
-    ]
-    if node_type == "L3":
-        scalar_fields.extend(
-            [
-                "recommended_start_level",
-                "materials_text",
-                "expected_output",
-                "estimated_hours",
-            ]
-        )
+    scalar_fields = sorted(
+        allowed_fields - {"resource_codes", "standard_target_overrides"}
+    )
 
     updates = []
     parameters: list[object] = []
@@ -511,7 +499,7 @@ def update_capability_node(
             connection.execute(
                 f"""
                 UPDATE capability_node
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE code = %s
                 """,
                 parameters,
@@ -636,7 +624,7 @@ def update_learning_resource(
             connection.execute(
                 f"""
                 UPDATE learning_resource
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE material_code = %s
                 """,
                 parameters,

@@ -72,8 +72,10 @@ for (const viewport of VIEWPORTS) {
     await expect(
       page.getByRole('tablist', { name: '能力域导航' }),
     ).toBeVisible()
-    await expect(page.locator('[data-testid^="l2-group-"]')).toHaveCount(4)
-    await expect(page.locator('[data-testid^="level-summary-"]')).toHaveCount(5)
+    await expect(page.locator('[data-testid^="l2-group-"]')).toHaveCount(10)
+    await expect(
+      page.locator('[data-testid^="l2-level-summary-"]'),
+    ).toHaveCount(0)
     const scrollWidth = await page.evaluate(
       () => document.documentElement.scrollWidth,
     )
@@ -101,6 +103,38 @@ test('capability map Drawer visual evidence 1440x900', async ({ page }) => {
   await page.getByTestId('l3-row-P01.01.01').click()
   await expect(page.getByRole('dialog', { name: 'P01.01.01' })).toBeVisible()
   await expect(page).toHaveScreenshot('capability-map-drawer-1440x900.png', {
+    maxDiffPixelRatio: 0.05,
+    fullPage: true,
+  })
+})
+
+test('capability map L2 P4-P8 visual evidence 1440x900', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mockCapabilityMap(page)
+  await loginAs(page, 'member')
+  await page.goto('/capability/model')
+  await page.getByTestId('l2-toggle-P01.01').click()
+  await page.getByTestId('l2-level-summary-P01.01-P5').click()
+  await expect(
+    page.getByTestId('l2-level-inline-description-P01.01-P5'),
+  ).toBeVisible()
+  await expect(page).toHaveScreenshot('capability-map-l2-level-1440x900.png', {
+    maxDiffPixelRatio: 0.05,
+    fullPage: true,
+  })
+})
+
+test('capability map empty L3 path visual evidence 1440x900', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mockCapabilityMap(page)
+  await loginAs(page, 'member')
+  await page.goto('/capability/model')
+  await page.getByTestId('capability-domain-tab-P02').click()
+  await page.getByTestId('l2-toggle-P02.07').click()
+  await expect(page.getByText('三级达成路径待补充')).toBeVisible()
+  await expect(page).toHaveScreenshot('capability-map-empty-l2-1440x900.png', {
     maxDiffPixelRatio: 0.05,
     fullPage: true,
   })

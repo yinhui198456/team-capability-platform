@@ -7,6 +7,8 @@ import psycopg
 import pytest
 from openpyxl import load_workbook
 
+from app.access.schema import create_access_schema
+from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import (
     ensure_catalog_initialized,
     import_catalog,
@@ -15,8 +17,7 @@ from app.catalog.importer import (
 from app.catalog.schema import create_catalog_schema
 
 WORKBOOK_DIR = resolve_workbook_dir()
-MODEL_WORKBOOK = "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx"
-PLAN_WORKBOOK = "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx"
+MODEL_WORKBOOK = "技术架构与开发_角色能力模型.xlsx"
 
 
 def count(connection: psycopg.Connection, table: str) -> int:
@@ -185,7 +186,7 @@ def test_rejects_learning_resource_link_update_for_non_l3_node(
             )
 
 
-def test_import_requires_the_two_fixed_workbooks(
+def test_import_requires_the_fixed_workbook(
     connection: psycopg.Connection, tmp_path: Path
 ) -> None:
     with pytest.raises(FileNotFoundError):
@@ -207,12 +208,12 @@ def test_imports_six_domains_and_catalog_baseline(
         report.resource_count,
     ) == (
         6,
-        47,
+        51,
         310,
         95,
     )
     assert count(connection, "capability_model") == 1
-    assert count(connection, "capability_node") == 363
+    assert count(connection, "capability_node") == 367
     assert count(connection, "learning_resource") == 95
     assert {
         row[0]
@@ -220,6 +221,36 @@ def test_imports_six_domains_and_catalog_baseline(
             "SELECT code FROM capability_node WHERE node_type = 'L1' ORDER BY code"
         )
     } == {"P01", "P02", "P03", "C01", "C02", "C03"}
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM capability_node WHERE node_type = 'L2' "
+            "AND p4_description IS NOT NULL AND p8_description IS NOT NULL"
+        ).fetchone()[0]
+        == 51
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM capability_node WHERE node_type IN ('L1', 'L3') "
+            "AND (p4_description IS NOT NULL OR p5_description IS NOT NULL OR "
+            "p6_description IS NOT NULL OR p7_description IS NOT NULL OR "
+            "p8_description IS NOT NULL)"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM capability_node WHERE node_type = 'L3' "
+            "AND output_type IS NULL"
+        ).fetchone()[0]
+        == 115
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM capability_node "
+            "WHERE node_type = 'L3' AND notes IS NULL"
+        ).fetchone()[0]
+        == 291
+    )
 
 
 def test_preserves_materials_text_and_warns_for_unmatched_a8(
@@ -253,16 +284,15 @@ def test_unknown_l1_rejects_import_without_replacing_existing_catalog(
         count(connection, "capability_node"),
     )
 
-    copy2(WORKBOOK_DIR / MODEL_WORKBOOK, tmp_path / MODEL_WORKBOOK)
-    copied_plan = tmp_path / PLAN_WORKBOOK
-    copy2(WORKBOOK_DIR / PLAN_WORKBOOK, copied_plan)
-    workbook = load_workbook(copied_plan)
-    worksheet = workbook["02_能力差距自评"]
+    copied_workbook = tmp_path / MODEL_WORKBOOK
+    copy2(WORKBOOK_DIR / MODEL_WORKBOOK, copied_workbook)
+    workbook = load_workbook(copied_workbook)
+    worksheet = workbook["02_职级要求矩阵"]
     worksheet["B2"] = "X99"
     worksheet["C2"] = "Unknown capability"
-    workbook.save(copied_plan)
+    workbook.save(copied_workbook)
 
-    with pytest.raises(ValueError, match="unknown L1"):
+    with pytest.raises(ValueError, match="invalid L2 parent"):
         import_catalog(tmp_path, connection)
 
     assert (
@@ -284,4 +314,76 @@ def test_second_initialization_does_not_reimport(
     assert (
         connection.execute("SELECT id FROM capability_model").fetchone()[0]
         == first_model_id
+    )
+
+
+def test_upgrade_keeps_existing_ids_and_adds_only_the_four_empty_l2(
+    connection: psycopg.Connection,
+) -> None:
+    create_catalog_schema(connection)
+    import_catalog(WORKBOOK_DIR, connection)
+    ids_before = dict(
+        connection.execute(
+            "SELECT code, id FROM capability_node "
+            "WHERE code IN ('P01', 'P01.01', 'P01.01.01')"
+        )
+    )
+    l3_id = ids_before["P01.01.01"]
+    connection.execute(
+        "INSERT INTO capability_standard_target_override "
+        "(node_id, job_level, target_level) "
+        "VALUES (%s, 'P4', 3)",
+        (l3_id,),
+    )
+    create_access_schema(connection)
+    create_assessment_schema(connection)
+    member_id = connection.execute(
+        "INSERT INTO tcp_user (username, full_name, password_hash) "
+        "VALUES ('importer-member', 'Importer member', 'x') RETURNING id"
+    ).fetchone()[0]
+    assessment_id = connection.execute(
+        """
+        INSERT INTO assessment (member_id, year, assessment_type, status)
+        VALUES (%s, 2026, '年度', '草稿') RETURNING id
+        """,
+        (member_id,),
+    ).fetchone()[0]
+    connection.execute(
+        "INSERT INTO assessment_detail (assessment_id, l3_code) "
+        "VALUES (%s, 'P01.01.01')",
+        (assessment_id,),
+    )
+    connection.execute(
+        "DELETE FROM capability_node WHERE code = ANY(%s)",
+        (["P02.07", "P02.08", "P02.09", "P02.10"],),
+    )
+    connection.execute(
+        "UPDATE capability_model SET version = 'legacy', "
+        "source_workbook = 'legacy.xlsx'"
+    )
+
+    report = import_catalog(WORKBOOK_DIR, connection)
+
+    ids_after = dict(
+        connection.execute(
+            "SELECT code, id FROM capability_node "
+            "WHERE code IN ('P01', 'P01.01', 'P01.01.01')"
+        )
+    )
+    assert ids_after == ids_before
+    assert report.added_l2_codes == ("P02.07", "P02.08", "P02.09", "P02.10")
+    assert (
+        connection.execute(
+            "SELECT target_level FROM capability_standard_target_override "
+            "WHERE node_id = %s AND job_level = 'P4'",
+            (l3_id,),
+        ).fetchone()[0]
+        == 3
+    )
+    assert (
+        connection.execute(
+            "SELECT l3_code FROM assessment_detail WHERE assessment_id = %s",
+            (assessment_id,),
+        ).fetchone()[0]
+        == "P01.01.01"
     )

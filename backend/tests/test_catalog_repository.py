@@ -26,23 +26,18 @@ def test_capability_model_returns_only_the_six_enabled_domains(
         UPDATE capability_node
         SET p4_description = CASE code
                 WHEN 'P01.01' THEN 'L2 P4 description'
-                WHEN 'P01.01.01' THEN 'L3 P4 description'
             END,
             p5_description = CASE code
                 WHEN 'P01.01' THEN 'L2 P5 description'
-                WHEN 'P01.01.01' THEN 'L3 P5 description'
             END,
             p6_description = CASE code
                 WHEN 'P01.01' THEN 'L2 P6 description'
-                WHEN 'P01.01.01' THEN 'L3 P6 description'
             END,
             p7_description = CASE code
                 WHEN 'P01.01' THEN 'L2 P7 description'
-                WHEN 'P01.01.01' THEN 'L3 P7 description'
             END,
             p8_description = CASE code
                 WHEN 'P01.01' THEN 'L2 P8 description'
-                WHEN 'P01.01.01' THEN 'L3 P8 description'
             END
         WHERE code IN ('P01.01', 'P01.01.01')
         """
@@ -74,14 +69,15 @@ def test_capability_model_returns_only_the_six_enabled_domains(
         "L2 P7 description",
         "L2 P8 description",
     }
-    assert {l3[level] for level in levels} == {
-        "L3 P4 description",
-        "L3 P5 description",
-        "L3 P6 description",
-        "L3 P7 description",
-        "L3 P8 description",
-    }
-    assert {"materials_text", "resources", "unmatched_materials"} <= set(l3)
+    assert not levels & set(l3)
+    assert {
+        "materials_text",
+        "resources",
+        "unmatched_materials",
+        "output_type",
+        "notes",
+    } <= set(l3)
+    assert "overview" in model["domains"][0]
 
 
 def test_capability_model_filters_one_domain_and_returns_none_when_missing(

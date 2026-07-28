@@ -25,11 +25,7 @@ function emptyDomain(code: string) {
   return {
     code,
     name: `${code} 允许域`,
-    p4_description: null,
-    p5_description: null,
-    p6_description: null,
-    p7_description: null,
-    p8_description: null,
+    overview: `${code} 一级概述`,
     children: [],
   }
 }
@@ -41,11 +37,7 @@ const model: CapabilityModel = {
     {
       code: 'P01',
       name: 'Data Infra 能力',
-      p4_description: 'P4 描述',
-      p5_description: 'P5 描述',
-      p6_description: 'P6 描述',
-      p7_description: 'P7 描述',
-      p8_description: 'P8 描述',
+      overview: 'P01 一级概述',
       children: [
         {
           code: 'P01.01',
@@ -59,16 +51,13 @@ const model: CapabilityModel = {
             {
               code: 'P01.01.01',
               name: 'TDC / TDH / ArgoDB / TDS 产品定位',
-              p4_description: 'L3 P4 完整描述',
-              p5_description: 'L3 P5 完整描述',
-              p6_description: 'L3 P6 完整描述',
-              p7_description: 'L3 P7 完整描述',
-              p8_description: 'L3 P8 完整描述',
               recommended_start_level: 'P6',
               standard_target_overrides: { P7: 3 },
               materials_text: 'P01-M001、A8',
               expected_output: '能力说明',
               estimated_hours: '8',
+              output_type: '认知+环境验证',
+              notes: null,
               resources: [
                 {
                   material_code: 'P01-M001',
@@ -93,15 +82,12 @@ const model: CapabilityModel = {
             {
               code: 'P01.02.01',
               name: '默认折叠能力',
-              p4_description: null,
-              p5_description: null,
-              p6_description: null,
-              p7_description: null,
-              p8_description: null,
               recommended_start_level: null,
               materials_text: '',
               expected_output: null,
               estimated_hours: null,
+              output_type: null,
+              notes: null,
               resources: [],
               unmatched_materials: [],
             },
@@ -112,11 +98,7 @@ const model: CapabilityModel = {
     {
       code: 'P02',
       name: 'AI Infra 能力',
-      p4_description: 'P02 P4 描述',
-      p5_description: 'P02 P5 描述',
-      p6_description: 'P02 P6 描述',
-      p7_description: 'P02 P7 描述',
-      p8_description: 'P02 P8 描述',
+      overview: 'P02 一级概述',
       children: [
         {
           code: 'P02.01',
@@ -130,15 +112,12 @@ const model: CapabilityModel = {
             {
               code: 'P02.01.01',
               name: 'Agent 编排能力',
-              p4_description: 'P02 L3 P4',
-              p5_description: 'P02 L3 P5',
-              p6_description: 'P02 L3 P6',
-              p7_description: 'P02 L3 P7',
-              p8_description: 'P02 L3 P8',
               recommended_start_level: 'P4',
               materials_text: '',
               expected_output: 'Agent 方案',
               estimated_hours: '10',
+              output_type: null,
+              notes: null,
               resources: [],
               unmatched_materials: [],
             },
@@ -311,8 +290,8 @@ describe('catalog routes', () => {
       await screen.findByText(/TDC \/ TDH \/ ArgoDB \/ TDS 产品定位/),
     ).toBeTruthy()
     expect(screen.getByText(/来源待补充 \/ 未关联/)).toBeTruthy()
-    expect(screen.getByText('P4 描述')).toBeTruthy()
-    expect(screen.getByText('8 小时')).toBeTruthy()
+    expect(screen.getByText('职级要求 P4–P8')).toBeTruthy()
+    expect(screen.getByText('预计耗时：8')).toBeTruthy()
     expect(screen.getByText(/产品体系材料/)).toBeTruthy()
     for (const code of ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']) {
       expect(screen.getByRole('tab', { name: new RegExp(code) })).toBeTruthy()
@@ -361,7 +340,7 @@ describe('catalog routes', () => {
       screen.getByRole('tab', { name: /P01/ }).getAttribute('aria-selected'),
     ).toBe('true')
     const l3Result = screen.getByRole('option', {
-      name: /L3.*P02\.01\.01.*Agent 编排能力/,
+      name: /达成路径.*P02\.01\.01.*Agent 编排能力/,
     })
     expect(l3Result).toBeTruthy()
     fireEvent.click(l3Result)
@@ -389,7 +368,7 @@ describe('catalog routes', () => {
     expect(
       screen.getByRole('tab', { name: /P01/ }).getAttribute('aria-selected'),
     ).toBe('true')
-    fireEvent.click(screen.getByRole('option', { name: /L1.*P02/ }))
+    fireEvent.click(screen.getByRole('option', { name: /能力域.*P02/ }))
     expect(
       screen.getByRole('tab', { name: /P02/ }).getAttribute('aria-selected'),
     ).toBe('true')
@@ -398,14 +377,14 @@ describe('catalog routes', () => {
     )
 
     fireEvent.change(search, { target: { value: 'P02.02' } })
-    fireEvent.click(screen.getByRole('option', { name: /L2.*P02\.02/ }))
+    fireEvent.click(screen.getByRole('option', { name: /能力标准.*P02\.02/ }))
     expect(
       screen.getByTestId('l2-toggle-P02.02').getAttribute('aria-expanded'),
     ).toBe('true')
     expect(document.activeElement).toBe(screen.getByTestId('l2-toggle-P02.02'))
   })
 
-  it('opens the L3 Drawer with its own level descriptions and restores focus on close', async () => {
+  it('opens the L3 Drawer with its path context and restores focus on close', async () => {
     stubMember()
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
@@ -424,13 +403,14 @@ describe('catalog routes', () => {
       within(dialog).getByText(/P01\.01 · Data Infra 产品体系认知/),
     ).toBeTruthy()
     expect(within(dialog).getByText(/P01\.01\.01 · TDC/)).toBeTruthy()
-    expect(within(dialog).getByText('L3 P4 完整描述')).toBeTruthy()
+    expect(within(dialog).getByText('认知+环境验证')).toBeTruthy()
+    expect(within(dialog).queryByText('L3 P4 完整描述')).toBeNull()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).toBe(row)
   })
 
-  it('expands the L1 level description inline and handles an initial L3 hash', async () => {
+  it('expands an L2 level description inline and handles an initial L3 hash', async () => {
     window.history.replaceState({}, '', '/capability/model#P02.01.01')
     stubMember()
     render(
@@ -448,10 +428,10 @@ describe('catalog routes', () => {
     ).toBe('true')
     expect(document.activeElement).toBe(row)
 
-    fireEvent.click(screen.getByTestId('level-summary-P4'))
+    fireEvent.click(screen.getByTestId('l2-level-summary-P02.01-P4'))
     expect(
-      screen.getByTestId('level-inline-description-P4').textContent,
-    ).toContain('P02 P4 描述')
+      screen.getByTestId('l2-level-inline-description-P02.01-P4').textContent,
+    ).toContain('P02 L2 P4')
     window.history.replaceState({}, '', '/capability/model')
   })
 
@@ -465,7 +445,7 @@ describe('catalog routes', () => {
     await screen.findByRole('tab', { name: /P01/ })
     fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
     fireEvent.click(await screen.findByTestId('l3-row-P01.01.01'))
-    fireEvent.click(screen.getByRole('button', { name: '关闭 L3 详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭达成路径详情' }))
     fireEvent.change(screen.getByRole('combobox', { name: '搜索能力地图' }), {
       target: { value: 'P02' },
     })
@@ -492,7 +472,7 @@ describe('catalog routes', () => {
     })
     fireEvent.click(
       screen.getByRole('option', {
-        name: /L3.*P02\.01\.01.*Agent 编排能力/,
+        name: /达成路径.*P02\.01\.01.*Agent 编排能力/,
       }),
     )
     const focusedL3 = screen.getByTestId('l3-row-P02.01.01')
@@ -541,7 +521,7 @@ describe('catalog routes', () => {
     const search = screen.getByRole('combobox', { name: '搜索能力地图' })
     fireEvent.change(search, { target: { value: 'P02.02' } })
     expect(search.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(screen.getByRole('option', { name: /L2.*P02\.02/ }))
+    fireEvent.click(screen.getByRole('option', { name: /能力标准.*P02\.02/ }))
     expect((search as HTMLInputElement).value).toBe('P02.02')
     expect(search.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('listbox')).toBeNull()
@@ -753,7 +733,7 @@ describe('Leader catalog controls', () => {
     expect(screen.getAllByText('编辑节点').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('submits PUT to update a domain description', async () => {
+  it('submits PUT to update a domain overview', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
@@ -762,8 +742,8 @@ describe('Leader catalog controls', () => {
     await screen.findByRole('tab', { name: /P01/ })
     fireEvent.click(screen.getAllByText('编辑')[0])
 
-    fireEvent.change(screen.getByLabelText('P4 描述'), {
-      target: { value: '更新后的 P4' },
+    fireEvent.change(screen.getByLabelText('一级概述'), {
+      target: { value: '更新后的概述' },
     })
     fireEvent.click(screen.getByText('保存'))
 
@@ -789,11 +769,7 @@ describe('Leader catalog controls', () => {
     expect(body).toMatchObject({
       name: 'Data Infra 能力',
       enabled: true,
-      p4_description: '更新后的 P4',
-      p5_description: 'P5 描述',
-      p6_description: 'P6 描述',
-      p7_description: 'P7 描述',
-      p8_description: 'P8 描述',
+      overview: '更新后的概述',
     })
   })
 

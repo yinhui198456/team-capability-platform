@@ -18,16 +18,13 @@ export type JobLevel = 'P4' | 'P5' | 'P6' | 'P7' | 'P8'
 export type L3Node = {
   code: string
   name: string
-  p4_description: string | null
-  p5_description: string | null
-  p6_description: string | null
-  p7_description: string | null
-  p8_description: string | null
   recommended_start_level: string | null
   standard_target_overrides?: Partial<Record<JobLevel, number | null>>
   materials_text: string
   expected_output: string | null
   estimated_hours: string | null
+  output_type: string | null
+  notes: string | null
   resources: ResourceSummary[]
   unmatched_materials: string[]
 }
@@ -46,11 +43,8 @@ export type L2Node = {
 export type Domain = {
   code: string
   name: string
-  p4_description: string | null
-  p5_description: string | null
-  p6_description: string | null
-  p7_description: string | null
-  p8_description: string | null
+  category?: string | null
+  overview: string | null
   children: L2Node[]
 }
 

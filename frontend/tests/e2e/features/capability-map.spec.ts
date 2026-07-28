@@ -56,6 +56,20 @@ test.describe('Issue #52 capability map', () => {
   test('mounts one L1, unloads collapsed L3 DOM, and preserves per-domain state', async ({
     page,
   }) => {
+    expect(
+      capabilityMapModel.domains.reduce(
+        (count, domain) => count + domain.children.length,
+        0,
+      ),
+    ).toBe(51)
+    expect(
+      capabilityMapModel.domains.reduce(
+        (count, domain) =>
+          count +
+          domain.children.reduce((total, l2) => total + l2.children.length, 0),
+        0,
+      ),
+    ).toBe(310)
     await mockCapabilityMap(page)
     await loginAs(page, 'member')
     await page.goto('/capability/model')
@@ -67,10 +81,10 @@ test.describe('Issue #52 capability map', () => {
       page.locator('[data-testid^="capability-domain-content-"]'),
     ).toHaveCount(1)
     await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(0)
-    await expect(page.locator('[data-testid^="l2-group-"]')).toHaveCount(4)
+    await expect(page.locator('[data-testid^="l2-group-"]')).toHaveCount(10)
 
     await page.getByTestId('l2-toggle-P01.01').click()
-    await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(14)
+    await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(9)
     await page.getByTestId('l2-toggle-P01.01').click()
     await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(0)
 
@@ -86,6 +100,18 @@ test.describe('Issue #52 capability map', () => {
     )
   })
 
+  test('shows an explicit empty state for L2 standards without L3 paths', async ({
+    page,
+  }) => {
+    await mockCapabilityMap(page)
+    await loginAs(page, 'member')
+    await page.goto('/capability/model')
+    await page.getByTestId('capability-domain-tab-P02').click()
+    await page.getByTestId('l2-toggle-P02.07').click()
+    await expect(page.getByRole('status')).toContainText('三级达成路径待补充')
+    await expect(page.locator('[data-testid^="l3-row-"]')).toHaveCount(0)
+  })
+
   test('searches all levels, waits for selection, and locates across domains', async ({
     page,
   }) => {
@@ -98,22 +124,28 @@ test.describe('Issue #52 capability map', () => {
 
     await search.fill('P01')
     await expect(
-      page.getByRole('option').filter({ hasText: /^L1/ }),
+      page.getByRole('option').filter({ hasText: /^能力域/ }),
     ).toHaveCount(1)
     await expect(
-      page.getByRole('option').filter({ hasText: /^L2/ }).first(),
+      page
+        .getByRole('option')
+        .filter({ hasText: /^能力标准/ })
+        .first(),
     ).toBeVisible()
     await expect(
-      page.getByRole('option').filter({ hasText: /^L3/ }).first(),
+      page
+        .getByRole('option')
+        .filter({ hasText: /^达成路径/ })
+        .first(),
     ).toBeVisible()
     await expect(page.getByTestId('capability-domain-tab-P01')).toHaveAttribute(
       'aria-selected',
       'true',
     )
 
-    await search.fill('跨域搜索目标能力')
+    await search.fill('跨域搜索目标达成路径')
     await expect(page.getByRole('option')).toHaveCount(1)
-    await expect(page.getByRole('option')).toContainText('L3')
+    await expect(page.getByRole('option')).toContainText('达成路径')
     await expect(page.getByRole('option')).toContainText('P02.03.07')
     await expect(page.getByRole('option')).toContainText('P02 能力域')
     await expect(page.getByRole('option')).toContainText('P02.03')
@@ -148,10 +180,10 @@ test.describe('Issue #52 capability map', () => {
     const dialog = page.getByRole('dialog', { name: 'P01.01.01' })
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('所属能力域P01 · P01 能力域')
-    await expect(dialog).toContainText('所属能力组P01.01 · P01 分组 1')
+    await expect(dialog).toContainText('所属能力组P01.01 · P01 能力标准 1')
     await expect(dialog).toContainText('P01.01.01')
-    await expect(dialog).toContainText('P01.01.01 P4 完整描述')
-    await expect(dialog).toContainText('该能力项的 P4–P8 完整描述')
+    await expect(dialog).toContainText('达成路径')
+    await expect(dialog).not.toContainText('P4 完整描述')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     await expect(row).toBeFocused()
@@ -164,7 +196,7 @@ test.describe('Issue #52 capability map', () => {
     await loginAs(page, 'member')
     await page.goto('/capability/model')
     const search = page.getByRole('combobox', { name: '搜索能力地图' })
-    await search.fill('跨域搜索目标能力')
+    await search.fill('跨域搜索目标达成路径')
     await page.getByRole('option').click()
     const focusedL3 = page.getByTestId('l3-row-P02.03.07')
     await expect(focusedL3).toBeFocused()

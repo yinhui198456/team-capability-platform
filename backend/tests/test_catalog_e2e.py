@@ -7,10 +7,7 @@ from app.catalog.importer import resolve_workbook_dir
 from app.main import app, lifespan
 
 WORKBOOK_DIR = resolve_workbook_dir()
-WORKBOOKS = (
-    "技术架构与开发专业线能力胜任模型20260509_V1.0.xlsx",
-    "团队成员年度学习计划模板_基于能力模型_V1.3.xlsx",
-)
+WORKBOOKS = ("技术架构与开发_角色能力模型.xlsx",)
 
 
 def reset_catalog(connection: psycopg.Connection) -> None:
@@ -44,7 +41,7 @@ def test_image_workbooks_bootstrap_the_catalog_baseline(
         "C02",
         "C03",
     }
-    assert sum(len(domain["children"]) for domain in domains) == 47
+    assert sum(len(domain["children"]) for domain in domains) == 51
     assert (
         sum(len(l2["children"]) for domain in domains for l2 in domain["children"])
         == 310

@@ -4,46 +4,48 @@ import type {
   ResourceDetail,
 } from '../../../src/catalog'
 
-const DOMAIN_CODES = ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']
+const DOMAIN_SPECS = [
+  ['P01', 10, [9, 9, 8, 8, 8, 8, 8, 8, 8, 8]],
+  ['P02', 10, [7, 7, 7, 7, 7, 6, 0, 0, 0, 0]],
+  ['P03', 9, [8, 8, 8, 8, 8, 8, 8, 7, 7]],
+  ['C01', 7, [6, 6, 6, 6, 6, 6, 6]],
+  ['C02', 7, [5, 5, 5, 5, 5, 5, 5]],
+  ['C03', 8, [5, 5, 5, 5, 5, 5, 5, 5]],
+] as const
+
+const startLevels = ['P4', 'P5', 'P4–P5', 'P6', 'P5–P6', 'P6–P8']
 
 export const capabilityMapModel: CapabilityModel = {
-  code: 'Issue #52 300+ L3 能力模型',
-  version: 'test-fixture-v1',
-  domains: DOMAIN_CODES.map((domainCode, domainIndex) => ({
+  code: '技术架构与开发角色能力模型',
+  version: 'v1.0',
+  domains: DOMAIN_SPECS.map(([domainCode, l2Count, l3Counts]) => ({
     code: domainCode,
     name: `${domainCode} 能力域`,
-    p4_description: `${domainCode} P4 核心定位`,
-    p5_description: `${domainCode} P5 核心定位`,
-    p6_description: `${domainCode} P6 核心定位`,
-    p7_description: `${domainCode} P7 核心定位`,
-    p8_description: `${domainCode} P8 核心定位`,
-    children: Array.from({ length: 4 }, (_, l2Index) => {
+    overview: `${domainCode} 一级能力域概述`,
+    children: Array.from({ length: l2Count }, (_, l2Index) => {
       const l2Code = `${domainCode}.${String(l2Index + 1).padStart(2, '0')}`
       return {
         code: l2Code,
-        name: `${domainCode} 分组 ${l2Index + 1}`,
-        p4_description: `${l2Code} P4`,
-        p5_description: `${l2Code} P5`,
-        p6_description: `${l2Code} P6`,
-        p7_description: `${l2Code} P7`,
-        p8_description: `${l2Code} P8`,
-        children: Array.from({ length: 14 }, (_, l3Index) => {
+        name: `${domainCode} 能力标准 ${l2Index + 1}`,
+        p4_description: `${l2Code} P4 职级要求`,
+        p5_description: `${l2Code} P5 职级要求`,
+        p6_description: `${l2Code} P6 职级要求`,
+        p7_description: `${l2Code} P7 职级要求`,
+        p8_description: `${l2Code} P8 职级要求`,
+        children: Array.from({ length: l3Counts[l2Index] }, (_, l3Index) => {
           const l3Code = `${l2Code}.${String(l3Index + 1).padStart(2, '0')}`
+          const isSearchTarget = l3Code === 'P02.03.07'
           return {
             code: l3Code,
-            name:
-              domainIndex === 1 && l2Index === 2 && l3Index === 6
-                ? '跨域搜索目标能力'
-                : `${l3Code} 紧凑能力项`,
-            p4_description: `${l3Code} P4 完整描述`,
-            p5_description: `${l3Code} P5 完整描述`,
-            p6_description: `${l3Code} P6 完整描述`,
-            p7_description: `${l3Code} P7 完整描述`,
-            p8_description: `${l3Code} P8 完整描述`,
-            recommended_start_level: 'P4',
-            materials_text: '',
-            expected_output: `${l3Code} 输出`,
-            estimated_hours: '8',
+            name: isSearchTarget
+              ? '跨域搜索目标达成路径'
+              : `${l3Code} 学习实践项`,
+            recommended_start_level: startLevels[l3Index % startLevels.length],
+            materials_text: isSearchTarget ? 'ISSUE52-M001' : '',
+            expected_output: `${l3Code} 验收输出`,
+            estimated_hours: l3Index % 2 ? '4–6' : '8',
+            output_type: l3Index % 3 ? '实践输出' : null,
+            notes: null,
             resources: [],
             unmatched_materials: [],
           }
@@ -70,11 +72,11 @@ export const capabilityMapResourceDetail: ResourceDetail = {
   l3_nodes: [
     {
       code: 'P02.03.07',
-      name: '跨域搜索目标能力',
+      name: '跨域搜索目标达成路径',
       l1_code: 'P02',
       l1_name: 'P02 能力域',
       l2_code: 'P02.03',
-      l2_name: 'P02 分组 3',
+      l2_name: 'P02 能力标准 3',
     },
   ],
 }

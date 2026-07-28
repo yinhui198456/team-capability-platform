@@ -25,6 +25,7 @@ class CapabilityNodeUpdate(BaseModel):
 
     name: str | None = None
     enabled: bool | None = None
+    overview: str | None = None
     p4_description: str | None = None
     p5_description: str | None = None
     p6_description: str | None = None
@@ -34,6 +35,8 @@ class CapabilityNodeUpdate(BaseModel):
     materials_text: str | None = None
     expected_output: str | None = None
     estimated_hours: str | None = None
+    output_type: str | None = None
+    notes: str | None = None
     resource_codes: list[str] | None = None
     standard_target_overrides: (
         dict[Literal["P4", "P5", "P6", "P7", "P8"], StrictInt | None] | None

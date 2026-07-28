@@ -200,6 +200,24 @@
   margin-bottom: 3px;
 }
 
+.domainOverview {
+  background: #f8fafc;
+  border-left: 3px solid #175cd3;
+  color: #344054;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+}
+
+.domainOverview p {
+  line-height: 1.55;
+  margin: 0 0 5px;
+}
+
+.domainOverview span {
+  color: #667085;
+  font-size: 12px;
+}
+
 .sectionKicker {
   color: #667085;
   font-size: 11px;
@@ -214,6 +232,13 @@
   border-radius: 9px;
   margin-bottom: 18px;
   padding: 12px;
+}
+
+.levelSection h4,
+.l3List h4 {
+  color: #344054;
+  font-size: 13px;
+  margin: 0 0 9px;
 }
 
 .levelGrid {
@@ -344,6 +369,21 @@
   display: grid;
   gap: 6px;
   padding: 8px;
+}
+
+.l2Expanded {
+  border-top: 1px solid #f2f4f7;
+  padding: 8px;
+}
+
+.l2Expanded .levelSection {
+  margin-bottom: 8px;
+}
+
+.l3Empty {
+  color: #667085;
+  margin: 0;
+  padding: 10px 4px;
 }
 
 .l3Row {
@@ -509,20 +549,6 @@
 .drawerSection p {
   color: #344054;
   line-height: 1.55;
-}
-
-.drawerLevels {
-  display: grid;
-  gap: 10px;
-}
-
-.drawerLevels div {
-  border-left: 3px solid #b2ddff;
-  padding-left: 10px;
-}
-
-.drawerLevels p {
-  margin: 3px 0 0;
 }
 
 .resourceSummary {
