@@ -1,3 +1,5 @@
+from collections import Counter
+from hashlib import sha256
 from pathlib import Path
 
 from app.planning.hours import parse_estimated_hours, summarize_estimated_hours
@@ -87,6 +89,9 @@ def _find_capability_model_dir() -> Path:
 def test_source_workbook_estimated_hours_are_all_parseable() -> None:
     workbook_path = _find_capability_model_dir() / "技术架构与开发_角色能力模型.xlsx"
     assert workbook_path.is_file(), f"Source workbook not found: {workbook_path}"
+    assert sha256(workbook_path.read_bytes()).hexdigest() == (
+        "2169dcd4312d37b9b7f171d3c24ef0be10112c4eafc2c15c462da32cb75c26d2"
+    )
 
     from openpyxl import load_workbook
 
@@ -98,11 +103,32 @@ def test_source_workbook_estimated_hours_are_all_parseable() -> None:
 
     values = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
+        l1_code = row[header["一级序号"] - 1]
+        l2_code = row[header["二级序号"] - 1]
+        l3_code = row[header["三级序号"] - 1]
         raw = row[column - 1]
-        if isinstance(raw, str) and raw.strip():
+        if all(
+            isinstance(value, str) and value.strip()
+            for value in (l1_code, l2_code, l3_code, raw)
+        ):
             values.append(raw.strip())
 
     assert len(values) == 310, f"Expected 310 L3 estimated hours, got {len(values)}"
+    formats = Counter(values)
+    assert sum(value.lower().endswith("h") for value in values) == 187
+    assert {
+        "8–16h": formats["8–16h"],
+        "4–8h": formats["4–8h"],
+        "16–32h": formats["16–32h"],
+        "12–24h": formats["12–24h"],
+        "2-3h": formats["2-3h"],
+    } == {
+        "8–16h": 30,
+        "4–8h": 22,
+        "16–32h": 13,
+        "12–24h": 13,
+        "2-3h": 9,
+    }
 
     parsed = [parse_estimated_hours(value) for value in values]
     invalid = [value for value in parsed if not value.is_valid]
