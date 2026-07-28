@@ -362,10 +362,29 @@ def _get_assessment_l2_groups(
             }
         groups.append(group)
         by_l2[str(row[2])] = group
+    unmapped_details: list[dict[str, object]] = []
     for detail in details:
         l2_code = detail.get("l2_code")
         if isinstance(l2_code, str) and l2_code in by_l2:
             by_l2[l2_code]["details"].append(detail)
+        else:
+            unmapped_details.append(detail)
+
+    # Historical assessment details are immutable facts.  A later catalog change
+    # must not make them disappear from a Buddy review simply because their L3 no
+    # longer maps to a current L2.
+    if unmapped_details:
+        groups.append(
+            {
+                "l1_code": None,
+                "l1_name": None,
+                "l2_code": None,
+                "l2_name": "未映射历史项",
+                "l3_count": len(unmapped_details),
+                "is_empty": False,
+                "details": unmapped_details,
+            }
+        )
     return groups
 
 

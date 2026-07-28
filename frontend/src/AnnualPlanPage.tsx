@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
+
 import { me, type User } from './access'
 import { useYear } from './YearContext'
 import { LearningTaskPage } from './LearningTaskPage'
@@ -19,11 +24,6 @@ import {
 } from './planning'
 
 const MONTHS = Array.from({ length: 12 }, (_, index) => index + 1)
-
-function hours(value: string | null): number {
-  const parsed = Number(value ?? 0)
-  return Number.isFinite(parsed) ? parsed : 0
-}
 
 export function AnnualPlanPage() {
   const year = useYear()
@@ -85,9 +85,8 @@ export function AnnualPlanPage() {
     ? items.filter((item) => item.target_month === selectedMonth)
     : items
   const taskByPlanItem = new Map(tasks.map((task) => [task.plan_item_id, task]))
-  const totalEstimatedHours = items.reduce(
-    (sum, item) => sum + hours(item.estimated_hours),
-    0,
+  const totalEstimatedHours = formatEstimatedHoursSummary(
+    plan?.estimated_hours_summary,
   )
   const totalActualHours = monthlyHours.reduce(
     (sum, item) => sum + item.total_hours,
@@ -165,7 +164,7 @@ export function AnnualPlanPage() {
         </div>
         <div>
           <span>预计时长</span>
-          <strong>{totalEstimatedHours} 小时</strong>
+          <strong>{totalEstimatedHours}</strong>
         </div>
         <div>
           <span>实际时长</span>
@@ -260,7 +259,10 @@ export function AnnualPlanPage() {
                   <span className="status-pill">{item.status}</span>
                   <span>
                     优先级：{item.priority} · 预计{' '}
-                    {item.estimated_hours ?? '未设置'} 小时
+                    {formatEstimatedHours(
+                      item.estimated_hours,
+                      item.estimated_hours_parsed,
+                    )}
                   </span>
                 </li>
               ))}

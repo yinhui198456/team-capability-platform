@@ -373,6 +373,13 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert item["learning_material"] == "test materials"
     assert item["expected_output"] == "test output"
     assert item["estimated_hours"] == "10"
+    assert item["estimated_hours_parsed"] == {
+        "raw": "10",
+        "min_hours": 10.0,
+        "max_hours": 10.0,
+        "is_valid": True,
+        "is_range": False,
+    }
     assert item["status"] == "未开始"
     assert item["target_month"] is None
 
@@ -393,6 +400,12 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert status == 200
     assert plan is not None
     assert plan["year"] == 2026
+    assert plan["estimated_hours_summary"] == {
+        "min_hours": 10.0,
+        "max_hours": 10.0,
+        "has_values": True,
+        "has_unparsed": False,
+    }
     assert plan["status"] == "制定中"
     assert len(plan["items"]) == 2
 

@@ -106,7 +106,13 @@ describe('TeamAnalyticsPage', () => {
     )
     await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
     expect(screen.getAllByText('50%')).not.toHaveLength(0)
-    expect(screen.getByText('成员能力达成率')).toBeTruthy()
+    expect(screen.getByText('成员 L3 掌握度达成率')).toBeTruthy()
+    expect(screen.getByText('L3 掌握度实际 vs 目标')).toBeTruthy()
+    expect(
+      screen.getByText(
+        '以上指标基于三级达成路径的当前掌握度与目标掌握度聚合，不代表二级能力标准 P4–P8 岗位职级达成率。',
+      ),
+    ).toBeTruthy()
     expect(screen.getByRole('figure', { name: '计划完成组合图' })).toBeTruthy()
     expect(screen.getByRole('figure', { name: '学习时长组合图' })).toBeTruthy()
     // 自评完成率 must not appear per Issue #28

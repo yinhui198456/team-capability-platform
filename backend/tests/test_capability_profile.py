@@ -585,6 +585,9 @@ def test_planned_hours_aggregated_by_plan_year(
     assert status == 200
     assert body is not None
     assert body["statistics"]["total_planned_hours"] == 10
+    assert body["statistics"]["total_planned_hours_min"] == 10
+    assert body["statistics"]["total_planned_hours_max"] == 10
+    assert body["statistics"]["total_planned_hours_has_unparsed"] is False
 
 
 def test_cross_year_hours_filtered_by_record_date(

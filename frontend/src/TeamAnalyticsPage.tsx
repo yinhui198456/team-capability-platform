@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { formatEstimatedHoursSummary } from './estimatedHours'
+
 import { useMe } from './catalog'
 import { useYear } from './YearContext'
 import {
@@ -60,18 +62,52 @@ function TrendTable({
   trends: TeamAnalytics['monthly_trends']
   hours: boolean
 }) {
+  const plannedHours = (trend: TeamAnalytics['monthly_trends'][number]) =>
+    trend.planned_hours_max ?? trend.planned_hours
+  const cumulativePlannedHours = (
+    trend: TeamAnalytics['monthly_trends'][number],
+  ) => trend.cumulative_planned_hours_max ?? trend.cumulative_planned_hours
+  const formatPlanned = (trend: TeamAnalytics['monthly_trends'][number]) => {
+    const value = formatEstimatedHoursSummary({
+      min_hours: trend.planned_hours_min ?? trend.planned_hours,
+      max_hours: trend.planned_hours_max ?? trend.planned_hours,
+      has_values:
+        trend.planned_hours_min !== undefined || trend.planned_hours > 0,
+      has_unparsed: trend.planned_hours_has_unparsed ?? false,
+    })
+    return trend.planned_hours_has_unparsed
+      ? `${value}（部分文本未计入）`
+      : value
+  }
+  const formatCumulativePlanned = (
+    trend: TeamAnalytics['monthly_trends'][number],
+  ) => {
+    const value = formatEstimatedHoursSummary({
+      min_hours:
+        trend.cumulative_planned_hours_min ?? trend.cumulative_planned_hours,
+      max_hours:
+        trend.cumulative_planned_hours_max ?? trend.cumulative_planned_hours,
+      has_values:
+        trend.cumulative_planned_hours_min !== undefined ||
+        trend.cumulative_planned_hours > 0,
+      has_unparsed: trend.cumulative_planned_hours_has_unparsed ?? false,
+    })
+    return trend.cumulative_planned_hours_has_unparsed
+      ? `${value}（部分文本未计入）`
+      : value
+  }
   const maxValue = Math.max(
     1,
     ...trends.flatMap((trend) =>
       hours
-        ? [trend.planned_hours, trend.actual_hours]
+        ? [plannedHours(trend), trend.actual_hours]
         : [trend.planned_count, trend.actual_count],
     ),
   )
   const cumulativeActual = (trend: TeamAnalytics['monthly_trends'][number]) =>
     hours ? trend.cumulative_actual_hours : trend.cumulative_actual_rate * 100
   const cumulativePlan = (trend: TeamAnalytics['monthly_trends'][number]) =>
-    hours ? trend.cumulative_planned_hours : trend.cumulative_planned_rate * 100
+    hours ? cumulativePlannedHours(trend) : trend.cumulative_planned_rate * 100
   const maxCumulative = Math.max(
     1,
     ...trends.flatMap((trend) => [
@@ -100,7 +136,7 @@ function TrendTable({
             <div key={trend.month}>
               <i
                 style={{
-                  height: `${((hours ? trend.planned_hours : trend.planned_count) / maxValue) * 100}%`,
+                  height: `${((hours ? plannedHours(trend) : trend.planned_count) / maxValue) * 100}%`,
                 }}
               />
               <i
@@ -126,9 +162,9 @@ function TrendTable({
         <thead>
           <tr>
             <th>月份</th>
-            <th>{hours ? '当月计划时长' : '当月计划'}</th>
+            <th>{hours ? '当月计划时长（区间）' : '当月计划'}</th>
             <th>{hours ? '当月实际时长' : '当月实际'}</th>
-            <th>{hours ? '累计计划时长' : '累计计划'}</th>
+            <th>{hours ? '累计计划时长（区间）' : '累计计划'}</th>
             <th>{hours ? '累计实际时长' : '累计实际'}</th>
           </tr>
         </thead>
@@ -136,13 +172,11 @@ function TrendTable({
           {trends.map((trend) => (
             <tr key={trend.month}>
               <td>{trend.month}月</td>
-              <td>
-                {hours ? `${trend.planned_hours} h` : trend.planned_count}
-              </td>
+              <td>{hours ? formatPlanned(trend) : trend.planned_count}</td>
               <td>{hours ? `${trend.actual_hours} h` : trend.actual_count}</td>
               <td>
                 {hours
-                  ? `${trend.cumulative_planned_hours} h`
+                  ? formatCumulativePlanned(trend)
                   : percent(trend.cumulative_planned_rate)}
               </td>
               <td>
@@ -313,13 +347,17 @@ export function TeamAnalyticsPage() {
           </div>
           <div className="dashboard-grid">
             <article className="dashboard-card">
-              <h2>能力实际 vs 计划</h2>
+              <h2>L3 掌握度实际 vs 目标</h2>
+              <p className="muted">
+                以上指标基于三级达成路径的当前掌握度与目标掌握度聚合，不代表二级能力标准
+                P4–P8 岗位职级达成率。
+              </p>
               <table className="analytics-table">
                 <thead>
                   <tr>
                     <th>能力域</th>
-                    <th>实际</th>
-                    <th>计划值</th>
+                    <th>当前掌握度均值（1–5）</th>
+                    <th>目标掌握度均值（1–5）</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -330,7 +368,7 @@ export function TeamAnalyticsPage() {
                       </td>
                       <td>
                         <progress
-                          aria-label={`${item.domain_code}实际`}
+                          aria-label={`${item.domain_code}当前掌握度均值`}
                           max={5}
                           value={item.actual}
                         />{' '}
@@ -338,7 +376,7 @@ export function TeamAnalyticsPage() {
                       </td>
                       <td>
                         <progress
-                          aria-label={`${item.domain_code}计划值`}
+                          aria-label={`${item.domain_code}目标掌握度均值`}
                           max={5}
                           value={item.target}
                         />{' '}
@@ -350,7 +388,7 @@ export function TeamAnalyticsPage() {
               </table>
             </article>
             <article className="dashboard-card">
-              <h2>成员能力达成率</h2>
+              <h2>成员 L3 掌握度达成率</h2>
               <table className="analytics-table">
                 <thead>
                   <tr>

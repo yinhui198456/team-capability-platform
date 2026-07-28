@@ -44,7 +44,7 @@ test.describe('four-role core read paths', () => {
       page.getByRole('heading', { name: '团队能力分析' }),
     ).toBeVisible()
     await expect(page.getByText('数据范围：团队')).toBeVisible()
-    await expect(page.getByText('成员能力达成率')).toBeVisible()
+    await expect(page.getByText('成员 L3 掌握度达成率')).toBeVisible()
   })
 
   test('Admin: can view user and configuration management', async ({

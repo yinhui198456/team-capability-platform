@@ -285,6 +285,55 @@ def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
     assert "requirements" not in historical["l2_groups"][0]
 
 
+def test_assessment_groups_preserve_unmapped_historical_details(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(assessment_schema, "member_legacy_detail", ["Member"])
+    assessment_schema.execute(
+        "UPDATE capability_node "
+        "SET enabled = (code = 'C01.01.01') WHERE node_type = 'L3'"
+    )
+    assessment_schema.commit()
+    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+    assessment_schema.execute(
+        """
+        UPDATE assessment_detail
+        SET l3_code = 'unknown-legacy-l3', current_level = 1, target_level = 4,
+            gap_value = 3, evidence_note = '历史依据'
+        WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    )
+    assessment_schema.commit()
+
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    details = assessment["details"]
+    grouped = [
+        detail for group in assessment["l2_groups"] for detail in group["details"]
+    ]
+    assert len(grouped) == len(details)
+    assert {detail["id"] for detail in grouped} == {detail["id"] for detail in details}
+    assert len({detail["id"] for detail in grouped}) == len(grouped)
+
+    fallback = next(
+        group for group in assessment["l2_groups"] if group["l2_code"] is None
+    )
+    assert fallback["l1_code"] is None
+    assert fallback["l2_name"] == "未映射历史项"
+    assert "requirements" not in fallback
+    assert fallback["details"] == [
+        {
+            **fallback["details"][0],
+            "l3_code": "unknown-legacy-l3",
+            "current_level": 1,
+            "target_level": 4,
+            "gap_value": 3,
+            "evidence_note": "历史依据",
+        }
+    ]
+
+
 def test_assessment_writes_require_expected_revision_token(
     assessment_schema: psycopg.Connection,
 ) -> None:

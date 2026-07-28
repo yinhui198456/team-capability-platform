@@ -26,6 +26,7 @@ describe('BuddyReviewCenter', () => {
   function mockBuddyData(
     options: {
       includeEvidence?: boolean
+      includeUnmappedHistory?: boolean
       evidenceHistory?: Awaited<
         ReturnType<typeof planningApi.listEvidenceReviewsForTask>
       >
@@ -143,6 +144,28 @@ describe('BuddyReviewCenter', () => {
             },
           ],
         },
+        ...(options.includeUnmappedHistory
+          ? [
+              {
+                l1_code: null,
+                l1_name: null,
+                l2_code: null,
+                l2_name: '未映射历史项',
+                l3_count: 1,
+                is_empty: false,
+                details: [
+                  {
+                    l3_code: 'unknown-legacy-l3',
+                    current_level: 1,
+                    target_level: 4,
+                    standard_target_level: 3,
+                    gap_value: 3,
+                    evidence_note: '历史依据',
+                  },
+                ],
+              },
+            ]
+          : []),
       ],
     })
     vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue(
@@ -242,6 +265,31 @@ describe('BuddyReviewCenter', () => {
       conclusion: '认可',
       feedback: '依据充分',
     })
+  })
+
+  it('keeps unmapped historical paths visible beside current L2 groups', async () => {
+    mockBuddyData({ includeEvidence: false, includeUnmappedHistory: true })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockResolvedValue({ ok: true })
+
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('未映射历史项')).toBeTruthy())
+    expect(screen.getByText(/二级能力标准：P01-L2A/)).toBeTruthy()
+    expect(screen.getByText(/unknown-legacy-l3/)).toBeTruthy()
+    expect(screen.getByText(/当前掌握度 1 → 标准 3/)).toBeTruthy()
+    expect(screen.getByText(/历史依据/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '保留历史项复核' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() => expect(submitReview).toHaveBeenCalled())
   })
 
   it('submits an Evidence Review in the unified workspace', async () => {

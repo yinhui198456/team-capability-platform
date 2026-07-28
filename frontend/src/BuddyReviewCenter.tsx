@@ -520,15 +520,18 @@ export function BuddyReviewCenter() {
                             )
                           : null
                         return (
-                          <section key={group.l2_code}>
+                          <section key={group.l2_code ?? 'unmapped-history'}>
                             <h4>
-                              二级能力标准：{group.l2_code}
-                              {group.l2_name ? ` · ${group.l2_name}` : ''}
+                              {group.l2_code
+                                ? `二级能力标准：${group.l2_code}${group.l2_name ? ` · ${group.l2_name}` : ''}`
+                                : (group.l2_name ?? '未映射历史项')}
                             </h4>
                             <p className="muted">
                               {requirement
                                 ? `${requirement.label} ${requirement.level} 要求：${requirement.text}`
-                                : '职级要求暂不可用'}
+                                : group.l2_code
+                                  ? '职级要求暂不可用'
+                                  : '历史项未关联当前职级要求。'}
                             </p>
                             {group.is_empty ? (
                               <p className="muted">

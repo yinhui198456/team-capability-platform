@@ -109,6 +109,9 @@ function buildMonthlyTrends(
     )
     const actualCount = Math.max(0, plannedCount - (i % 3 === 0 ? 1 : 0))
     const plannedHours = plannedCount * 8
+    const isRange = month === 1
+    const plannedHoursMin = isRange ? 4 : plannedHours
+    const plannedHoursMax = isRange ? 6 : plannedHours
     const actualHours = actualCount * 8 + (i % 4 === 0 ? 2 : 0)
     const cumPlannedCount = Array.from({ length: month }, (_, j) =>
       Math.round((Math.min(j + 1, plannedCount) / scale) * scale),
@@ -124,8 +127,14 @@ function buildMonthlyTrends(
       cumulative_planned_rate: Math.min(1, cumPlannedCount / totalItems),
       cumulative_actual_rate: Math.min(1, cumActualCount / totalItems),
       planned_hours: plannedHours,
+      planned_hours_min: plannedHoursMin,
+      planned_hours_max: plannedHoursMax,
+      planned_hours_has_unparsed: false,
       actual_hours: actualHours,
       cumulative_planned_hours: cumPlannedCount * 8,
+      cumulative_planned_hours_min: isRange ? 4 : cumPlannedCount * 8,
+      cumulative_planned_hours_max: isRange ? 6 : cumPlannedCount * 8,
+      cumulative_planned_hours_has_unparsed: false,
       cumulative_actual_hours: cumActualCount * 8 + i,
     }
   })

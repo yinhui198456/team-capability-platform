@@ -522,7 +522,7 @@ export function AssessmentGapPage() {
           ...details.map(l1Of),
           ...(assessment?.l2_groups ?? []).map((group) => group.l1_code),
         ]),
-      ].filter(Boolean),
+      ].filter((code): code is string => typeof code === 'string'),
     [assessment, details],
   )
   const filtered = useMemo(() => {
@@ -555,11 +555,16 @@ export function AssessmentGapPage() {
       .slice(0, 10)
   }, [details, search])
   const l2Groups = useMemo(() => {
-    const groups = new Map<string, AssessmentL2Group>()
+    const groups = new Map<
+      string,
+      AssessmentL2Group & { l1_code: string; l2_code: string }
+    >()
     for (const group of assessment?.l2_groups ?? []) {
-      if (group.l1_code === activeDomain) {
+      if (group.l1_code === activeDomain && group.l2_code) {
         groups.set(group.l2_code, {
           ...group,
+          l1_code: group.l1_code,
+          l2_code: group.l2_code,
           details: [],
         })
       }

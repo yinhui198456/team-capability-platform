@@ -1,4 +1,5 @@
 import { request, getOrNull } from './shared/api'
+import type { EstimatedHours, EstimatedHoursSummary } from './estimatedHours'
 
 export type AvailableYears = {
   available_years: number[]
@@ -87,6 +88,7 @@ export type PlanItem = CapabilityContext & {
   learning_task_content: string | null
   expected_output: string | null
   estimated_hours: string | null
+  estimated_hours_parsed?: EstimatedHours
   plan_start_date: string | null
   plan_end_date: string | null
   target_month: number | null
@@ -112,6 +114,7 @@ export type LearningTask = CapabilityContext & {
   plan_item_learning_task_content: string | null
   plan_item_expected_output: string | null
   plan_item_estimated_hours: string | null
+  plan_item_estimated_hours_parsed?: EstimatedHours
   plan_item_target_month?: number | null
 }
 
@@ -139,6 +142,14 @@ export type MemberDashboard = {
     annual_planned_hours: number
     current_month_actual_hours: number
     current_month_planned_hours: number
+    annual_planned_hours_min?: number | null
+    annual_planned_hours_max?: number | null
+    annual_planned_hours_has_values?: boolean
+    annual_planned_hours_has_unparsed?: boolean
+    current_month_planned_hours_min?: number | null
+    current_month_planned_hours_max?: number | null
+    current_month_planned_hours_has_values?: boolean
+    current_month_planned_hours_has_unparsed?: boolean
     completed_task_count: number
     pending_evidence_count: number
   }
@@ -165,6 +176,7 @@ export type AnnualPlan = {
   end_date: string | null
   created_at: string
   items: PlanItem[]
+  estimated_hours_summary?: EstimatedHoursSummary
 }
 
 export type EvidenceStatus =
@@ -487,6 +499,10 @@ export type CapabilityProfileAnnualPlan = Omit<AnnualPlan, 'items'> & {
 export type CapabilityProfileStatistics = {
   total_learning_hours: number
   total_planned_hours: number
+  total_planned_hours_min?: number | null
+  total_planned_hours_max?: number | null
+  total_planned_hours_has_values?: boolean
+  total_planned_hours_has_unparsed?: boolean
   evidence_count_by_status: Record<string, number>
 }
 
@@ -695,8 +711,14 @@ export type TeamAnalytics = {
     cumulative_planned_rate: number
     cumulative_actual_rate: number
     planned_hours: number
+    planned_hours_min?: number | null
+    planned_hours_max?: number | null
+    planned_hours_has_unparsed?: boolean
     actual_hours: number
     cumulative_planned_hours: number
+    cumulative_planned_hours_min?: number | null
+    cumulative_planned_hours_max?: number | null
+    cumulative_planned_hours_has_unparsed?: boolean
     cumulative_actual_hours: number
   }>
   overdue_items: Array<{

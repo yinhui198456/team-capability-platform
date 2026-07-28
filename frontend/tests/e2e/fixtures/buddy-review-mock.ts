@@ -157,6 +157,27 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
               },
             ],
           },
+          {
+            l1_code: null,
+            l1_name: null,
+            l2_code: null,
+            l2_name: '未映射历史项',
+            l3_count: 1,
+            is_empty: false,
+            details: [
+              {
+                id: 99,
+                l3_code: 'unknown-legacy-l3',
+                current_level: 1,
+                target_level: 4,
+                standard_target_applicable: true,
+                standard_target_level: 3,
+                target_adjusted: false,
+                gap_value: 3,
+                evidence_note: '历史依据仍可复核。',
+              },
+            ],
+          },
         ],
         details: [
           {
@@ -194,6 +215,18 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
             recommended_start_level: '1',
             l1_code: 'P02',
             l1_name: 'AI Infra / Agent',
+          },
+          {
+            id: 99,
+            l3_code: 'unknown-legacy-l3',
+            current_level: 1,
+            target_level: 4,
+            standard_target_applicable: true,
+            standard_target_level: 3,
+            target_adjusted: false,
+            gap_value: 3,
+            evidence_note: '历史依据仍可复核。',
+            plan_candidate: false,
           },
         ],
         gap_summary: {

@@ -98,8 +98,8 @@ for (const viewport of VIEWPORTS) {
       await expect(kpis).not.toContainText('自评完成率')
 
       for (const heading of [
-        '能力实际 vs 计划',
-        '成员能力达成率',
+        'L3 掌握度实际 vs 目标',
+        '成员 L3 掌握度达成率',
         '计划完成趋势',
         '学习时长趋势',
         '延期计划项明细',
@@ -109,8 +109,11 @@ for (const viewport of VIEWPORTS) {
 
       await expect(page.getByLabel('计划完成组合图')).toBeVisible()
       await expect(page.getByLabel('学习时长组合图')).toBeVisible()
-      await expect(page.getByLabel('P01实际')).toBeVisible()
-      await expect(page.getByLabel('P01计划值')).toBeVisible()
+      await expect(page.getByLabel('P01当前掌握度均值')).toBeVisible()
+      await expect(page.getByLabel('P01目标掌握度均值')).toBeVisible()
+      await expect(
+        page.getByText('不代表二级能力标准 P4–P8 岗位职级达成率。'),
+      ).toBeVisible()
 
       // Fixed legend must be present
       const legends = page.locator('ul.trend-legend')
@@ -128,12 +131,12 @@ for (const viewport of VIEWPORTS) {
         content.getByRole('spinbutton', { name: '年度' }),
       ).not.toBeVisible()
 
-      // Domain table header must be "计划值", not old "目标"
+      // Domain table labels must state L3 mastery means, not generic targets.
       const domainTable = page.locator(
-        '.dashboard-card:has-text("能力实际 vs 计划") .analytics-table',
+        '.dashboard-card:has-text("L3 掌握度实际 vs 目标") .analytics-table',
       )
-      await expect(domainTable).toContainText('计划值')
-      await expect(domainTable).not.toContainText('目标')
+      await expect(domainTable).toContainText('当前掌握度均值（1–5）')
+      await expect(domainTable).toContainText('目标掌握度均值（1–5）')
 
       const overdueTable = page.locator(
         '.dashboard-card:has-text("延期计划项明细") .analytics-table',
@@ -193,7 +196,7 @@ for (const viewport of VIEWPORTS) {
       )
       await assertKpis(page, EXPECTED_P01)
       const domainTable = page.locator(
-        '.dashboard-card:has-text("能力实际 vs 计划") .analytics-table',
+        '.dashboard-card:has-text("L3 掌握度实际 vs 目标") .analytics-table',
       )
       await expect(domainTable.locator('tbody tr')).toHaveCount(
         EXPECTED_P01.domainRows,

@@ -24,9 +24,9 @@ export type L2Requirements = Record<
 >
 
 export type AssessmentL2Group = {
-  l1_code: string
+  l1_code: string | null
   l1_name: string | null
-  l2_code: string
+  l2_code: string | null
   l2_name: string | null
   l3_count: number
   is_empty: boolean

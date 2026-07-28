@@ -30,8 +30,16 @@ def test_member_dashboard_aggregates_only_current_member_data(
     assert body["summary"] == {
         "annual_actual_hours": 5,
         "annual_planned_hours": 10,
+        "annual_planned_hours_min": 10,
+        "annual_planned_hours_max": 10,
+        "annual_planned_hours_has_values": True,
+        "annual_planned_hours_has_unparsed": False,
         "current_month_actual_hours": 0,
         "current_month_planned_hours": 0,
+        "current_month_planned_hours_min": 0,
+        "current_month_planned_hours_max": 0,
+        "current_month_planned_hours_has_values": False,
+        "current_month_planned_hours_has_unparsed": False,
         "completed_task_count": 1,
         "pending_evidence_count": 0,
     }

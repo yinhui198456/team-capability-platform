@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
+
 import { useYear } from './YearContext'
 import {
   formatCapabilityPath,
@@ -74,6 +79,25 @@ function formatHours(
       <span className="hours-unit"> h</span>
     </span>
   )
+}
+
+function plannedHours(
+  fallback: number,
+  min: number | null | undefined,
+  max: number | null | undefined,
+  hasValues: boolean | undefined,
+  hasUnparsed: boolean | undefined,
+) {
+  const value =
+    hasValues === undefined
+      ? `${fallback} h`
+      : formatEstimatedHoursSummary({
+          min_hours: min ?? null,
+          max_hours: max ?? null,
+          has_values: hasValues,
+          has_unparsed: hasUnparsed ?? false,
+        })
+  return hasUnparsed ? `${value}（部分计划项耗时为文本，未计入汇总）` : value
 }
 
 function TodoItem({
@@ -322,7 +346,13 @@ function ArchivedSummary({ dashboard }: { dashboard: MemberDashboard }) {
           <div className={styles.metric}>
             <span>全年计划时长</span>
             <strong>
-              {formatHours(dashboard.summary.annual_planned_hours)}
+              {plannedHours(
+                dashboard.summary.annual_planned_hours,
+                dashboard.summary.annual_planned_hours_min,
+                dashboard.summary.annual_planned_hours_max,
+                dashboard.summary.annual_planned_hours_has_values,
+                dashboard.summary.annual_planned_hours_has_unparsed,
+              )}
             </strong>
           </div>
           <div className={styles.metric}>
@@ -334,7 +364,13 @@ function ArchivedSummary({ dashboard }: { dashboard: MemberDashboard }) {
           <div className={styles.metric}>
             <span>当月计划时长</span>
             <strong>
-              {formatHours(dashboard.summary.current_month_planned_hours)}
+              {plannedHours(
+                dashboard.summary.current_month_planned_hours,
+                dashboard.summary.current_month_planned_hours_min,
+                dashboard.summary.current_month_planned_hours_max,
+                dashboard.summary.current_month_planned_hours_has_values,
+                dashboard.summary.current_month_planned_hours_has_unparsed,
+              )}
             </strong>
           </div>
         </div>
@@ -512,7 +548,13 @@ function PlanDashboard({
             <div className={styles.metric}>
               <span>全年计划时长</span>
               <strong>
-                {formatHours(dashboard.summary.annual_planned_hours)}
+                {plannedHours(
+                  dashboard.summary.annual_planned_hours,
+                  dashboard.summary.annual_planned_hours_min,
+                  dashboard.summary.annual_planned_hours_max,
+                  dashboard.summary.annual_planned_hours_has_values,
+                  dashboard.summary.annual_planned_hours_has_unparsed,
+                )}
               </strong>
             </div>
             <div className={styles.metric}>
@@ -524,7 +566,13 @@ function PlanDashboard({
             <div className={styles.metric}>
               <span>当月计划时长</span>
               <strong>
-                {formatHours(dashboard.summary.current_month_planned_hours)}
+                {plannedHours(
+                  dashboard.summary.current_month_planned_hours,
+                  dashboard.summary.current_month_planned_hours_min,
+                  dashboard.summary.current_month_planned_hours_max,
+                  dashboard.summary.current_month_planned_hours_has_values,
+                  dashboard.summary.current_month_planned_hours_has_unparsed,
+                )}
               </strong>
             </div>
           </div>
@@ -585,9 +633,15 @@ function PlanDashboard({
             </thead>
             <tbody>
               {dashboard.current_tasks.map((task) => {
-                const est = Number(task.plan_item_estimated_hours ?? 0)
+                const estimated = task.plan_item_estimated_hours_parsed
                 const prog =
-                  est > 0 ? Math.round((task.actual_hours / est) * 100) : 0
+                  estimated?.is_valid &&
+                  !estimated.is_range &&
+                  estimated.max_hours
+                    ? Math.round(
+                        (task.actual_hours / estimated.max_hours) * 100,
+                      )
+                    : null
                 const dc = task.l1_code ?? '未映射'
                 const name =
                   task.plan_item_learning_task_content?.trim() ||
@@ -617,10 +671,22 @@ function PlanDashboard({
                         ? `${task.plan_item_target_month} 月`
                         : '未排期'}
                     </td>
-                    <td>{formatHours(task.plan_item_estimated_hours)}</td>
+                    <td>
+                      {formatEstimatedHours(
+                        task.plan_item_estimated_hours,
+                        task.plan_item_estimated_hours_parsed,
+                      )}
+                    </td>
                     <td>{formatHours(task.actual_hours)}</td>
                     <td>
-                      <progress max={100} value={Math.min(prog, 100)} /> {prog}%
+                      {prog === null ? (
+                        '—'
+                      ) : (
+                        <>
+                          <progress max={100} value={Math.min(prog, 100)} />{' '}
+                          {prog}%
+                        </>
+                      )}
                     </td>
                     <td>
                       <span className={`${styles.statusPill} ${statusClass}`}>

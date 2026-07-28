@@ -176,6 +176,63 @@ describe('AnnualPlanTaskPage', () => {
     expect(pressedBtn?.getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('shows an estimated-hour range without coercing it to zero', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '执行中',
+      start_date: null,
+      end_date: null,
+      created_at: '',
+      estimated_hours_summary: {
+        min_hours: 4,
+        max_hours: 6,
+        has_values: true,
+        has_unparsed: false,
+      },
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 1,
+          growth_goal_id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 4,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: '区间任务',
+          expected_output: null,
+          estimated_hours: '4–6',
+          estimated_hours_parsed: {
+            raw: '4–6',
+            min_hours: 4,
+            max_hours: 6,
+            is_valid: true,
+            is_range: true,
+          },
+          plan_start_date: null,
+          plan_end_date: null,
+          target_month: 3,
+          status: '进行中',
+        },
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getAllByText('4–6 h')).toHaveLength(2))
+  })
+
   it('falls back to l3_code when l3_name is missing', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 1,
