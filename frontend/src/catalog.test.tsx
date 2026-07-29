@@ -31,6 +31,7 @@ function emptyDomain(code: string) {
 }
 
 const model: CapabilityModel = {
+  id: 1,
   code: '技术架构与开发专业线能力模型',
   version: 'V1.0',
   domains: [
@@ -52,7 +53,6 @@ const model: CapabilityModel = {
               code: 'P01.01.01',
               name: 'TDC / TDH / ArgoDB / TDS 产品定位',
               recommended_start_level: 'P6',
-              standard_target_overrides: { P7: 3 },
               materials_text: 'P01-M001、A8',
               expected_output: '能力说明',
               estimated_hours: '8',
@@ -209,6 +209,26 @@ function mockFetchWithAuth(
     if (input === '/api/auth/me') return userResponse
     if (input === '/api/planning/available-years')
       return response({ available_years: [2026], active_year: 2026 })
+    if (input === '/api/capability-standard-versions/published?model_id=1') {
+      return response({
+        version: {
+          id: 101,
+          model_id: 1,
+          version_no: 1,
+          label: 'Legacy Baseline v1',
+          status: '已发布',
+          published_at: '2026-07-29T00:00:00Z',
+        },
+        items: ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
+          l3_node_id: 1,
+          l3_code: 'P01.01.01',
+          job_level,
+          applicable: true,
+          target_level: index + 1,
+          source: 'legacy_derived',
+        })),
+      })
+    }
     if (input.startsWith('/api/capability-model')) return response(model)
     if (input === '/api/learning-resources/P01-M001') return response(detail)
     if (input.includes('name=%E4%BA%A7%E5%93%81%E4%BD%93%E7%B3%BB')) {
@@ -404,10 +424,13 @@ describe('catalog routes', () => {
     ).toBeTruthy()
     expect(within(dialog).getByText(/P01\.01\.01 · TDC/)).toBeTruthy()
     expect(within(dialog).getByText('认知+环境验证')).toBeTruthy()
+    const standard = await within(dialog).findByTestId('published-standard')
+    expect(standard.textContent).toContain('Legacy Baseline v1')
+    expect(standard.textContent).toContain('目标掌握度 1 / 5')
     expect(within(dialog).queryByText('L3 P4 完整描述')).toBeNull()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(document.activeElement).toBe(row)
+    await waitFor(() => expect(document.activeElement).toBe(row))
   })
 
   it('expands an L2 level description inline and handles an initial L3 hash', async () => {
@@ -813,7 +836,7 @@ describe('Leader catalog controls', () => {
     })
   })
 
-  it('maintains three-state standard targets and disables levels below applicability', async () => {
+  it('does not expose legacy per-node standard target overrides', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
@@ -823,22 +846,8 @@ describe('Leader catalog controls', () => {
     fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
     fireEvent.click(screen.getAllByText('编辑节点')[0])
 
-    expect(
-      (screen.getByLabelText('P4 标准目标') as HTMLSelectElement).disabled,
-    ).toBe(true)
-    expect(
-      (screen.getByLabelText('P5 标准目标') as HTMLSelectElement).disabled,
-    ).toBe(true)
-    expect(
-      (screen.getByLabelText('P7 标准目标') as HTMLSelectElement).value,
-    ).toBe('3')
-
-    fireEvent.change(screen.getByLabelText('P6 标准目标'), {
-      target: { value: '__na__' },
-    })
-    fireEvent.change(screen.getByLabelText('P7 标准目标'), {
-      target: { value: '4' },
-    })
+    expect(screen.queryByLabelText('P4 标准目标')).toBeNull()
+    expect(screen.queryByText('P4–P8 标准目标覆盖')).toBeNull()
     fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() =>
@@ -855,14 +864,14 @@ describe('Leader catalog controls', () => {
           (init as RequestInit | undefined)?.method === 'PUT',
       )
     const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.standard_target_overrides).toEqual({ P6: null, P7: 4 })
+    expect(body.standard_target_overrides).toBeUndefined()
+    expect(body.recommended_start_level).toBe('P6')
   })
 
-  it('removes low-level overrides when the recommended start level is raised', async () => {
-    const modelWithLowLevelOverrides = structuredClone(model)
-    const node = modelWithLowLevelOverrides.domains[0].children[0].children[0]
+  it('keeps recommended start level as a path display field', async () => {
+    const modelWithChangedStart = structuredClone(model)
+    const node = modelWithChangedStart.domains[0].children[0].children[0]
     node.recommended_start_level = 'P4'
-    node.standard_target_overrides = { P4: 3, P5: null, P7: 4 }
     vi.stubGlobal(
       'fetch',
       vi.fn((input: string) => {
@@ -875,7 +884,7 @@ describe('Leader catalog controls', () => {
           })
         }
         if (input.startsWith('/api/capability-model')) {
-          return response(modelWithLowLevelOverrides)
+          return response(modelWithChangedStart)
         }
         return response(resources)
       }),
@@ -892,7 +901,6 @@ describe('Leader catalog controls', () => {
     fireEvent.change(screen.getByLabelText('建议起始等级'), {
       target: { value: 'P6' },
     })
-    expect(screen.getByText(/已移除不适用的覆盖项：P4、P5/)).toBeTruthy()
     fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() =>
@@ -909,7 +917,8 @@ describe('Leader catalog controls', () => {
           (init as RequestInit | undefined)?.method === 'PUT',
       )
     const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.standard_target_overrides).toEqual({ P7: 4 })
+    expect(body.recommended_start_level).toBe('P6')
+    expect(body.standard_target_overrides).toBeUndefined()
   })
 
   it('shows create and edit controls on resources page for Leader', async () => {

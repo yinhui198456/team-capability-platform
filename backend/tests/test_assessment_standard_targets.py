@@ -17,12 +17,14 @@ from app.assessment.repository import (
 )
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
+from app.migrations import run_migrations
 from tests.conftest import TEST_DATABASE_URL
 
 
 @pytest.fixture
 def standard_target_schema(connection: psycopg.Connection) -> psycopg.Connection:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS schema_migration")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
         connection.execute("DROP TABLE IF EXISTS tcp_session")
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
@@ -31,6 +33,7 @@ def standard_target_schema(connection: psycopg.Connection) -> psycopg.Connection
     create_access_schema(connection)
     create_assessment_schema(connection)
     import_catalog(resolve_workbook_dir(), connection)
+    run_migrations(connection)
     connection.commit()
     return connection
 
@@ -39,7 +42,7 @@ def _member(connection: psycopg.Connection, target_level: str | None) -> int:
     user_id = create_user(connection, "member", "Member", "secret")
     assign_role(connection, user_id, "Member")
     connection.execute(
-        "UPDATE tcp_user SET target_level = %s WHERE id = %s",
+        "UPDATE tcp_user SET current_level = 'P4', target_level = %s WHERE id = %s",
         (target_level, user_id),
     )
     connection.commit()
@@ -73,32 +76,12 @@ def test_create_requires_member_target_level(
     )
 
 
-def test_create_snapshots_default_override_and_not_applicable(
+def test_create_snapshots_published_matrix_and_not_applicable(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P5")
-    override_id, override_code = _node_at_start(standard_target_schema, "P4")
+    _, override_code = _node_at_start(standard_target_schema, "P4")
     _, below_start_code = _node_at_start(standard_target_schema, "P6")
-    explicit_na_row = standard_target_schema.execute(
-        """
-        SELECT id, code FROM capability_node
-        WHERE node_type = 'L3' AND recommended_start_level = 'P4' AND id <> %s
-        ORDER BY code LIMIT 1
-        """,
-        (override_id,),
-    ).fetchone()
-    assert explicit_na_row is not None
-    explicit_na_id, explicit_na_code = explicit_na_row
-    standard_target_schema.execute(
-        """
-        INSERT INTO capability_standard_target_override (
-            node_id, job_level, target_level
-        )
-        VALUES (%s, 'P5', 4), (%s, 'P5', NULL)
-        """,
-        (override_id, explicit_na_id),
-    )
-    standard_target_schema.commit()
 
     assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
     assessment = get_assessment(standard_target_schema, assessment_id)
@@ -106,17 +89,14 @@ def test_create_snapshots_default_override_and_not_applicable(
     details = {detail["l3_code"]: detail for detail in assessment["details"]}
 
     assert details[override_code]["standard_target_applicable"] is True
-    assert details[override_code]["standard_target_level"] == 4
-    assert details[override_code]["target_level"] == 4
-    assert details[override_code]["target_snapshot_source"] == "leader_override"
+    assert details[override_code]["standard_target_level"] == 3
+    assert details[override_code]["target_level"] == 3
+    assert details[override_code]["target_snapshot_source"].endswith(":legacy_derived")
 
     assert details[below_start_code]["standard_target_applicable"] is False
     assert details[below_start_code]["standard_target_level"] is None
     assert details[below_start_code]["target_level"] is None
     assert details[below_start_code]["gap_value"] is None
-
-    assert details[explicit_na_code]["standard_target_applicable"] is False
-    assert details[explicit_na_code]["target_snapshot_source"] == "leader_override"
 
 
 def test_snapshot_is_immutable_after_model_and_member_changes(
@@ -131,15 +111,6 @@ def test_snapshot_is_immutable_after_model_and_member_changes(
     assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
 
     standard_target_schema.execute(
-        """
-        INSERT INTO capability_standard_target_override (
-            node_id, job_level, target_level
-        )
-        VALUES (%s, 'P4', 5)
-        """,
-        (node_id,),
-    )
-    standard_target_schema.execute(
         "UPDATE capability_node SET recommended_start_level = 'P6' WHERE id = %s",
         (node_id,),
     )
@@ -152,7 +123,7 @@ def test_snapshot_is_immutable_after_model_and_member_changes(
     assert detail["l3_code"] == code
     assert detail["standard_target_level"] == 2
     assert detail["target_level"] == 2
-    assert detail["target_snapshot_source"] == "default"
+    assert detail["target_snapshot_source"].endswith(":legacy_derived")
 
 
 def test_save_uses_snapshot_and_requires_reason_for_adjustment(

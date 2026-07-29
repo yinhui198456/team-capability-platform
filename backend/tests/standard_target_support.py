@@ -1,5 +1,7 @@
 import psycopg
 
+from app.migrations import run_migrations
+
 
 def ensure_capability_nodes(
     connection: psycopg.Connection, l3_codes: list[str]
@@ -65,6 +67,17 @@ def ensure_capability_nodes(
             """,
             (model_id, l2_row[0], l3_code, l3_code, order, order),
         )
+    # Test fixtures create users directly.  #59 deliberately requires both
+    # snapshots for a new Assessment, so fixture users receive explicit valid
+    # values here rather than weakening the production validation.
+    connection.execute(
+        """
+        UPDATE tcp_user
+        SET current_level = COALESCE(current_level, 'P4'),
+            target_level = COALESCE(target_level, 'P8')
+        """
+    )
+    run_migrations(connection)
     connection.commit()
 
 

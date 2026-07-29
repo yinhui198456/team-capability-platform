@@ -94,7 +94,14 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: '能力标准',
-    items: [{ label: '能力地图', href: '/capability/model' }],
+    items: [
+      { label: '能力地图', href: '/capability/model' },
+      {
+        label: '标准版本维护',
+        href: '/capability/standards',
+        roles: ['Leader'],
+      },
+    ],
   },
 ]
 

@@ -23,6 +23,7 @@ from app.assessment.repository import (
 from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
+from app.migrations import run_migrations
 from app.planning.repository import (
     create_growth_goal,
     create_progress_log,
@@ -36,6 +37,7 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_full_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS schema_migration")
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan_domain")
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan")
         connection.execute("DROP TABLE IF EXISTS capability_profile")
@@ -79,7 +81,8 @@ def _create_test_user(
     for role_code in roles:
         assign_role(connection, user_id, role_code)
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P4', target_level = 'P8' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id
@@ -156,6 +159,8 @@ def _ensure_l3_nodes(connection: psycopg.Connection, l3_codes: list[str]) -> Non
             (model_id, l2_id, l3_code, f"Leaf {l3_code}", sort_order, sort_order + 1),
         )
         sort_order += 2
+    run_migrations(connection)
+    connection.commit()
 
 
 async def _asgi_request(

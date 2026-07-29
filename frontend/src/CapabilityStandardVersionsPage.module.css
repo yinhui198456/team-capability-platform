@@ -1,0 +1,73 @@
+.page {
+  max-width: none;
+  min-width: 0;
+  width: 100%;
+}
+.panel {
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+}
+.panel > label {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+  max-width: 480px;
+}
+.issues {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+}
+.segmentedNav {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  overflow-x: auto;
+}
+.segmentedNav button,
+.sectionToggle {
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+}
+.segmentedNav button[aria-selected='true'] {
+  border-color: var(--color-brand-600);
+  color: var(--color-brand-700);
+}
+.sectionToggle {
+  font-weight: 700;
+  text-align: left;
+  width: 100%;
+}
+.matrix {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  min-width: 0;
+}
+.matrixRow {
+  align-items: center;
+  border-top: 1px solid var(--color-gray-100);
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(180px, 2fr) repeat(5, minmax(72px, 1fr));
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+.matrixRow label {
+  display: grid;
+  font-size: var(--text-xs);
+  gap: 2px;
+}
+.matrixRow select {
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .matrixRow {
+    grid-template-columns: 1fr repeat(5, minmax(62px, 1fr));
+  }
+}

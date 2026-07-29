@@ -14,6 +14,7 @@ from app.access.security import verify_password
 from app.access.seed import seed_demo_accounts
 from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
+from app.migrations import run_migrations
 from app.planning.schema import create_planning_schema
 
 _DEMO_USERNAMES = ("admin", "leader", "buddy", "member", "member2")
@@ -182,6 +183,7 @@ def test_seed_business_data_builds_repeatable_core_loop(
         )""",
         (model_id, l2_id),
     )
+    run_migrations(access_schema)
     seed_demo_accounts(access_schema)
 
     seed.seed_demo_business_data(access_schema)

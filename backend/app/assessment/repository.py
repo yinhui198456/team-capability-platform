@@ -5,7 +5,7 @@ import psycopg
 
 from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
-from ..catalog.standard_targets import resolve_standard_target
+from ..catalog.standard_versions import StandardVersionError, published_matrix_for_model
 
 
 class AssessmentValidationError(ValueError):
@@ -588,28 +588,29 @@ def create_assessment_draft(
 ) -> int:
     with connection.transaction():
         member_row = connection.execute(
-            "SELECT target_level FROM tcp_user WHERE id = %s",
+            "SELECT current_level, target_level FROM tcp_user WHERE id = %s",
             (member_id,),
         ).fetchone()
         if member_row is None:
             raise ValueError("member not found")
-        member_target_level = member_row[0]
-        if member_target_level is None:
+        member_current_level, member_target_level = member_row
+        if not _is_job_level(member_current_level):
+            raise ValueError("member current_level is required")
+        if not _is_job_level(member_target_level):
             raise ValueError("member target_level is required")
-
-        capability_rows = connection.execute(
-            """
-            SELECT c.code, c.recommended_start_level,
-                   o.node_id IS NOT NULL AS override_present,
-                   o.target_level AS override_value
-            FROM capability_node c
-            LEFT JOIN capability_standard_target_override o
-              ON o.node_id = c.id AND o.job_level = %s
-            WHERE c.node_type = 'L3' AND c.enabled = TRUE
-            ORDER BY c.code
-            """,
-            (member_target_level,),
-        ).fetchall()
+        if int(member_current_level[1:]) > int(member_target_level[1:]):
+            raise ValueError("member current_level cannot exceed target_level")
+        model = connection.execute(
+            "SELECT id FROM capability_model ORDER BY id LIMIT 1"
+        ).fetchone()
+        if model is None:
+            raise ValueError("capability model not found")
+        try:
+            standard_version_id, capability_rows = published_matrix_for_model(
+                connection, int(model[0]), str(member_target_level)
+            )
+        except StandardVersionError as exc:
+            raise ValueError(str(exc)) from exc
         source = get_latest_approved_assessment_for_member(connection, member_id)
         inherited = {}
         if source is not None:
@@ -625,25 +626,12 @@ def create_assessment_draft(
                 ).fetchall()
             }
         snapshots = []
-        for (
-            code,
-            recommended_start_level,
-            override_present,
-            override_value,
-        ) in capability_rows:
-            if recommended_start_level is None:
-                raise ValueError(f"recommended_start_level is required for {code}")
-            resolved = resolve_standard_target(
-                member_target_level,
-                recommended_start_level,
-                override_present=override_present,
-                override_value=override_value,
-            )
+        for code, applicable, standard_target, standard_source in capability_rows:
             inherited_row = inherited.get(code)
             inherited_current = inherited_row[1] if inherited_row else None
             inherited_evidence = inherited_row[2] if inherited_row else None
             can_inherit_level = (
-                resolved.applicable is True
+                applicable is True
                 and inherited_row is not None
                 and inherited_current is not None
                 and 1 <= int(inherited_current) <= 5
@@ -657,10 +645,10 @@ def create_assessment_draft(
             snapshots.append(
                 (
                     code,
-                    resolved.applicable,
-                    resolved.target_level,
-                    resolved.target_level,
-                    resolved.source,
+                    bool(applicable),
+                    standard_target,
+                    standard_target,
+                    f"published_standard_version:{standard_version_id}:{standard_source}",
                     inherited_current if can_inherit_level else None,
                     inherited_evidence.strip() if can_inherit_evidence else None,
                     source["id"] if can_inherit and source else None,
@@ -680,11 +668,23 @@ def create_assessment_draft(
 
         row = connection.execute(
             """
-            INSERT INTO assessment (member_id, year, version, assessment_type, status)
-            VALUES (%s, %s, %s, %s, '草稿')
+            INSERT INTO assessment (
+                member_id, year, version, assessment_type, status,
+                member_current_level_snapshot, member_target_level_snapshot,
+                capability_standard_version_id
+            )
+            VALUES (%s, %s, %s, %s, '草稿', %s, %s, %s)
             RETURNING id
             """,
-            (member_id, year, version, assessment_type),
+            (
+                member_id,
+                year,
+                version,
+                assessment_type,
+                member_current_level,
+                member_target_level,
+                standard_version_id,
+            ),
         ).fetchone()
         assert row is not None
         assessment_id = row[0]

@@ -31,6 +31,8 @@ def _ensure_test_database() -> None:
 
 def _clear_catalog(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS schema_migration")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_version_audit")
         connection.execute("DROP TABLE IF EXISTS capability_standard_item")
         connection.execute("DROP TABLE IF EXISTS capability_standard_version")
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")

@@ -15,6 +15,7 @@ import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { CapabilityModelPage } from './CapabilityModelPage'
+import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
 import { LearningResourcesPage } from './LearningResourcesPage'
 import { TeamAnalyticsPage } from './TeamAnalyticsPage'
 import { TeamAnnualPlanPage } from './TeamAnnualPlanPage'
@@ -77,6 +78,10 @@ export function App() {
         <Route element={<AuthenticatedShell />}>
           <Route path="/dashboard/member" element={<MemberDashboardPage />} />
           <Route path="/capability/model" element={<CapabilityModelPage />} />
+          <Route
+            path="/capability/standards"
+            element={<CapabilityStandardVersionsPage />}
+          />
           <Route
             path="/capability/assessment"
             element={<AssessmentGapPage />}

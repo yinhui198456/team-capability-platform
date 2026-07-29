@@ -7,9 +7,11 @@ import pytest
 
 from app.access.repository import assign_role, create_session, create_user
 from app.access.schema import create_access_schema
+from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.catalog.schema import create_catalog_schema
 from app.main import app
+from app.migrations import run_migrations
 
 WORKBOOK_DIR = resolve_workbook_dir()
 SESSION_COOKIE = "tcp_session"
@@ -28,9 +30,12 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 
 @pytest.fixture(autouse=True)
 def initialize_catalog_and_access(connection: psycopg.Connection) -> None:
+    connection.execute("DROP TABLE IF EXISTS schema_migration")
     _reset_access_schema(connection)
     create_catalog_schema(connection)
+    create_assessment_schema(connection)
     import_catalog(WORKBOOK_DIR, connection)
+    run_migrations(connection)
     connection.commit()
 
 
@@ -164,7 +169,7 @@ class TestPublicGetRemainsOpen:
 
 
 class TestUpdateCapabilityNode:
-    def test_leader_sets_numeric_and_explicit_na_standard_targets(
+    def test_legacy_override_field_is_not_available_at_runtime(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:
         status, body = _request(
@@ -174,8 +179,8 @@ class TestUpdateCapabilityNode:
             cookies={SESSION_COOKIE: leader_cookie},
         )
 
-        assert status == 200
-        assert body["standard_target_overrides"] == {"P4": 3, "P5": None}
+        assert status == 422
+        assert "standard_target_overrides" in str(body["detail"])
 
         status, model = _request("GET", "/api/capability-model")
         assert status == 200
@@ -186,30 +191,22 @@ class TestUpdateCapabilityNode:
             for l3 in l2["children"]
             if l3["code"] == "P01.01.01"
         )
-        assert node["standard_target_overrides"] == {"P4": 3, "P5": None}
+        assert "standard_target_overrides" not in node
 
-    def test_replacing_standard_targets_with_empty_map_clears_overrides(
+    def test_catalog_node_update_never_reads_or_writes_legacy_overrides(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:
         cookie = {SESSION_COOKIE: leader_cookie}
-        status, _ = _request(
+        status, body = _request(
             "PUT",
             "/api/capability-model/nodes/P01.01.01",
             {"standard_target_overrides": {"P4": 3}},
             cookies=cookie,
         )
-        assert status == 200
+        assert status == 422
+        assert "standard_target_overrides" in str(body["detail"])
 
-        status, body = _request(
-            "PUT",
-            "/api/capability-model/nodes/P01.01.01",
-            {"standard_target_overrides": {}},
-            cookies=cookie,
-        )
-        assert status == 200
-        assert body["standard_target_overrides"] == {}
-
-    def test_override_below_recommended_start_level_is_rejected(
+    def test_recommended_start_level_is_not_a_standard_matrix_constraint(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:
         row = connection.execute(
@@ -224,25 +221,17 @@ class TestUpdateCapabilityNode:
         status, body = _request(
             "PUT",
             f"/api/capability-model/nodes/{row[0]}",
-            {"standard_target_overrides": {"P5": 4}},
+            {"recommended_start_level": "P7"},
             cookies={SESSION_COOKIE: leader_cookie},
         )
 
-        assert status == 422
-        assert "below recommended_start_level" in body["detail"]
+        assert status == 200
+        assert body["recommended_start_level"] == "P7"
 
-    def test_start_level_cannot_move_above_existing_override(
+    def test_recommended_start_level_can_change_without_matrix_side_effects(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:
         cookie = {SESSION_COOKIE: leader_cookie}
-        status, _ = _request(
-            "PUT",
-            "/api/capability-model/nodes/P01.01.01",
-            {"standard_target_overrides": {"P4": 3}},
-            cookies=cookie,
-        )
-        assert status == 200
-
         status, body = _request(
             "PUT",
             "/api/capability-model/nodes/P01.01.01",
@@ -250,8 +239,8 @@ class TestUpdateCapabilityNode:
             cookies=cookie,
         )
 
-        assert status == 422
-        assert "below recommended_start_level" in body["detail"]
+        assert status == 200
+        assert body["recommended_start_level"] == "P5"
 
     @pytest.mark.parametrize(
         "overrides",
@@ -781,3 +770,66 @@ class TestProvenancePreservation:
         assert row[0] == "manual"
         assert row[1] == "manual"
         assert row[2] == 0
+
+
+class TestCapabilityStandardVersionAccess:
+    def test_only_leader_can_create_or_read_a_draft(
+        self,
+        connection: psycopg.Connection,
+        leader_cookie: str,
+        member_cookie: str,
+        buddy_cookie: str,
+        admin_without_leader_cookie: str,
+    ) -> None:
+        model_id = int(
+            connection.execute("SELECT id FROM capability_model").fetchone()[0]
+        )
+        status, draft = _request(
+            "POST",
+            "/api/capability-standard-versions/drafts",
+            {"model_id": model_id, "change_summary": "校准 P8"},
+            cookies={SESSION_COOKIE: leader_cookie},
+        )
+        assert status == 201
+        assert draft["status"] == "草稿"
+
+        status, body = _request(
+            "GET",
+            f"/api/capability-standard-versions/{draft['id']}",
+            cookies={SESSION_COOKIE: member_cookie},
+        )
+        assert status == 404
+        assert body["detail"]["code"] == "published_standard_not_found"
+
+        status, matrix = _request(
+            "GET",
+            f"/api/capability-standard-versions/{draft['id']}",
+            cookies={SESSION_COOKIE: leader_cookie},
+        )
+        assert status == 200
+        assert matrix["version"]["revision"] == 1
+        assert len(matrix["items"]) == 310 * 5
+
+        status, _ = _request(
+            "POST",
+            "/api/capability-standard-versions/drafts",
+            {"model_id": model_id},
+            cookies={SESSION_COOKIE: member_cookie},
+        )
+        assert status == 403
+
+        for cookie in (buddy_cookie, admin_without_leader_cookie):
+            status, body = _request(
+                "GET",
+                f"/api/capability-standard-versions/{draft['id']}",
+                cookies={SESSION_COOKIE: cookie},
+            )
+            assert status == 404
+            assert body["detail"]["code"] == "published_standard_not_found"
+            status, _ = _request(
+                "POST",
+                "/api/capability-standard-versions/drafts",
+                {"model_id": model_id},
+                cookies={SESSION_COOKIE: cookie},
+            )
+            assert status == 403

@@ -16,6 +16,7 @@ const DOMAIN_SPECS = [
 const startLevels = ['P4', 'P5', 'P4–P5', 'P6', 'P5–P6', 'P6–P8']
 
 export const capabilityMapModel: CapabilityModel = {
+  id: 1,
   code: '技术架构与开发角色能力模型',
   version: 'v1.0',
   domains: DOMAIN_SPECS.map(([domainCode, l2Count, l3Counts]) => ({
