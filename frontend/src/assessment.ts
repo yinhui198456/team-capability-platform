@@ -97,6 +97,47 @@ export type GapSummary = {
   low_priority: number
 }
 
+export type DraftTargetRepairDetail = {
+  l3_code: string
+  action: 'rebuild' | 'preserve' | 'not_applicable' | 'unrepairable'
+  reason: string | null
+}
+
+export type DraftTargetRepairSummary = {
+  rebuild_count: number
+  preserve_count: number
+  not_applicable_count: number
+  unrepairable_count: number
+  actionable_count: number
+}
+
+export type DraftTargetRepairPreview = {
+  assessment_id: number
+  status: string
+  revision: number
+  member_current_level: { value: string | null; source: string | null }
+  member_target_level: { value: string | null; source: string | null }
+  standard_version: {
+    id: number
+    version_no: number
+    status: string
+    source: string
+  } | null
+  summary: DraftTargetRepairSummary
+  details: DraftTargetRepairDetail[]
+  unrepairable_details: DraftTargetRepairDetail[]
+}
+
+export type DraftTargetRepairResult = {
+  result: 'repaired' | 'noop'
+  assessment_id: number
+  old_revision: number
+  revision: number
+  audit_id: number | null
+  summary: DraftTargetRepairSummary
+  unrepairable_details: DraftTargetRepairDetail[]
+}
+
 export type AssessmentReview = {
   id: number
   assessment_id: number
@@ -125,6 +166,26 @@ export async function listAssessments(): Promise<Assessment[]> {
 
 export async function getAssessment(id: number): Promise<Assessment> {
   return request<Assessment>(`/api/assessments/${id}`, { method: 'GET' })
+}
+
+export async function getDraftTargetRepairPreview(
+  id: number,
+): Promise<DraftTargetRepairPreview> {
+  return request<DraftTargetRepairPreview>(
+    `/api/assessments/${id}/draft-target-repair/preview`,
+    { method: 'GET' },
+  )
+}
+
+export async function repairDraftTargetSnapshots(
+  id: number,
+  expectedRevision: number,
+): Promise<DraftTargetRepairResult> {
+  return request<DraftTargetRepairResult>(
+    `/api/assessments/${id}/draft-target-repair`,
+    { method: 'POST' },
+    { expected_revision: expectedRevision },
+  )
 }
 
 export async function saveDraft(

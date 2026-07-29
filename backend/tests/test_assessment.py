@@ -14,6 +14,7 @@ from app.assessment.repository import (
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.main import app
+from app.migrations import run_migrations
 
 SESSION_COOKIE = "tcp_session"
 
@@ -60,7 +61,11 @@ def _create_test_user(
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
+    connection.execute("DROP TABLE IF EXISTS schema_migration CASCADE")
+    connection.execute("DROP TABLE IF EXISTS capability_standard_item CASCADE")
+    connection.execute("DROP TABLE IF EXISTS capability_standard_version CASCADE")
     import_catalog(resolve_workbook_dir(), connection)
+    run_migrations(connection)
     connection.commit()
     return connection
 
@@ -487,3 +492,119 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
         cookies=cookies,
     )
     assert status == 400
+
+
+def test_draft_target_repair_api_enforces_permissions_and_all_or_nothing(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    owner_id = _create_test_user(assessment_schema, "repair_owner", ["Member"])
+    other_member_id = _create_test_user(
+        assessment_schema, "repair_other_member", ["Member"]
+    )
+    buddy_id = _create_test_user(assessment_schema, "repair_buddy", ["Buddy"])
+    leader_id = _create_test_user(assessment_schema, "repair_leader", ["Leader"])
+    admin_id = _create_test_user(assessment_schema, "repair_admin", ["Admin"])
+    assessment_schema.execute(
+        "UPDATE tcp_user SET current_level = 'P4', target_level = 'P5' WHERE id = %s",
+        (owner_id,),
+    )
+    assessment_id = create_assessment_draft(assessment_schema, owner_id, 2026)
+    assessment_schema.execute(
+        """
+        UPDATE assessment
+        SET member_current_level_snapshot = NULL,
+            member_target_level_snapshot = NULL,
+            capability_standard_version_id = NULL
+        WHERE id = %s
+        """,
+        (assessment_id,),
+    )
+    assessment_schema.execute(
+        """
+        UPDATE assessment_detail
+        SET target_snapshot_source = 'legacy_preserved',
+            target_compatibility_error = '历史明细缺少目标快照'
+        WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    )
+    assessment_schema.commit()
+
+    cookies = {
+        "owner": _login(assessment_schema, "repair_owner"),
+        "other_member": _login(assessment_schema, "repair_other_member"),
+        "buddy": _login(assessment_schema, "repair_buddy"),
+        "leader": _login(assessment_schema, "repair_leader"),
+        "admin": _login(assessment_schema, "repair_admin"),
+    }
+    for role in ("other_member", "buddy", "leader"):
+        status, body, _ = _request(
+            "GET",
+            f"/api/assessments/{assessment_id}/draft-target-repair/preview",
+            cookies=cookies[role],
+        )
+        assert status == 403
+        assert body["detail"]["code"] == "draft_repair_forbidden"
+
+    status, preview, _ = _request(
+        "GET",
+        f"/api/assessments/{assessment_id}/draft-target-repair/preview",
+        cookies=cookies["owner"],
+    )
+    assert status == 200
+    assert preview["summary"]["unrepairable_count"] == 0
+    assert (
+        assessment_schema.execute(
+            "SELECT count(*) FROM assessment_draft_target_repair_audit"
+        ).fetchone()[0]
+        == 0
+    )
+
+    status, repaired, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/draft-target-repair",
+        {"expected_revision": 1},
+        cookies=cookies["owner"],
+    )
+    assert status == 200
+    assert repaired["result"] == "repaired"
+
+    status, noop, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/draft-target-repair",
+        {"expected_revision": 2},
+        cookies=cookies["admin"],
+    )
+    assert status == 200
+    assert noop["result"] == "noop"
+
+    blocked_id = create_assessment_draft(assessment_schema, owner_id, 2027)
+    assessment_schema.execute(
+        "UPDATE assessment_detail SET l3_code = 'legacy-unknown' "
+        "WHERE id = (SELECT min(id) FROM assessment_detail WHERE assessment_id = %s)",
+        (blocked_id,),
+    )
+    assessment_schema.commit()
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{blocked_id}/draft-target-repair",
+        {"expected_revision": 1},
+        cookies=cookies["owner"],
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "draft_repair_has_unrepairable_details"
+    assert (
+        assessment_schema.execute(
+            "SELECT revision FROM assessment WHERE id = %s", (blocked_id,)
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        assessment_schema.execute(
+            "SELECT count(*) FROM assessment_draft_target_repair_audit "
+            "WHERE assessment_id = %s",
+            (blocked_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert all(user_id for user_id in (other_member_id, buddy_id, leader_id, admin_id))

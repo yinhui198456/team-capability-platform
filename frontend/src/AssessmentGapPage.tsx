@@ -5,11 +5,14 @@ import {
   type Assessment,
   type AssessmentDetail,
   type AssessmentL2Group,
+  type DraftTargetRepairPreview,
   createAssessment,
   batchFillL2,
   getAssessment,
+  getDraftTargetRepairPreview,
   listAssessments,
   saveDraft,
+  repairDraftTargetSnapshots,
   selectL2Requirement,
   submitAssessment,
 } from './assessment'
@@ -72,7 +75,11 @@ function effectiveTarget(detail: AssessmentDetail): number | null {
 }
 
 function isFilled(detail: AssessmentDetail) {
-  return isApplicableDetail(detail) && !unfilledReason(detail)
+  return (
+    isApplicableDetail(detail) &&
+    !detail.target_compatibility_error &&
+    !unfilledReason(detail)
+  )
 }
 
 function isApplicableDetail(detail: AssessmentDetail) {
@@ -148,7 +155,6 @@ function canBatchFill(detail: AssessmentDetail) {
 }
 
 function unfilledReason(detail: AssessmentDetail) {
-  if (detail.target_compatibility_error) return '需兼容修复'
   if (!isApplicableDetail(detail)) return ''
   const adjustment = adjustmentReason(detail)
   if (adjustment) return adjustment
@@ -241,6 +247,10 @@ export function AssessmentGapPage() {
   >({})
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
+  const [repairPreview, setRepairPreview] =
+    useState<DraftTargetRepairPreview | null>(null)
+  const [repairLoading, setRepairLoading] = useState(false)
+  const [repairExecuting, setRepairExecuting] = useState(false)
 
   function loadAssessment(value: Assessment) {
     setAssessment(value)
@@ -482,6 +492,57 @@ export function AssessmentGapPage() {
     }
   }
 
+  async function handleRepairPreview() {
+    if (!assessment || repairLoading) return
+    setError('')
+    setMessage('')
+    setRepairLoading(true)
+    try {
+      setRepairPreview(await getDraftTargetRepairPreview(assessment.id))
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : '无法读取修复影响，请稍后重试。',
+      )
+    } finally {
+      setRepairLoading(false)
+    }
+  }
+
+  async function handleRepairConfirm() {
+    if (!assessment || !repairPreview || repairExecuting) return
+    setError('')
+    setMessage('')
+    setRepairExecuting(true)
+    try {
+      const result = await repairDraftTargetSnapshots(
+        assessment.id,
+        repairPreview.revision,
+      )
+      loadAssessment(await getAssessment(assessment.id))
+      setRepairPreview(null)
+      setDirtyIds(new Set())
+      setMessage(
+        result.result === 'noop'
+          ? '草稿目标快照已是最新状态。'
+          : '草稿目标快照已修复，已重新加载评估。',
+      )
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status
+      const detail = (err as { detail?: { message?: unknown } }).detail
+      setError(
+        status === 409
+          ? '草稿已被更新，请重新加载后查看修复影响。'
+          : typeof detail?.message === 'string'
+            ? detail.message
+            : err instanceof Error
+              ? err.message
+              : '修复失败，请重试。',
+      )
+    } finally {
+      setRepairExecuting(false)
+    }
+  }
+
   function locateDetail(detail: AssessmentDetail) {
     setActiveDomain(l1Of(detail))
     setExpandedL2((current) => new Set(current).add(l2Of(detail)))
@@ -507,8 +568,12 @@ export function AssessmentGapPage() {
     setEditingId(null)
   }
 
+  const hasCompatibilityError = details.some((detail) =>
+    Boolean(detail.target_compatibility_error),
+  )
   const editable =
-    assessment?.status === '草稿' || assessment?.status === '建议调整'
+    !hasCompatibilityError &&
+    (assessment?.status === '草稿' || assessment?.status === '建议调整')
   const assessedDetails = useMemo(() => progressDetails(details), [details])
   const filled = useMemo(
     () => assessedDetails.filter(isFilled).length,
@@ -654,6 +719,58 @@ export function AssessmentGapPage() {
             Gap <strong>{summary?.total_gaps ?? 0}</strong>
           </span>
         </section>
+        {hasCompatibilityError && assessment && (
+          <section
+            className={s.repairBlocker}
+            aria-label="草稿目标快照需要兼容修复"
+            role="alert"
+          >
+            <strong>草稿目标快照需要兼容修复</strong>
+            <p>
+              此草稿暂不能保存或提交。请先查看修复影响；修复会在整份草稿可安全处理时一次完成。
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleRepairPreview()}
+              disabled={repairLoading || repairExecuting}
+            >
+              {repairLoading ? '读取中…' : '查看修复影响'}
+            </button>
+            {repairPreview && (
+              <div
+                className={s.repairPreview}
+                data-testid="draft-repair-preview"
+              >
+                <p>
+                  将重建 {repairPreview.summary.rebuild_count} 条明细，保留{' '}
+                  {repairPreview.summary.preserve_count} 条明细。
+                </p>
+                {repairPreview.summary.unrepairable_count > 0 ? (
+                  <>
+                    <p>存在无法安全修复的明细，本次不会写入任何数据。</p>
+                    <ul>
+                      {repairPreview.unrepairable_details.map((detail) => (
+                        <li key={detail.l3_code}>
+                          {detail.l3_code}：{detail.reason ?? '无法修复'}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : repairPreview.summary.actionable_count > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleRepairConfirm()}
+                    disabled={repairExecuting}
+                  >
+                    {repairExecuting ? '修复中…' : '确认修复草稿'}
+                  </button>
+                ) : (
+                  <p>草稿目标快照已是最新状态。</p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
         {error && <p className="error global-assessment-error">{error}</p>}
         {message && <p className="success">{message}</p>}
 
