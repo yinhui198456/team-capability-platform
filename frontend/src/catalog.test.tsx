@@ -319,6 +319,24 @@ describe('catalog routes', () => {
     expect(screen.queryByText(/P04 扩展能力域/)).toBeNull()
   })
 
+  it('keeps the Leader standard-version entry local to the capability map', async () => {
+    stubLeader()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('tab', { name: /P01/ })
+    expect(screen.queryByRole('link', { name: '标准版本维护' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '标准版本维护' }))
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/standards',
+    )
+  })
+
   it('mounts one domain and unloads collapsed L3 rows while preserving domain state', async () => {
     stubMember()
     render(

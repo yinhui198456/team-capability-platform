@@ -23,6 +23,10 @@
   position: relative;
 }
 
+.standardVersionsAction {
+  margin: 0 0 8px auto;
+}
+
 .searchLabel {
   color: #344054;
   display: block;

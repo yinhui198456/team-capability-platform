@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
 } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import styles from './CapabilityModelPage.module.css'
 
@@ -472,6 +473,7 @@ export function CapabilityModelPage() {
   )
   const { data: resources } = useCatalog<Resource[]>('/api/learning-resources')
   const { isLeader, user } = useMe()
+  const navigate = useNavigate()
   const [activeDomain, setActiveDomain] = useState('')
   const [expandedL2ByDomain, setExpandedL2ByDomain] = useState<
     Record<string, Set<string>>
@@ -678,6 +680,15 @@ export function CapabilityModelPage() {
           )}
         </div>
         <div className={styles.headerActions}>
+          {isLeader && (
+            <button
+              type="button"
+              className={styles.standardVersionsAction}
+              onClick={() => navigate('/capability/standards')}
+            >
+              标准版本维护
+            </button>
+          )}
           <label className={styles.searchLabel} htmlFor="capability-search">
             搜索能力地图
           </label>
