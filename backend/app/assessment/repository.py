@@ -34,15 +34,16 @@ def _repair_l3_lookup_codes(code: str) -> tuple[str, ...]:
 
 
 def _draft_repair_baseline(
-    connection: psycopg.Connection,
+    connection: psycopg.Connection, model_id: int
 ) -> tuple[int, int] | None:
     rows = connection.execute(
         """
         SELECT id, version_no
         FROM capability_standard_version
-        WHERE status = '已发布' AND label = 'Legacy Baseline v1'
+        WHERE model_id = %s AND status = '已发布' AND label = 'Legacy Baseline v1'
         ORDER BY id
-        """
+        """,
+        (model_id,),
     ).fetchall()
     if len(rows) != 1:
         return None
@@ -96,21 +97,22 @@ def _draft_repair_detail_rows(
     ).fetchall()
 
 
+def _canonical_l3_code(code: str) -> str:
+    return code.replace("-", ".")
+
+
 def _draft_repair_gap_rows(
     connection: psycopg.Connection, assessment_id: int
-) -> dict[str, tuple[object, ...]]:
-    return {
-        str(row[1]): row
-        for row in connection.execute(
-            """
+) -> list[tuple[object, ...]]:
+    return connection.execute(
+        """
             SELECT id, l3_code, current_level, target_level, gap_value,
                    priority, plan_candidate
             FROM gap WHERE assessment_id = %s
             ORDER BY l3_code
             """,
-            (assessment_id,),
-        ).fetchall()
-    }
+        (assessment_id,),
+    ).fetchall()
 
 
 def _baseline_item_for_detail(
@@ -165,12 +167,11 @@ def get_draft_target_repair_preview(
             "draft_repair_state_conflict", "assessment is not repairable"
         )
 
-    baseline = _draft_repair_baseline(connection)
     current_job, target_job, current_source, target_source = _draft_repair_profile(
         (snapshot_current, snapshot_target, profile_current, profile_target)
     )
     rows = _draft_repair_detail_rows(connection, assessment_id)
-    gaps = _draft_repair_gap_rows(connection, assessment_id)
+    raw_gaps = _draft_repair_gap_rows(connection, assessment_id)
     details: list[dict[str, object]] = []
     summary = {
         "rebuild_count": 0,
@@ -179,11 +180,48 @@ def get_draft_target_repair_preview(
         "unrepairable_count": 0,
         "actionable_count": 0,
     }
-    if baseline is None or current_job is None or target_job is None:
+    detail_models: set[int] = set()
+    ambiguous = False
+    for row in rows:
+        matches = connection.execute(
+            """
+            SELECT id, model_id FROM capability_node
+            WHERE node_type = 'L3' AND code = ANY(%s)
+            """,
+            (list(_repair_l3_lookup_codes(str(row[1]))),),
+        ).fetchall()
+        if len(matches) != 1:
+            ambiguous = True
+        else:
+            detail_models.add(int(matches[0][1]))
+    model_id = next(iter(detail_models)) if len(detail_models) == 1 else None
+    baseline = (
+        _draft_repair_baseline(connection, model_id) if model_id is not None else None
+    )
+    detail_codes = [_canonical_l3_code(str(row[1])) for row in rows]
+    gap_codes = [_canonical_l3_code(str(row[1])) for row in raw_gaps]
+    gaps = {code: row for code, row in zip(gap_codes, raw_gaps, strict=True)}
+    gap_invalid = (
+        len(set(detail_codes)) != len(detail_codes)
+        or len(set(gap_codes)) != len(gap_codes)
+        or not set(gap_codes).issubset(set(detail_codes))
+    )
+    if (
+        ambiguous
+        or model_id is None
+        or gap_invalid
+        or baseline is None
+        or current_job is None
+        or target_job is None
+    ):
         reason = (
-            "缺少唯一已发布 Legacy Baseline v1"
-            if baseline is None
-            else "成员当前职级或目标职级不可追溯"
+            "明细或 Gap 无法唯一映射到同一能力模型"
+            if ambiguous or model_id is None or gap_invalid
+            else (
+                "缺少该能力模型唯一已发布 Legacy Baseline v1"
+                if baseline is None
+                else "成员当前职级或目标职级不可追溯"
+            )
         )
         for row in rows:
             details.append(
@@ -194,7 +232,7 @@ def get_draft_target_repair_preview(
                     "reason": reason,
                 }
             )
-        summary["unrepairable_count"] = len(details)
+        summary["unrepairable_count"] = max(len(details), 1)
         return {
             "assessment_id": assessment_id,
             "status": status,
@@ -243,6 +281,7 @@ def get_draft_target_repair_preview(
         expected_standard: int | None = None
         expected_target: int | None = None
         expected_gap: int | None = None
+        existing_gap_id: int | None = None
         if baseline_item is None:
             reason = "L3 无法唯一映射到 Legacy Baseline v1"
         else:
@@ -285,7 +324,10 @@ def get_draft_target_repair_preview(
                     current_level is None or expected_gap is None or expected_gap <= 0
                 ):
                     reason = "计划候选与重建后的目标不一致"
-                existing_gap = gaps.get(str(l3_code))
+                existing_gap = gaps.get(_canonical_l3_code(str(l3_code)))
+                existing_gap_id = (
+                    int(existing_gap[0]) if existing_gap is not None else None
+                )
                 if existing_gap is not None and expected_gap != int(existing_gap[4]):
                     if expected_gap is None or expected_gap <= 0:
                         reason = "既有 Gap 不能在修复中删除"
@@ -294,7 +336,8 @@ def get_draft_target_repair_preview(
             action = "unrepairable"
             summary["unrepairable_count"] += 1
         else:
-            existing_gap = gaps.get(str(l3_code))
+            existing_gap = gaps.get(_canonical_l3_code(str(l3_code)))
+            existing_gap_id = int(existing_gap[0]) if existing_gap is not None else None
             gap_matches = (
                 (expected_gap is None or expected_gap <= 0) and existing_gap is None
             ) or (
@@ -339,6 +382,7 @@ def get_draft_target_repair_preview(
                 "expected_standard_target_level": expected_standard,
                 "expected_target_level": expected_target,
                 "expected_gap_value": expected_gap,
+                "existing_gap_id": existing_gap_id,
                 "needs_gap_update": reason is None and action != "preserve",
             }
         )
@@ -437,27 +481,42 @@ def repair_draft_target_snapshots(
             )
             expected_gap = detail["expected_gap_value"]
             if expected_gap is not None and int(expected_gap) > 0:
-                connection.execute(
-                    """
-                    INSERT INTO gap (
-                        assessment_id, l3_code, current_level, target_level,
-                        gap_value, plan_candidate
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (assessment_id, l3_code)
-                    DO UPDATE SET current_level = EXCLUDED.current_level,
-                                  target_level = EXCLUDED.target_level,
-                                  gap_value = EXCLUDED.gap_value,
-                                  plan_candidate = EXCLUDED.plan_candidate
-                    """,
-                    (
-                        assessment_id,
-                        detail["l3_code"],
-                        detail["current_level"],
-                        detail["expected_target_level"],
-                        expected_gap,
-                        detail["plan_candidate"],
-                    ),
-                )
+                existing_gap_id = detail["existing_gap_id"]
+                if existing_gap_id is None:
+                    connection.execute(
+                        """
+                        INSERT INTO gap (
+                            assessment_id, l3_code, current_level, target_level,
+                            gap_value, plan_candidate
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            assessment_id,
+                            detail["l3_code"],
+                            detail["current_level"],
+                            detail["expected_target_level"],
+                            expected_gap,
+                            detail["plan_candidate"],
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE gap
+                        SET current_level = %s,
+                            target_level = %s,
+                            gap_value = %s,
+                            plan_candidate = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            detail["current_level"],
+                            detail["expected_target_level"],
+                            expected_gap,
+                            detail["plan_candidate"],
+                            existing_gap_id,
+                        ),
+                    )
         new_revision = int(revision) + 1
         standard_version = preview["standard_version"]
         assert isinstance(standard_version, dict)
@@ -496,9 +555,9 @@ def repair_draft_target_snapshots(
                 actor_user_id,
                 int(revision),
                 new_revision,
-                "assessment_snapshot" if old_current else None,
+                "assessment_snapshot" if _is_job_level(old_current) else None,
                 current_job["source"],
-                "assessment_snapshot" if old_target else None,
+                "assessment_snapshot" if _is_job_level(old_target) else None,
                 target_job["source"],
                 old_version,
                 standard_version["id"],

@@ -65,6 +65,35 @@ def _create_schema(connection: psycopg.Connection) -> None:
         connection.execute(
             f"ALTER TABLE assessment ADD COLUMN IF NOT EXISTS {definition}"
         )
+    for name, column in (
+        (
+            "assessment_member_current_level_snapshot_check",
+            "member_current_level_snapshot",
+        ),
+        (
+            "assessment_member_target_level_snapshot_check",
+            "member_target_level_snapshot",
+        ),
+    ):
+        connection.execute(
+            f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'assessment'::regclass
+                      AND conname = '{name}'
+                ) THEN
+                    ALTER TABLE assessment ADD CONSTRAINT {name}
+                    CHECK (
+                        {column} IS NULL
+                        OR {column} IN ('P4', 'P5', 'P6', 'P7', 'P8')
+                    );
+                END IF;
+            END
+            $$
+            """
+        )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS assessment_draft_target_repair_audit (
