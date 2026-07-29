@@ -191,4 +191,106 @@ test.describe('Issue #58 draft target snapshot repair', () => {
     ).toHaveCount(0)
     expect(executed).toBe(0)
   })
+
+  test('surfaces preview permission denial without enabling confirmation', async ({
+    page,
+  }) => {
+    await page.route('**/api/assessments**', async (route) => {
+      const { pathname } = new URL(route.request().url())
+      if (pathname === '/api/assessments') {
+        await route.fulfill({
+          status: 200,
+          json: [{ ...draft, details: undefined }],
+        })
+      } else if (pathname === '/api/assessments/700') {
+        await route.fulfill({ status: 200, json: draft })
+      } else if (pathname.endsWith('/draft-target-repair/preview')) {
+        await route.fulfill({
+          status: 403,
+          json: {
+            detail: { code: 'draft_repair_forbidden', message: '无权限修复' },
+          },
+        })
+      } else {
+        await route.fallback()
+      }
+    })
+    await loginAs(page, 'member')
+    await page.goto('/capability/assessment')
+    await page.getByRole('button', { name: '查看修复影响' }).click()
+    await expect(page.getByText('无权限修复')).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: '确认修复草稿' }),
+    ).toHaveCount(0)
+  })
+
+  for (const [status, body, message] of [
+    [
+      409,
+      { detail: { message: '版本已变化' } },
+      '草稿已被更新，请重新加载后查看修复影响。',
+    ],
+    [
+      422,
+      { detail: { message: '存在无法安全修复的明细' } },
+      '存在无法安全修复的明细',
+    ],
+  ] as const) {
+    test(`keeps confirmation retryable after execute ${status}`, async ({
+      page,
+    }) => {
+      await page.route('**/api/assessments**', async (route) => {
+        const { pathname } = new URL(route.request().url())
+        if (pathname === '/api/assessments') {
+          await route.fulfill({
+            status: 200,
+            json: [{ ...draft, details: undefined }],
+          })
+        } else if (pathname === '/api/assessments/700') {
+          await route.fulfill({ status: 200, json: draft })
+        } else if (pathname.endsWith('/preview')) {
+          await route.fulfill({ status: 200, json: preview })
+        } else if (pathname.endsWith('/draft-target-repair')) {
+          await route.fulfill({ status, json: body })
+        } else {
+          await route.fallback()
+        }
+      })
+      await loginAs(page, 'member')
+      await page.goto('/capability/assessment')
+      await page.getByRole('button', { name: '查看修复影响' }).click()
+      await page.getByRole('button', { name: '确认修复草稿' }).click()
+      await expect(page.getByText(message)).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: '确认修复草稿' }),
+      ).toBeEnabled()
+    })
+  }
+
+  test('restores confirmation after a network failure', async ({ page }) => {
+    await page.route('**/api/assessments**', async (route) => {
+      const { pathname } = new URL(route.request().url())
+      if (pathname === '/api/assessments') {
+        await route.fulfill({
+          status: 200,
+          json: [{ ...draft, details: undefined }],
+        })
+      } else if (pathname === '/api/assessments/700') {
+        await route.fulfill({ status: 200, json: draft })
+      } else if (pathname.endsWith('/preview')) {
+        await route.fulfill({ status: 200, json: preview })
+      } else if (pathname.endsWith('/draft-target-repair')) {
+        await route.abort()
+      } else {
+        await route.fallback()
+      }
+    })
+    await loginAs(page, 'member')
+    await page.goto('/capability/assessment')
+    await page.getByRole('button', { name: '查看修复影响' }).click()
+    await page.getByRole('button', { name: '确认修复草稿' }).click()
+    await expect(
+      page.getByRole('button', { name: '确认修复草稿' }),
+    ).toBeEnabled()
+  })
 })
