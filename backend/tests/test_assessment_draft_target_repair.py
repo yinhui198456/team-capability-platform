@@ -688,6 +688,7 @@ def test_missing_assessment_snapshot_is_repaired_then_a_true_noop_is_audit_free(
         ).fetchone()[0]
         == 1
     )
+    state_before_noop = _repair_state(connection, assessment_id)
 
     second = repair_draft_target_snapshots(
         connection, assessment_id, member_id, expected_revision=2
@@ -702,6 +703,7 @@ def test_missing_assessment_snapshot_is_repaired_then_a_true_noop_is_audit_free(
         "unrepairable_details": [],
     }
     assert second["summary"]["unrepairable_count"] == 0
+    assert _repair_state(connection, assessment_id) == state_before_noop
     assert (
         connection.execute(
             "SELECT count(*) FROM assessment_draft_target_repair_audit"
