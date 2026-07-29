@@ -127,9 +127,8 @@ test('capability map Drawer visual evidence 1440x900', async ({ page }) => {
   await page.getByTestId('l2-toggle-P01.01').click()
   await page.getByTestId('l3-row-P01.01.01').click()
   await expect(page.getByRole('dialog', { name: 'P01.01.01' })).toBeVisible()
-  await expect(page.getByTestId('member-standard-highlight')).toContainText(
-    'P5',
-  )
+  await expect(page.getByTestId('member-target-level')).toContainText('P5')
+  await expect(page.getByTestId('member-current-level')).toContainText('P4')
   await expect(page).toHaveScreenshot('capability-map-drawer-1440x900.png', {
     maxDiffPixelRatio: 0.05,
     fullPage: true,

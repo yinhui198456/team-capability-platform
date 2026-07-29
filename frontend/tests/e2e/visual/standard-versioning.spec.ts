@@ -31,6 +31,7 @@ for (const viewport of viewports) {
                   name: '测试分类',
                   children: [
                     {
+                      id: 101,
                       code: 'P01.01.01',
                       name: '标准矩阵达成路径',
                       recommended_start_level: 'P4',

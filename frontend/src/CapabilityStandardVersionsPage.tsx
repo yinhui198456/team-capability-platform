@@ -105,19 +105,6 @@ export function CapabilityStandardVersionsPage() {
     return value
   }, [matrix])
 
-  // Build l3_code → l3_node_id from model (for new nodes)
-  const l3IdByCode = useMemo(() => {
-    const value = new Map<string, number>()
-    for (const dom of domains) {
-      for (const l2 of dom.children) {
-        for (const l3 of l2.children) {
-          if (l3.id !== undefined) value.set(l3.code, l3.id)
-        }
-      }
-    }
-    return value
-  }, [domains])
-
   // Build node_id → L3 info for copy confirmation and issue navigation
   const nodeIdInfo = useMemo(() => {
     const value = new Map<
@@ -516,7 +503,7 @@ export function CapabilityStandardVersionsPage() {
                     data-testid={`standard-l2-${l2.code}`}
                   >
                     {l2.children.map((l3) => {
-                      const nodeId = l3.id ?? l3IdByCode.get(l3.code)
+                      const nodeId = l3.id
                       // Only match by l3_node_id; code must not be a fallback
                       const cells = nodeId
                         ? (itemsByNodeId.get(nodeId) ?? [])
@@ -542,7 +529,10 @@ export function CapabilityStandardVersionsPage() {
                             </strong>
                           </label>
                           {missingNodeId ? (
-                            <span className="muted" style={{ gridColumn: 'span 5' }}>
+                            <span
+                              className="muted"
+                              style={{ gridColumn: 'span 5' }}
+                            >
                               能力目录缺少稳定节点身份
                             </span>
                           ) : (
@@ -584,9 +574,7 @@ export function CapabilityStandardVersionsPage() {
                                             job_level: level,
                                           },
                                           value !== 'na',
-                                          value === 'na'
-                                            ? null
-                                            : Number(value),
+                                          value === 'na' ? null : Number(value),
                                         )
                                       }}
                                     >
@@ -614,18 +602,12 @@ export function CapabilityStandardVersionsPage() {
                                         ? String(item.target_level)
                                         : 'na'
                                     }
-                                    aria-invalid={
-                                      cellIssue ? true : undefined
-                                    }
+                                    aria-invalid={cellIssue ? true : undefined}
                                     className={
-                                      cellIssue
-                                        ? styles.invalidCell
-                                        : undefined
+                                      cellIssue ? styles.invalidCell : undefined
                                     }
                                     title={
-                                      cellIssue
-                                        ? cellIssue.message
-                                        : undefined
+                                      cellIssue ? cellIssue.message : undefined
                                     }
                                     onChange={(event) =>
                                       updateCell(

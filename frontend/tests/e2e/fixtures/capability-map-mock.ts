@@ -14,6 +14,7 @@ const DOMAIN_SPECS = [
 ] as const
 
 const startLevels = ['P4', 'P5', 'P4–P5', 'P6', 'P5–P6', 'P6–P8']
+let nodeIdCounter = 0
 
 export const capabilityMapModel: CapabilityModel = {
   id: 1,
@@ -36,7 +37,9 @@ export const capabilityMapModel: CapabilityModel = {
         children: Array.from({ length: l3Counts[l2Index] }, (_, l3Index) => {
           const l3Code = `${l2Code}.${String(l3Index + 1).padStart(2, '0')}`
           const isSearchTarget = l3Code === 'P02.03.07'
+          nodeIdCounter += 1
           return {
+            id: nodeIdCounter,
             code: l3Code,
             name: isSearchTarget
               ? '跨域搜索目标达成路径'
