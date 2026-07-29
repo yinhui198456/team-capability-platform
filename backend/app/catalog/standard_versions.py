@@ -38,7 +38,8 @@ def _version(
         SELECT id, model_id, version_no, label, status, revision, based_on_version_id,
                change_summary, created_at, published_at, archived_at
         FROM capability_standard_version WHERE id = %s
-        """ + suffix,
+        """
+        + suffix,
         (version_id,),
     ).fetchone()
     if row is None:

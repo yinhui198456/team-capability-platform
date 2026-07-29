@@ -254,7 +254,8 @@ def list_learning_resources(
         filters.append("resource.status = %s")
         parameters.append(status)
     if l3_code:
-        filters.append("""
+        filters.append(
+            """
             EXISTS (
                 SELECT 1
                 FROM capability_node_resource AS target_link
@@ -263,7 +264,8 @@ def list_learning_resources(
                   AND target_l3.node_type = 'L3'
                   AND target_l3.code = %s
             )
-            """)
+            """
+        )
         parameters.append(l3_code)
     return _fetchall(
         connection,

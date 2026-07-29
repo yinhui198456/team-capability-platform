@@ -67,11 +67,13 @@ def _legacy_schema(connection) -> tuple[int, int]:
     create_access_schema(connection)
     create_catalog_schema(connection)
     create_assessment_schema(connection)
-    model_id = connection.execute("""
+    model_id = connection.execute(
+        """
         INSERT INTO capability_model (code, name, version, source_workbook, source_sheet, source_row)
         VALUES ('versioning-model', 'Versioning model', '1', 'test.xlsx', 'model', 1)
         RETURNING id
-        """).fetchone()[0]
+        """
+    ).fetchone()[0]
     l1_id = connection.execute(
         """
         INSERT INTO capability_node (model_id, node_type, code, name, sort_order, source_workbook, source_sheet, source_row)
@@ -101,11 +103,13 @@ def _legacy_schema(connection) -> tuple[int, int]:
 
 def _additional_model(connection) -> tuple[int, int]:
     """Add a second model after v0005 to prove model-local baseline selection."""
-    model_id = connection.execute("""
+    model_id = connection.execute(
+        """
         INSERT INTO capability_model (code, name, version, source_workbook, source_sheet, source_row)
         VALUES ('versioning-model-b', 'Versioning model B', '1', 'test.xlsx', 'model', 10)
         RETURNING id
-        """).fetchone()[0]
+        """
+    ).fetchone()[0]
     l1_id = connection.execute(
         """INSERT INTO capability_node
            (model_id,node_type,code,name,sort_order,source_workbook,source_sheet,source_row)
@@ -147,10 +151,15 @@ def test_v0005_rejects_legacy_override_that_no_longer_matches_v1(connection) -> 
         with connection.transaction():
             upgrade_v0005(connection)
 
-    assert connection.execute("""
+    assert (
+        connection.execute(
+            """
         SELECT COUNT(*) FROM information_schema.columns
         WHERE table_name = 'capability_standard_item' AND column_name = 'l3_node_id'
-        """).fetchone()[0] == 0
+        """
+        ).fetchone()[0]
+        == 0
+    )
     assert (
         connection.execute(
             "SELECT COUNT(*) FROM capability_standard_version WHERE model_id = %s",

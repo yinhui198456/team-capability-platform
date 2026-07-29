@@ -514,12 +514,15 @@ export function CapabilityModelPage() {
     : new Set<string>()
   const selectedContext = findSelectedL3Context(model, selectedL3 ?? '')
   const selectedNode = selectedContext?.l3
+  const selectedNodeId = selectedNode?.id
   const selectedStandardItems = useMemo(
     () =>
-      publishedStandard?.items?.filter(
-        (item) => item.l3_code === selectedNode?.code,
-      ) ?? [],
-    [publishedStandard, selectedNode?.code],
+      selectedNodeId !== undefined
+        ? (publishedStandard?.items?.filter(
+            (item) => item.l3_node_id === selectedNodeId,
+          ) ?? [])
+        : [],
+    [publishedStandard, selectedNodeId],
   )
 
   useEffect(() => {
@@ -1159,7 +1162,11 @@ export function CapabilityModelPage() {
             data-testid="published-standard"
           >
             <h3>当前已发布职级标准</h3>
-            {publishedStandard ? (
+            {!publishedStandard ? (
+              <p>已发布职级标准暂不可用。</p>
+            ) : selectedNodeId === undefined ? (
+              <p>标准数据不可用（缺少稳定节点身份）。</p>
+            ) : (
               <>
                 <p className={styles.standardVersion}>
                   {publishedStandard.version.label} · 已发布
@@ -1202,9 +1209,7 @@ export function CapabilityModelPage() {
                         ) : !item.applicable ? (
                           <span>不适用</span>
                         ) : (
-                          <span>
-                            目标掌握度 {item.target_level} / 5
-                          </span>
+                          <span>目标掌握度 {item.target_level} / 5</span>
                         )}
                         {hasItem && (
                           <small className="muted">来源：{item.source}</small>
@@ -1214,8 +1219,6 @@ export function CapabilityModelPage() {
                   })}
                 </div>
               </>
-            ) : (
-              <p>已发布职级标准暂不可用。</p>
             )}
           </section>
           <section className={styles.drawerSection}>

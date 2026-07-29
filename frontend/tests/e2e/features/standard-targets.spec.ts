@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 const l3 = {
+  id: 101,
   code: 'P01.01.01',
   name: '标准目标测试能力',
   p4_description: null,
@@ -349,6 +350,11 @@ test.describe('capability standard targets', () => {
       'P01.01.01 · P8',
     )
     await page.getByRole('button', { name: '预览发布' }).click()
+    // Expand L2 section and select L3 checkbox for copy
+    await page.getByRole('button', { name: /P01\.01.*测试分类/ }).click()
+    await page
+      .getByRole('checkbox', { name: /选择 P01\.01\.01 用于复制/ })
+      .check()
     await page.getByRole('button', { name: /复制 P7 → P8/ }).click()
     page.once('dialog', (dialog) => dialog.accept())
     await page.getByRole('button', { name: '检查并发布' }).click()

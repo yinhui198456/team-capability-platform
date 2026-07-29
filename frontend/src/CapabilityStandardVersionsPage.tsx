@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import styles from './CapabilityStandardVersionsPage.module.css'
 
@@ -23,14 +23,24 @@ import {
 import { type ApiError } from './shared/api'
 
 const LEVELS: JobLevel[] = ['P4', 'P5', 'P6', 'P7', 'P8']
+const COPY_TARGET: Record<JobLevel, JobLevel> = {
+  P4: 'P5',
+  P5: 'P6',
+  P6: 'P7',
+  P7: 'P8',
+  P8: 'P8',
+}
 
 function messageFor(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请重试。'
 }
 
-function structuredIssues(
-  error: unknown,
-): Array<{ l3_node_id?: number; l3_code?: string | null; job_level?: string | null; message: string }> {
+function structuredIssues(error: unknown): Array<{
+  l3_node_id?: number
+  l3_code?: string | null
+  job_level?: string | null
+  message: string
+}> {
   if (!(error instanceof Error)) return []
   const api = error as ApiError
   if (!api.detail || typeof api.detail !== 'object') return []
@@ -50,7 +60,11 @@ export function CapabilityStandardVersionsPage() {
   )
   const { data: drift, refresh: refreshDrift } = useCatalog<{
     has_drift: boolean
-    added_enabled_l3: Array<{ l3_node_id: number; l3_code: string; l3_name: string }>
+    added_enabled_l3: Array<{
+      l3_node_id: number
+      l3_code: string
+      l3_name: string
+    }>
     disabled_l3: Array<{ l3_node_id: number; l3_code: string }>
     renamed_or_moved_l3: Array<{ l3_node_id: number }>
   }>(
@@ -72,21 +86,26 @@ export function CapabilityStandardVersionsPage() {
     }>
   >([])
   const [copyFrom, setCopyFrom] = useState<JobLevel>('P7')
-  const [copyTo, setCopyTo] = useState<JobLevel>('P8')
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
+  const issueListRef = useRef<HTMLUListElement | null>(null)
 
+  const copyTo = COPY_TARGET[copyFrom]
   const domains = useMemo(() => enabledDomains(model), [model])
   const domain =
     domains.find((item) => item.code === activeDomain) ?? domains[0]
-  const itemsByCode = useMemo(() => {
-    const value = new Map<string, StandardMatrixItem[]>()
+
+  // Primary index: l3_node_id → cells (ONLY index, no code fallback)
+  const itemsByNodeId = useMemo(() => {
+    const value = new Map<number, StandardMatrixItem[]>()
     for (const item of matrix?.items ?? []) {
-      const entries = value.get(item.l3_code) ?? []
+      const entries = value.get(item.l3_node_id) ?? []
       entries.push(item)
-      value.set(item.l3_code, entries)
+      value.set(item.l3_node_id, entries)
     }
     return value
   }, [matrix])
-  // Find L3 code → node_id from model for constructing matrix items
+
+  // Build l3_code → l3_node_id from model (for new nodes)
   const l3IdByCode = useMemo(() => {
     const value = new Map<string, number>()
     for (const dom of domains) {
@@ -99,8 +118,67 @@ export function CapabilityStandardVersionsPage() {
     return value
   }, [domains])
 
+  // Build node_id → L3 info for copy confirmation and issue navigation
+  const nodeIdInfo = useMemo(() => {
+    const value = new Map<
+      number,
+      { code: string; name: string; l2Code: string; l1Code: string }
+    >()
+    for (const dom of domains) {
+      for (const l2 of dom.children) {
+        for (const l3 of l2.children) {
+          if (l3.id !== undefined) {
+            value.set(l3.id, {
+              code: l3.code,
+              name: l3.name,
+              l2Code: l2.code,
+              l1Code: dom.code,
+            })
+          }
+        }
+      }
+    }
+    return value
+  }, [domains])
+
+  // Issue index for positioning
+  const issueIndex = useMemo(() => {
+    const value = new Map<string, (typeof issues)[0]>()
+    for (const issue of issues) {
+      if (issue.l3_node_id !== undefined && issue.job_level) {
+        value.set(`${issue.l3_node_id}:${issue.job_level}`, issue)
+      }
+    }
+    return value
+  }, [issues])
+
   if (loading) return <p className="muted">正在加载…</p>
   if (!isLeader) return <p className="error">仅 Leader 可维护能力标准版本。</p>
+
+  function navigateToIssue(issue: (typeof issues)[0]) {
+    if (!issue.l3_node_id || !issue.job_level) return
+    const info = nodeIdInfo.get(issue.l3_node_id)
+    if (!info) return
+    // Switch domain and expand L2
+    setActiveDomain(info.l1Code)
+    setExpanded((current) => {
+      const next = new Set(current)
+      next.add(info.l2Code)
+      return next
+    })
+    // Wait for render, then focus the target cell
+    const cellId = `cell-${issue.l3_node_id}-${issue.job_level}`
+    const tryFocus = (attempts: number) => {
+      const el = document.getElementById(cellId)
+      if (el) {
+        el.focus()
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      } else if (attempts < 20) {
+        setTimeout(() => tryFocus(attempts + 1), 50)
+      }
+    }
+    setTimeout(() => tryFocus(0), 50)
+  }
 
   async function createDraft() {
     if (!model?.id) return
@@ -118,7 +196,9 @@ export function CapabilityStandardVersionsPage() {
   }
 
   async function updateCell(
-    item: StandardMatrixItem | { l3_node_id: number; l3_code: string; job_level: JobLevel },
+    item:
+      | StandardMatrixItem
+      | { l3_node_id: number; l3_code: string; job_level: JobLevel },
     applicable: boolean,
     targetLevel: number | null,
   ) {
@@ -191,17 +271,8 @@ export function CapabilityStandardVersionsPage() {
   }
 
   async function copyPrevious() {
-    if (!matrix?.version.revision) return
-    const activeL2s = domain?.children ?? []
-    const nodeIds = activeL2s.flatMap((l2) =>
-      l2.children
-        .map((l3) => {
-          const nodeId = l3.id ?? l3IdByCode.get(l3.code)
-          return nodeId
-        })
-        .filter((nodeId): nodeId is number => nodeId !== undefined),
-    )
-    if (!nodeIds.length) return
+    if (!matrix?.version.revision || selectedNodeIds.size === 0) return
+    const nodeIds = Array.from(selectedNodeIds)
     setBusy(true)
     setError('')
     try {
@@ -212,6 +283,7 @@ export function CapabilityStandardVersionsPage() {
         copyTo,
         nodeIds,
       )
+      setSelectedNodeIds(new Set())
       refreshMatrix()
       refreshVersions()
     } catch (reason) {
@@ -219,6 +291,15 @@ export function CapabilityStandardVersionsPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  function toggleNodeSelection(nodeId: number) {
+    setSelectedNodeIds((current) => {
+      const next = new Set(current)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return next
+    })
   }
 
   async function abandon() {
@@ -351,7 +432,9 @@ export function CapabilityStandardVersionsPage() {
               来源职级
               <select
                 value={copyFrom}
-                onChange={(event) => setCopyFrom(event.target.value as JobLevel)}
+                onChange={(event) => {
+                  setCopyFrom(event.target.value as JobLevel)
+                }}
               >
                 {LEVELS.slice(0, -1).map((level) => (
                   <option key={level} value={level}>
@@ -360,26 +443,36 @@ export function CapabilityStandardVersionsPage() {
                 ))}
               </select>
             </label>{' '}
-            <label>
-              目标职级
-              <select
-                value={copyTo}
-                onChange={(event) => setCopyTo(event.target.value as JobLevel)}
-              >
-                {LEVELS.filter(
-                  (level) =>
-                    level ===
-                    LEVELS[LEVELS.indexOf(copyFrom as JobLevel) + 1],
-                ).map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </label>{' '}
-            <button type="button" onClick={copyPrevious} disabled={busy}>
-              复制 {copyFrom} → {copyTo}（当前域）
+            <span>
+              目标职级：<strong>{copyTo}</strong>
+            </span>{' '}
+            <span>
+              已选：<strong>{selectedNodeIds.size}</strong> 条达成路径
+            </span>{' '}
+            <button
+              type="button"
+              onClick={copyPrevious}
+              disabled={busy || selectedNodeIds.size === 0}
+            >
+              复制 {copyFrom} → {copyTo}
             </button>
+            {selectedNodeIds.size > 0 && (
+              <details>
+                <summary>查看已选达成路径</summary>
+                <ul>
+                  {Array.from(selectedNodeIds).map((nodeId) => {
+                    const info = nodeIdInfo.get(nodeId)
+                    return (
+                      <li key={nodeId}>
+                        {info
+                          ? `${info.l1Code} / ${info.l2Code} / ${info.code} · ${info.name}`
+                          : `节点 ${nodeId}`}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </details>
+            )}
           </section>
           <div
             className={styles.segmentedNav}
@@ -424,46 +517,126 @@ export function CapabilityStandardVersionsPage() {
                   >
                     {l2.children.map((l3) => {
                       const nodeId = l3.id ?? l3IdByCode.get(l3.code)
+                      // Only match by l3_node_id; code must not be a fallback
+                      const cells = nodeId
+                        ? (itemsByNodeId.get(nodeId) ?? [])
+                        : []
+                      const isSelected =
+                        nodeId !== undefined && selectedNodeIds.has(nodeId)
+                      const missingNodeId = nodeId === undefined
                       return (
                         <div className={styles.matrixRow} key={l3.code}>
-                          <strong>
-                            {l3.code} · {l3.name}
-                          </strong>
-                          {LEVELS.map((level) => {
-                            const item = itemsByCode
-                              .get(l3.code)
-                              ?.find((cell) => cell.job_level === level)
-                            if (!item) {
-                              // New enabled L3 — show editable "pending config"
-                              if (!nodeId)
+                          <label className="checkbox">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={busy || missingNodeId}
+                              onChange={() => {
+                                if (nodeId !== undefined)
+                                  toggleNodeSelection(nodeId)
+                              }}
+                              aria-label={`选择 ${l3.code} 用于复制`}
+                            />
+                            <strong>
+                              {l3.code} · {l3.name}
+                            </strong>
+                          </label>
+                          {missingNodeId ? (
+                            <span className="muted" style={{ gridColumn: 'span 5' }}>
+                              能力目录缺少稳定节点身份
+                            </span>
+                          ) : (
+                            LEVELS.map((level) => {
+                              const item = cells.find(
+                                (cell) => cell.job_level === level,
+                              )
+                              const cellId = `cell-${nodeId}-${level}`
+                              const issueKey = `${nodeId}:${level}`
+                              const cellIssue = issueIndex.get(issueKey)
+                              if (!item) {
                                 return (
-                                  <span key={level}>{level} 缺失</span>
+                                  <label key={level}>
+                                    {level}
+                                    <select
+                                      id={cellId}
+                                      disabled={busy}
+                                      defaultValue="pending"
+                                      aria-invalid={
+                                        cellIssue ? true : undefined
+                                      }
+                                      className={
+                                        cellIssue
+                                          ? styles.invalidCell
+                                          : undefined
+                                      }
+                                      title={
+                                        cellIssue
+                                          ? cellIssue.message
+                                          : undefined
+                                      }
+                                      onChange={(event) => {
+                                        const value = event.target.value
+                                        if (value === 'pending') return
+                                        updateCell(
+                                          {
+                                            l3_node_id: nodeId,
+                                            l3_code: l3.code,
+                                            job_level: level,
+                                          },
+                                          value !== 'na',
+                                          value === 'na'
+                                            ? null
+                                            : Number(value),
+                                        )
+                                      }}
+                                    >
+                                      <option value="pending" disabled>
+                                        待配置
+                                      </option>
+                                      <option value="na">不适用</option>
+                                      {[1, 2, 3, 4, 5].map((target) => (
+                                        <option key={target} value={target}>
+                                          {target}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
                                 )
+                              }
                               return (
                                 <label key={level}>
                                   {level}
                                   <select
+                                    id={cellId}
                                     disabled={busy}
-                                    defaultValue="pending"
-                                    onChange={(event) => {
-                                      const value = event.target.value
-                                      if (value === 'pending') return
+                                    value={
+                                      item.applicable
+                                        ? String(item.target_level)
+                                        : 'na'
+                                    }
+                                    aria-invalid={
+                                      cellIssue ? true : undefined
+                                    }
+                                    className={
+                                      cellIssue
+                                        ? styles.invalidCell
+                                        : undefined
+                                    }
+                                    title={
+                                      cellIssue
+                                        ? cellIssue.message
+                                        : undefined
+                                    }
+                                    onChange={(event) =>
                                       updateCell(
-                                        {
-                                          l3_node_id: nodeId,
-                                          l3_code: l3.code,
-                                          job_level: level,
-                                        },
-                                        value !== 'na',
-                                        value === 'na'
+                                        item,
+                                        event.target.value !== 'na',
+                                        event.target.value === 'na'
                                           ? null
-                                          : Number(value),
+                                          : Number(event.target.value),
                                       )
-                                    }}
+                                    }
                                   >
-                                    <option value="pending" disabled>
-                                      待配置
-                                    </option>
                                     <option value="na">不适用</option>
                                     {[1, 2, 3, 4, 5].map((target) => (
                                       <option key={target} value={target}>
@@ -473,37 +646,8 @@ export function CapabilityStandardVersionsPage() {
                                   </select>
                                 </label>
                               )
-                            }
-                            return (
-                              <label key={level}>
-                                {level}
-                                <select
-                                  disabled={busy}
-                                  value={
-                                    item.applicable
-                                      ? String(item.target_level)
-                                      : 'na'
-                                  }
-                                  onChange={(event) =>
-                                    updateCell(
-                                      item,
-                                      event.target.value !== 'na',
-                                      event.target.value === 'na'
-                                        ? null
-                                        : Number(event.target.value),
-                                    )
-                                  }
-                                >
-                                  <option value="na">不适用</option>
-                                  {[1, 2, 3, 4, 5].map((target) => (
-                                    <option key={target} value={target}>
-                                      {target}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            )
-                          })}
+                            })
+                          )}
                         </div>
                       )
                     })}
@@ -515,19 +659,35 @@ export function CapabilityStandardVersionsPage() {
           {issues.length > 0 && (
             <section className={styles.panel}>
               <h3>矩阵问题</h3>
-              <ul className={styles.issues} aria-label="矩阵检查问题">
+              <ul
+                ref={issueListRef}
+                className={styles.issues}
+                aria-label="矩阵检查问题"
+              >
                 {issues.map((issue, index) => (
-                  <li key={`${issue.l3_code ?? issue.l3_node_id}-${issue.job_level}-${index}`}>
-                    {[
-                      issue.l3_code,
-                      issue.job_level,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    {issue.l3_code || issue.job_level || issue.l3_node_id
-                      ? '：'
-                      : ''}
-                    {issue.message}
+                  <li
+                    key={`${issue.l3_node_id ?? issue.l3_code}-${issue.job_level}-${index}`}
+                  >
+                    {issue.l3_node_id && issue.job_level ? (
+                      <button
+                        type="button"
+                        className={styles.issueLink}
+                        onClick={() => navigateToIssue(issue)}
+                      >
+                        {[issue.l3_code, issue.job_level]
+                          .filter(Boolean)
+                          .join(' · ')}
+                        ：{issue.message}
+                      </button>
+                    ) : (
+                      <span>
+                        {[issue.l3_code, issue.job_level]
+                          .filter(Boolean)
+                          .join(' · ')}
+                        {issue.l3_code || issue.job_level ? '：' : ''}
+                        {issue.message}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

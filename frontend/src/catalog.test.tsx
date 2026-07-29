@@ -50,6 +50,7 @@ const model: CapabilityModel = {
           p8_description: null,
           children: [
             {
+              id: 101,
               code: 'P01.01.01',
               name: 'TDC / TDH / ArgoDB / TDS 产品定位',
               recommended_start_level: 'P6',
@@ -80,6 +81,7 @@ const model: CapabilityModel = {
           p8_description: 'L2 P8 完整描述',
           children: [
             {
+              id: 102,
               code: 'P01.02.01',
               name: '默认折叠能力',
               recommended_start_level: null,
@@ -220,7 +222,7 @@ function mockFetchWithAuth(
           published_at: '2026-07-29T00:00:00Z',
         },
         items: ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
-          l3_node_id: 1,
+          l3_node_id: 101,
           l3_code: 'P01.01.01',
           job_level,
           applicable: true,

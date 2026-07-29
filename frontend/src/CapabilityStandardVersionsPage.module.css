@@ -66,6 +66,23 @@
 .matrixRow select {
   min-width: 0;
 }
+.invalidCell {
+  border-color: var(--color-red-500);
+  box-shadow: 0 0 0 1px var(--color-red-300);
+}
+.issueLink {
+  background: none;
+  border: none;
+  color: var(--color-brand-600);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+.issueLink:hover {
+  color: var(--color-brand-800);
+}
 @media (max-width: 900px) {
   .matrixRow {
     grid-template-columns: 1fr repeat(5, minmax(62px, 1fr));

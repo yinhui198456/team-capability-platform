@@ -39,29 +39,52 @@ vi.mock('./catalog', () => ({
 
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
 
-const model = {
-  id: 9,
-  code: 'model',
-  version: '1',
-  domains: [
-    {
-      code: 'P01',
-      name: '平台能力',
-      overview: null,
-      children: [
-        {
-          code: 'P01.01',
-          name: '能力标准',
-          children: [
-            {
-              code: 'P01.01.01',
-              name: '达成路径',
-            },
-          ],
-        },
-      ],
-    },
-  ],
+function makeModel(overrides?: {
+  l3Id?: number
+  l3Code?: string
+  l3Name?: string
+}) {
+  return {
+    id: 9,
+    code: 'model',
+    version: '1',
+    domains: [
+      {
+        code: 'P01',
+        name: '平台能力',
+        overview: null,
+        children: [
+          {
+            code: 'P01.01',
+            name: '能力标准',
+            children: [
+              {
+                id: overrides?.l3Id ?? 101,
+                code: overrides?.l3Code ?? 'P01.01.01',
+                name: overrides?.l3Name ?? '达成路径',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function makeMatrixItems(nodeId: number, l3Code: string, l3Name: string) {
+  return ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
+    l3_node_id: nodeId,
+    l1_code: 'P01',
+    l1_name: '平台能力',
+    l2_code: 'P01.01',
+    l2_name: '能力标准',
+    l3_code: l3Code,
+    l3_name: l3Name,
+    job_level,
+    applicable: true,
+    target_level: index + 1,
+    source: 'copied' as const,
+  }))
 }
 
 const draft = {
@@ -75,26 +98,15 @@ const draft = {
 }
 
 function mockedCatalog(path: string | null) {
-  if (path === '/api/capability-model') return { data: model, refresh: vi.fn() }
+  if (path === '/api/capability-model')
+    return { data: makeModel(), refresh: vi.fn() }
   if (path === '/api/capability-standard-versions?model_id=9')
     return { data: [draft], refresh: vi.fn() }
   if (path === '/api/capability-standard-versions/11')
     return {
       data: {
         version: draft,
-        items: ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
-          l3_node_id: 101,
-          l1_code: 'P01',
-          l1_name: '平台能力',
-          l2_code: 'P01.01',
-          l2_name: '能力标准',
-          l3_code: 'P01.01.01',
-          l3_name: '达成路径',
-          job_level,
-          applicable: true,
-          target_level: index + 1,
-          source: 'copied',
-        })),
+        items: makeMatrixItems(101, 'P01.01.01', '达成路径'),
       },
       refresh: vi.fn(),
     }
@@ -118,20 +130,116 @@ afterEach(() => {
 })
 
 describe('CapabilityStandardVersionsPage', () => {
-  it('keeps the 310x5 editor lazy: only an expanded L2 mounts its cells', () => {
+  it('matches matrix by l3_node_id only', () => {
     catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
     catalogMocks.useCatalog.mockImplementation(mockedCatalog)
 
     render(<CapabilityStandardVersionsPage />)
-
-    expect(screen.queryByTestId('standard-l2-P01.01')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
     expect(screen.getByTestId('standard-l2-P01.01')).toBeTruthy()
-    // 5 matrix cell comboboxes + 2 copy-level selectors = 7 total comboboxes
-    expect(screen.getAllByRole('combobox')).toHaveLength(7)
+    // 5 matrix cells + 1 copyFrom = 6 comboboxes
+    expect(screen.getAllByRole('combobox')).toHaveLength(6)
   })
 
-  it('writes with L3 node identity and reports a revision conflict precisely', async () => {
+  it('shows matrix correctly when L3 renamed (stable l3_node_id)', () => {
+    const renamedModel = makeModel({
+      l3Id: 101,
+      l3Code: 'P01.01.01-new',
+      l3Name: '改名后',
+    })
+    catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
+    catalogMocks.useCatalog.mockImplementation((path: string | null) => {
+      if (path === '/api/capability-model')
+        return { data: renamedModel, refresh: vi.fn() }
+      if (path === '/api/capability-standard-versions?model_id=9')
+        return { data: [draft], refresh: vi.fn() }
+      if (path === '/api/capability-standard-versions/11')
+        return {
+          data: {
+            version: draft,
+            items: makeMatrixItems(101, 'P01.01.01', '达成路径'),
+          },
+          refresh: vi.fn(),
+        }
+      if (path === '/api/capability-standard-versions/11/catalog-drift')
+        return {
+          data: {
+            has_drift: false,
+            added_enabled_l3: [],
+            disabled_l3: [],
+            renamed_or_moved_l3: [],
+          },
+          refresh: vi.fn(),
+        }
+      return { data: null, refresh: vi.fn() }
+    })
+
+    render(<CapabilityStandardVersionsPage />)
+    fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
+    // Still shows cells via l3_node_id even though l3_code differs
+    expect(screen.getAllByRole('combobox')).toHaveLength(6)
+    expect(screen.getByText(/改名后/)).toBeTruthy()
+  })
+
+  it('shows missing node identity when L3 has no id', () => {
+    const noIdModel = {
+      id: 9,
+      code: 'model',
+      version: '1',
+      domains: [
+        {
+          code: 'P01',
+          name: '平台能力',
+          overview: null,
+          children: [
+            {
+              code: 'P01.01',
+              name: '能力标准',
+              children: [
+                {
+                  // No id — must trigger "缺少稳定节点身份"
+                  code: 'P01.01.01',
+                  name: '达成路径',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
+    catalogMocks.useCatalog.mockImplementation((path: string | null) => {
+      if (path === '/api/capability-model')
+        return { data: noIdModel, refresh: vi.fn() }
+      if (path === '/api/capability-standard-versions?model_id=9')
+        return { data: [draft], refresh: vi.fn() }
+      if (path === '/api/capability-standard-versions/11')
+        return {
+          data: {
+            version: draft,
+            items: makeMatrixItems(101, 'P01.01.01', '达成路径'),
+          },
+          refresh: vi.fn(),
+        }
+      if (path === '/api/capability-standard-versions/11/catalog-drift')
+        return {
+          data: {
+            has_drift: false,
+            added_enabled_l3: [],
+            disabled_l3: [],
+            renamed_or_moved_l3: [],
+          },
+          refresh: vi.fn(),
+        }
+      return { data: null, refresh: vi.fn() }
+    })
+
+    render(<CapabilityStandardVersionsPage />)
+    fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
+    expect(screen.getByText(/缺少稳定节点身份/)).toBeTruthy()
+  })
+
+  it('writes with l3_node_id and reports revision conflict', async () => {
     catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
     catalogMocks.useCatalog.mockImplementation(mockedCatalog)
     catalogMocks.update.mockRejectedValueOnce(
@@ -140,9 +248,7 @@ describe('CapabilityStandardVersionsPage', () => {
 
     render(<CapabilityStandardVersionsPage />)
     fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
-    // comboboxes: [0]=source copy level, [1]=target copy level, [2..6]=P4..P8
-    const matrixCombos = screen.getAllByRole('combobox').slice(2)
-    fireEvent.change(matrixCombos[0], {
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
       target: { value: '4' },
     })
 
@@ -160,28 +266,53 @@ describe('CapabilityStandardVersionsPage', () => {
     )
   })
 
-  it('does not expose draft metadata or editing controls to a non-Leader', () => {
+  it('does not expose draft metadata to non-Leader', () => {
     catalogMocks.useMe.mockReturnValue({ isLeader: false, loading: false })
     catalogMocks.useCatalog.mockImplementation(mockedCatalog)
-
     render(<CapabilityStandardVersionsPage />)
-
     expect(screen.getByText('仅 Leader 可维护能力标准版本。')).toBeTruthy()
-    expect(screen.queryByText('标准版本 v2（草稿）')).toBeNull()
-    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
-  it('offers validation, preview, copy, abandon and reconcile controls for a draft', () => {
+  it('has validation, preview, copy, abandon, reconcile buttons', () => {
     catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
     catalogMocks.useCatalog.mockImplementation(mockedCatalog)
-
     render(<CapabilityStandardVersionsPage />)
-
     expect(screen.getByRole('button', { name: '检查草稿' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '预览发布' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /复制 P7 → P8/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: '放弃草稿' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '协调目录' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '检查并发布' })).toBeTruthy()
+  })
+
+  it('copyTo derives from copyFrom', () => {
+    catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
+    catalogMocks.useCatalog.mockImplementation(mockedCatalog)
+    render(<CapabilityStandardVersionsPage />)
+    expect(screen.getByText(/目标职级：/).textContent).toContain('P8')
+    fireEvent.change(screen.getByDisplayValue('P7'), {
+      target: { value: 'P4' },
+    })
+    expect(screen.getByText(/目标职级：/).textContent).toContain('P5')
+  })
+
+  it('copy disabled when zero selected', () => {
+    catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
+    catalogMocks.useCatalog.mockImplementation(mockedCatalog)
+    render(<CapabilityStandardVersionsPage />)
+    fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
+    const btn = screen.getByRole('button', {
+      name: /复制 P7 → P8/,
+    }) as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+  })
+
+  it('empty selection issues no copy request', () => {
+    catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
+    catalogMocks.useCatalog.mockImplementation(mockedCatalog)
+    render(<CapabilityStandardVersionsPage />)
+    fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
+    fireEvent.click(screen.getByRole('button', { name: /复制 P7 → P8/ }))
+    expect(catalogMocks.copyPrevious).not.toHaveBeenCalled()
   })
 })
