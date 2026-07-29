@@ -52,6 +52,10 @@ const baseDashboard: planningApi.MemberDashboard = {
     {
       id: 1,
       assessment_id: 1,
+      l1_code: 'P01',
+      l1_name: '数据基础设施',
+      l2_code: 'P01.01',
+      l2_name: '数据基础',
       l3_code: 'P01.01.01',
       l3_name: '数据建模与设计',
       current_level: 2,
@@ -65,6 +69,10 @@ const baseDashboard: planningApi.MemberDashboard = {
     {
       id: 1,
       plan_item_id: 1,
+      l1_code: 'P01',
+      l1_name: '数据基础设施',
+      l2_code: 'P01.01',
+      l2_name: '数据基础',
       l3_code: 'P01.01.01',
       l3_name: '数据建模与设计',
       status: '进行中' as const,

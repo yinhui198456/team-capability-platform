@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
+
 import { useMe } from './catalog'
 import { useYear } from './YearContext'
 import {
   getCapabilityProfile,
   getCapabilityProfileForMember,
   getSelectableMembersForProfile,
-  formatL3Name,
+  formatCapabilityPath,
   type CapabilityProfile,
   type CapabilityProfilePlanItem,
   type SelectableMember,
@@ -18,6 +23,18 @@ function formatDate(value: string | null | undefined): string | null {
   if (!value) return null
   const prefix = value.slice(0, 10)
   return /^\d{4}-\d{2}-\d{2}$/.test(prefix) ? prefix : value
+}
+
+function formatProfilePlannedHours(profile: CapabilityProfile): string {
+  if (profile.statistics.total_planned_hours_has_values === undefined) {
+    return `${profile.statistics.total_planned_hours} h`
+  }
+  return formatEstimatedHoursSummary({
+    min_hours: profile.statistics.total_planned_hours_min ?? null,
+    max_hours: profile.statistics.total_planned_hours_max ?? null,
+    has_values: profile.statistics.total_planned_hours_has_values,
+    has_unparsed: profile.statistics.total_planned_hours_has_unparsed ?? false,
+  })
 }
 
 function statusBadgeClass(status: string): string {
@@ -85,22 +102,23 @@ function KpiCard({
 }
 
 function PlanItemCard({ item }: { item: CapabilityProfilePlanItem }) {
-  const estimated = item.estimated_hours
-    ? `${item.estimated_hours} 小时`
-    : '未设置'
+  const estimated = formatEstimatedHours(
+    item.estimated_hours,
+    item.estimated_hours_parsed,
+  )
   return (
     <article className={styles.planItem} aria-label={`计划项：${item.l3_code}`}>
       <div className={styles.planItemHeader}>
         <div>
           <div className={styles.planItemName}>
-            {formatL3Name(item.l3_name, item.l3_code)}
+            {formatCapabilityPath(item)}
           </div>
         </div>
         <Badge>{item.status}</Badge>
       </div>
       <div className={styles.planItemDetails}>
         <span className={styles.taskMetaItem}>
-          L{item.current_level} → L{item.target_level}
+          掌握度 {item.current_level} → {item.target_level}
         </span>
         <Badge>{item.priority}</Badge>
         <span className={styles.taskMetaItem}>预计 {estimated}</span>
@@ -176,7 +194,7 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
         <div className={styles.statRow}>
           <span className={styles.statLabel}>计划学习时长</span>
           <span className={styles.statValue}>
-            {profile.statistics.total_planned_hours} 小时
+            {formatProfilePlannedHours(profile)}
           </span>
         </div>
         <div className={styles.statRow}>
@@ -223,9 +241,10 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
         <div className={styles.taskList}>
           {tasks.map((item) => {
             const task = item.learning_task!
-            const estimated = item.estimated_hours
-              ? `${item.estimated_hours} 小时`
-              : '未设置'
+            const estimated = formatEstimatedHours(
+              item.estimated_hours,
+              item.estimated_hours_parsed,
+            )
             const actual = `${task.actual_hours ?? 0} 小时`
             return (
               <article
@@ -236,7 +255,10 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                 <div className={styles.taskItemHeader}>
                   <div>
                     <div className={styles.taskTitle}>
-                      {formatL3Name(item.l3_name ?? task.l3_name, item.l3_code)}
+                      {formatCapabilityPath({
+                        ...item,
+                        l3_name: item.l3_name ?? task.l3_name,
+                      })}
                     </div>
                   </div>
                   <Badge>{task.status}</Badge>
@@ -506,9 +528,7 @@ export function ProfilePage() {
                     </div>
                     <div className={styles.planMetaItem}>
                       计划时长：
-                      <strong>
-                        {profile.statistics.total_planned_hours} 小时
-                      </strong>
+                      <strong>{formatProfilePlannedHours(profile)}</strong>
                     </div>
                     <div className={styles.planMetaItem}>
                       完成进度：

@@ -24,7 +24,7 @@ for (const viewport of VIEWPORTS) {
     test('semantic alignment', async ({ page }) => {
       // 学习时长单位应为 h 而非 小时
       const hourUnits = page.locator('.hours-unit')
-      await expect.poll(async () => hourUnits.count()).toBeGreaterThanOrEqual(4)
+      await expect.poll(async () => hourUnits.count()).toBeGreaterThanOrEqual(3)
       for (const unit of await hourUnits.all()) {
         const text = await unit.textContent()
         expect(text).toContain('h')

@@ -4,6 +4,7 @@ import { loginAs } from '../fixtures/auth'
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
+  { name: '1920x1080', width: 1920, height: 1080 },
   { name: '1280x800', width: 1280, height: 800 },
 ] as const
 
@@ -36,6 +37,8 @@ for (const viewport of VIEWPORTS) {
 
       const planItems = page.getByTestId('plan-item')
       await expect.poll(async () => planItems.count()).toBeGreaterThan(0)
+      await expect(page.getByText('二级能力标准 → 三级达成路径')).toBeVisible()
+      await expect(page.getByText('掌握度提升')).toBeVisible()
     })
 
     test('annual plan screenshot', async ({ page }) => {

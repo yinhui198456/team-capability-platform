@@ -8,6 +8,7 @@ import {
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
+  { name: '1920x1080', width: 1920, height: 1080 },
   { name: '1280x800', width: 1280, height: 800 },
 ] as const
 
@@ -68,6 +69,10 @@ for (const viewport of VIEWPORTS) {
       await expect(workspace).toContainText(
         '标准 3；个人调整 4（岗位项目要求）',
       )
+      await expect(workspace).toContainText(
+        '目标职级 P6 要求：能够负责复杂场景',
+      )
+      await expect(workspace).toContainText('三级达成路径：P01.01.01')
     })
 
     test('default all members screenshot', async ({ page }) => {

@@ -7,6 +7,7 @@ import {
   getAnnualPlanEligibility,
   getEligibleGaps,
   listGrowthGoals,
+  formatCapabilityPath,
   type EligibleGap,
   type GrowthGoal,
   type AnnualPlanEligibility,
@@ -121,10 +122,12 @@ export function GrowthGoalPage() {
       <ul className="gap-list">
         {availableGaps.map((gap) => (
           <li key={gap.id} className="gap-item">
-            <span className="gap-l3">{gap.l3_code}</span>
+            <span className="gap-l3">
+              二级能力标准 → 三级达成路径：{formatCapabilityPath(gap)}
+            </span>
             <span className="gap-levels">
-              当前 {gap.current_level} → 目标 {gap.target_level}（Gap{' '}
-              {gap.gap_value}）
+              掌握度提升：当前 {gap.current_level} → 目标 {gap.target_level}
+              （Gap {gap.gap_value}）
             </span>
             <span className="gap-priority">优先级：{gap.priority}</span>
             <button
@@ -143,7 +146,9 @@ export function GrowthGoalPage() {
       <ul className="goal-list">
         {goals.map((goal) => (
           <li key={goal.id} className="goal-item">
-            <span className="goal-l3">{goal.l3_code}</span>
+            <span className="goal-l3">
+              二级能力标准 → 三级达成路径：{formatCapabilityPath(goal)}
+            </span>
             <span className="goal-level">目标掌握度：{goal.target_level}</span>
             <span className="goal-priority">优先级：{goal.priority}</span>
             <button

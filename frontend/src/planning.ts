@@ -1,4 +1,5 @@
 import { request, getOrNull } from './shared/api'
+import type { EstimatedHours, EstimatedHoursSummary } from './estimatedHours'
 
 export type AvailableYears = {
   available_years: number[]
@@ -16,11 +17,36 @@ export type AnnualPlanEligibility = {
   reason: string | null
 }
 
-export type EligibleGap = {
+export type CapabilityContext = {
+  l1_code?: string | null
+  l1_name?: string | null
+  l2_code?: string | null
+  l2_name?: string | null
+  l3_name?: string | null
+  l3_recommended_start_level?: string | null
+  l3_materials_text?: string | null
+  l3_expected_output?: string | null
+  l3_estimated_hours?: string | null
+  l3_output_type?: string | null
+  l3_notes?: string | null
+}
+
+export function formatCapabilityPath(
+  item: Pick<CapabilityContext, 'l2_code' | 'l2_name' | 'l3_name'> & {
+    l3_code: string
+  },
+): string {
+  const l2 = item.l2_name
+    ? `${item.l2_code ?? '未映射'} · ${item.l2_name}`
+    : item.l2_code
+  const l3 = item.l3_name ? `${item.l3_code} · ${item.l3_name}` : item.l3_code
+  return l2 ? `${l2} → ${l3}` : l3
+}
+
+export type EligibleGap = CapabilityContext & {
   id: number
   assessment_id: number
   l3_code: string
-  l3_name?: string | null
   current_level: number
   target_level: number
   gap_value: number
@@ -28,7 +54,7 @@ export type EligibleGap = {
   plan_candidate: boolean
 }
 
-export type GrowthGoal = {
+export type GrowthGoal = CapabilityContext & {
   id: number
   gap_id: number
   annual_growth_plan_id: number
@@ -50,12 +76,11 @@ export type LearningTaskStatus =
   | '暂停'
   | '取消'
 
-export type PlanItem = {
+export type PlanItem = CapabilityContext & {
   id: number
   annual_growth_plan_id: number
   growth_goal_id: number
   l3_code: string
-  l3_name?: string | null
   current_level: number
   target_level: number
   priority: '高' | '中' | '低'
@@ -63,17 +88,17 @@ export type PlanItem = {
   learning_task_content: string | null
   expected_output: string | null
   estimated_hours: string | null
+  estimated_hours_parsed?: EstimatedHours
   plan_start_date: string | null
   plan_end_date: string | null
   target_month: number | null
   status: PlanItemStatus
 }
 
-export type LearningTask = {
+export type LearningTask = CapabilityContext & {
   id: number
   plan_item_id: number
   l3_code: string
-  l3_name?: string | null
   status: LearningTaskStatus
   actual_start_date: string | null
   actual_end_date: string | null
@@ -89,6 +114,7 @@ export type LearningTask = {
   plan_item_learning_task_content: string | null
   plan_item_expected_output: string | null
   plan_item_estimated_hours: string | null
+  plan_item_estimated_hours_parsed?: EstimatedHours
   plan_item_target_month?: number | null
 }
 
@@ -116,6 +142,14 @@ export type MemberDashboard = {
     annual_planned_hours: number
     current_month_actual_hours: number
     current_month_planned_hours: number
+    annual_planned_hours_min?: number | null
+    annual_planned_hours_max?: number | null
+    annual_planned_hours_has_values?: boolean
+    annual_planned_hours_has_unparsed?: boolean
+    current_month_planned_hours_min?: number | null
+    current_month_planned_hours_max?: number | null
+    current_month_planned_hours_has_values?: boolean
+    current_month_planned_hours_has_unparsed?: boolean
     completed_task_count: number
     pending_evidence_count: number
   }
@@ -142,12 +176,13 @@ export type AnnualPlan = {
   end_date: string | null
   created_at: string
   items: PlanItem[]
+  estimated_hours_summary?: EstimatedHoursSummary
 }
 
 export type EvidenceStatus =
   '草稿' | '待 Review' | '通过' | '需补充' | '驳回' | '已归档'
 
-export type Evidence = {
+export type Evidence = CapabilityContext & {
   id: number
   learning_task_id: number
   l3_code: string
@@ -413,6 +448,11 @@ export type EvidenceReview = {
   username?: string
   learning_task_id?: number
   l3_code?: string
+  l1_code?: string | null
+  l1_name?: string | null
+  l2_code?: string | null
+  l2_name?: string | null
+  l3_name?: string | null
   content?: string | null
   evidence_link?: string | null
 }
@@ -459,6 +499,10 @@ export type CapabilityProfileAnnualPlan = Omit<AnnualPlan, 'items'> & {
 export type CapabilityProfileStatistics = {
   total_learning_hours: number
   total_planned_hours: number
+  total_planned_hours_min?: number | null
+  total_planned_hours_max?: number | null
+  total_planned_hours_has_values?: boolean
+  total_planned_hours_has_unparsed?: boolean
   evidence_count_by_status: Record<string, number>
 }
 
@@ -667,8 +711,14 @@ export type TeamAnalytics = {
     cumulative_planned_rate: number
     cumulative_actual_rate: number
     planned_hours: number
+    planned_hours_min?: number | null
+    planned_hours_max?: number | null
+    planned_hours_has_unparsed?: boolean
     actual_hours: number
     cumulative_planned_hours: number
+    cumulative_planned_hours_min?: number | null
+    cumulative_planned_hours_max?: number | null
+    cumulative_planned_hours_has_unparsed?: boolean
     cumulative_actual_hours: number
   }>
   overdue_items: Array<{
@@ -676,6 +726,10 @@ export type TeamAnalytics = {
     username: string
     full_name: string
     l3_code: string
+    l1_code?: string | null
+    l1_name?: string | null
+    l2_code?: string | null
+    l2_name?: string | null
     l3_name: string | null
     due_date: string
     plan_start_date: string

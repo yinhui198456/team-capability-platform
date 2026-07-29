@@ -26,6 +26,7 @@ describe('BuddyReviewCenter', () => {
   function mockBuddyData(
     options: {
       includeEvidence?: boolean
+      includeUnmappedHistory?: boolean
       evidenceHistory?: Awaited<
         ReturnType<typeof planningApi.listEvidenceReviewsForTask>
       >
@@ -98,6 +99,8 @@ describe('BuddyReviewCenter', () => {
       details: [
         {
           l3_code: 'P01-L2A-L3A',
+          l2_code: 'P01-L2A',
+          l2_name: '数据基础',
           current_level: 2,
           target_level: 4,
           standard_target_applicable: true,
@@ -107,6 +110,62 @@ describe('BuddyReviewCenter', () => {
           target_adjustment_reason: '岗位项目要求',
           gap_value: 2,
         },
+      ],
+      member_current_level: 'P5',
+      member_target_level: 'P6',
+      l2_groups: [
+        {
+          l1_code: 'P01',
+          l1_name: '数据基础设施',
+          l2_code: 'P01-L2A',
+          l2_name: '数据基础',
+          l3_count: 1,
+          is_empty: false,
+          requirements: {
+            P4: 'P4 要求',
+            P5: 'P5 要求',
+            P6: 'P6 职级要求',
+            P7: 'P7 要求',
+            P8: 'P8 要求',
+          },
+          details: [
+            {
+              l3_code: 'P01-L2A-L3A',
+              l2_code: 'P01-L2A',
+              l2_name: '数据基础',
+              current_level: 2,
+              target_level: 4,
+              standard_target_applicable: true,
+              standard_target_level: 3,
+              target_adjusted: true,
+              adjusted_target_level: 4,
+              target_adjustment_reason: '岗位项目要求',
+              gap_value: 2,
+            },
+          ],
+        },
+        ...(options.includeUnmappedHistory
+          ? [
+              {
+                l1_code: null,
+                l1_name: null,
+                l2_code: null,
+                l2_name: '未映射历史项',
+                l3_count: 1,
+                is_empty: false,
+                details: [
+                  {
+                    l3_code: 'unknown-legacy-l3',
+                    current_level: 1,
+                    target_level: 4,
+                    standard_target_level: 3,
+                    gap_value: 3,
+                    evidence_note: '历史依据',
+                  },
+                ],
+              },
+            ]
+          : []),
       ],
     })
     vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue(
@@ -165,6 +224,9 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByRole('tab', { name: '全部待处理' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '复核工作区' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/上一版反馈/)).toBeTruthy())
+    expect(screen.getByText(/二级能力标准：P01-L2A · 数据基础/)).toBeTruthy()
+    expect(screen.getByText(/目标职级 P6 要求：P6 职级要求/)).toBeTruthy()
+    expect(screen.getByText(/三级达成路径：P01-L2A-L3A/)).toBeTruthy()
     expect(screen.getByText(/标准 3；个人调整 4（岗位项目要求）/)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
     await waitFor(() =>
@@ -203,6 +265,31 @@ describe('BuddyReviewCenter', () => {
       conclusion: '认可',
       feedback: '依据充分',
     })
+  })
+
+  it('keeps unmapped historical paths visible beside current L2 groups', async () => {
+    mockBuddyData({ includeEvidence: false, includeUnmappedHistory: true })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockResolvedValue({ ok: true })
+
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('未映射历史项')).toBeTruthy())
+    expect(screen.getByText(/二级能力标准：P01-L2A/)).toBeTruthy()
+    expect(screen.getByText(/unknown-legacy-l3/)).toBeTruthy()
+    expect(screen.getByText(/当前掌握度 1 → 标准 3/)).toBeTruthy()
+    expect(screen.getByText(/历史依据/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '保留历史项复核' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() => expect(submitReview).toHaveBeenCalled())
   })
 
   it('submits an Evidence Review in the unified workspace', async () => {

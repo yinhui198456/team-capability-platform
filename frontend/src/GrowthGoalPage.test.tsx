@@ -41,6 +41,9 @@ describe('GrowthGoalPage', () => {
         id: 10,
         assessment_id: 7,
         l3_code: 'P01-L2A-L3A',
+        l2_code: 'P01-L2A',
+        l2_name: '数据基础',
+        l3_name: '完成数据建模实践',
         current_level: 2,
         target_level: 4,
         gap_value: 2,
@@ -56,9 +59,11 @@ describe('GrowthGoalPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByText(/P01-L2A-L3A/)).toBeTruthy()
+      expect(screen.getByText(/P01-L2A · 数据基础/)).toBeTruthy()
     })
 
+    expect(screen.getByText(/三级达成路径/)).toBeTruthy()
+    expect(screen.getByText(/掌握度提升：当前 2 → 目标 4/)).toBeTruthy()
     expect(screen.getByText('创建成长目标')).toBeTruthy()
   })
 

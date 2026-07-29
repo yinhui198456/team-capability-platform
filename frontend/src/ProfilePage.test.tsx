@@ -66,6 +66,8 @@ const baseProfile: planningApi.CapabilityProfile = {
         growth_goal_id: 40,
         l3_code: 'P01-L2A-L3A',
         l3_name: '测试能力项 P01',
+        l2_code: 'P01-L2A',
+        l2_name: '测试二级能力标准',
         current_level: 2,
         target_level: 4,
         priority: '中',
@@ -82,6 +84,8 @@ const baseProfile: planningApi.CapabilityProfile = {
           plan_item_id: 30,
           l3_code: 'P01-L2A-L3A',
           l3_name: '测试能力项 P01',
+          l2_code: 'P01-L2A',
+          l2_name: '测试二级能力标准',
           status: '进行中',
           actual_start_date: null,
           actual_end_date: null,
@@ -182,7 +186,9 @@ describe('ProfilePage', () => {
     expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
     expect(
-      screen.getAllByText(/测试能力项 P01（P01-L2A-L3A）/).length,
+      screen.getAllByText(
+        /P01-L2A · 测试二级能力标准 → P01-L2A-L3A · 测试能力项 P01/,
+      ).length,
     ).toBeGreaterThanOrEqual(2)
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()
@@ -226,6 +232,67 @@ describe('ProfilePage', () => {
     expect(
       screen.getByRole('region', { name: '学习任务与学习日志' }),
     ).toBeTruthy()
+  })
+
+  it('renders hour-suffix estimated hours as normalized ranges', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    const profileWithRange: planningApi.CapabilityProfile = {
+      ...baseProfile,
+      annual_plan: {
+        ...baseProfile.annual_plan!,
+        items: [
+          {
+            ...baseProfile.annual_plan!.items[0],
+            estimated_hours: '4–6h',
+            estimated_hours_parsed: {
+              raw: '4–6h',
+              min_hours: 4,
+              max_hours: 6,
+              is_valid: true,
+              is_range: true,
+            },
+            learning_task: {
+              ...baseProfile.annual_plan!.items[0].learning_task!,
+              plan_item_estimated_hours: '4–6h',
+              plan_item_estimated_hours_parsed: {
+                raw: '4–6h',
+                min_hours: 4,
+                max_hours: 6,
+                is_valid: true,
+                is_range: true,
+              },
+            },
+          },
+        ],
+      },
+    }
+    vi.spyOn(planningApi, 'getCapabilityProfile').mockResolvedValue(
+      profileWithRange,
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '成长档案', level: 1 }),
+      ).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(
+        screen.getAllByText((content) => content.includes('4–6 h')).length,
+      ).toBeGreaterThanOrEqual(1)
+    })
+    expect(screen.queryByText('46 h')).toBeNull()
+    expect(screen.queryByText('4–6h h')).toBeNull()
   })
 
   it('shows empty state when profile data is missing', async () => {

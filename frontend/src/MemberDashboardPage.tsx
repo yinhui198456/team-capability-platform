@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
+
 import { useYear } from './YearContext'
 import {
+  formatCapabilityPath,
   getMemberDashboard,
   type MemberDashboard,
   type MemberDashboardAssessment,
@@ -75,6 +81,25 @@ function formatHours(
   )
 }
 
+function plannedHours(
+  fallback: number,
+  min: number | null | undefined,
+  max: number | null | undefined,
+  hasValues: boolean | undefined,
+  hasUnparsed: boolean | undefined,
+) {
+  const value =
+    hasValues === undefined
+      ? `${fallback} h`
+      : formatEstimatedHoursSummary({
+          min_hours: min ?? null,
+          max_hours: max ?? null,
+          has_values: hasValues,
+          has_unparsed: hasUnparsed ?? false,
+        })
+  return hasUnparsed ? `${value}（部分计划项耗时为文本，未计入汇总）` : value
+}
+
 function TodoItem({
   label,
   value,
@@ -104,9 +129,7 @@ function Radar({
   gaps: MemberDashboard['gaps']
 }) {
   const targetScores = data.map((domain) => {
-    const domainGaps = gaps.filter((gap) =>
-      gap.l3_code.startsWith(domain.domain_code),
-    )
+    const domainGaps = gaps.filter((gap) => gap.l1_code === domain.domain_code)
     if (domainGaps.length === 0) return domain.score
     return Math.min(
       5,
@@ -323,7 +346,13 @@ function ArchivedSummary({ dashboard }: { dashboard: MemberDashboard }) {
           <div className={styles.metric}>
             <span>全年计划时长</span>
             <strong>
-              {formatHours(dashboard.summary.annual_planned_hours)}
+              {plannedHours(
+                dashboard.summary.annual_planned_hours,
+                dashboard.summary.annual_planned_hours_min,
+                dashboard.summary.annual_planned_hours_max,
+                dashboard.summary.annual_planned_hours_has_values,
+                dashboard.summary.annual_planned_hours_has_unparsed,
+              )}
             </strong>
           </div>
           <div className={styles.metric}>
@@ -335,7 +364,13 @@ function ArchivedSummary({ dashboard }: { dashboard: MemberDashboard }) {
           <div className={styles.metric}>
             <span>当月计划时长</span>
             <strong>
-              {formatHours(dashboard.summary.current_month_planned_hours)}
+              {plannedHours(
+                dashboard.summary.current_month_planned_hours,
+                dashboard.summary.current_month_planned_hours_min,
+                dashboard.summary.current_month_planned_hours_max,
+                dashboard.summary.current_month_planned_hours_has_values,
+                dashboard.summary.current_month_planned_hours_has_unparsed,
+              )}
             </strong>
           </div>
         </div>
@@ -357,15 +392,14 @@ function AbilitySection({
   setSelectedDomain: (domain: string) => void
 }) {
   const filteredGaps = dashboard.gaps.filter(
-    (gap) =>
-      selectedDomain === '全部' || gap.l3_code.startsWith(selectedDomain),
+    (gap) => selectedDomain === '全部' || gap.l1_code === selectedDomain,
   )
 
   return (
     <section className={`card ${styles.abilitySection}`}>
       <div className={styles.abilityHead}>
         <h2>能力分析</h2>
-        <span className="muted">选择能力域查看对应 Gap</span>
+        <span className="muted">L3 掌握度聚合；选择能力域查看对应 Gap</span>
       </div>
       <div className={styles.domainFilter} data-testid="domain-filter">
         {['全部', ...dashboard.domain_radar.map((d) => d.domain_code)].map(
@@ -395,22 +429,22 @@ function AbilitySection({
             <table className={styles.gapTable}>
               <thead>
                 <tr>
-                  <th>能力域 / L3</th>
-                  <th>当前</th>
-                  <th>目标</th>
+                  <th>二级能力标准 → 三级达成路径</th>
+                  <th>当前掌握度</th>
+                  <th>目标掌握度</th>
                   <th>Gap</th>
                   <th>优先级</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredGaps.slice(0, 8).map((gap) => {
-                  const dc = gap.l3_code.slice(0, 3)
+                  const dc = gap.l1_code ?? '未映射'
                   return (
                     <tr key={gap.id}>
                       <td>
                         <DomainBadge code={dc} />
                         <span className={styles.l3Name}>
-                          {gap.l3_name ?? gap.l3_code}
+                          {formatCapabilityPath(gap)}
                         </span>
                       </td>
                       <td>{gap.current_level}</td>
@@ -514,7 +548,13 @@ function PlanDashboard({
             <div className={styles.metric}>
               <span>全年计划时长</span>
               <strong>
-                {formatHours(dashboard.summary.annual_planned_hours)}
+                {plannedHours(
+                  dashboard.summary.annual_planned_hours,
+                  dashboard.summary.annual_planned_hours_min,
+                  dashboard.summary.annual_planned_hours_max,
+                  dashboard.summary.annual_planned_hours_has_values,
+                  dashboard.summary.annual_planned_hours_has_unparsed,
+                )}
               </strong>
             </div>
             <div className={styles.metric}>
@@ -526,7 +566,13 @@ function PlanDashboard({
             <div className={styles.metric}>
               <span>当月计划时长</span>
               <strong>
-                {formatHours(dashboard.summary.current_month_planned_hours)}
+                {plannedHours(
+                  dashboard.summary.current_month_planned_hours,
+                  dashboard.summary.current_month_planned_hours_min,
+                  dashboard.summary.current_month_planned_hours_max,
+                  dashboard.summary.current_month_planned_hours_has_values,
+                  dashboard.summary.current_month_planned_hours_has_unparsed,
+                )}
               </strong>
             </div>
           </div>
@@ -577,7 +623,7 @@ function PlanDashboard({
             <thead>
               <tr>
                 <th>任务名称</th>
-                <th>所属能力域 / L3</th>
+                <th>二级能力标准 → 三级达成路径</th>
                 <th>计划月份</th>
                 <th>预计时长</th>
                 <th>实际时长</th>
@@ -587,10 +633,16 @@ function PlanDashboard({
             </thead>
             <tbody>
               {dashboard.current_tasks.map((task) => {
-                const est = Number(task.plan_item_estimated_hours ?? 0)
+                const estimated = task.plan_item_estimated_hours_parsed
                 const prog =
-                  est > 0 ? Math.round((task.actual_hours / est) * 100) : 0
-                const dc = task.l3_code.slice(0, 3)
+                  estimated?.is_valid &&
+                  !estimated.is_range &&
+                  estimated.max_hours
+                    ? Math.round(
+                        (task.actual_hours / estimated.max_hours) * 100,
+                      )
+                    : null
+                const dc = task.l1_code ?? '未映射'
                 const name =
                   task.plan_item_learning_task_content?.trim() ||
                   task.l3_name ||
@@ -611,7 +663,7 @@ function PlanDashboard({
                     <td>
                       <DomainBadge code={dc} />
                       <span className={styles.l3Name}>
-                        {task.l3_name ?? task.l3_code}
+                        {formatCapabilityPath(task)}
                       </span>
                     </td>
                     <td>
@@ -619,10 +671,22 @@ function PlanDashboard({
                         ? `${task.plan_item_target_month} 月`
                         : '未排期'}
                     </td>
-                    <td>{formatHours(task.plan_item_estimated_hours)}</td>
+                    <td>
+                      {formatEstimatedHours(
+                        task.plan_item_estimated_hours,
+                        task.plan_item_estimated_hours_parsed,
+                      )}
+                    </td>
                     <td>{formatHours(task.actual_hours)}</td>
                     <td>
-                      <progress max={100} value={Math.min(prog, 100)} /> {prog}%
+                      {prog === null ? (
+                        '—'
+                      ) : (
+                        <>
+                          <progress max={100} value={Math.min(prog, 100)} />{' '}
+                          {prog}%
+                        </>
+                      )}
                     </td>
                     <td>
                       <span className={`${styles.statusPill} ${statusClass}`}>

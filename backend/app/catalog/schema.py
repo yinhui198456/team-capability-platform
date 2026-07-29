@@ -26,6 +26,7 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
             name TEXT NOT NULL,
             sort_order INTEGER NOT NULL,
             l1_category TEXT,
+            overview TEXT,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
             p4_description TEXT,
             p5_description TEXT,
@@ -36,6 +37,8 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
             materials_text TEXT,
             expected_output TEXT,
             estimated_hours TEXT,
+            output_type TEXT,
+            notes TEXT,
             source_workbook TEXT NOT NULL,
             source_sheet TEXT NOT NULL,
             source_row INTEGER NOT NULL,
@@ -47,6 +50,10 @@ def create_catalog_schema(connection: psycopg.Connection) -> None:
         )
         """
     )
+    for column in ("overview", "output_type", "notes"):
+        connection.execute(
+            f"ALTER TABLE capability_node ADD COLUMN IF NOT EXISTS {column} TEXT"
+        )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS learning_resource (

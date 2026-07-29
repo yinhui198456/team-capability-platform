@@ -5,7 +5,6 @@ import pytest
 
 from app.catalog.importer import (
     MODEL_WORKBOOK,
-    PLAN_WORKBOOK,
     resolve_workbook_dir,
 )
 
@@ -14,7 +13,6 @@ def test_resolve_workbook_dir_from_importer_module() -> None:
     """Resolving from the importer module itself must find the workbooks."""
     directory = resolve_workbook_dir()
     assert (directory / MODEL_WORKBOOK).is_file()
-    assert (directory / PLAN_WORKBOOK).is_file()
 
 
 def test_resolve_workbook_dir_from_backend_directory() -> None:
@@ -24,7 +22,6 @@ def test_resolve_workbook_dir_from_backend_directory() -> None:
     )
     directory = resolve_workbook_dir(importer_path)
     assert (directory / MODEL_WORKBOOK).is_file()
-    assert (directory / PLAN_WORKBOOK).is_file()
 
 
 def test_resolve_workbook_dir_ignores_cwd(tmp_path: Path) -> None:
@@ -34,7 +31,6 @@ def test_resolve_workbook_dir_ignores_cwd(tmp_path: Path) -> None:
         os.chdir(tmp_path)
         directory = resolve_workbook_dir()
         assert (directory / MODEL_WORKBOOK).is_file()
-        assert (directory / PLAN_WORKBOOK).is_file()
     finally:
         os.chdir(original_cwd)
 
@@ -50,5 +46,4 @@ def test_resolve_workbook_dir_missing_files(tmp_path: Path) -> None:
 
     message = str(exc_info.value)
     assert MODEL_WORKBOOK in message
-    assert PLAN_WORKBOOK in message
     assert "capability-model" in message

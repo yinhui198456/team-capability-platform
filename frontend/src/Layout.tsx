@@ -5,7 +5,8 @@ import {
   useNavigate,
   useLocation,
 } from 'react-router-dom'
-import { useMe } from './catalog'
+import { useRef, useState } from 'react'
+import { useAuth } from './AuthContext'
 import { useYear, useYearState } from './YearContext'
 import { defaultRouteFor } from './access'
 
@@ -144,7 +145,8 @@ function scopeLabel(roles: string[]) {
 }
 
 export function Layout() {
-  const { user } = useMe()
+  const { user, signOut } = useAuth()
+  const navigate = useNavigate()
   const roles = user?.roles ?? []
   const [searchParams] = useSearchParams()
   const contextYear = useYear()
@@ -152,9 +154,27 @@ export function Layout() {
   const location = useLocation()
   const homePath = defaultRouteFor(roles)
   const isPublicStandard = location.pathname === '/capability/model'
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState('')
+  const signOutInFlight = useRef(false)
 
   function yHref(path: string): string {
     return `${path}?year=${yearForLinks}`
+  }
+
+  async function handleSignOut() {
+    if (signOutInFlight.current) return
+    signOutInFlight.current = true
+    setSigningOut(true)
+    setSignOutError('')
+    try {
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch {
+      setSignOutError('退出失败，请重试')
+      setSigningOut(false)
+      signOutInFlight.current = false
+    }
   }
 
   const visibleSections = NAV_SECTIONS.filter((s) =>
@@ -173,6 +193,22 @@ export function Layout() {
           {!isPublicStandard && (
             <span className="app-topbar-scope">
               数据范围：{scopeLabel(roles)}
+            </span>
+          )}
+          <span className="app-topbar-user">
+            {user?.full_name?.trim() || user?.username}
+          </span>
+          <button
+            className="app-topbar-logout"
+            disabled={signingOut}
+            onClick={handleSignOut}
+            type="button"
+          >
+            {signingOut ? '退出中…' : '退出'}
+          </button>
+          {signOutError && (
+            <span className="app-topbar-error" role="alert">
+              {signOutError}
             </span>
           )}
         </div>

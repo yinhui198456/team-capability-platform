@@ -39,6 +39,8 @@ describe('AnnualPlanTaskPage', () => {
           id: 1,
           annual_growth_plan_id: 1,
           growth_goal_id: 1,
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
           l3_code: 'P01.01.01',
           l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
           current_level: 2,
@@ -82,12 +84,12 @@ describe('AnnualPlanTaskPage', () => {
     })
     expect(
       screen.getByText((content) =>
-        content.includes('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+        content.includes('P01.01 · 数据基础 → P01.01.01'),
       ),
     ).toBeTruthy()
     // Column headers
-    expect(screen.getByText('能力项')).toBeTruthy()
-    expect(screen.getByText('等级提升')).toBeTruthy()
+    expect(screen.getByText('二级能力标准 → 三级达成路径')).toBeTruthy()
+    expect(screen.getByText('掌握度提升')).toBeTruthy()
     expect(screen.getByText('计划时长')).toBeTruthy()
   })
 
@@ -161,7 +163,7 @@ describe('AnnualPlanTaskPage', () => {
     )
     await waitFor(() => {
       expect(
-        screen.getByText('TDC / TDH / ArgoDB / TDS 产品定位（P01.01.01）'),
+        screen.getByText('P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位'),
       ).toBeTruthy()
     })
     expect(
@@ -172,6 +174,63 @@ describe('AnnualPlanTaskPage', () => {
       b.textContent?.startsWith('3 月'),
     ) as HTMLButtonElement
     expect(pressedBtn?.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows an estimated-hour range without coercing it to zero', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '执行中',
+      start_date: null,
+      end_date: null,
+      created_at: '',
+      estimated_hours_summary: {
+        min_hours: 4,
+        max_hours: 6,
+        has_values: true,
+        has_unparsed: false,
+      },
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 1,
+          growth_goal_id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 4,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: '区间任务',
+          expected_output: null,
+          estimated_hours: '4–6',
+          estimated_hours_parsed: {
+            raw: '4–6',
+            min_hours: 4,
+            max_hours: 6,
+            is_valid: true,
+            is_range: true,
+          },
+          plan_start_date: null,
+          plan_end_date: null,
+          target_month: 3,
+          status: '进行中',
+        },
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getAllByText('4–6 h')).toHaveLength(2))
   })
 
   it('falls back to l3_code when l3_name is missing', async () => {
@@ -220,6 +279,129 @@ describe('AnnualPlanTaskPage', () => {
     })
     expect(screen.getByText('P01.01.01')).toBeTruthy()
     expect(screen.queryByText('无名称任务')).toBeNull()
+  })
+
+  it('renders hour-suffix estimated hours as normalized ranges', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '执行中',
+      start_date: null,
+      end_date: null,
+      created_at: '',
+      estimated_hours_summary: {
+        min_hours: 4,
+        max_hours: 6,
+        has_values: true,
+        has_unparsed: false,
+      },
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 1,
+          growth_goal_id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 1,
+          target_level: 3,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: '区间任务',
+          expected_output: null,
+          estimated_hours: '4–6h',
+          estimated_hours_parsed: {
+            raw: '4–6h',
+            min_hours: 4,
+            max_hours: 6,
+            is_valid: true,
+            is_range: true,
+          },
+          plan_start_date: null,
+          plan_end_date: null,
+          target_month: 3,
+          status: '进行中',
+        },
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getAllByText('4–6 h')).toHaveLength(2))
+    expect(screen.queryByText('46 h')).toBeNull()
+    expect(screen.queryByText('4–6h h')).toBeNull()
+  })
+
+  it('shows unparsed warning when estimated hours summary has unparsed text', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue({
+      id: 1,
+      member_id: 1,
+      year: 2026,
+      plan_cycle: 12,
+      status: '执行中',
+      start_date: null,
+      end_date: null,
+      created_at: '',
+      estimated_hours_summary: {
+        min_hours: 0,
+        max_hours: 0,
+        has_values: false,
+        has_unparsed: true,
+      },
+      items: [
+        {
+          id: 1,
+          annual_growth_plan_id: 1,
+          growth_goal_id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 1,
+          target_level: 3,
+          priority: '中',
+          learning_material: null,
+          learning_task_content: '文本任务',
+          expected_output: null,
+          estimated_hours: '约半天',
+          estimated_hours_parsed: {
+            raw: '约半天',
+            min_hours: null,
+            max_hours: null,
+            is_valid: false,
+            is_range: false,
+          },
+          plan_start_date: null,
+          plan_end_date: null,
+          target_month: 3,
+          status: '进行中',
+        },
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByText((content) =>
+          content.includes('部分计划项耗时为文本，未计入汇总'),
+        ),
+      ).toBeTruthy(),
+    )
+    expect(screen.getByText('约半天')).toBeTruthy()
   })
 
   it('shows month and count when month is selected', async () => {

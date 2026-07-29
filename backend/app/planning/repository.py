@@ -9,8 +9,9 @@ from ..access.repository import (
     is_member_assigned_to_buddy,
 )
 from ..assessment.repository import get_gap
-from ..catalog.repository import DOMAIN_CODES
+from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
+from .hours import parse_estimated_hours, summarize_estimated_hours
 
 
 def _now(connection: psycopg.Connection) -> Any:
@@ -28,7 +29,7 @@ def _serialize_datetime(value: Any) -> str | None:
 
 
 def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
-    return {
+    item = {
         "id": row[0],
         "annual_growth_plan_id": row[1],
         "growth_goal_id": row[2],
@@ -45,23 +46,36 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
         "target_month": row[13],
         "status": row[14],
     }
+    item["estimated_hours_parsed"] = parse_estimated_hours(
+        row[10] if isinstance(row[10], str) else None
+    ).as_dict()
+    return item
 
 
-def _get_l3_names(
-    connection: psycopg.Connection, l3_codes: list[str]
-) -> dict[str, str | None]:
-    if not l3_codes:
-        return {}
-    # capability_node uses dots while task/gap codes use dashes.
-    code_map = {code.replace("-", "."): code for code in l3_codes}
-    rows = connection.execute(
-        """
-        SELECT code, name FROM capability_node
-        WHERE node_type = 'L3' AND code = ANY(%s)
-        """,
-        (list(code_map.keys()),),
-    ).fetchall()
-    return {code_map[str(row[0])]: row[1] for row in rows}
+def _estimated_hours_summary(items: list[dict[str, object]]) -> dict[str, object]:
+    return summarize_estimated_hours(
+        [
+            (
+                item.get("estimated_hours")
+                if isinstance(item.get("estimated_hours"), str)
+                else None
+            )
+            for item in items
+        ]
+    )
+
+
+def _attach_l3_contexts(
+    connection: psycopg.Connection, items: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    contexts = get_l3_contexts(
+        connection, [str(item["l3_code"]) for item in items if item.get("l3_code")]
+    )
+    for item in items:
+        code = item.get("l3_code")
+        if isinstance(code, str):
+            item.update(contexts[code])
+    return items
 
 
 _ALLOWED_TASK_STATUSES = {
@@ -166,19 +180,22 @@ def list_eligible_gaps(
         """,
         (latest["id"],),
     ).fetchall()
-    return [
-        {
-            "id": row[0],
-            "assessment_id": row[1],
-            "l3_code": row[2],
-            "current_level": row[3],
-            "target_level": row[4],
-            "gap_value": row[5],
-            "priority": row[6],
-            "plan_candidate": row[7],
-        }
-        for row in rows
-    ]
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "assessment_id": row[1],
+                "l3_code": row[2],
+                "current_level": row[3],
+                "target_level": row[4],
+                "gap_value": row[5],
+                "priority": row[6],
+                "plan_candidate": row[7],
+            }
+            for row in rows
+        ],
+    )
 
 
 def create_growth_goal(
@@ -231,15 +248,20 @@ def create_growth_goal(
         ),
     ).fetchone()
     assert row is not None
-    return {
-        "id": row[0],
-        "gap_id": row[1],
-        "annual_growth_plan_id": row[2],
-        "l3_code": row[3],
-        "year": row[4],
-        "target_level": row[5],
-        "priority": row[6],
-    }
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "gap_id": row[1],
+                "annual_growth_plan_id": row[2],
+                "l3_code": row[3],
+                "year": row[4],
+                "target_level": row[5],
+                "priority": row[6],
+            }
+        ],
+    )[0]
 
 
 def list_growth_goals(
@@ -256,18 +278,21 @@ def list_growth_goals(
         """,
         (member_id,),
     ).fetchall()
-    return [
-        {
-            "id": row[0],
-            "gap_id": row[1],
-            "annual_growth_plan_id": row[2],
-            "l3_code": row[3],
-            "year": row[4],
-            "target_level": row[5],
-            "priority": row[6],
-        }
-        for row in rows
-    ]
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "gap_id": row[1],
+                "annual_growth_plan_id": row[2],
+                "l3_code": row[3],
+                "year": row[4],
+                "target_level": row[5],
+                "priority": row[6],
+            }
+            for row in rows
+        ],
+    )
 
 
 def delete_growth_goal(
@@ -317,10 +342,9 @@ def get_annual_plan_with_items(
         """,
         (member_id, year),
     ).fetchall()
-    plan_items = [_plan_item_row(item) for item in items]
-    l3_names = _get_l3_names(connection, [item["l3_code"] for item in plan_items])
-    for item in plan_items:
-        item["l3_name"] = l3_names.get(item["l3_code"])
+    plan_items = _attach_l3_contexts(
+        connection, [_plan_item_row(item) for item in items]
+    )
 
     return {
         "id": row[0],
@@ -332,6 +356,7 @@ def get_annual_plan_with_items(
         "end_date": row[6],
         "created_at": row[7],
         "items": plan_items,
+        "estimated_hours_summary": _estimated_hours_summary(plan_items),
     }
 
 
@@ -444,7 +469,7 @@ def generate_plan_items(
     ).fetchall()
     for plan_item_id, l3_code in missing_tasks:
         _insert_learning_task(connection, int(plan_item_id), str(l3_code))
-    return created
+    return _attach_l3_contexts(connection, created)
 
 
 def list_plan_items(
@@ -503,7 +528,9 @@ def create_learning_task(
     if existing is not None:
         raise ValueError("learning task already exists for this plan item")
 
-    return _insert_learning_task(connection, plan_item_id, str(row[1]))
+    return _attach_l3_contexts(
+        connection, [_insert_learning_task(connection, plan_item_id, str(row[1]))]
+    )[0]
 
 
 def _insert_learning_task(
@@ -595,7 +622,7 @@ def update_plan_item(
                 "UPDATE learning_task SET status = %s WHERE plan_item_id = %s",
                 (updates["status"], plan_item_id),
             )
-    return _plan_item_row(updated)
+    return _attach_l3_contexts(connection, [_plan_item_row(updated)])[0]
 
 
 def list_learning_tasks(
@@ -617,20 +644,29 @@ def list_learning_tasks(
         """,
         (member_id,),
     ).fetchall()
-    return [
-        {
-            **_learning_task_row(row[:10]),
-            "plan_item_current_level": row[10],
-            "plan_item_target_level": row[11],
-            "plan_item_priority": row[12],
-            "plan_item_learning_material": row[13],
-            "plan_item_learning_task_content": row[14],
-            "plan_item_expected_output": row[15],
-            "plan_item_estimated_hours": row[16],
-            "plan_item_target_month": row[17],
-        }
-        for row in rows
-    ]
+    tasks = _attach_l3_contexts(
+        connection,
+        [
+            {
+                **_learning_task_row(row[:10]),
+                "plan_item_current_level": row[10],
+                "plan_item_target_level": row[11],
+                "plan_item_priority": row[12],
+                "plan_item_learning_material": row[13],
+                "plan_item_learning_task_content": row[14],
+                "plan_item_expected_output": row[15],
+                "plan_item_estimated_hours": row[16],
+                "plan_item_target_month": row[17],
+            }
+            for row in rows
+        ],
+    )
+    for task in tasks:
+        raw = task.get("plan_item_estimated_hours")
+        task["plan_item_estimated_hours_parsed"] = parse_estimated_hours(
+            raw if isinstance(raw, str) else None
+        ).as_dict()
+    return tasks
 
 
 def get_learning_task(
@@ -653,17 +689,27 @@ def get_learning_task(
     ).fetchone()
     if row is None:
         return None
-    return {
-        **_learning_task_row(row[:10]),
-        "plan_item_current_level": row[10],
-        "plan_item_target_level": row[11],
-        "plan_item_priority": row[12],
-        "plan_item_learning_material": row[13],
-        "plan_item_learning_task_content": row[14],
-        "plan_item_expected_output": row[15],
-        "plan_item_estimated_hours": row[16],
-        "plan_item_target_month": row[17],
-    }
+    task = _attach_l3_contexts(
+        connection,
+        [
+            {
+                **_learning_task_row(row[:10]),
+                "plan_item_current_level": row[10],
+                "plan_item_target_level": row[11],
+                "plan_item_priority": row[12],
+                "plan_item_learning_material": row[13],
+                "plan_item_learning_task_content": row[14],
+                "plan_item_expected_output": row[15],
+                "plan_item_estimated_hours": row[16],
+                "plan_item_target_month": row[17],
+            }
+        ],
+    )[0]
+    raw = task.get("plan_item_estimated_hours")
+    task["plan_item_estimated_hours_parsed"] = parse_estimated_hours(
+        raw if isinstance(raw, str) else None
+    ).as_dict()
+    return task
 
 
 def update_learning_task(
@@ -1020,24 +1066,25 @@ def get_member_dashboard(
         """,
         (member_id, year, current_month),
     ).fetchone()
-    plan_hours_row = connection.execute(
+    plan_hours_rows = connection.execute(
         """
-        SELECT
-            COALESCE(SUM(
-                CASE WHEN pi.estimated_hours ~ '^[0-9]+(\\.[0-9]+)?$'
-                THEN pi.estimated_hours::DOUBLE PRECISION ELSE 0 END
-            ), 0),
-            COALESCE(SUM(
-                CASE WHEN pi.target_month = %s
-                      AND pi.estimated_hours ~ '^[0-9]+(\\.[0-9]+)?$'
-                THEN pi.estimated_hours::DOUBLE PRECISION ELSE 0 END
-            ), 0)
+        SELECT pi.estimated_hours, pi.target_month
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
         """,
-        (current_month, member_id, year),
-    ).fetchone()
+        (member_id, year),
+    ).fetchall()
+    annual_hours = summarize_estimated_hours(
+        [row[0] if isinstance(row[0], str) else None for row in plan_hours_rows]
+    )
+    current_month_hours = summarize_estimated_hours(
+        [
+            row[0] if isinstance(row[0], str) else None
+            for row in plan_hours_rows
+            if row[1] == current_month
+        ]
+    )
     completed_row = connection.execute(
         """
         SELECT COUNT(*)
@@ -1127,14 +1174,12 @@ def get_member_dashboard(
             for row in gap_rows
         ]
 
-    l3_codes = list(
-        {gap["l3_code"] for gap in gaps} | {task["l3_code"] for task in current_tasks}
+    contexts = get_l3_contexts(
+        connection,
+        [str(item["l3_code"]) for item in [*gaps, *current_tasks]],
     )
-    l3_names = _get_l3_names(connection, l3_codes)
-    for gap in gaps:
-        gap["l3_name"] = l3_names.get(gap["l3_code"])
-    for task in current_tasks:
-        task["l3_name"] = l3_names.get(task["l3_code"])
+    for item in [*gaps, *current_tasks]:
+        item.update(contexts[str(item["l3_code"])])
 
     assessment_out: dict[str, object] | None = None
     if latest_assessment is not None:
@@ -1150,13 +1195,21 @@ def get_member_dashboard(
         "annual_plan_status": annual_plan_status,
         "summary": {
             "annual_actual_hours": int(total_hours_row[0]) if total_hours_row else 0,
-            "annual_planned_hours": float(plan_hours_row[0]) if plan_hours_row else 0,
+            "annual_planned_hours": annual_hours["min_hours"] or 0,
+            "annual_planned_hours_min": annual_hours["min_hours"],
+            "annual_planned_hours_max": annual_hours["max_hours"],
+            "annual_planned_hours_has_values": annual_hours["has_values"],
+            "annual_planned_hours_has_unparsed": annual_hours["has_unparsed"],
             "current_month_actual_hours": (
                 int(current_month_hours_row[0]) if current_month_hours_row else 0
             ),
-            "current_month_planned_hours": (
-                float(plan_hours_row[1]) if plan_hours_row else 0
-            ),
+            "current_month_planned_hours": current_month_hours["min_hours"] or 0,
+            "current_month_planned_hours_min": current_month_hours["min_hours"],
+            "current_month_planned_hours_max": current_month_hours["max_hours"],
+            "current_month_planned_hours_has_values": current_month_hours["has_values"],
+            "current_month_planned_hours_has_unparsed": current_month_hours[
+                "has_unparsed"
+            ],
             "completed_task_count": int(completed_row[0]) if completed_row else 0,
             "pending_evidence_count": (
                 int(pending_evidence_row[0]) if pending_evidence_row else 0
@@ -1224,7 +1277,7 @@ def _assert_evidence_ownership(
     ).fetchone()
     if row is None:
         raise PermissionError("evidence does not belong to member")
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def create_evidence_draft(
@@ -1278,7 +1331,7 @@ def create_evidence_draft(
         (learning_task_id, l3_code, version_number, content, evidence_link),
     ).fetchone()
     assert row is not None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def update_evidence_draft(
@@ -1316,7 +1369,7 @@ def update_evidence_draft(
         values,
     ).fetchone()
     assert row is not None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def submit_evidence(
@@ -1370,7 +1423,7 @@ def submit_evidence(
             (int(submitted["learning_task_id"]),),
         )
 
-    return submitted
+    return _attach_l3_contexts(connection, [submitted])[0]
 
 
 def list_evidences(
@@ -1387,7 +1440,7 @@ def list_evidences(
         """,
         (learning_task_id,),
     ).fetchall()
-    return [_evidence_row(row) for row in rows]
+    return _attach_l3_contexts(connection, [_evidence_row(row) for row in rows])
 
 
 def get_evidence(
@@ -1407,7 +1460,7 @@ def get_evidence(
     ).fetchone()
     if row is None:
         return None
-    return _evidence_row(row)
+    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
 def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -1442,7 +1495,7 @@ def list_pending_evidence_reviews_for_buddy(
         """,
         (buddy_id,),
     ).fetchall()
-    return [
+    items = [
         {
             "id": row[0],
             "evidence_id": row[1],
@@ -1457,6 +1510,7 @@ def list_pending_evidence_reviews_for_buddy(
         }
         for row in rows
     ]
+    return _attach_l3_contexts(connection, items)
 
 
 def get_evidence_review_for_buddy(
@@ -1484,22 +1538,27 @@ def get_evidence_review_for_buddy(
     member_id = int(row[13])
     if not is_member_assigned_to_buddy(connection, member_id, buddy_id):
         return None
-    return {
-        "id": row[0],
-        "evidence_id": row[1],
-        "buddy_id": row[2],
-        "status": row[3],
-        "conclusion": row[4],
-        "feedback": row[5],
-        "reviewed_at": row[6],
-        "created_at": row[7],
-        "learning_task_id": row[8],
-        "l3_code": row[9],
-        "version_number": row[10],
-        "content": row[11],
-        "evidence_link": row[12],
-        "member_id": member_id,
-    }
+    return _attach_l3_contexts(
+        connection,
+        [
+            {
+                "id": row[0],
+                "evidence_id": row[1],
+                "buddy_id": row[2],
+                "status": row[3],
+                "conclusion": row[4],
+                "feedback": row[5],
+                "reviewed_at": row[6],
+                "created_at": row[7],
+                "learning_task_id": row[8],
+                "l3_code": row[9],
+                "version_number": row[10],
+                "content": row[11],
+                "evidence_link": row[12],
+                "member_id": member_id,
+            }
+        ],
+    )[0]
 
 
 def submit_evidence_review(
@@ -1725,6 +1784,7 @@ def _annual_plan_with_items_for_member(
         """,
         (member_id, year),
     ).fetchall()
+    plan_items = [_plan_item_row(item) for item in items]
     return {
         "id": row[0],
         "member_id": row[1],
@@ -1734,7 +1794,8 @@ def _annual_plan_with_items_for_member(
         "start_date": row[5],
         "end_date": row[6],
         "created_at": row[7],
-        "items": [_plan_item_row(item) for item in items],
+        "items": plan_items,
+        "estimated_hours_summary": _estimated_hours_summary(plan_items),
     }
 
 
@@ -1880,9 +1941,18 @@ def get_capability_profile(
         enriched_items = []
         for item in annual_plan["items"]:
             task = _learning_task_with_logs_and_evidences(connection, int(item["id"]))
-            if task is not None:
-                task["l3_name"] = item.get("l3_name")
             enriched_items.append({**item, "learning_task": task})
+        contexts = get_l3_contexts(
+            connection, [str(item["l3_code"]) for item in enriched_items]
+        )
+        for item in enriched_items:
+            context = contexts[str(item["l3_code"])]
+            item.update(context)
+            task = item["learning_task"]
+            if isinstance(task, dict):
+                task.update(context)
+                for evidence in task["evidences"]:
+                    evidence.update(context)
         annual_plan["items"] = enriched_items
 
     start_of_year = f"{year}-01-01"
@@ -1902,24 +1972,18 @@ def get_capability_profile(
     ).fetchone()
     total_learning_hours = int(total_hours_row[0]) if total_hours_row else 0
 
-    planned_hours_row = connection.execute(
+    planned_hours_rows = connection.execute(
         """
-        SELECT COALESCE(
-            SUM(
-                CAST(
-                    NULLIF(regexp_substr(pi.estimated_hours, '\\d+'), '')
-                    AS NUMERIC
-                )
-            ),
-            0
-        )
+        SELECT pi.estimated_hours
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
         """,
         (member_id, year),
-    ).fetchone()
-    total_planned_hours = int(planned_hours_row[0]) if planned_hours_row else 0
+    ).fetchall()
+    planned_hours = summarize_estimated_hours(
+        [row[0] if isinstance(row[0], str) else None for row in planned_hours_rows]
+    )
 
     evidence_status_rows = connection.execute(
         """
@@ -1950,7 +2014,11 @@ def get_capability_profile(
         "annual_plan": annual_plan,
         "statistics": {
             "total_learning_hours": total_learning_hours,
-            "total_planned_hours": total_planned_hours,
+            "total_planned_hours": planned_hours["min_hours"] or 0,
+            "total_planned_hours_min": planned_hours["min_hours"],
+            "total_planned_hours_max": planned_hours["max_hours"],
+            "total_planned_hours_has_values": planned_hours["has_values"],
+            "total_planned_hours_has_unparsed": planned_hours["has_unparsed"],
             "evidence_count_by_status": evidence_count_by_status,
         },
     }
@@ -2011,7 +2079,7 @@ def list_selectable_members_for_profile(
     ).fetchone()
     if row is None:
         return []
-    return [
+    items = [
         {
             "id": row[0],
             "username": row[1],
@@ -2020,6 +2088,7 @@ def list_selectable_members_for_profile(
             "target_level": row[4],
         }
     ]
+    return items
 
 
 _ALLOWED_TEAM_PLAN_STATUSES = {"已发布", "已归档"}
@@ -2224,13 +2293,6 @@ def archive_team_annual_plan(
 _TEAM_ANALYTICS_DOMAIN_CODES = list(DOMAIN_CODES)
 
 
-def _parse_hours_sql(column: str) -> str:
-    return (
-        "COALESCE(CAST(NULLIF(REGEXP_REPLACE("
-        f"COALESCE({column}, ''), '[^0-9]', '', 'g'), '') AS INTEGER), 0)"
-    )
-
-
 def validate_team_analytics_domain_filter(
     connection: psycopg.Connection, domain_code: str | None
 ) -> None:
@@ -2379,29 +2441,28 @@ def _team_analytics_overdue_items(
               AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
         )
         SELECT d.member_id, u.username, u.full_name,
-               d.l3_code, cn.name AS l3_name,
+               d.l3_code,
                d.due_date, (CURRENT_DATE - d.due_date) AS overdue_days, d.status
         FROM due d
         JOIN tcp_user u ON u.id = d.member_id
-        LEFT JOIN capability_node cn ON cn.code = d.l3_code AND cn.node_type = 'L3'
         WHERE d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE
         ORDER BY overdue_days DESC, d.l3_code
         """,
         (year, year, member_id, member_id, domain_code, domain_code),
     ).fetchall()
-    return [
+    items = [
         {
             "member_id": row[0],
             "username": row[1],
             "full_name": row[2],
             "l3_code": row[3],
-            "l3_name": row[4],
-            "due_date": str(row[5]) if row[5] is not None else None,
-            "overdue_days": int(row[6]) if row[6] is not None else 0,
-            "status": row[7],
+            "due_date": str(row[4]) if row[4] is not None else None,
+            "overdue_days": int(row[5]) if row[5] is not None else 0,
+            "status": row[6],
         }
         for row in rows
     ]
+    return _attach_l3_contexts(connection, items)
 
 
 def _team_analytics_domain_averages(
@@ -2531,31 +2592,32 @@ def _team_analytics_monthly_trends(
     member_id: int | None,
     domain_code: str | None,
 ) -> list[dict[str, object]]:
-    hours_sql = _parse_hours_sql("pi.estimated_hours")
     planned_rows = connection.execute(
-        f"""
-        SELECT month, COUNT(*) AS planned_count, SUM(hours) AS planned_hours
-        FROM (
-            SELECT
-                CASE
-                    WHEN pi.target_month IS NOT NULL THEN pi.target_month
-                    WHEN pi.plan_end_date IS NOT NULL THEN
-                        EXTRACT(MONTH FROM pi.plan_end_date)::INT
-                END AS month,
-                {hours_sql} AS hours
-            FROM plan_item pi
-            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-            WHERE agp.year = %s AND pi.status != '取消'
-              AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
-              AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
-        ) t
-        WHERE month IS NOT NULL
-        GROUP BY month
-        ORDER BY month
+        """
+        SELECT CASE
+                   WHEN pi.target_month IS NOT NULL THEN pi.target_month
+                   WHEN pi.plan_end_date IS NOT NULL THEN
+                       EXTRACT(MONTH FROM pi.plan_end_date)::INT
+               END AS month,
+               pi.estimated_hours
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s AND pi.status != '取消'
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
         """,
         (year, member_id, member_id, domain_code, domain_code),
     ).fetchall()
-    planned_by_month = {int(row[0]): (int(row[1]), int(row[2])) for row in planned_rows}
+    planned_values_by_month: dict[int, list[str | None]] = {}
+    for month, estimated_hours in planned_rows:
+        if month is not None:
+            planned_values_by_month.setdefault(int(month), []).append(
+                estimated_hours if isinstance(estimated_hours, str) else None
+            )
+    planned_by_month = {
+        month: (len(values), summarize_estimated_hours(values))
+        for month, values in planned_values_by_month.items()
+    }
 
     actual_count_rows = connection.execute(
         """
@@ -2608,16 +2670,27 @@ def _team_analytics_monthly_trends(
     trends: list[dict[str, object]] = []
     cumulative_planned = 0
     cumulative_actual = 0
-    cumulative_planned_hours = 0
+    cumulative_planned_hours_min = 0.0
+    cumulative_planned_hours_max = 0.0
+    cumulative_planned_hours_has_unparsed = False
     cumulative_actual_hours = 0
     for month in range(1, 13):
-        planned_count, planned_hours = planned_by_month.get(month, (0, 0))
+        planned_count, planned_hours = planned_by_month.get(
+            month,
+            (0, {"min_hours": None, "max_hours": None, "has_unparsed": False}),
+        )
         actual_count = actual_count_by_month.get(month, 0)
         actual_hours = actual_hours_by_month.get(month, 0)
 
         cumulative_planned += planned_count
         cumulative_actual += actual_count
-        cumulative_planned_hours += planned_hours
+        planned_hours_min = float(planned_hours["min_hours"] or 0)
+        planned_hours_max = float(planned_hours["max_hours"] or 0)
+        cumulative_planned_hours_min += planned_hours_min
+        cumulative_planned_hours_max += planned_hours_max
+        cumulative_planned_hours_has_unparsed = (
+            cumulative_planned_hours_has_unparsed or bool(planned_hours["has_unparsed"])
+        )
         cumulative_actual_hours += actual_hours
 
         trends.append(
@@ -2635,9 +2708,17 @@ def _team_analytics_monthly_trends(
                     if total_plan_items
                     else 0.0
                 ),
-                "planned_hours": planned_hours,
+                "planned_hours": planned_hours_min,
+                "planned_hours_min": planned_hours["min_hours"],
+                "planned_hours_max": planned_hours["max_hours"],
+                "planned_hours_has_unparsed": planned_hours["has_unparsed"],
                 "actual_hours": actual_hours,
-                "cumulative_planned_hours": cumulative_planned_hours,
+                "cumulative_planned_hours": cumulative_planned_hours_min,
+                "cumulative_planned_hours_min": cumulative_planned_hours_min,
+                "cumulative_planned_hours_max": cumulative_planned_hours_max,
+                "cumulative_planned_hours_has_unparsed": (
+                    cumulative_planned_hours_has_unparsed
+                ),
                 "cumulative_actual_hours": cumulative_actual_hours,
             }
         )

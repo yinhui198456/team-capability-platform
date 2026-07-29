@@ -11,8 +11,55 @@ export type Assessment = {
   submitted_at: string | null
   archived_at: string | null
   revision?: number
+  member_current_level?: string | null
+  member_target_level?: string | null
   details?: AssessmentDetail[]
+  l2_groups?: AssessmentL2Group[]
   gap_summary?: GapSummary
+}
+
+export type L2Requirements = Record<
+  'P4' | 'P5' | 'P6' | 'P7' | 'P8',
+  string | null
+>
+
+export type AssessmentL2Group = {
+  l1_code: string | null
+  l1_name: string | null
+  l2_code: string | null
+  l2_name: string | null
+  l3_count: number
+  is_empty: boolean
+  details: AssessmentDetail[]
+  requirements?: L2Requirements
+}
+
+const jobLevels = ['P4', 'P5', 'P6', 'P7', 'P8'] as const
+
+export function selectL2Requirement(
+  requirements: L2Requirements,
+  currentLevel: string | null | undefined,
+  targetLevel: string | null | undefined,
+): {
+  level: (typeof jobLevels)[number]
+  label: '目标职级' | '当前职级'
+  text: string
+} | null {
+  for (const [level, label] of [
+    [targetLevel, '目标职级'],
+    [currentLevel, '当前职级'],
+  ] as const) {
+    if (!jobLevels.includes(level as (typeof jobLevels)[number])) continue
+    const text = requirements[level as (typeof jobLevels)[number]]
+    if (text?.trim()) {
+      return {
+        level: level as (typeof jobLevels)[number],
+        label,
+        text: text.trim(),
+      }
+    }
+  }
+  return null
 }
 
 export type AssessmentDetail = {

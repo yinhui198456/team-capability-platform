@@ -46,6 +46,8 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
         l3_name: '数据管道',
         l1_code: 'P01',
         l1_name: '数据基础设施',
+        l2_code: 'P01.01',
+        l2_name: '数据基础',
         current_level: null,
         target_level: 4,
         standard_target_applicable: true,
@@ -108,7 +110,11 @@ describe('AssessmentGapPage', () => {
       }),
     ).toBeTruthy()
     expect(within(content).getByTestId('assessment-main-area')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /P01/ })).toBeTruthy()
+    expect(
+      within(screen.getByLabelText('一级能力域导航')).getByRole('button', {
+        name: /P01/,
+      }),
+    ).toBeTruthy()
   })
 
   it('renders create button', async () => {
@@ -122,6 +128,61 @@ describe('AssessmentGapPage', () => {
         screen.getByRole('button', { name: '创建年度自评草稿' }),
       ).toBeTruthy()
     })
+  })
+
+  it('shows L2 job requirements and keeps an empty L2 visible', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        member_current_level: 'P5',
+        member_target_level: 'P6',
+        l2_groups: [
+          {
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            l2_code: 'P01.01',
+            l2_name: '数据基础',
+            l3_count: 1,
+            is_empty: false,
+            requirements: {
+              P4: 'P4 要求',
+              P5: 'P5 要求',
+              P6: 'P6 要求',
+              P7: 'P7 要求',
+              P8: 'P8 要求',
+            },
+            details: [mockDraft().details![0]],
+          },
+          {
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            l2_code: 'P02.07',
+            l2_name: '待补充标准',
+            l3_count: 0,
+            is_empty: true,
+            requirements: {
+              P4: 'P4 要求',
+              P5: 'P5 要求',
+              P6: 'P6 要求',
+              P7: 'P7 要求',
+              P8: 'P8 要求',
+            },
+            details: [],
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /P02.07/ })
+    expect(screen.getByText('目标职级 P6：P6 要求')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /P02.07/ }))
+    expect(screen.getByText('暂无三级达成路径，当前无可评估项')).toBeTruthy()
   })
 
   it('creates draft with a read-only standard target and null current level', async () => {
@@ -317,9 +378,11 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('不适用')
     expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 1/1')
     expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
-    expect(screen.getByRole('button', { name: /P01/ }).textContent).toContain(
-      '1/1',
-    )
+    expect(
+      within(screen.getByLabelText('一级能力域导航')).getByRole('button', {
+        name: /P01/,
+      }).textContent,
+    ).toContain('1/1')
     expect(
       within(screen.getByTestId('assessment-main-area')).getByText('1/1'),
     ).toBeTruthy()
@@ -721,6 +784,66 @@ describe('AssessmentGapPage', () => {
   })
 })
 
+describe('AssessmentHistoryPage', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('shows current-model L2/L3 mapping without presenting live L2 requirements as history', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      {
+        ...mockDraft({ status: '已归档', details: undefined }),
+        submitted_at: '2026-01-02T00:00:00Z',
+      },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        status: '已归档',
+        l2_groups: [
+          {
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            l2_code: 'P01.01',
+            l2_name: '数据基础',
+            l3_count: 1,
+            is_empty: false,
+            requirements: {
+              P4: '不应作为历史事实展示的实时 P4 文本',
+              P5: null,
+              P6: null,
+              P7: null,
+              P8: null,
+            },
+            details: [mockDraft().details![0]],
+          },
+        ],
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment/history']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const entry = await screen.findByRole('button', { name: /版本 1/ })
+    fireEvent.click(entry)
+
+    expect(
+      await screen.findByText(
+        /当前模型映射上下文：P01.01 · 数据基础 → P01.01.01 · 数据管道/,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText(/当前掌握度.*目标掌握度.*Gap/)).toBeTruthy()
+    expect(screen.queryByText(/实时 P4 文本/)).toBeNull()
+  })
+})
+
 describe('R2-B filter/search', () => {
   beforeEach(() => {
     stubAuthAndYear()
@@ -735,6 +858,8 @@ describe('R2-B filter/search', () => {
     l3_name: '数据管道基础',
     l1_code: 'P01',
     l1_name: '数据基础设施',
+    l2_code: 'P01.01',
+    l2_name: '数据基础',
     current_level: 2,
     target_level: 4,
     gap_value: 2,
@@ -776,6 +901,8 @@ describe('R2-B filter/search', () => {
           l3_name: '文件规范',
           l1_code: 'P01',
           l1_name: '数据基础设施',
+          l2_code: 'P01.01',
+          l2_name: '数据基础',
           current_level: null,
           target_level: null,
           gap_value: 0,
@@ -850,5 +977,40 @@ describe('assessment api helpers', () => {
       plan_candidate: false,
     })
     expect(body.expected_revision).toBe(1)
+  })
+})
+
+describe('L2 职级要求选择', () => {
+  const requirements = {
+    P4: 'P4 要求',
+    P5: 'P5 要求',
+    P6: 'P6 要求',
+    P7: 'P7 要求',
+    P8: 'P8 要求',
+  }
+
+  it('prefers the target job level, then falls back to the current job level', () => {
+    expect(assessmentApi.selectL2Requirement(requirements, 'P5', 'P7')).toEqual(
+      { level: 'P7', label: '目标职级', text: 'P7 要求' },
+    )
+    expect(assessmentApi.selectL2Requirement(requirements, 'P5', null)).toEqual(
+      { level: 'P5', label: '当前职级', text: 'P5 要求' },
+    )
+  })
+
+  it('returns unavailable for missing, invalid, or blank job-level requirements', () => {
+    expect(
+      assessmentApi.selectL2Requirement(requirements, null, null),
+    ).toBeNull()
+    expect(
+      assessmentApi.selectL2Requirement(requirements, 'P9', null),
+    ).toBeNull()
+    expect(
+      assessmentApi.selectL2Requirement(
+        { ...requirements, P6: ' ' },
+        null,
+        'P6',
+      ),
+    ).toBeNull()
   })
 })

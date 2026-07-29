@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
 import {
-  formatL3Name,
+  formatCapabilityPath,
   getAnnualPlan,
   generatePlanItems,
   type AnnualPlan,
@@ -32,11 +36,6 @@ type LearningLog = {
   record_date: string
   actual_hours: number
   note?: string | null
-}
-
-function hours(v: string | null | number): number {
-  const n = typeof v === 'number' ? v : Number(v ?? 0)
-  return Number.isFinite(n) ? n : 0
 }
 
 type TaskDetail = {
@@ -127,10 +126,10 @@ export function AnnualPlanTaskPage() {
   const visibleItems = selectedMonth
     ? items.filter((i) => i.target_month === selectedMonth)
     : items
-  const totalEstimated = items.reduce(
-    (sum, i) => sum + hours(i.estimated_hours),
-    0,
+  const totalEstimated = formatEstimatedHoursSummary(
+    plan?.estimated_hours_summary,
   )
+  const hasUnparsedHours = plan?.estimated_hours_summary?.has_unparsed ?? false
   const totalActual = Object.values(tasks).reduce(
     (sum, t) => sum + (t.task.actual_hours ?? 0),
     0,
@@ -183,7 +182,10 @@ export function AnnualPlanTaskPage() {
         </div>
         <div className={s.summaryCard}>
           <dt>预计时长</dt>
-          <dd>{totalEstimated} h</dd>
+          <dd>
+            {totalEstimated}
+            {hasUnparsedHours && '（部分计划项耗时为文本，未计入汇总）'}
+          </dd>
         </div>
         <div className={s.summaryCard}>
           <dt>实际时长</dt>
@@ -224,8 +226,8 @@ export function AnnualPlanTaskPage() {
             borderBottom: '2px solid var(--color-gray-200)',
           }}
         >
-          <strong>能力项</strong>
-          <strong>等级提升</strong>
+          <strong>二级能力标准 → 三级达成路径</strong>
+          <strong>掌握度提升</strong>
           <strong>计划时长</strong>
           <strong>实际时长</strong>
           <strong>月份</strong>
@@ -258,14 +260,17 @@ export function AnnualPlanTaskPage() {
                 }}
               >
                 <div>
-                  <span className={s.l3name}>
-                    {formatL3Name(item.l3_name, item.l3_code)}
-                  </span>
+                  <span className={s.l3name}>{formatCapabilityPath(item)}</span>
                 </div>
                 <span>
                   {item.current_level}→{item.target_level}
                 </span>
-                <span>{hours(item.estimated_hours)} h</span>
+                <span>
+                  {formatEstimatedHours(
+                    item.estimated_hours,
+                    item.estimated_hours_parsed,
+                  )}
+                </span>
                 <span>{td ? td.task.actual_hours : 0} h</span>
                 <span>
                   {item.target_month ? `${item.target_month} 月` : '—'}

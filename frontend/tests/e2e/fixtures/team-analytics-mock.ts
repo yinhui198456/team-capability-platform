@@ -109,6 +109,9 @@ function buildMonthlyTrends(
     )
     const actualCount = Math.max(0, plannedCount - (i % 3 === 0 ? 1 : 0))
     const plannedHours = plannedCount * 8
+    const isRange = month === 1
+    const plannedHoursMin = isRange ? 4 : plannedHours
+    const plannedHoursMax = isRange ? 6 : plannedHours
     const actualHours = actualCount * 8 + (i % 4 === 0 ? 2 : 0)
     const cumPlannedCount = Array.from({ length: month }, (_, j) =>
       Math.round((Math.min(j + 1, plannedCount) / scale) * scale),
@@ -124,8 +127,14 @@ function buildMonthlyTrends(
       cumulative_planned_rate: Math.min(1, cumPlannedCount / totalItems),
       cumulative_actual_rate: Math.min(1, cumActualCount / totalItems),
       planned_hours: plannedHours,
+      planned_hours_min: plannedHoursMin,
+      planned_hours_max: plannedHoursMax,
+      planned_hours_has_unparsed: false,
       actual_hours: actualHours,
       cumulative_planned_hours: cumPlannedCount * 8,
+      cumulative_planned_hours_min: isRange ? 4 : cumPlannedCount * 8,
+      cumulative_planned_hours_max: isRange ? 6 : cumPlannedCount * 8,
+      cumulative_planned_hours_has_unparsed: false,
       cumulative_actual_hours: cumActualCount * 8 + i,
     }
   })
@@ -138,6 +147,8 @@ const overdueCatalog = [
     full_name: '张三',
     l3_code: 'P01-L2A-L3A',
     l3_name: '数据建模与治理',
+    l2_code: 'P01-L2A',
+    l2_name: '数据建模标准',
     due_date: '2026-06-15',
     plan_start_date: '2026-05-01',
     plan_end_date: '2026-06-15',
@@ -150,6 +161,8 @@ const overdueCatalog = [
     full_name: '李四',
     l3_code: 'P02-L1B-L2A',
     l3_name: 'ML Pipeline 搭建',
+    l2_code: 'P02-L1B',
+    l2_name: 'ML Pipeline 标准',
     due_date: '2026-05-01',
     plan_start_date: '2026-03-15',
     plan_end_date: '2026-05-01',
@@ -162,6 +175,8 @@ const overdueCatalog = [
     full_name: '王五',
     l3_code: 'C03-L2A-L3A',
     l3_name: '技术创新提案',
+    l2_code: 'C03-L2A',
+    l2_name: '创新实践标准',
     due_date: '2026-07-01',
     plan_start_date: '2026-06-01',
     plan_end_date: '2026-07-01',

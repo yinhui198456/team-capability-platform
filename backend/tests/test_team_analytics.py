@@ -602,6 +602,33 @@ def test_team_analytics_aggregates_match_data(
     assert len(overdue) == 2
     overdue_members = {item["member_id"] for item in overdue}
     assert overdue_members == {member_a_id, member_b_id}
+    assert all(item["l2_code"] is not None for item in overdue)
+    assert all(item["l3_name"] is not None for item in overdue)
+
+
+def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    _, _, leader_cookies = _build_two_member_team(team_analytics_schema)
+    team_analytics_schema.execute(
+        """
+        UPDATE plan_item
+        SET estimated_hours = '4–6h'
+        WHERE target_month = 3
+        """
+    )
+    team_analytics_schema.commit()
+
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=leader_cookies
+    )
+    assert status == 200
+    assert body is not None
+    march = next(row for row in body["monthly_trends"] if row["month"] == 3)
+    assert march["planned_hours_min"] == 8
+    assert march["planned_hours_max"] == 12
+    assert march["planned_hours"] == 8
+    assert march["planned_hours_max"] != 46
 
 
 def test_team_analytics_domain_filter_restricts_aggregates(

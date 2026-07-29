@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import { ResourceForm } from './CapabilityModelPage'
 import {
-  allL3,
+  allL3WithContext,
   resourcePath,
   useCatalog,
   useMe,
@@ -80,15 +80,15 @@ export function LearningResourcesPage() {
           />
         </label>
         <label>
-          L3
+          三级达成路径
           <select
             value={l3Code}
             onChange={(event) => setL3Code(event.target.value)}
           >
             <option value="">全部</option>
-            {allL3(model).map((node) => (
+            {allL3WithContext(model).map((node) => (
               <option key={node.code} value={node.code}>
-                {node.code} · {node.name}
+                {node.l2_code} · {node.l2_name} → {node.code} · {node.name}
               </option>
             ))}
           </select>
@@ -115,7 +115,7 @@ export function LearningResourcesPage() {
               {resource.material_code} · {resource.material_type} ·{' '}
               {resource.status}
             </p>
-            <p className="muted">已关联 L3：{resource.l3_count}</p>
+            <p className="muted">已关联三级达成路径：{resource.l3_count}</p>
             {isLeader && (
               <button
                 type="button"
@@ -163,25 +163,25 @@ export function LearningResourcesPage() {
             <strong>用途：</strong>
             {detail.purpose ?? '未提供'}
           </p>
-          <h3>关联 L3</h3>
+          <h3>关联三级达成路径</h3>
           {detail.l3_nodes.length ? (
             <ul>
               {detail.l3_nodes.map((node) => (
                 <li key={node.code}>
                   <a href={`/capability/model#${node.code}`}>
-                    {node.code} · {node.name}
+                    {node.l2_code} · {node.l2_name} → {node.code} · {node.name}
                   </a>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="muted">暂无关联 L3。</p>
+            <p className="muted">暂无关联三级达成路径。</p>
           )}
         </article>
       )}
       {creating && (
         <ResourceForm
-          l3Nodes={allL3(model)}
+          l3Nodes={allL3WithContext(model)}
           onClose={() => setCreating(false)}
           onSaved={handleSaved}
         />
@@ -190,7 +190,7 @@ export function LearningResourcesPage() {
         <ResourceForm
           resource={resources?.find((r) => r.material_code === editingCode)}
           detail={detail}
-          l3Nodes={allL3(model)}
+          l3Nodes={allL3WithContext(model)}
           onClose={() => setEditingCode('')}
           onSaved={handleSaved}
           onArchived={handleArchived}

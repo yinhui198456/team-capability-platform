@@ -1,6 +1,12 @@
 /// @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { App } from './App'
@@ -531,5 +537,110 @@ describe('year parameter persistence', () => {
       name: '选择年度',
     }) as HTMLSelectElement
     expect(select.disabled).toBe(true)
+  })
+})
+
+describe('global logout action', () => {
+  const users = [
+    { role: 'Member', full_name: 'Member User', roles: ['Member'] },
+    { role: 'Buddy', full_name: 'Buddy User', roles: ['Buddy'] },
+    { role: 'Leader', full_name: 'Leader User', roles: ['Leader'] },
+    { role: 'Admin', full_name: 'Admin User', roles: ['Admin'] },
+    { role: 'no-role', full_name: '', roles: [] },
+  ]
+
+  function renderAuthenticated(user: {
+    role: string
+    full_name: string
+    roles: string[]
+  }) {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: user.role.toLowerCase(),
+      full_name: user.full_name,
+      roles: user.roles,
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input.startsWith('/api/capability-model'))
+          return response({ code: 'T', version: 'V1', domains: [] })
+        if (input.startsWith('/api/learning-resources')) return response([])
+        return response({})
+      }),
+    )
+    return render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+  }
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it.each(users)(
+    'shows the logout action for $role and falls back to username when full_name is empty',
+    async (user) => {
+      renderAuthenticated(user)
+      const expectedName = user.full_name || user.role.toLowerCase()
+      await waitFor(() => {
+        expect(screen.getByText(expectedName)).toBeTruthy()
+      })
+      expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
+      expect(screen.queryByText(/数据范围：/)).toBeNull()
+    },
+  )
+
+  it('logs out once, disables the action while pending, and redirects to login', async () => {
+    let resolveLogout: (() => void) | undefined
+    const logout = vi.spyOn(accessApi, 'logout').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveLogout = resolve
+        }),
+    )
+    renderAuthenticated(users[0])
+
+    const button = (await screen.findByRole('button', {
+      name: '退出',
+    })) as HTMLButtonElement
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toBe('退出中…')
+
+    resolveLogout?.()
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/login')
+    })
+    expect(screen.queryByText('Member User')).toBeNull()
+  })
+
+  it('keeps the authenticated page visible when logout fails', async () => {
+    vi.spyOn(accessApi, 'logout').mockRejectedValue(new Error('network'))
+    renderAuthenticated(users[0])
+
+    fireEvent.click(await screen.findByRole('button', { name: '退出' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe('退出失败，请重试')
+    })
+    expect(screen.getByTestId('location').textContent).toBe('/capability/model')
+    expect(screen.getByText('Member User')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '退出' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false)
   })
 })

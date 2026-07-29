@@ -4,11 +4,13 @@ import { useYear } from './YearContext'
 import {
   type Assessment,
   type AssessmentDetail,
+  type AssessmentL2Group,
   createAssessment,
   batchFillL2,
   getAssessment,
   listAssessments,
   saveDraft,
+  selectL2Requirement,
   submitAssessment,
 } from './assessment'
 import {
@@ -28,11 +30,11 @@ const DOMAINS: Record<string, string> = {
 }
 
 function l1Of(detail: AssessmentDetail) {
-  return detail.l1_code ?? detail.l3_code.split('.')[0]
+  return detail.l1_code ?? '未映射'
 }
 
 function l2Of(detail: AssessmentDetail) {
-  return detail.l2_code ?? detail.l3_code.split('.').slice(0, 2).join('.')
+  return detail.l2_code ?? detail.l3_code
 }
 
 function defaultL2(details: AssessmentDetail[], domain: string) {
@@ -234,15 +236,21 @@ export function AssessmentGapPage() {
     l2Code: string
     level: 1 | 2
   } | null>(null)
+  const [selectedRequirement, setSelectedRequirement] = useState<
+    Record<string, 'P4' | 'P5' | 'P6' | 'P7' | 'P8'>
+  >({})
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
 
   function loadAssessment(value: Assessment) {
     setAssessment(value)
     setDetails(value.details ?? [])
-    const firstDomain = defaultDomain(value.details ?? [])
+    const firstDomain =
+      value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     setActiveDomain((current) => current || firstDomain)
-    const firstL2 = defaultL2(value.details ?? [], firstDomain)
+    const firstL2 =
+      value.l2_groups?.find((group) => group.l1_code === firstDomain)
+        ?.l2_code ?? defaultL2(value.details ?? [], firstDomain)
     if (firstL2) setExpandedL2(new Set([firstL2]))
   }
 
@@ -508,8 +516,14 @@ export function AssessmentGapPage() {
   )
   const unfilled = assessedDetails.length - filled
   const domains = useMemo(
-    () => [...new Set(details.map(l1Of))].filter(Boolean),
-    [details],
+    () =>
+      [
+        ...new Set([
+          ...details.map(l1Of),
+          ...(assessment?.l2_groups ?? []).map((group) => group.l1_code),
+        ]),
+      ].filter((code): code is string => typeof code === 'string'),
+    [assessment, details],
   )
   const filtered = useMemo(() => {
     let list = details.filter((detail) => l1Of(detail) === activeDomain)
@@ -541,17 +555,44 @@ export function AssessmentGapPage() {
       .slice(0, 10)
   }, [details, search])
   const l2Groups = useMemo(() => {
-    const groups = new Map<string, AssessmentDetail[]>()
-    for (const detail of filtered) {
-      const key = l2Of(detail)
-      groups.set(key, [...(groups.get(key) ?? []), detail])
+    const groups = new Map<
+      string,
+      AssessmentL2Group & { l1_code: string; l2_code: string }
+    >()
+    for (const group of assessment?.l2_groups ?? []) {
+      if (group.l1_code === activeDomain && group.l2_code) {
+        groups.set(group.l2_code, {
+          ...group,
+          l1_code: group.l1_code,
+          l2_code: group.l2_code,
+          details: [],
+        })
+      }
     }
-    return [...groups.entries()].sort(([left], [right]) => {
-      const leftOpen = expandedL2.has(left) ? 0 : 1
-      const rightOpen = expandedL2.has(right) ? 0 : 1
+    for (const detail of filtered) {
+      const code = l2Of(detail)
+      const existing = groups.get(code)
+      if (existing) {
+        existing.details.push(detail)
+        existing.l3_count = Math.max(existing.l3_count, existing.details.length)
+      } else {
+        groups.set(code, {
+          l1_code: l1Of(detail),
+          l1_name: detail.l1_name ?? null,
+          l2_code: code,
+          l2_name: detail.l2_name ?? null,
+          l3_count: 1,
+          is_empty: false,
+          details: [detail],
+        })
+      }
+    }
+    return [...groups.values()].sort((left, right) => {
+      const leftOpen = expandedL2.has(left.l2_code) ? 0 : 1
+      const rightOpen = expandedL2.has(right.l2_code) ? 0 : 1
       return leftOpen - rightOpen
     })
-  }, [filtered, expandedL2])
+  }, [activeDomain, assessment, expandedL2, filtered])
   const summary = assessment?.gap_summary
 
   if (loading) return <p className="muted">加载中…</p>
@@ -736,8 +777,23 @@ export function AssessmentGapPage() {
 
         <div className={s.mainArea} data-testid="assessment-main-area">
           <div className={s.tableArea}>
-            {l2Groups.map(([l2Code, items]) => {
+            {l2Groups.map((group) => {
+              const l2Code = group.l2_code
+              const items = group.details
               const open = expandedL2.has(l2Code)
+              const suggestedRequirement = group.requirements
+                ? selectL2Requirement(
+                    group.requirements,
+                    assessment.member_current_level,
+                    assessment.member_target_level,
+                  )
+                : null
+              const requirementLevel =
+                selectedRequirement[l2Code] ?? suggestedRequirement?.level
+              const requirementText =
+                requirementLevel && group.requirements
+                  ? group.requirements[requirementLevel]
+                  : null
               return (
                 <div className={s.domainGroup} key={l2Code}>
                   <div className={s.domainHeader}>
@@ -754,10 +810,11 @@ export function AssessmentGapPage() {
                       }
                     >
                       <span>
-                        {open ? '▾' : '▸'} {items[0].l2_name ?? l2Code}
+                        {open ? '▾' : '▸'} {l2Code} · {group.l2_name ?? l2Code}
                       </span>
                     </button>
                     <span className={s.groupActions}>
+                      <small>二级能力标准 · {group.l3_count} 条达成路径</small>
                       <small>
                         {
                           items.filter(isApplicableDetail).filter(isFilled)
@@ -802,223 +859,287 @@ export function AssessmentGapPage() {
                     </span>
                   </div>
                   {open && (
-                    <table className={s.table} data-testid="assessment-table">
-                      <thead>
-                        <tr>
-                          <th>L3 能力项</th>
-                          <th>当前</th>
-                          <th>标准目标</th>
-                          <th>个人调整</th>
-                          <th>最终目标</th>
-                          <th>Gap</th>
-                          <th>优先级</th>
-                          <th>计划候选</th>
-                          <th>依据</th>
-                          <th title="P4–P8 为能力项建议起始职级">建议起始</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((detail) => {
-                          const index = details.indexOf(detail)
-                          const target = effectiveTarget(detail)
-                          const gap =
-                            detail.current_level != null && target != null
-                              ? Math.max(target - detail.current_level, 0)
-                              : null
-                          const reason = unfilledReason(detail)
-                          const applicable = isApplicableDetail(detail)
-                          const adjustable =
-                            applicable &&
-                            detail.standard_target_level != null &&
-                            !detail.target_compatibility_error
-                          const inherited =
-                            detail.inherited_from_assessment_id != null
-                          const updated = inherited && isInheritedUpdate(detail)
-                          return (
-                            <Fragment key={detail.id}>
-                              <tr
-                                id={`row-${detail.id}`}
-                                tabIndex={-1}
-                                className={
-                                  gap && gap > 0 ? s.rowGap : undefined
-                                }
-                              >
-                                <td>
-                                  <strong>
-                                    {detail.l3_name ?? detail.l3_code}
-                                  </strong>
-                                  <small className={s.l3name}>
-                                    {detail.l3_code}
-                                  </small>
-                                  {!isFilled(detail) && reason && (
-                                    <span className={s.reasonTag}>
-                                      {reason}
-                                    </span>
-                                  )}
-                                  {inherited && (
-                                    <span className={s.inheritanceTag}>
-                                      {updated ? '本次已更新' : '沿用上次评估'}
-                                    </span>
-                                  )}
-                                </td>
-                                <td>
-                                  {levelSelect(
-                                    detail.current_level,
-                                    (value) =>
-                                      updateDetail(index, {
-                                        current_level: value,
-                                      }),
-                                    !editable || !applicable,
-                                    `当前等级 ${detail.l3_code}`,
-                                  )}
-                                </td>
-                                <td title="标准目标等级 1–5">
-                                  {applicable ? (
-                                    <>
-                                      标准{' '}
-                                      {detail.standard_target_level ??
-                                        detail.target_level ??
-                                        '—'}
-                                      {detail.target_snapshot_source ===
-                                        'legacy_preserved' && (
-                                        <small className={s.snapshotTag}>
-                                          历史保留
-                                        </small>
+                    <>
+                      <section aria-label={l2Code + ' 职级要求'}>
+                        <strong>职级要求 P4–P8</strong>
+                        {group.requirements ? (
+                          <>
+                            <div className={s.groupActions}>
+                              {(['P4', 'P5', 'P6', 'P7', 'P8'] as const).map(
+                                (level) => (
+                                  <button
+                                    aria-pressed={requirementLevel === level}
+                                    key={level}
+                                    onClick={() =>
+                                      setSelectedRequirement((current) => ({
+                                        ...current,
+                                        [l2Code]: level,
+                                      }))
+                                    }
+                                    type="button"
+                                  >
+                                    {level}
+                                  </button>
+                                ),
+                              )}
+                            </div>
+                            <p className="muted">
+                              {requirementText?.trim()
+                                ? (suggestedRequirement?.label ?? '职级') +
+                                  ' ' +
+                                  requirementLevel +
+                                  '：' +
+                                  requirementText
+                                : '职级要求暂不可用'}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="muted">职级要求暂不可用</p>
+                        )}
+                      </section>
+                      <h3>三级达成路径 / 学习实践项</h3>
+                      {group.is_empty ? (
+                        <p className="muted">
+                          暂无三级达成路径，当前无可评估项
+                        </p>
+                      ) : (
+                        <table
+                          className={s.table}
+                          data-testid="assessment-table"
+                        >
+                          <thead>
+                            <tr>
+                              <th>三级达成路径 / 学习实践项</th>
+                              <th>当前掌握度</th>
+                              <th>标准目标</th>
+                              <th>个人调整</th>
+                              <th>最终目标</th>
+                              <th>Gap</th>
+                              <th>优先级</th>
+                              <th>计划候选</th>
+                              <th>依据</th>
+                              <th title="L3 建议起始阶段，不是岗位职级要求">
+                                建议起始阶段
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((detail) => {
+                              const index = details.indexOf(detail)
+                              const target = effectiveTarget(detail)
+                              const gap =
+                                detail.current_level != null && target != null
+                                  ? Math.max(target - detail.current_level, 0)
+                                  : null
+                              const reason = unfilledReason(detail)
+                              const applicable = isApplicableDetail(detail)
+                              const adjustable =
+                                applicable &&
+                                detail.standard_target_level != null &&
+                                !detail.target_compatibility_error
+                              const inherited =
+                                detail.inherited_from_assessment_id != null
+                              const updated =
+                                inherited && isInheritedUpdate(detail)
+                              return (
+                                <Fragment key={detail.id}>
+                                  <tr
+                                    id={`row-${detail.id}`}
+                                    tabIndex={-1}
+                                    className={
+                                      gap && gap > 0 ? s.rowGap : undefined
+                                    }
+                                  >
+                                    <td>
+                                      <strong>
+                                        {detail.l3_name ?? detail.l3_code}
+                                      </strong>
+                                      <small className={s.l3name}>
+                                        {detail.l3_code}
+                                      </small>
+                                      {!isFilled(detail) && reason && (
+                                        <span className={s.reasonTag}>
+                                          {reason}
+                                        </span>
                                       )}
-                                    </>
-                                  ) : (
-                                    '不适用'
-                                  )}
-                                </td>
-                                <td>
-                                  <label className="checkbox">
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`申请调整 ${detail.l3_code}`}
-                                      checked={detail.target_adjusted ?? false}
-                                      disabled={!editable || !adjustable}
-                                      onChange={(event) =>
-                                        updateDetail(index, {
-                                          target_adjusted: event.target.checked,
-                                          adjusted_target_level: event.target
-                                            .checked
-                                            ? (detail.adjusted_target_level ??
-                                              detail.standard_target_level ??
-                                              null)
-                                            : null,
-                                          target_adjustment_reason: event.target
-                                            .checked
-                                            ? (detail.target_adjustment_reason ??
-                                              '')
-                                            : null,
-                                        })
-                                      }
-                                    />
-                                    调整
-                                  </label>
-                                  {detail.target_adjusted && adjustable && (
-                                    <div className={s.adjustmentEditor}>
+                                      {inherited && (
+                                        <span className={s.inheritanceTag}>
+                                          {updated
+                                            ? '本次已更新'
+                                            : '沿用上次评估'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td>
                                       {levelSelect(
-                                        detail.adjusted_target_level ?? null,
+                                        detail.current_level,
                                         (value) =>
                                           updateDetail(index, {
-                                            adjusted_target_level: value,
+                                            current_level: value,
                                           }),
-                                        !editable,
-                                        `调整目标 ${detail.l3_code}`,
+                                        !editable || !applicable,
+                                        `当前等级 ${detail.l3_code}`,
                                       )}
+                                    </td>
+                                    <td title="标准目标等级 1–5">
+                                      {applicable ? (
+                                        <>
+                                          标准{' '}
+                                          {detail.standard_target_level ??
+                                            detail.target_level ??
+                                            '—'}
+                                          {detail.target_snapshot_source ===
+                                            'legacy_preserved' && (
+                                            <small className={s.snapshotTag}>
+                                              历史保留
+                                            </small>
+                                          )}
+                                        </>
+                                      ) : (
+                                        '不适用'
+                                      )}
+                                    </td>
+                                    <td>
+                                      <label className="checkbox">
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`申请调整 ${detail.l3_code}`}
+                                          checked={
+                                            detail.target_adjusted ?? false
+                                          }
+                                          disabled={!editable || !adjustable}
+                                          onChange={(event) =>
+                                            updateDetail(index, {
+                                              target_adjusted:
+                                                event.target.checked,
+                                              adjusted_target_level: event
+                                                .target.checked
+                                                ? (detail.adjusted_target_level ??
+                                                  detail.standard_target_level ??
+                                                  null)
+                                                : null,
+                                              target_adjustment_reason: event
+                                                .target.checked
+                                                ? (detail.target_adjustment_reason ??
+                                                  '')
+                                                : null,
+                                            })
+                                          }
+                                        />
+                                        调整
+                                      </label>
+                                      {detail.target_adjusted && adjustable && (
+                                        <div className={s.adjustmentEditor}>
+                                          {levelSelect(
+                                            detail.adjusted_target_level ??
+                                              null,
+                                            (value) =>
+                                              updateDetail(index, {
+                                                adjusted_target_level: value,
+                                              }),
+                                            !editable,
+                                            `调整目标 ${detail.l3_code}`,
+                                          )}
+                                          <input
+                                            aria-label={`调整原因 ${detail.l3_code}`}
+                                            value={
+                                              detail.target_adjustment_reason ??
+                                              ''
+                                            }
+                                            placeholder="填写调整原因"
+                                            onChange={(event) =>
+                                              updateDetail(index, {
+                                                target_adjustment_reason:
+                                                  event.target.value,
+                                              })
+                                            }
+                                            disabled={!editable}
+                                          />
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td>{target ?? '—'}</td>
+                                    <td className={s.gapCell}>{gap ?? '—'}</td>
+                                    <td>
+                                      {gap == null ? '未评估' : priority(gap)}
+                                    </td>
+                                    <td>
                                       <input
-                                        aria-label={`调整原因 ${detail.l3_code}`}
-                                        value={
-                                          detail.target_adjustment_reason ?? ''
+                                        type="checkbox"
+                                        aria-label={`计划候选 ${detail.l3_code}`}
+                                        checked={detail.plan_candidate ?? false}
+                                        disabled={
+                                          !editable ||
+                                          !applicable ||
+                                          detail.current_level == null ||
+                                          target == null ||
+                                          (gap != null && gap <= 0) ||
+                                          Boolean(reason)
                                         }
-                                        placeholder="填写调整原因"
                                         onChange={(event) =>
                                           updateDetail(index, {
-                                            target_adjustment_reason:
-                                              event.target.value,
+                                            plan_candidate:
+                                              event.target.checked,
                                           })
                                         }
-                                        disabled={!editable}
                                       />
-                                    </div>
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className={s.inlineBtn}
+                                        onClick={() => {
+                                          setEditingId(detail.id ?? null)
+                                          setEditingText(
+                                            detail.evidence_note ?? '',
+                                          )
+                                        }}
+                                        disabled={!editable}
+                                      >
+                                        {detail.evidence_note?.trim()
+                                          ? '编辑'
+                                          : '填写'}
+                                      </button>
+                                    </td>
+                                    <td>
+                                      {detail.recommended_start_level ?? '—'}
+                                    </td>
+                                  </tr>
+                                  {editingId === detail.id && editable && (
+                                    <tr className={s.evidenceRow}>
+                                      <td colSpan={10}>
+                                        <textarea
+                                          autoFocus
+                                          value={editingText}
+                                          onChange={(event) =>
+                                            setEditingText(event.target.value)
+                                          }
+                                          placeholder="自评依据…"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setEvidence(index, editingText)
+                                          }
+                                        >
+                                          确认依据
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingId(null)}
+                                        >
+                                          取消
+                                        </button>
+                                      </td>
+                                    </tr>
                                   )}
-                                </td>
-                                <td>{target ?? '—'}</td>
-                                <td className={s.gapCell}>{gap ?? '—'}</td>
-                                <td>
-                                  {gap == null ? '未评估' : priority(gap)}
-                                </td>
-                                <td>
-                                  <input
-                                    type="checkbox"
-                                    aria-label={`计划候选 ${detail.l3_code}`}
-                                    checked={detail.plan_candidate ?? false}
-                                    disabled={
-                                      !editable ||
-                                      !applicable ||
-                                      detail.current_level == null ||
-                                      target == null ||
-                                      (gap != null && gap <= 0) ||
-                                      Boolean(reason)
-                                    }
-                                    onChange={(event) =>
-                                      updateDetail(index, {
-                                        plan_candidate: event.target.checked,
-                                      })
-                                    }
-                                  />
-                                </td>
-                                <td>
-                                  <button
-                                    type="button"
-                                    className={s.inlineBtn}
-                                    onClick={() => {
-                                      setEditingId(detail.id ?? null)
-                                      setEditingText(detail.evidence_note ?? '')
-                                    }}
-                                    disabled={!editable}
-                                  >
-                                    {detail.evidence_note?.trim()
-                                      ? '编辑'
-                                      : '填写'}
-                                  </button>
-                                </td>
-                                <td>{detail.recommended_start_level ?? '—'}</td>
-                              </tr>
-                              {editingId === detail.id && editable && (
-                                <tr className={s.evidenceRow}>
-                                  <td colSpan={10}>
-                                    <textarea
-                                      autoFocus
-                                      value={editingText}
-                                      onChange={(event) =>
-                                        setEditingText(event.target.value)
-                                      }
-                                      placeholder="自评依据…"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setEvidence(index, editingText)
-                                      }
-                                    >
-                                      确认依据
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingId(null)}
-                                    >
-                                      取消
-                                    </button>
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                                </Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </>
                   )}
                 </div>
               )

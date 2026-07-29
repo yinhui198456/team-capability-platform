@@ -25,6 +25,13 @@ test.describe('成长档案', () => {
     await expect(page.getByText('计划学习时长')).toBeVisible()
     await expect(kpiRegion.getByText('实际学习时长')).toBeVisible()
     await expect(page.getByText('计划项完成率')).toBeVisible()
+    await expect(
+      page
+        .getByText(
+          'P01-L2A · Data Infra 产品体系认知 → P01-L2A-L3A · TDC / TDH / ArgoDB / TDS 产品定位',
+        )
+        .first(),
+    ).toBeVisible()
   })
 
   test('Buddy 查看负责成员档案并切换成员', async ({ page }) => {

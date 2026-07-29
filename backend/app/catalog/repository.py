@@ -35,6 +35,78 @@ def _unmatched_materials(materials_text: str, resource_codes: set[str]) -> list[
     return []
 
 
+def get_l3_contexts(
+    connection: psycopg.Connection, l3_codes: list[str]
+) -> dict[str, dict[str, object | None]]:
+    """Return current catalog context keyed by the caller's original L3 code."""
+    requested = list(dict.fromkeys(l3_codes))
+    contexts: dict[str, dict[str, object | None]] = {
+        code: {
+            "l1_code": None,
+            "l1_name": None,
+            "l2_code": None,
+            "l2_name": None,
+            "l3_code": code,
+            "l3_name": None,
+            "l3_recommended_start_level": None,
+            "l3_materials_text": None,
+            "l3_expected_output": None,
+            "l3_estimated_hours": None,
+            "l3_output_type": None,
+            "l3_notes": None,
+        }
+        for code in requested
+    }
+    if not requested:
+        return contexts
+
+    lookup_to_requested: dict[str, list[str]] = {}
+    for code in requested:
+        for lookup_code in {
+            code,
+            code.replace("-", "."),
+            code.replace(".", "-"),
+        }:
+            lookup_to_requested.setdefault(lookup_code, []).append(code)
+
+    rows = _fetchall(
+        connection,
+        """
+        SELECT l3.code, l3.name, l3.recommended_start_level,
+               l3.materials_text, l3.expected_output, l3.estimated_hours,
+               l3.output_type, l3.notes,
+               l2.code AS l2_code, l2.name AS l2_name,
+               l1.code AS l1_code, l1.name AS l1_name
+        FROM capability_node AS l3
+        JOIN capability_node AS l2 ON l2.id = l3.parent_node_id
+        JOIN capability_node AS l1 ON l1.id = l2.parent_node_id
+        WHERE l3.node_type = 'L3' AND l3.code = ANY(%s)
+        ORDER BY l3.id
+        """,
+        (list(lookup_to_requested),),
+    )
+    for row in rows:
+        for requested_code in lookup_to_requested[str(row["code"])]:
+            if contexts[requested_code]["l3_name"] is not None:
+                continue
+            contexts[requested_code].update(
+                {
+                    "l1_code": row["l1_code"],
+                    "l1_name": row["l1_name"],
+                    "l2_code": row["l2_code"],
+                    "l2_name": row["l2_name"],
+                    "l3_name": row["name"],
+                    "l3_recommended_start_level": row["recommended_start_level"],
+                    "l3_materials_text": row["materials_text"],
+                    "l3_expected_output": row["expected_output"],
+                    "l3_estimated_hours": row["estimated_hours"],
+                    "l3_output_type": row["output_type"],
+                    "l3_notes": row["notes"],
+                }
+            )
+    return contexts
+
+
 def catalog_is_empty(connection: psycopg.Connection) -> bool:
     return connection.execute(
         "SELECT NOT EXISTS (SELECT 1 FROM capability_model)"
@@ -65,9 +137,7 @@ def get_capability_model(
     l1_rows = _fetchall(
         connection,
         f"""
-        SELECT id, code, name, l1_category, enabled,
-               p4_description, p5_description, p6_description,
-               p7_description, p8_description
+        SELECT id, code, name, l1_category, overview, enabled
         FROM capability_node
         WHERE model_id = (SELECT id FROM capability_model ORDER BY id LIMIT 1)
           AND node_type = 'L1'
@@ -83,7 +153,9 @@ def get_capability_model(
     l2_rows = _fetchall(
         connection,
         """
-        SELECT id, parent_node_id, code, name
+        SELECT id, parent_node_id, code, name,
+               p4_description, p5_description, p6_description,
+               p7_description, p8_description
         FROM capability_node
         WHERE node_type = 'L2' AND parent_node_id = ANY(%s)
         ORDER BY sort_order
@@ -95,7 +167,7 @@ def get_capability_model(
         connection,
         """
         SELECT id, parent_node_id, code, name, recommended_start_level,
-               materials_text, expected_output, estimated_hours
+               materials_text, expected_output, estimated_hours, output_type, notes
         FROM capability_node
         WHERE node_type = 'L3' AND parent_node_id = ANY(%s)
         ORDER BY sort_order
@@ -147,6 +219,8 @@ def get_capability_model(
                 "materials_text": row["materials_text"],
                 "expected_output": row["expected_output"],
                 "estimated_hours": row["estimated_hours"],
+                "output_type": row["output_type"],
+                "notes": row["notes"],
                 "standard_target_overrides": overrides_by_node[row["id"]],
                 "resources": resources,
                 "unmatched_materials": _unmatched_materials(
@@ -161,6 +235,11 @@ def get_capability_model(
             {
                 "code": row["code"],
                 "name": row["name"],
+                "p4_description": row["p4_description"],
+                "p5_description": row["p5_description"],
+                "p6_description": row["p6_description"],
+                "p7_description": row["p7_description"],
+                "p8_description": row["p8_description"],
                 "children": l3_by_l2[row["id"]],
             }
         )
@@ -169,12 +248,8 @@ def get_capability_model(
             "code": row["code"],
             "name": row["name"],
             "category": row["l1_category"],
+            "overview": row["overview"],
             "enabled": row["enabled"],
-            "p4_description": row["p4_description"],
-            "p5_description": row["p5_description"],
-            "p6_description": row["p6_description"],
-            "p7_description": row["p7_description"],
-            "p8_description": row["p8_description"],
             "children": l2_by_l1[row["id"]],
         }
         for row in l1_rows
@@ -218,7 +293,7 @@ def list_learning_resources(
                count(DISTINCT link.node_id) AS l3_count
         FROM learning_resource AS resource
         LEFT JOIN capability_node_resource AS link ON link.resource_id = resource.id
-        WHERE {' AND '.join(filters)}
+        WHERE {" AND ".join(filters)}
         GROUP BY resource.id
         ORDER BY resource.material_code
         """,
@@ -266,9 +341,22 @@ _L3_ONLY_FIELDS = (
     "materials_text",
     "expected_output",
     "estimated_hours",
+    "output_type",
+    "notes",
     "resource_codes",
     "standard_target_overrides",
 )
+_L1_FIELDS = {"name", "enabled", "overview"}
+_L2_FIELDS = {
+    "name",
+    "enabled",
+    "p4_description",
+    "p5_description",
+    "p6_description",
+    "p7_description",
+    "p8_description",
+}
+_L3_FIELDS = {"name", "enabled", *_L3_ONLY_FIELDS}
 
 
 def get_capability_node(
@@ -277,10 +365,12 @@ def get_capability_node(
     node = _fetchone(
         connection,
         """
-        SELECT id, node_type, code, name, l1_category, enabled,
+        SELECT id, node_type, code, name, l1_category, overview, enabled,
                p4_description, p5_description, p6_description,
                p7_description, p8_description,
-               recommended_start_level, materials_text, expected_output, estimated_hours
+               recommended_start_level, materials_text, expected_output,
+               estimated_hours,
+               output_type, notes
         FROM capability_node
         WHERE code = %s
         """,
@@ -296,11 +386,7 @@ def get_capability_node(
             "name": node["name"],
             "category": node["l1_category"],
             "enabled": node["enabled"],
-            "p4_description": node["p4_description"],
-            "p5_description": node["p5_description"],
-            "p6_description": node["p6_description"],
-            "p7_description": node["p7_description"],
-            "p8_description": node["p8_description"],
+            "overview": node["overview"],
         }
     if node_type == "L2":
         return {
@@ -343,15 +429,12 @@ def get_capability_node(
         "code": node["code"],
         "name": node["name"],
         "enabled": node["enabled"],
-        "p4_description": node["p4_description"],
-        "p5_description": node["p5_description"],
-        "p6_description": node["p6_description"],
-        "p7_description": node["p7_description"],
-        "p8_description": node["p8_description"],
         "recommended_start_level": node["recommended_start_level"],
         "materials_text": node["materials_text"],
         "expected_output": node["expected_output"],
         "estimated_hours": node["estimated_hours"],
+        "output_type": node["output_type"],
+        "notes": node["notes"],
         "standard_target_overrides": standard_target_overrides,
         "resources": resources,
         "unmatched_materials": _unmatched_materials(
@@ -414,10 +497,16 @@ def update_capability_node(
         return None
 
     node_type = node["node_type"]
-    if node_type != "L3":
-        for field in _L3_ONLY_FIELDS:
-            if field in data:
-                raise ValueError(f"{field} is only allowed on L3 nodes")
+    allowed_fields = {
+        "L1": _L1_FIELDS,
+        "L2": _L2_FIELDS,
+        "L3": _L3_FIELDS,
+    }[node_type]
+    invalid_fields = set(data) - allowed_fields
+    if invalid_fields:
+        raise ValueError(
+            f"invalid fields for {node_type}: {', '.join(sorted(invalid_fields))}"
+        )
 
     standard_target_overrides: dict[str, int | None] | None = None
     if node_type == "L3" and (
@@ -465,24 +554,9 @@ def update_capability_node(
                 + ", ".join(below_start)
             )
 
-    scalar_fields = [
-        "name",
-        "enabled",
-        "p4_description",
-        "p5_description",
-        "p6_description",
-        "p7_description",
-        "p8_description",
-    ]
-    if node_type == "L3":
-        scalar_fields.extend(
-            [
-                "recommended_start_level",
-                "materials_text",
-                "expected_output",
-                "estimated_hours",
-            ]
-        )
+    scalar_fields = sorted(
+        allowed_fields - {"resource_codes", "standard_target_overrides"}
+    )
 
     updates = []
     parameters: list[object] = []
@@ -497,7 +571,7 @@ def update_capability_node(
             connection.execute(
                 f"""
                 UPDATE capability_node
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE code = %s
                 """,
                 parameters,
@@ -622,7 +696,7 @@ def update_learning_resource(
             connection.execute(
                 f"""
                 UPDATE learning_resource
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE material_code = %s
                 """,
                 parameters,

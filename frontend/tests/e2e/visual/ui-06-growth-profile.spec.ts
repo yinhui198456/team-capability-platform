@@ -70,14 +70,18 @@ for (const viewport of VIEWPORTS) {
           .getByText('实际 5 小时'),
       ).toBeVisible()
 
-      // Fixture exposes real workbook L3 names alongside the test codes
+      // Fixture exposes the complete L2/L3 context alongside test codes.
       await expect(
         page
-          .getByText('TDC / TDH / ArgoDB / TDS 产品定位（P01-L2A-L3A）')
+          .getByText(
+            'P01-L2A · Data Infra 产品体系认知 → P01-L2A-L3A · TDC / TDH / ArgoDB / TDS 产品定位',
+          )
           .first(),
       ).toBeVisible()
       await expect(
-        page.getByText('常用办公工具基础（C01-L2A-L3A）').first(),
+        page
+          .getByText('C01-L2A · 办公效率标准 → C01-L2A-L3A · 常用办公工具基础')
+          .first(),
       ).toBeVisible()
 
       // Below-fold DOM verification: scroll to the learning-task region and

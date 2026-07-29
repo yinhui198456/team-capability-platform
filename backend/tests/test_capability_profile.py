@@ -422,16 +422,20 @@ def test_member_views_own_profile_with_aggregation(
     assert len(body["annual_plan"]["items"]) == 1
     item = body["annual_plan"]["items"][0]
     assert item["l3_code"] == "P01-L2A-L3A"
+    assert item["l2_code"] == "P01-L2A"
+    assert item["l3_name"] == "Leaf"
 
     task = item["learning_task"]
     assert task is not None
     assert task["l3_code"] == "P01-L2A-L3A"
+    assert task["l2_code"] == "P01-L2A"
     assert len(task["progress_logs"]) == 1
     assert task["progress_logs"][0]["actual_hours"] == 5
 
     assert len(task["evidences"]) == 1
     evidence = task["evidences"][0]
     assert evidence["status"] == "已归档"
+    assert evidence["l2_code"] == "P01-L2A"
     assert evidence["review"] is not None
     assert evidence["review"]["conclusion"] == "通过"
 
@@ -581,6 +585,9 @@ def test_planned_hours_aggregated_by_plan_year(
     assert status == 200
     assert body is not None
     assert body["statistics"]["total_planned_hours"] == 10
+    assert body["statistics"]["total_planned_hours_min"] == 10
+    assert body["statistics"]["total_planned_hours_max"] == 10
+    assert body["statistics"]["total_planned_hours_has_unparsed"] is False
 
 
 def test_cross_year_hours_filtered_by_record_date(

@@ -363,12 +363,23 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert "P01-L2A-L3A" in items_by_code
     assert "P01-L2A-L3B" in items_by_code
     item = items_by_code["P01-L2A-L3A"]
+    assert item["l1_code"] == "P01"
+    assert item["l2_code"] == "P01-L2A"
+    assert item["l2_name"] is not None
+    assert item["l3_name"] is not None
     assert item["current_level"] == 2
     assert item["target_level"] == 4
     assert item["priority"] == "中"
     assert item["learning_material"] == "test materials"
     assert item["expected_output"] == "test output"
     assert item["estimated_hours"] == "10"
+    assert item["estimated_hours_parsed"] == {
+        "raw": "10",
+        "min_hours": 10.0,
+        "max_hours": 10.0,
+        "is_valid": True,
+        "is_range": False,
+    }
     assert item["status"] == "未开始"
     assert item["target_month"] is None
 
@@ -378,6 +389,10 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert status == 200
     assert {task["plan_item_id"] for task in tasks} == {item["id"] for item in items}
     assert {task["status"] for task in tasks} == {"未开始"}
+    assert (
+        next(task for task in tasks if task["l3_code"] == "P01-L2A-L3A")["l2_code"]
+        == "P01-L2A"
+    )
 
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
@@ -385,6 +400,12 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert status == 200
     assert plan is not None
     assert plan["year"] == 2026
+    assert plan["estimated_hours_summary"] == {
+        "min_hours": 10.0,
+        "max_hours": 10.0,
+        "has_values": True,
+        "has_unparsed": False,
+    }
     assert plan["status"] == "制定中"
     assert len(plan["items"]) == 2
 
@@ -399,6 +420,60 @@ def test_generate_creates_plan_items_and_is_idempotent(
     )
     assert status == 200
     assert len(tasks) == 2
+
+
+def test_generate_plan_item_parses_hour_suffix_ranges(
+    planning_schema: psycopg.Connection,
+) -> None:
+    member_id = _create_test_user(planning_schema, "member_range", ["Member"])
+    buddy_id = _create_test_user(planning_schema, "buddy_range", ["Buddy"])
+    create_buddy_relationship(planning_schema, member_id, buddy_id)
+    _ensure_l3_node(planning_schema, "P01-L2A-L3A", estimated_hours="4–6h")
+    planning_schema.commit()
+
+    assessment_id = _create_and_submit_assessment(planning_schema, "member_range")
+    _approve_assessment(planning_schema, assessment_id, "buddy_range")
+
+    member_cookies = _login(planning_schema, "member_range")
+    status, gaps, _ = _request(
+        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
+    )
+    assert status == 200
+    assert len(gaps) == 2
+    status, _, _ = _request(
+        "POST",
+        "/api/planning/growth-goals",
+        {"gap_id": gaps[0]["id"]},
+        cookies=member_cookies,
+    )
+    assert status == 200
+
+    status, result, _ = _request(
+        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
+    )
+    assert status == 200
+    assert result["created"] == 1
+    item = result["items"][0]
+    assert item["estimated_hours"] == "4–6h"
+    assert item["estimated_hours_parsed"] == {
+        "raw": "4–6h",
+        "min_hours": 4.0,
+        "max_hours": 6.0,
+        "is_valid": True,
+        "is_range": True,
+    }
+
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
+    )
+    assert status == 200
+    assert plan is not None
+    assert plan["estimated_hours_summary"] == {
+        "min_hours": 4.0,
+        "max_hours": 6.0,
+        "has_values": True,
+        "has_unparsed": False,
+    }
 
 
 def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(

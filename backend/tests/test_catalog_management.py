@@ -284,12 +284,12 @@ class TestUpdateCapabilityNode:
             "/api/capability-model/nodes/P01.01.01",
             {
                 "name": "Updated L3 Name",
-                "p4_description": "P4 updated",
-                "p5_description": "P5 updated",
                 "recommended_start_level": "P5",
                 "materials_text": "P01-M001",
                 "expected_output": "updated output",
                 "estimated_hours": "10h",
+                "output_type": "测试输出",
+                "notes": "测试备注",
             },
             cookies={SESSION_COOKIE: leader_cookie},
         )
@@ -297,10 +297,11 @@ class TestUpdateCapabilityNode:
         assert status == 200
         assert body["code"] == "P01.01.01"
         assert body["name"] == "Updated L3 Name"
-        assert body["p4_description"] == "P4 updated"
+        assert "p4_description" not in body
         assert body["recommended_start_level"] == "P5"
+        assert body["output_type"] == "测试输出"
 
-    def test_leader_updates_domain_description(
+    def test_leader_updates_domain_overview(
         self, connection: psycopg.Connection, leader_cookie: str
     ) -> None:
         status, body = _request(
@@ -309,16 +310,29 @@ class TestUpdateCapabilityNode:
             {
                 "name": "Data Infra 能力",
                 "enabled": True,
-                "p4_description": "Domain P4",
-                "p8_description": "Domain P8",
+                "overview": "更新后的一级概述",
             },
             cookies={SESSION_COOKIE: leader_cookie},
         )
 
         assert status == 200
         assert body["code"] == "P01"
-        assert body["p4_description"] == "Domain P4"
-        assert body["p8_description"] == "Domain P8"
+        assert body["overview"] == "更新后的一级概述"
+
+    def test_node_type_field_whitelist_rejects_cross_level_fields(
+        self, connection: psycopg.Connection, leader_cookie: str
+    ) -> None:
+        cookie = {SESSION_COOKIE: leader_cookie}
+        for code, body in (
+            ("P01", {"p4_description": "not L1"}),
+            ("P01.01", {"estimated_hours": "4–6"}),
+            ("P01.01.01", {"p4_description": "not L3"}),
+        ):
+            status, response = _request(
+                "PUT", f"/api/capability-model/nodes/{code}", body, cookies=cookie
+            )
+            assert status == 422
+            assert "invalid fields" in response["detail"]
 
     def test_leader_replaces_l3_resource_links(
         self, connection: psycopg.Connection, leader_cookie: str
