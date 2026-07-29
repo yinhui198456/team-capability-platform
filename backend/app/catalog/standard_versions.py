@@ -38,8 +38,7 @@ def _version(
         SELECT id, model_id, version_no, label, status, revision, based_on_version_id,
                change_summary, created_at, published_at, archived_at
         FROM capability_standard_version WHERE id = %s
-        """
-        + suffix,
+        """ + suffix,
         (version_id,),
     ).fetchone()
     if row is None:
@@ -364,6 +363,7 @@ def update_matrix(
         version = _require_draft(connection, version_id, expected_revision)
         model_id = int(version[1])
         validated: list[tuple[int, str, str, bool, int | None]] = []
+        seen_identities: set[tuple[int, str]] = set()
         for item in changes:
             node_id = item.get("l3_node_id")
             level = item.get("job_level")
@@ -384,6 +384,14 @@ def update_matrix(
                     raise StandardVersionError(
                         "invalid_matrix_item", "invalid applicable/target pair"
                     )
+            identity = (int(node_id), str(level))
+            if identity in seen_identities:
+                raise StandardVersionError(
+                    "duplicate_matrix_cell",
+                    "duplicate matrix cell in request",
+                    [{"l3_node_id": int(node_id), "job_level": str(level)}],
+                )
+            seen_identities.add(identity)
             node = connection.execute(
                 """
                 SELECT n.code FROM capability_node n
@@ -482,7 +490,7 @@ def update_matrix(
             "edited",
             int(version[5]),
             new_revision,
-            {"updated_count": len(validated)},
+            {"updated_count": len(pending)},
         )
         return {
             "version_id": version_id,
@@ -490,6 +498,9 @@ def update_matrix(
             "updated_count": len(pending),
             "noop": False,
         }
+
+
+_ADJACENT_COPY = {"P4": "P5", "P5": "P6", "P6": "P7", "P7": "P8"}
 
 
 def copy_previous_level(
@@ -501,24 +512,22 @@ def copy_previous_level(
     to_level: str,
     l3_node_ids: Iterable[int],
 ) -> dict[str, object]:
-    if (
-        from_level not in JOB_LEVELS
-        or to_level not in JOB_LEVELS
-        or from_level == to_level
-    ):
+    if from_level not in _ADJACENT_COPY or _ADJACENT_COPY[from_level] != to_level:
         raise StandardVersionError(
-            "invalid_copy_levels", "invalid copy source or destination level"
+            "invalid_copy_levels",
+            "only adjacent copy is allowed: P4→P5, P5→P6, P6→P7, P7→P8",
         )
     node_ids = sorted(set(l3_node_ids))
-    if not node_ids:
-        return {
-            "version_id": version_id,
-            "revision": expected_revision,
-            "updated_count": 0,
-            "noop": True,
-        }
     with connection.transaction():
         version = _require_draft(connection, version_id, expected_revision)
+        model_id = int(version[1])
+        if not node_ids:
+            return {
+                "version_id": version_id,
+                "revision": int(version[5]),
+                "updated_count": 0,
+                "noop": True,
+            }
         rows = connection.execute(
             """
             SELECT l3_node_id, applicable, target_level
@@ -531,7 +540,8 @@ def copy_previous_level(
             raise StandardVersionError(
                 "matrix_source_missing", "source matrix cells are missing"
             )
-        targets = {
+        # Collect existing targets to detect true noop
+        existing_targets = {
             int(node_id): (bool(applicable), target)
             for node_id, applicable, target in connection.execute(
                 """
@@ -542,24 +552,64 @@ def copy_previous_level(
                 (version_id, to_level, node_ids),
             ).fetchall()
         }
-        if all(
-            targets.get(int(node_id)) == (bool(applicable), target)
-            for node_id, applicable, target in rows
-        ):
+        # Build source map
+        source_map: dict[int, tuple[bool, int | None]] = {}
+        for node_id, applicable, target in rows:
+            source_map[int(node_id)] = (bool(applicable), target)
+        # Determine actually-changed cells
+        pending: list[tuple[int, bool, int | None]] = []
+        for node_id, applicable, target in rows:
+            nid = int(node_id)
+            existing = existing_targets.get(nid)
+            if existing != (bool(applicable), target):
+                pending.append((nid, bool(applicable), target))
+        if not pending:
             return {
                 "version_id": version_id,
                 "revision": int(version[5]),
                 "updated_count": 0,
                 "noop": True,
             }
-        for node_id, applicable, target in rows:
+        for node_id, applicable, target in pending:
+            context = connection.execute(
+                """
+                SELECT l1.code, l1.name, l2.code, l2.name, l3.code, l3.name
+                FROM capability_node l3
+                JOIN capability_node l2 ON l2.id = l3.parent_node_id
+                JOIN capability_node l1 ON l1.id = l2.parent_node_id
+                WHERE l3.id = %s AND l3.model_id = %s
+                """,
+                (node_id, model_id),
+            ).fetchone()
+            if context is None:
+                raise StandardVersionError(
+                    "matrix_identity_mismatch",
+                    "matrix L3 identity mismatch",
+                    [{"l3_node_id": node_id}],
+                )
             connection.execute(
                 """
-                UPDATE capability_standard_item
-                SET applicable=%s,target_level=%s,source='explicit',updated_by=%s,updated_at=NOW()
-                WHERE version_id=%s AND l3_node_id=%s AND job_level=%s
+                INSERT INTO capability_standard_item
+                    (version_id, l3_node_id, l1_code, l1_name, l2_code, l2_name,
+                     l3_code, l3_name, job_level, applicable, target_level, source,
+                     updated_by, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'copied', %s, NOW())
+                ON CONFLICT (version_id, l3_node_id, job_level) DO UPDATE SET
+                    applicable = EXCLUDED.applicable,
+                    target_level = EXCLUDED.target_level,
+                    source = 'copied',
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = EXCLUDED.updated_at
                 """,
-                (applicable, target, actor_user_id, version_id, node_id, to_level),
+                (
+                    version_id,
+                    node_id,
+                    *context,
+                    to_level,
+                    applicable,
+                    target,
+                    actor_user_id,
+                ),
             )
         new_revision = int(version[5]) + 1
         connection.execute(
@@ -576,13 +626,13 @@ def copy_previous_level(
             {
                 "copied_from": from_level,
                 "copied_to": to_level,
-                "l3_count": len(node_ids),
+                "updated_count": len(pending),
             },
         )
         return {
             "version_id": version_id,
             "revision": new_revision,
-            "updated_count": len(node_ids),
+            "updated_count": len(pending),
             "noop": False,
         }
 
@@ -652,12 +702,20 @@ def reconcile_catalog(
                 "drift": drift,
             }
         removed = [row["l3_node_id"] for row in drift["disabled_l3"]]
+        changed = drift["renamed_or_moved_l3"]
+        # True noop: only added_enabled_l3, nothing to actually reconcile
+        if not removed and not changed:
+            return {
+                "version_id": version_id,
+                "revision": int(version[5]),
+                "noop": True,
+                "drift": drift,
+            }
         if removed:
             connection.execute(
                 "DELETE FROM capability_standard_item WHERE version_id=%s AND l3_node_id=ANY(%s)",
                 (version_id, removed),
             )
-        changed = drift["renamed_or_moved_l3"]
         for change in changed:
             node_id = change["l3_node_id"]
             row = connection.execute(

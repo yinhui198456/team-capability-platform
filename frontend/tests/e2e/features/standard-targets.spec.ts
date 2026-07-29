@@ -349,7 +349,7 @@ test.describe('capability standard targets', () => {
       'P01.01.01 · P8',
     )
     await page.getByRole('button', { name: '预览发布' }).click()
-    await page.getByRole('button', { name: '复制 P7 → P8' }).click()
+    await page.getByRole('button', { name: /复制 P7 → P8/ }).click()
     page.once('dialog', (dialog) => dialog.accept())
     await page.getByRole('button', { name: '检查并发布' }).click()
     await expect(page.getByRole('alert')).toContainText(

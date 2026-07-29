@@ -14,6 +14,7 @@ from app.catalog.schema import create_catalog_schema
 from app.catalog.standard_versions import (
     StandardVersionError,
     catalog_drift,
+    copy_previous_level,
     create_draft,
     publish_version,
     read_matrix,
@@ -66,13 +67,11 @@ def _legacy_schema(connection) -> tuple[int, int]:
     create_access_schema(connection)
     create_catalog_schema(connection)
     create_assessment_schema(connection)
-    model_id = connection.execute(
-        """
+    model_id = connection.execute("""
         INSERT INTO capability_model (code, name, version, source_workbook, source_sheet, source_row)
         VALUES ('versioning-model', 'Versioning model', '1', 'test.xlsx', 'model', 1)
         RETURNING id
-        """
-    ).fetchone()[0]
+        """).fetchone()[0]
     l1_id = connection.execute(
         """
         INSERT INTO capability_node (model_id, node_type, code, name, sort_order, source_workbook, source_sheet, source_row)
@@ -102,13 +101,11 @@ def _legacy_schema(connection) -> tuple[int, int]:
 
 def _additional_model(connection) -> tuple[int, int]:
     """Add a second model after v0005 to prove model-local baseline selection."""
-    model_id = connection.execute(
-        """
+    model_id = connection.execute("""
         INSERT INTO capability_model (code, name, version, source_workbook, source_sheet, source_row)
         VALUES ('versioning-model-b', 'Versioning model B', '1', 'test.xlsx', 'model', 10)
         RETURNING id
-        """
-    ).fetchone()[0]
+        """).fetchone()[0]
     l1_id = connection.execute(
         """INSERT INTO capability_node
            (model_id,node_type,code,name,sort_order,source_workbook,source_sheet,source_row)
@@ -150,15 +147,10 @@ def test_v0005_rejects_legacy_override_that_no_longer_matches_v1(connection) -> 
         with connection.transaction():
             upgrade_v0005(connection)
 
-    assert (
-        connection.execute(
-            """
+    assert connection.execute("""
         SELECT COUNT(*) FROM information_schema.columns
         WHERE table_name = 'capability_standard_item' AND column_name = 'l3_node_id'
-        """
-        ).fetchone()[0]
-        == 0
-    )
+        """).fetchone()[0] == 0
     assert (
         connection.execute(
             "SELECT COUNT(*) FROM capability_standard_version WHERE model_id = %s",
@@ -405,7 +397,16 @@ def test_added_enabled_l3_stays_missing_after_reconcile_and_blocks_publish(
     reconciled = reconcile_catalog(
         connection, int(draft["id"]), actor_id, int(draft["revision"])
     )
+    # added-only reconcile is true noop — no revision bump, no audit write
+    assert reconciled["noop"] is True
+    assert reconciled["revision"] == draft["revision"]
     assert reconciled["drift"]["has_drift"] is True
+    # second reconcile must also be true noop (idempotent)
+    reconciled2 = reconcile_catalog(
+        connection, int(draft["id"]), actor_id, int(draft["revision"])
+    )
+    assert reconciled2["noop"] is True
+    assert reconciled2["revision"] == draft["revision"]
     with pytest.raises(StandardVersionError, match="catalog drift"):
         publish_version(
             connection, int(draft["id"]), actor_id, int(reconciled["revision"])
@@ -618,4 +619,437 @@ def test_publish_audit_failure_rolls_back_all_version_changes(
             "SELECT COUNT(*) FROM capability_standard_version_audit"
         ).fetchone()[0]
         == audit_count
+    )
+
+
+def test_copy_previous_level_empty_ids_validates_draft_and_revision(
+    connection,
+) -> None:
+    """Empty l3_node_ids must still lock version and validate revision."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+
+    # stale revision rejected even with empty node_ids
+    with pytest.raises(StandardVersionError, match="revision conflict"):
+        copy_previous_level(
+            connection,
+            int(draft["id"]),
+            actor_id,
+            999,
+            "P7",
+            "P8",
+            [],
+        )
+
+    # valid revision with empty returns true noop
+    result = copy_previous_level(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        int(draft["revision"]),
+        "P7",
+        "P8",
+        [],
+    )
+    assert result["noop"] is True
+    assert result["revision"] == draft["revision"]
+    assert result["updated_count"] == 0
+
+
+def test_copy_previous_level_rejects_non_adjacent_422(connection) -> None:
+    """Only adjacent copy allowed: P4→P5, P5→P6, P6→P7, P7→P8."""
+    errors: list[str] = []
+    for from_level, to_level in [
+        ("P4", "P6"),
+        ("P4", "P7"),
+        ("P4", "P8"),
+        ("P5", "P7"),
+        ("P6", "P4"),
+        ("P7", "P5"),
+        ("P8", "P7"),
+    ]:
+        try:
+            copy_previous_level(connection, 1, 1, 1, from_level, to_level, [])  # type: ignore[arg-type]
+            errors.append(f"{from_level}→{to_level} not rejected")
+        except StandardVersionError:
+            pass
+    assert not errors, "; ".join(errors)
+
+
+def test_copy_previous_level_missing_source_whole_batch_zero_write(
+    connection,
+) -> None:
+    """Any source missing → zero write, no revision bump."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    before_count = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_item WHERE version_id=%s AND job_level='P8'",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+    before_revision = int(draft["revision"])
+    before_audit = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+
+    with pytest.raises(StandardVersionError, match="source matrix cells are missing"):
+        copy_previous_level(
+            connection,
+            int(draft["id"]),
+            actor_id,
+            before_revision,
+            "P7",
+            "P8",
+            [l3_id, 999999],  # second node_id doesn't exist
+        )
+
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_item WHERE version_id=%s AND job_level='P8'",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_count
+    )
+    assert (
+        connection.execute(
+            "SELECT revision FROM capability_standard_version WHERE id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_revision
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_audit
+    )
+
+
+def test_copy_previous_level_true_noop_identical(connection) -> None:
+    """When source and target are identical, true noop — no revision, no audit."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    # First copy: P5 → P6 (real change)
+    result = copy_previous_level(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        int(draft["revision"]),
+        "P5",
+        "P6",
+        [l3_id],
+    )
+    assert result["noop"] is False
+    rev_after = result["revision"]
+
+    # Second copy: same source → same target (should be true noop)
+    result2 = copy_previous_level(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        rev_after,
+        "P5",
+        "P6",
+        [l3_id],
+    )
+    assert result2["noop"] is True
+    assert result2["revision"] == rev_after
+    assert result2["updated_count"] == 0
+
+
+def test_copy_previous_level_inserts_missing_target_cell(connection) -> None:
+    """When target cell is missing from matrix, INSERT it with stable identity."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    # Delete P8 rows so target is missing
+    connection.execute(
+        "DELETE FROM capability_standard_item WHERE version_id=%s AND job_level='P8'",
+        (draft["id"],),
+    )
+    connection.commit()
+    after_delete_rev = int(
+        connection.execute(
+            "SELECT revision FROM capability_standard_version WHERE id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+
+    result = copy_previous_level(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        after_delete_rev,
+        "P7",
+        "P8",
+        [l3_id],
+    )
+    assert result["noop"] is False
+    assert result["updated_count"] == 1
+    # Verify P8 cell exists with correct data from P7
+    p7 = connection.execute(
+        "SELECT applicable, target_level FROM capability_standard_item WHERE version_id=%s AND l3_node_id=%s AND job_level='P7'",
+        (draft["id"], l3_id),
+    ).fetchone()
+    p8 = connection.execute(
+        "SELECT applicable, target_level, source FROM capability_standard_item WHERE version_id=%s AND l3_node_id=%s AND job_level='P8'",
+        (draft["id"], l3_id),
+    ).fetchone()
+    assert p8 is not None
+    assert p8[0] == p7[0]
+    assert p8[1] == p7[1]
+    assert p8[2] == "copied"
+
+
+def test_update_matrix_rejects_duplicate_cell_422(connection) -> None:
+    """Duplicate l3_node_id + job_level within request → structured 422, zero write."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    before_revision = int(draft["revision"])
+    before_audit = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+
+    error = None
+    try:
+        update_matrix(
+            connection,
+            int(draft["id"]),
+            actor_id,
+            before_revision,
+            [
+                {
+                    "l3_node_id": l3_id,
+                    "job_level": "P4",
+                    "applicable": True,
+                    "target_level": 3,
+                },
+                {
+                    "l3_node_id": l3_id,
+                    "job_level": "P4",
+                    "applicable": True,
+                    "target_level": 5,
+                },
+            ],
+        )
+    except StandardVersionError as exc:
+        error = exc
+    assert error is not None
+    assert error.code == "duplicate_matrix_cell"
+    assert len(error.issues) == 1
+    assert error.issues[0]["l3_node_id"] == l3_id
+    # Zero write
+    assert (
+        connection.execute(
+            "SELECT revision FROM capability_standard_version WHERE id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_revision
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_audit
+    )
+
+
+def test_update_matrix_partial_noop_mixed_audit_count(connection) -> None:
+    """Mixed batch: some noop + some changed → audit uses actual pending count."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    # Get current P4 and P5 values
+    p4 = connection.execute(
+        "SELECT applicable, target_level FROM capability_standard_item WHERE version_id=%s AND l3_node_id=%s AND job_level='P4'",
+        (draft["id"], l3_id),
+    ).fetchone()
+    result = update_matrix(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        int(draft["revision"]),
+        [
+            {
+                "l3_node_id": l3_id,
+                "job_level": "P4",
+                "applicable": p4[0],  # same as current → noop
+                "target_level": p4[1],
+            },
+            {
+                "l3_node_id": l3_id,
+                "job_level": "P5",
+                "applicable": True,
+                "target_level": 4,  # changed
+            },
+        ],
+    )
+    # Only 1 item actually changed
+    assert result["updated_count"] == 1
+    assert result["noop"] is False
+
+    # Verify audit recorded updated_count=1
+    audit = connection.execute(
+        "SELECT summary FROM capability_standard_version_audit WHERE version_id=%s ORDER BY id DESC LIMIT 1",
+        (draft["id"],),
+    ).fetchone()
+    assert audit is not None
+    assert audit[0]["updated_count"] == 1
+
+
+def test_update_matrix_all_noop_no_audit(connection) -> None:
+    """All items unchanged → true noop, no revision, no audit."""
+    model_id, l3_id = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    before_revision = int(draft["revision"])
+    before_audit = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+    p4 = connection.execute(
+        "SELECT applicable, target_level FROM capability_standard_item WHERE version_id=%s AND l3_node_id=%s AND job_level='P4'",
+        (draft["id"], l3_id),
+    ).fetchone()
+
+    result = update_matrix(
+        connection,
+        int(draft["id"]),
+        actor_id,
+        before_revision,
+        [
+            {
+                "l3_node_id": l3_id,
+                "job_level": "P4",
+                "applicable": p4[0],
+                "target_level": p4[1],
+            }
+        ],
+    )
+    assert result["noop"] is True
+    assert result["revision"] == before_revision
+    assert result["updated_count"] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_audit
+    )
+
+
+def test_reconcile_consecutive_added_only_both_noop(connection) -> None:
+    """Consecutive added-only reconcile calls both return true noop."""
+    model_id, _ = _legacy_schema(connection)
+    upgrade_v0004(connection)
+    upgrade_v0005(connection)
+    connection.commit()
+    actor_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'versioning-leader'"
+        ).fetchone()[0]
+    )
+    draft = create_draft(connection, model_id, actor_id, None)
+    parent_id = int(
+        connection.execute(
+            "SELECT id FROM capability_node WHERE model_id=%s AND node_type='L2'",
+            (model_id,),
+        ).fetchone()[0]
+    )
+    connection.execute(
+        """INSERT INTO capability_node
+        (model_id,parent_node_id,node_type,code,name,sort_order,recommended_start_level,
+         source_workbook,source_sheet,source_row)
+        VALUES (%s,%s,'L3','P01.01.02','New path',2,'P4','test.xlsx','model',5)""",
+        (model_id, parent_id),
+    )
+    connection.commit()
+
+    before_audit = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+    )
+
+    r1 = reconcile_catalog(
+        connection, int(draft["id"]), actor_id, int(draft["revision"])
+    )
+    assert r1["noop"] is True
+    assert r1["revision"] == draft["revision"]
+
+    r2 = reconcile_catalog(connection, int(draft["id"]), actor_id, int(r1["revision"]))
+    assert r2["noop"] is True
+    assert r2["revision"] == draft["revision"]
+
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM capability_standard_version_audit WHERE version_id=%s",
+            (draft["id"],),
+        ).fetchone()[0]
+        == before_audit
     )

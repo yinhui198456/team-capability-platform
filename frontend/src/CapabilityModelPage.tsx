@@ -1163,31 +1163,52 @@ export function CapabilityModelPage() {
               <>
                 <p className={styles.standardVersion}>
                   {publishedStandard.version.label} · 已发布
+                  {publishedStandard.version.published_at
+                    ? ` · ${new Date(publishedStandard.version.published_at).toLocaleDateString('zh-CN')}`
+                    : ''}
                 </p>
                 <div className={styles.standardCells}>
                   {['P4', 'P5', 'P6', 'P7', 'P8'].map((level) => {
                     const item = selectedStandardItems.find(
                       (candidate) => candidate.job_level === level,
                     )
-                    const highlighted =
-                      user?.roles.includes('Member') &&
-                      user.target_level === level
+                    const isMember = user?.roles.includes('Member')
+                    const isCurrent = isMember && user?.current_level === level
+                    const isTarget = isMember && user?.target_level === level
+                    const hasItem = item && item.applicable
                     return (
                       <div
                         className={
-                          highlighted ? styles.standardCellHighlighted : ''
+                          isCurrent || isTarget
+                            ? styles.standardCellHighlighted
+                            : ''
                         }
                         data-testid={
-                          highlighted ? 'member-standard-highlight' : undefined
+                          isCurrent
+                            ? 'member-current-level'
+                            : isTarget
+                              ? 'member-target-level'
+                              : undefined
                         }
                         key={level}
                       >
-                        <strong>{level}</strong>
-                        <span>
-                          {!item || !item.applicable
-                            ? '不适用'
-                            : `目标掌握度 ${item.target_level} / 5`}
-                        </span>
+                        <strong>
+                          {level}
+                          {isCurrent ? ' 当前' : ''}
+                          {isTarget ? ' 目标' : ''}
+                        </strong>
+                        {!item ? (
+                          <span className="muted">—</span>
+                        ) : !item.applicable ? (
+                          <span>不适用</span>
+                        ) : (
+                          <span>
+                            目标掌握度 {item.target_level} / 5
+                          </span>
+                        )}
+                        {hasItem && (
+                          <small className="muted">来源：{item.source}</small>
+                        )}
                       </div>
                     )
                   })}

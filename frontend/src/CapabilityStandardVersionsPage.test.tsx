@@ -127,7 +127,8 @@ describe('CapabilityStandardVersionsPage', () => {
     expect(screen.queryByTestId('standard-l2-P01.01')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
     expect(screen.getByTestId('standard-l2-P01.01')).toBeTruthy()
-    expect(screen.getAllByRole('combobox')).toHaveLength(5)
+    // 5 matrix cell comboboxes + 2 copy-level selectors = 7 total comboboxes
+    expect(screen.getAllByRole('combobox')).toHaveLength(7)
   })
 
   it('writes with L3 node identity and reports a revision conflict precisely', async () => {
@@ -139,7 +140,9 @@ describe('CapabilityStandardVersionsPage', () => {
 
     render(<CapabilityStandardVersionsPage />)
     fireEvent.click(screen.getByRole('button', { name: /P01\.01.*能力标准/ }))
-    fireEvent.change(screen.getAllByRole('combobox')[0], {
+    // comboboxes: [0]=source copy level, [1]=target copy level, [2..6]=P4..P8
+    const matrixCombos = screen.getAllByRole('combobox').slice(2)
+    fireEvent.change(matrixCombos[0], {
       target: { value: '4' },
     })
 
@@ -168,7 +171,7 @@ describe('CapabilityStandardVersionsPage', () => {
     expect(screen.queryByRole('combobox')).toBeNull()
   })
 
-  it('offers validation, preview, copy and abandon controls for a draft', () => {
+  it('offers validation, preview, copy, abandon and reconcile controls for a draft', () => {
     catalogMocks.useMe.mockReturnValue({ isLeader: true, loading: false })
     catalogMocks.useCatalog.mockImplementation(mockedCatalog)
 
@@ -176,7 +179,9 @@ describe('CapabilityStandardVersionsPage', () => {
 
     expect(screen.getByRole('button', { name: '检查草稿' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '预览发布' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '复制 P7 → P8' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /复制 P7 → P8/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: '放弃草稿' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '协调目录' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '检查并发布' })).toBeTruthy()
   })
 })

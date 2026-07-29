@@ -16,6 +16,7 @@ export type ResourceSummary = {
 export type JobLevel = 'P4' | 'P5' | 'P6' | 'P7' | 'P8'
 
 export type L3Node = {
+  id?: number
   code: string
   name: string
   l1_code?: string
@@ -286,6 +287,8 @@ export async function reconcileStandardCatalog(
 export async function copyStandardPreviousLevel(
   versionId: number,
   expectedRevision: number,
+  fromLevel: JobLevel,
+  toLevel: JobLevel,
   l3NodeIds: number[],
 ) {
   return request<{ revision: number }>(
@@ -293,8 +296,8 @@ export async function copyStandardPreviousLevel(
     { method: 'POST' },
     {
       expected_revision: expectedRevision,
-      from_level: 'P7',
-      to_level: 'P8',
+      from_level: fromLevel,
+      to_level: toLevel,
       l3_node_ids: l3NodeIds,
     },
   )
