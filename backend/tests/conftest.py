@@ -8,8 +8,13 @@ from app.settings import settings
 
 TEST_DATABASE = "tcp_test"
 _POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
-TEST_DATABASE_URL = f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:5432/tcp_test"
-ADMIN_DATABASE_URL = f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:5432/postgres"
+_POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
+TEST_DATABASE_URL = (
+    f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:{_POSTGRES_PORT}/tcp_test"
+)
+ADMIN_DATABASE_URL = (
+    f"postgresql://tcp:tcp_dev_only@{_POSTGRES_HOST}:{_POSTGRES_PORT}/postgres"
+)
 TEST_DATABASE_LOCK_KEY = 651042
 # ponytail: global PostgreSQL advisory lock on tcp_test blocks cross-process conflicts.
 # Serial test sessions are a known ceiling; isolate per worker only if throughput caps.
@@ -26,6 +31,8 @@ def _ensure_test_database() -> None:
 
 def _clear_catalog(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS capability_standard_item")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_version")
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -35,6 +42,7 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
 
 def _clear_assessment(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS assessment_draft_target_repair_audit")
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
@@ -76,8 +84,8 @@ def isolated_test_database() -> Iterator[None]:
 @pytest.fixture
 def connection() -> Iterator[psycopg.Connection]:
     with psycopg.connect(TEST_DATABASE_URL) as test_connection:
-        _clear_catalog(test_connection)
         _clear_assessment(test_connection)
+        _clear_catalog(test_connection)
         # Recreate empty catalog tables so assessment JOINs don't fail.
         from app.catalog.schema import create_catalog_schema
 

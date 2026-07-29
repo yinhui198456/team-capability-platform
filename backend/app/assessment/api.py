@@ -5,16 +5,19 @@ from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
     AssessmentValidationError,
+    DraftTargetRepairError,
     batch_fill_l2,
     create_assessment_draft,
     get_assessment,
     get_assessment_review_summary_for_buddy,
     get_assessment_reviews,
+    get_draft_target_repair_preview,
     get_gap,
     get_pending_reviews_for_buddy,
     list_gaps,
     list_member_assessments,
     patch_assessment_draft,
+    repair_draft_target_snapshots,
     save_assessment_draft,
     submit_assessment,
     submit_assessment_review,
@@ -54,12 +57,30 @@ class SubmitRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+class DraftTargetRepairRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
 class SubmitReviewRequest(BaseModel):
     conclusion: str = Field(pattern=r"^(认可|建议调整)$")
     feedback: str | None = None
 
 
 assessment_router = APIRouter(prefix="/api/assessments")
+
+
+def _draft_repair_error(exc: DraftTargetRepairError) -> HTTPException:
+    status_code = {
+        "assessment_not_found": status.HTTP_404_NOT_FOUND,
+        "draft_repair_forbidden": status.HTTP_403_FORBIDDEN,
+        "draft_repair_state_conflict": status.HTTP_409_CONFLICT,
+        "draft_repair_revision_conflict": status.HTTP_409_CONFLICT,
+        "draft_repair_has_unrepairable_details": (status.HTTP_422_UNPROCESSABLE_ENTITY),
+    }.get(exc.code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": str(exc)},
+    )
 
 
 @assessment_router.post("")
@@ -206,6 +227,64 @@ def get_assessment_detail(
             detail="insufficient permissions",
         )
     return assessment
+
+
+@assessment_router.get("/{assessment_id}/draft-target-repair/preview")
+def preview_draft_target_repair(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "assessment_not_found", "message": "assessment not found"},
+        )
+    if not policies.can_repair_draft(user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "draft_repair_forbidden",
+                "message": "insufficient permissions",
+            },
+        )
+    try:
+        return get_draft_target_repair_preview(connection, assessment_id)
+    except DraftTargetRepairError as exc:
+        raise _draft_repair_error(exc) from exc
+
+
+@assessment_router.post("/{assessment_id}/draft-target-repair")
+def execute_draft_target_repair(
+    assessment_id: int,
+    request: DraftTargetRepairRequest,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "assessment_not_found", "message": "assessment not found"},
+        )
+    if not policies.can_repair_draft(user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "draft_repair_forbidden",
+                "message": "insufficient permissions",
+            },
+        )
+    try:
+        return repair_draft_target_snapshots(
+            connection,
+            assessment_id,
+            int(user["id"]),
+            expected_revision=request.expected_revision,
+        )
+    except DraftTargetRepairError as exc:
+        raise _draft_repair_error(exc) from exc
 
 
 @assessment_router.put("/{assessment_id}/draft")

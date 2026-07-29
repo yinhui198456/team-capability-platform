@@ -12,6 +12,12 @@ def can_member_edit(user: dict[str, object], assessment: dict[str, object]) -> b
     return user["id"] == assessment["member_id"]
 
 
+def can_repair_draft(user: dict[str, object], assessment: dict[str, object]) -> bool:
+    if "Admin" in user["roles"]:
+        return True
+    return "Member" in user["roles"] and can_member_edit(user, assessment)
+
+
 def can_buddy_view(
     connection: psycopg.Connection,
     user: dict[str, object],

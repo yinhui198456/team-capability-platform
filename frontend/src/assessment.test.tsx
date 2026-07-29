@@ -784,6 +784,180 @@ describe('AssessmentGapPage', () => {
   })
 })
 
+describe('Assessment draft target repair', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('previews once, confirms once, and reloads the repaired assessment', async () => {
+    const incompatible = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          target_compatibility_error: '历史明细缺少目标快照',
+          standard_target_level: null,
+          target_level: 3,
+        },
+      ],
+    })
+    const repaired = mockDraft({ revision: 2 })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...incompatible, details: undefined },
+    ])
+    const getAssessment = vi
+      .spyOn(assessmentApi, 'getAssessment')
+      .mockResolvedValueOnce(incompatible)
+      .mockResolvedValueOnce(repaired)
+    const preview = vi
+      .spyOn(assessmentApi, 'getDraftTargetRepairPreview')
+      .mockResolvedValue({
+        assessment_id: 7,
+        status: '草稿',
+        revision: 1,
+        member_current_level: {
+          value: 'P4',
+          source: 'repair_time_user_profile',
+        },
+        member_target_level: {
+          value: 'P5',
+          source: 'repair_time_user_profile',
+        },
+        standard_version: {
+          id: 1,
+          version_no: 1,
+          status: '已发布',
+          source: 'legacy_derived',
+        },
+        summary: {
+          rebuild_count: 1,
+          preserve_count: 0,
+          not_applicable_count: 0,
+          unrepairable_count: 0,
+          actionable_count: 1,
+        },
+        details: [{ l3_code: 'P01.01.01', action: 'rebuild', reason: null }],
+        unrepairable_details: [],
+      })
+    const execute = vi
+      .spyOn(assessmentApi, 'repairDraftTargetSnapshots')
+      .mockResolvedValue({
+        result: 'repaired',
+        assessment_id: 7,
+        old_revision: 1,
+        revision: 2,
+        audit_id: 9,
+        summary: {
+          rebuild_count: 1,
+          preserve_count: 0,
+          not_applicable_count: 0,
+          unrepairable_count: 0,
+          actionable_count: 1,
+        },
+        unrepairable_details: [],
+      })
+
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('alert', { name: '草稿目标快照需要兼容修复' })
+    expect(screen.queryByText('需兼容修复')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '查看修复影响' }))
+    await waitFor(() => {
+      expect(screen.getByTestId('draft-repair-preview').textContent).toContain(
+        '将重建 1 条明细',
+      )
+    })
+    expect(preview).toHaveBeenCalledWith(7)
+    expect(execute).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '确认修复草稿' }))
+    await waitFor(() => {
+      expect(execute).toHaveBeenCalledWith(7, 1)
+    })
+    expect(getAssessment).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    [409, '版本冲突', '草稿已被更新，请重新加载后查看修复影响。'],
+    [403, '无权限执行修复', '无权限执行修复'],
+    [422, '存在无法安全修复的明细', '存在无法安全修复的明细'],
+    [undefined, '网络不可用', '网络不可用'],
+  ])(
+    'keeps the draft visible when repair returns %s',
+    async (status, message, expectedMessage) => {
+      const incompatible = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            target_compatibility_error: '历史明细缺少目标快照',
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+        { ...incompatible, details: undefined },
+      ])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(incompatible)
+      vi.spyOn(assessmentApi, 'getDraftTargetRepairPreview').mockResolvedValue({
+        assessment_id: 7,
+        status: '草稿',
+        revision: 1,
+        member_current_level: {
+          value: 'P4',
+          source: 'assessment_snapshot',
+        },
+        member_target_level: {
+          value: 'P5',
+          source: 'assessment_snapshot',
+        },
+        standard_version: {
+          id: 1,
+          version_no: 1,
+          status: '已发布',
+          source: 'legacy_derived',
+        },
+        summary: {
+          rebuild_count: 1,
+          preserve_count: 0,
+          not_applicable_count: 0,
+          unrepairable_count: 0,
+          actionable_count: 1,
+        },
+        details: [{ l3_code: 'P01.01.01', action: 'rebuild', reason: null }],
+        unrepairable_details: [],
+      })
+      const error = Object.assign(new Error(message), {
+        status,
+        detail: status === 409 ? undefined : { message },
+      })
+      vi.spyOn(assessmentApi, 'repairDraftTargetSnapshots').mockRejectedValue(
+        error,
+      )
+
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('alert', { name: '草稿目标快照需要兼容修复' })
+      fireEvent.click(screen.getByRole('button', { name: '查看修复影响' }))
+      await screen.findByRole('button', { name: '确认修复草稿' })
+      fireEvent.click(screen.getByRole('button', { name: '确认修复草稿' }))
+
+      expect(await screen.findByText(expectedMessage)).toBeTruthy()
+      expect(
+        screen.getByRole('alert', { name: '草稿目标快照需要兼容修复' }),
+      ).toBeTruthy()
+      expect(screen.getByRole('button', { name: '确认修复草稿' })).toBeTruthy()
+    },
+  )
+})
+
 describe('AssessmentHistoryPage', () => {
   beforeEach(() => {
     stubAuthAndYear()
