@@ -9,8 +9,8 @@ import pytest
 from app.access.repository import create_user
 from app.access.schema import create_access_schema
 from app.assessment.schema import create_assessment_schema
-from app.catalog.schema import create_catalog_schema
 from app.catalog import standard_versions
+from app.catalog.schema import create_catalog_schema
 from app.catalog.standard_versions import (
     StandardVersionError,
     catalog_drift,
