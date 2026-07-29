@@ -584,9 +584,9 @@ def test_invalid_legacy_baseline_rolls_back_the_entire_migration(
         run_migrations(connection)
     assert (
         connection.execute(
-            "SELECT count(*) FROM capability_standard_version"
+            "SELECT to_regclass('capability_standard_version')"
         ).fetchone()[0]
-        == 0
+        is None
     )
     assert (
         connection.execute("SELECT to_regclass('schema_migration')").fetchone()[0]
