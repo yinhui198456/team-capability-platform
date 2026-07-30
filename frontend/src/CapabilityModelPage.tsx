@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
 } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import styles from './CapabilityModelPage.module.css'
 
@@ -23,18 +24,8 @@ import {
   type CapabilityModel,
   type Resource,
   type ResourceDetail,
-  type JobLevel,
+  type PublishedStandardMatrix,
 } from './catalog'
-
-const JOB_LEVELS: JobLevel[] = ['P4', 'P5', 'P6', 'P7', 'P8']
-
-function earliestJobLevel(value?: string | null): number | null {
-  const match = value?.match(/^\s*P([4-8])(?:\s*[-–—]\s*P([4-8]))?\s*$/)
-  if (!match) return null
-  const start = Number(match[1])
-  const end = Number(match[2] ?? match[1])
-  return end >= start ? start : null
-}
 
 type EditableNode = {
   code: string
@@ -54,7 +45,6 @@ type EditableNode = {
   output_type?: string | null
   notes?: string | null
   resource_codes?: string[]
-  standard_target_overrides?: Partial<Record<JobLevel, number | null>>
 }
 
 function textField(
@@ -110,10 +100,6 @@ function NodeEditForm({
   const [resourceCodes, setResourceCodes] = useState<Iterable<string>>(
     new Set(node.resource_codes ?? []),
   )
-  const [standardTargets, setStandardTargets] = useState<
-    Partial<Record<JobLevel, number | null>>
-  >(node.standard_target_overrides ?? {})
-  const [standardTargetNotice, setStandardTargetNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -141,7 +127,6 @@ function NodeEditForm({
       body.output_type = outputType || null
       body.notes = notes || null
       body.resource_codes = Array.from(resourceCodes)
-      body.standard_target_overrides = standardTargets
     }
     try {
       await updateCapabilityNode(node.code, body)
@@ -158,36 +143,6 @@ function NodeEditForm({
     if (next.has(code)) next.delete(code)
     else next.add(code)
     setResourceCodes(next)
-  }
-
-  function updateStandardTarget(level: JobLevel, value: string) {
-    setStandardTargets((current) => {
-      const next = { ...current }
-      if (value === '__default__') delete next[level]
-      else next[level] = value === '__na__' ? null : Number(value)
-      return next
-    })
-  }
-
-  function updateRecommended(value: string) {
-    setRecommended(value)
-    const earliest = earliestJobLevel(value)
-    const removedLevels = JOB_LEVELS.filter(
-      (level) =>
-        earliest !== null &&
-        Number(level.slice(1)) < earliest &&
-        Object.prototype.hasOwnProperty.call(standardTargets, level),
-    )
-    if (removedLevels.length === 0) {
-      setStandardTargetNotice('')
-      return
-    }
-    setStandardTargets((current) => {
-      const next = { ...current }
-      for (const level of removedLevels) delete next[level]
-      return next
-    })
-    setStandardTargetNotice(`已移除不适用的覆盖项：${removedLevels.join('、')}`)
   }
 
   return (
@@ -221,53 +176,7 @@ function NodeEditForm({
       )}
       {isL3 && (
         <>
-          {textField('建议起始等级', recommended, updateRecommended)}
-          {standardTargetNotice && (
-            <p className="warning" role="status">
-              {standardTargetNotice}
-            </p>
-          )}
-          <fieldset className="link-set">
-            <legend>P4–P8 标准目标覆盖</legend>
-            <p className="muted">
-              未设置时使用默认映射；不适用与使用默认是不同状态。
-            </p>
-            {JOB_LEVELS.map((level) => {
-              const earliest = earliestJobLevel(recommended)
-              const disabled =
-                earliest === null || Number(level.slice(1)) < earliest
-              const configured = Object.prototype.hasOwnProperty.call(
-                standardTargets,
-                level,
-              )
-              const value = !configured
-                ? '__default__'
-                : standardTargets[level] === null
-                  ? '__na__'
-                  : String(standardTargets[level])
-              return (
-                <label key={level}>
-                  {level} 标准目标
-                  <select
-                    aria-label={`${level} 标准目标`}
-                    value={value}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      updateStandardTarget(level, event.target.value)
-                    }
-                  >
-                    <option value="__default__">使用默认</option>
-                    {[1, 2, 3, 4, 5].map((target) => (
-                      <option key={target} value={target}>
-                        {target}
-                      </option>
-                    ))}
-                    <option value="__na__">不适用</option>
-                  </select>
-                </label>
-              )
-            })}
-          </fieldset>
+          {textField('建议起始等级', recommended, setRecommended)}
           {textField('原始学习材料', materialsText, setMaterialsText)}
           {textField('预期输出', expectedOutput, setExpectedOutput)}
           {textField('预计时长', estimatedHours, setEstimatedHours)}
@@ -557,8 +466,14 @@ export function CapabilityModelPage() {
     error,
     refresh: refreshModel,
   } = useCatalog<CapabilityModel>('/api/capability-model')
+  const { data: publishedStandard } = useCatalog<PublishedStandardMatrix>(
+    model?.id
+      ? `/api/capability-standard-versions/published?model_id=${model.id}`
+      : null,
+  )
   const { data: resources } = useCatalog<Resource[]>('/api/learning-resources')
-  const { isLeader } = useMe()
+  const { isLeader, user } = useMe()
+  const navigate = useNavigate()
   const [activeDomain, setActiveDomain] = useState('')
   const [expandedL2ByDomain, setExpandedL2ByDomain] = useState<
     Record<string, Set<string>>
@@ -599,6 +514,16 @@ export function CapabilityModelPage() {
     : new Set<string>()
   const selectedContext = findSelectedL3Context(model, selectedL3 ?? '')
   const selectedNode = selectedContext?.l3
+  const selectedNodeId = selectedNode?.id
+  const selectedStandardItems = useMemo(
+    () =>
+      selectedNodeId !== undefined
+        ? (publishedStandard?.items?.filter(
+            (item) => item.l3_node_id === selectedNodeId,
+          ) ?? [])
+        : [],
+    [publishedStandard, selectedNodeId],
+  )
 
   useEffect(() => {
     if (!activeDomain && domains[0]) setActiveDomain(domains[0].code)
@@ -758,6 +683,15 @@ export function CapabilityModelPage() {
           )}
         </div>
         <div className={styles.headerActions}>
+          {isLeader && (
+            <button
+              type="button"
+              className={styles.standardVersionsAction}
+              onClick={() => navigate('/capability/standards')}
+            >
+              标准版本维护
+            </button>
+          )}
           <label className={styles.searchLabel} htmlFor="capability-search">
             搜索能力地图
           </label>
@@ -1128,8 +1062,6 @@ export function CapabilityModelPage() {
                                         resource_codes: l3.resources.map(
                                           (resource) => resource.material_code,
                                         ),
-                                        standard_target_overrides:
-                                          l3.standard_target_overrides,
                                       })
                                     }
                                   >
@@ -1225,6 +1157,70 @@ export function CapabilityModelPage() {
               </div>
             )}
           </dl>
+          <section
+            className={styles.drawerSection}
+            data-testid="published-standard"
+          >
+            <h3>当前已发布职级标准</h3>
+            {!publishedStandard ? (
+              <p>已发布职级标准暂不可用。</p>
+            ) : selectedNodeId === undefined ? (
+              <p>标准数据不可用（缺少稳定节点身份）。</p>
+            ) : (
+              <>
+                <p className={styles.standardVersion}>
+                  {publishedStandard.version.label} · 已发布
+                  {publishedStandard.version.published_at
+                    ? ` · ${new Date(publishedStandard.version.published_at).toLocaleDateString('zh-CN')}`
+                    : ''}
+                </p>
+                <div className={styles.standardCells}>
+                  {['P4', 'P5', 'P6', 'P7', 'P8'].map((level) => {
+                    const item = selectedStandardItems.find(
+                      (candidate) => candidate.job_level === level,
+                    )
+                    const isMember = user?.roles.includes('Member')
+                    const isCurrent = isMember && user?.current_level === level
+                    const isTarget = isMember && user?.target_level === level
+                    const hasItem = item && item.applicable
+                    return (
+                      <div
+                        className={
+                          isCurrent || isTarget
+                            ? styles.standardCellHighlighted
+                            : ''
+                        }
+                        data-testid={
+                          isCurrent
+                            ? 'member-current-level'
+                            : isTarget
+                              ? 'member-target-level'
+                              : undefined
+                        }
+                        key={level}
+                      >
+                        <strong>
+                          {level}
+                          {isCurrent ? ' 当前' : ''}
+                          {isTarget ? ' 目标' : ''}
+                        </strong>
+                        {!item ? (
+                          <span className="muted">—</span>
+                        ) : !item.applicable ? (
+                          <span>不适用</span>
+                        ) : (
+                          <span>目标掌握度 {item.target_level} / 5</span>
+                        )}
+                        {hasItem && (
+                          <small className="muted">来源：{item.source}</small>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </section>
           <section className={styles.drawerSection}>
             <h3>材料与资源</h3>
             <p>

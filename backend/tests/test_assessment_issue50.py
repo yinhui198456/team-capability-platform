@@ -41,7 +41,8 @@ def _member(connection: psycopg.Connection) -> int:
     user_id = create_user(connection, "issue50-member", "Issue 50 Member", "secret")
     assign_role(connection, user_id, "Member")
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P5' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P4', target_level = 'P5' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id

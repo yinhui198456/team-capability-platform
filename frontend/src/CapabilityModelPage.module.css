@@ -23,6 +23,10 @@
   position: relative;
 }
 
+.standardVersionsAction {
+  margin: 0 0 8px auto;
+}
+
 .searchLabel {
   color: #344054;
   display: block;
@@ -225,6 +229,38 @@
   letter-spacing: 0.08em;
   margin: 0 0 4px;
   text-transform: uppercase;
+}
+
+.standardVersion {
+  color: #667085;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.standardCells {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.standardCellHighlighted {
+  background: #eff8ff;
+  border-color: #2e90fa;
+}
+
+.standardCells div {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px;
+}
+
+.standardCells span {
+  color: #475467;
+  font-size: 12px;
 }
 
 .levelSection {

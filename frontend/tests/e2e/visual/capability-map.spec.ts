@@ -19,6 +19,8 @@ async function mockCapabilityMap(
       username: role,
       full_name: `Issue #52 ${role}`,
       roles: [role === 'leader' ? 'Leader' : 'Member'],
+      current_level: role === 'member' ? 'P4' : null,
+      target_level: role === 'member' ? 'P5' : null,
     }
     await route.fulfill({ status: 200, json: currentUser })
   })
@@ -34,6 +36,29 @@ async function mockCapabilityMap(
   )
   await page.route('**/api/learning-resources**', (route) =>
     route.fulfill({ status: 200, json: [] }),
+  )
+  await page.route('**/api/capability-standard-versions/published**', (route) =>
+    route.fulfill({
+      status: 200,
+      json: {
+        version: {
+          id: 1,
+          model_id: 1,
+          version_no: 1,
+          label: 'Legacy Baseline v1',
+          status: '已发布',
+          published_at: '2026-07-29T00:00:00Z',
+        },
+        items: ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
+          l3_node_id: 1,
+          l3_code: 'P01.01.01',
+          job_level,
+          applicable: true,
+          target_level: index + 1,
+          source: 'legacy_derived',
+        })),
+      },
+    }),
   )
 }
 
@@ -102,6 +127,8 @@ test('capability map Drawer visual evidence 1440x900', async ({ page }) => {
   await page.getByTestId('l2-toggle-P01.01').click()
   await page.getByTestId('l3-row-P01.01.01').click()
   await expect(page.getByRole('dialog', { name: 'P01.01.01' })).toBeVisible()
+  await expect(page.getByTestId('member-target-level')).toContainText('P5')
+  await expect(page.getByTestId('member-current-level')).toContainText('P4')
   await expect(page).toHaveScreenshot('capability-map-drawer-1440x900.png', {
     maxDiffPixelRatio: 0.05,
     fullPage: true,

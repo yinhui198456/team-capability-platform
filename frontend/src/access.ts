@@ -5,6 +5,8 @@ export type User = {
   username: string
   full_name: string
   roles: string[]
+  current_level?: 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | null
+  target_level?: 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | null
   assigned_members?: Array<{
     id: number
     username: string

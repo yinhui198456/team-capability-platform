@@ -211,7 +211,7 @@ def _publish_legacy_baseline(connection: psycopg.Connection, model_id: int) -> N
 
     source_rows = connection.execute(
         """
-        SELECT l1.code, l1.name, l2.code, l2.name, l3.code, l3.name,
+        SELECT l3.id, l1.code, l1.name, l2.code, l2.name, l3.code, l3.name,
                l3.recommended_start_level
         FROM capability_node l3
         JOIN capability_node l2 ON l2.id = l3.parent_node_id
@@ -224,6 +224,7 @@ def _publish_legacy_baseline(connection: psycopg.Connection, model_id: int) -> N
     items: list[tuple[object, ...]] = []
     validation_rows: list[tuple[object, ...]] = []
     for (
+        l3_node_id,
         l1_code,
         l1_name,
         l2_code,
@@ -257,6 +258,7 @@ def _publish_legacy_baseline(connection: psycopg.Connection, model_id: int) -> N
             )
             items.append(
                 (
+                    l3_node_id,
                     l1_code,
                     l1_name,
                     l2_code,
@@ -280,16 +282,36 @@ def _publish_legacy_baseline(connection: psycopg.Connection, model_id: int) -> N
     ).fetchone()
     assert version is not None
     version_id = version[0]
-    with connection.cursor() as cursor:
-        cursor.executemany(
+    has_node_identity = (
+        connection.execute(
             """
-            INSERT INTO capability_standard_item (
-                version_id, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
-                job_level, applicable, target_level, source
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'legacy_derived')
-            """,
-            [(version_id, *item) for item in items],
-        )
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'capability_standard_item' AND column_name = 'l3_node_id'
+        """
+        ).fetchone()
+        is not None
+    )
+    with connection.cursor() as cursor:
+        if has_node_identity:
+            cursor.executemany(
+                """
+                INSERT INTO capability_standard_item (
+                    version_id, l3_node_id, l1_code, l1_name, l2_code, l2_name,
+                    l3_code, l3_name, job_level, applicable, target_level, source
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'legacy_derived')
+                """,
+                [(version_id, *item) for item in items],
+            )
+        else:
+            cursor.executemany(
+                """
+                INSERT INTO capability_standard_item (
+                    version_id, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                    job_level, applicable, target_level, source
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'legacy_derived')
+                """,
+                [(version_id, *item[1:]) for item in items],
+            )
 
 
 def upgrade(connection: psycopg.Connection) -> None:

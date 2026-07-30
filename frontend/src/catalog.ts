@@ -16,6 +16,7 @@ export type ResourceSummary = {
 export type JobLevel = 'P4' | 'P5' | 'P6' | 'P7' | 'P8'
 
 export type L3Node = {
+  id?: number
   code: string
   name: string
   l1_code?: string
@@ -23,7 +24,6 @@ export type L3Node = {
   l2_code?: string
   l2_name?: string
   recommended_start_level: string | null
-  standard_target_overrides?: Partial<Record<JobLevel, number | null>>
   materials_text: string
   expected_output: string | null
   estimated_hours: string | null
@@ -53,9 +53,59 @@ export type Domain = {
 }
 
 export type CapabilityModel = {
+  id?: number
   code: string
   version: string
   domains: Domain[]
+}
+
+export type PublishedStandardMatrix = {
+  version: {
+    id: number
+    model_id: number
+    version_no: number
+    label: string
+    status: '已发布'
+    published_at: string | null
+  }
+  items: Array<{
+    l3_node_id: number
+    l3_code: string
+    job_level: JobLevel
+    applicable: boolean
+    target_level: number | null
+    source: 'legacy_derived' | 'copied' | 'explicit'
+  }>
+}
+
+export type StandardVersion = {
+  id: number
+  model_id: number
+  version_no: number
+  label: string
+  status: '草稿' | '已发布' | '已归档'
+  revision?: number
+  change_summary?: string | null
+  published_at: string | null
+}
+
+export type StandardMatrixItem = {
+  l3_node_id: number
+  l1_code: string
+  l1_name: string
+  l2_code: string
+  l2_name: string
+  l3_code: string
+  l3_name: string
+  job_level: JobLevel
+  applicable: boolean
+  target_level: number | null
+  source: 'legacy_derived' | 'copied' | 'explicit'
+}
+
+export type StandardMatrix = {
+  version: StandardVersion
+  items: StandardMatrixItem[]
 }
 
 export type Resource = {
@@ -186,6 +236,119 @@ export async function updateCapabilityNode(
     `/api/capability-model/nodes/${nodeCode}`,
     { method: 'PUT' },
     body,
+  )
+}
+
+export async function createStandardDraft(
+  modelId: number,
+  changeSummary: string,
+): Promise<StandardVersion> {
+  return request<StandardVersion>(
+    '/api/capability-standard-versions/drafts',
+    { method: 'POST' },
+    {
+      model_id: modelId,
+      change_summary: changeSummary || null,
+    },
+  )
+}
+
+export async function updateStandardMatrix(
+  versionId: number,
+  expectedRevision: number,
+  item: Pick<
+    StandardMatrixItem,
+    'l3_node_id' | 'l3_code' | 'job_level' | 'applicable' | 'target_level'
+  >,
+): Promise<{ revision: number }> {
+  return request(
+    `/api/capability-standard-versions/${versionId}/matrix`,
+    { method: 'PUT' },
+    {
+      expected_revision: expectedRevision,
+      items: [item],
+    },
+  )
+}
+
+export async function reconcileStandardCatalog(
+  versionId: number,
+  expectedRevision: number,
+) {
+  return request(
+    `/api/capability-standard-versions/${versionId}/reconcile-catalog`,
+    { method: 'POST' },
+    {
+      expected_revision: expectedRevision,
+    },
+  )
+}
+
+export async function copyStandardPreviousLevel(
+  versionId: number,
+  expectedRevision: number,
+  fromLevel: JobLevel,
+  toLevel: JobLevel,
+  l3NodeIds: number[],
+) {
+  return request<{ revision: number }>(
+    `/api/capability-standard-versions/${versionId}/copy-previous-level`,
+    { method: 'POST' },
+    {
+      expected_revision: expectedRevision,
+      from_level: fromLevel,
+      to_level: toLevel,
+      l3_node_ids: l3NodeIds,
+    },
+  )
+}
+
+export async function validateStandardVersion(versionId: number) {
+  return request<{
+    valid: boolean
+    issues: Array<{
+      l3_code?: string | null
+      job_level?: string | null
+      message: string
+    }>
+  }>(`/api/capability-standard-versions/${versionId}/validation`)
+}
+
+export async function previewStandardPublish(versionId: number) {
+  return request<{
+    can_publish: boolean
+    validation: {
+      valid: boolean
+      issues: Array<{
+        l3_code?: string | null
+        job_level?: string | null
+        message: string
+      }>
+    }
+  }>(`/api/capability-standard-versions/${versionId}/publish-preview`)
+}
+
+export async function abandonStandardDraft(
+  versionId: number,
+  expectedRevision: number,
+) {
+  return request(
+    `/api/capability-standard-versions/${versionId}/abandon`,
+    { method: 'POST' },
+    { expected_revision: expectedRevision },
+  )
+}
+
+export async function publishStandardVersion(
+  versionId: number,
+  expectedRevision: number,
+) {
+  return request(
+    `/api/capability-standard-versions/${versionId}/publish`,
+    { method: 'POST' },
+    {
+      expected_revision: expectedRevision,
+    },
   )
 }
 

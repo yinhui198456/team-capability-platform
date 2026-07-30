@@ -5,7 +5,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
-from ..access.policies import require_any_role
+from ..access.policies import CurrentUser, require_any_role
 from ..settings import settings
 from .repository import (
     archive_learning_resource,
@@ -15,6 +15,20 @@ from .repository import (
     list_learning_resources,
     update_capability_node,
     update_learning_resource,
+)
+from .standard_versions import (
+    StandardVersionError,
+    abandon_draft,
+    catalog_drift,
+    copy_previous_level,
+    create_draft,
+    list_versions,
+    publish_preview,
+    publish_version,
+    read_matrix,
+    reconcile_catalog,
+    update_matrix,
+    validate_version,
 )
 
 router = APIRouter(prefix="/api")
@@ -38,9 +52,6 @@ class CapabilityNodeUpdate(BaseModel):
     output_type: str | None = None
     notes: str | None = None
     resource_codes: list[str] | None = None
-    standard_target_overrides: (
-        dict[Literal["P4", "P5", "P6", "P7", "P8"], StrictInt | None] | None
-    ) = None
 
 
 class LearningResourceBase(BaseModel):
@@ -78,6 +89,52 @@ class LearningResourceUpdate(BaseModel):
         return value
 
 
+class StandardDraftCreate(BaseModel):
+    model_id: StrictInt
+    change_summary: str | None = None
+
+
+class StandardMatrixItem(BaseModel):
+    l3_node_id: StrictInt
+    l3_code: str | None = None
+    job_level: Literal["P4", "P5", "P6", "P7", "P8"]
+    applicable: bool
+    target_level: StrictInt | None = None
+
+
+class StandardMatrixUpdate(BaseModel):
+    expected_revision: StrictInt
+    items: list[StandardMatrixItem]
+
+
+class StandardRevisionRequest(BaseModel):
+    expected_revision: StrictInt
+
+
+class StandardCopyPreviousLevel(BaseModel):
+    expected_revision: StrictInt
+    from_level: Literal["P4", "P5", "P6", "P7", "P8"]
+    to_level: Literal["P4", "P5", "P6", "P7", "P8"]
+    l3_node_ids: list[StrictInt]
+
+
+def _standard_error(exc: StandardVersionError) -> HTTPException:
+    status_code = (
+        409
+        if exc.code
+        in {
+            "draft_already_exists",
+            "standard_revision_conflict",
+            "standard_version_not_draft",
+        }
+        else 404 if exc.code.endswith("not_found") else 422
+    )
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": str(exc), "issues": exc.issues},
+    )
+
+
 def get_connection() -> Iterator[psycopg.Connection]:
     with psycopg.connect(settings.database_url) as connection:
         yield connection
@@ -111,6 +168,184 @@ def update_node(
     if node is None:
         raise HTTPException(status_code=404, detail="capability node not found")
     return node
+
+
+@router.post(
+    "/capability-standard-versions/drafts", status_code=status.HTTP_201_CREATED
+)
+def create_standard_draft(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    body: StandardDraftCreate,
+) -> object:
+    try:
+        return create_draft(
+            connection, body.model_id, int(user["id"]), body.change_summary
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions")
+def standard_version_history(
+    connection: Connection, user: CurrentUser, model_id: int
+) -> object:
+    try:
+        return list_versions(
+            connection, model_id, include_drafts="Leader" in user["roles"]
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions/published")
+def published_standard_matrix(
+    connection: Connection, _: CurrentUser, model_id: int
+) -> object:
+    try:
+        versions = list_versions(connection, model_id, include_drafts=False)
+        if not versions:
+            raise StandardVersionError(
+                "published_standard_not_found", "published standard not found"
+            )
+        return read_matrix(
+            connection, int(versions[0]["id"]), include_draft_fields=False
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions/{version_id}")
+def standard_matrix(
+    connection: Connection, user: CurrentUser, version_id: int
+) -> object:
+    try:
+        return read_matrix(
+            connection, version_id, include_draft_fields="Leader" in user["roles"]
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions/{version_id}/validation")
+def standard_validation(
+    connection: Connection, _: LeaderRequired, version_id: int
+) -> object:
+    try:
+        return validate_version(connection, version_id)
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions/{version_id}/catalog-drift")
+def standard_catalog_drift(
+    connection: Connection, _: LeaderRequired, version_id: int
+) -> object:
+    try:
+        return catalog_drift(connection, version_id)
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.put("/capability-standard-versions/{version_id}/matrix")
+def standard_matrix_update(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    version_id: int,
+    body: StandardMatrixUpdate,
+) -> object:
+    try:
+        return update_matrix(
+            connection,
+            version_id,
+            int(user["id"]),
+            body.expected_revision,
+            [item.model_dump() for item in body.items],
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.post("/capability-standard-versions/{version_id}/copy-previous-level")
+def standard_copy_previous_level(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    version_id: int,
+    body: StandardCopyPreviousLevel,
+) -> object:
+    try:
+        return copy_previous_level(
+            connection,
+            version_id,
+            int(user["id"]),
+            body.expected_revision,
+            body.from_level,
+            body.to_level,
+            body.l3_node_ids,
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.post("/capability-standard-versions/{version_id}/reconcile-catalog")
+def standard_reconcile(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    version_id: int,
+    body: StandardRevisionRequest,
+) -> object:
+    try:
+        return reconcile_catalog(
+            connection, version_id, int(user["id"]), body.expected_revision
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.get("/capability-standard-versions/{version_id}/publish-preview")
+def standard_publish_preview(
+    connection: Connection, _: LeaderRequired, version_id: int
+) -> object:
+    try:
+        return publish_preview(connection, version_id)
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.post("/capability-standard-versions/{version_id}/publish")
+def standard_publish(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    version_id: int,
+    body: StandardRevisionRequest,
+) -> object:
+    try:
+        return publish_version(
+            connection, version_id, int(user["id"]), body.expected_revision
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
+
+
+@router.post("/capability-standard-versions/{version_id}/abandon")
+def standard_abandon(
+    connection: Connection,
+    user: CurrentUser,
+    _: LeaderRequired,
+    version_id: int,
+    body: StandardRevisionRequest,
+) -> object:
+    try:
+        return abandon_draft(
+            connection, version_id, int(user["id"]), body.expected_revision
+        )
+    except StandardVersionError as exc:
+        raise _standard_error(exc) from exc
 
 
 @router.get("/learning-resources")

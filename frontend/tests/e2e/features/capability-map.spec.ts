@@ -41,6 +41,32 @@ async function mockCapabilityMap(page: Page) {
     }
     await route.fulfill({ status: 200, json: route.request().postDataJSON() })
   })
+  await page.route(
+    '**/api/capability-standard-versions/published?model_id=1',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        json: {
+          version: {
+            id: 1,
+            model_id: 1,
+            version_no: 1,
+            label: 'Legacy Baseline v1',
+            status: '已发布',
+            published_at: '2026-07-29T00:00:00Z',
+          },
+          items: ['P4', 'P5', 'P6', 'P7', 'P8'].map((job_level, index) => ({
+            l3_node_id: 1,
+            l3_code: 'P01.01.01',
+            job_level,
+            applicable: true,
+            target_level: index + 1,
+            source: 'legacy_derived',
+          })),
+        },
+      })
+    },
+  )
   await page.route('**/api/learning-resources**', async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/ISSUE52-M001')) {
@@ -183,6 +209,9 @@ test.describe('Issue #52 capability map', () => {
     await expect(dialog).toContainText('所属能力组P01.01 · P01 能力标准 1')
     await expect(dialog).toContainText('P01.01.01')
     await expect(dialog).toContainText('达成路径')
+    await expect(dialog).toContainText('当前已发布职级标准')
+    await expect(dialog).toContainText('Legacy Baseline v1')
+    await expect(dialog).toContainText('目标掌握度 1 / 5')
     await expect(dialog).not.toContainText('P4 完整描述')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
