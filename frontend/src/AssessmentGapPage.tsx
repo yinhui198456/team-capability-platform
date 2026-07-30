@@ -802,22 +802,19 @@ export function AssessmentGapPage() {
           <div>
             <p className="eyebrow">能力成长 / 能力自评与 Gap</p>
             <h1>能力自评与 Gap 分析</h1>
-            <p className="muted">
+            <p className="muted" data-testid="scope-header">
               {assessment.year} 年度 · 版本 {assessment.version} ·{' '}
               {assessment.status}
+              {assessment.assessment_scope_version
+                ? ` · 当前 ${assessment.member_current_level_snapshot} → 年度目标 ${assessment.member_target_level_snapshot}`
+                : ''}
+              {assessment.standard_version_label
+                ? ` · ${assessment.standard_version_label}`
+                : ''}
+              {assessment.scope_summary
+                ? ` · 适用 ${assessment.scope_summary.total} · 必备 ${assessment.scope_summary.current_required} · 进阶 ${assessment.scope_summary.target_progressive}`
+                : ''}
             </p>
-            {assessment.assessment_scope_version && (
-              <p className="muted" data-testid="scope-header">
-                当前 {assessment.member_current_level_snapshot} → 年度目标{' '}
-                {assessment.member_target_level_snapshot}
-                {assessment.standard_version_label
-                  ? ` · ${assessment.standard_version_label}`
-                  : ''}
-                {assessment.scope_summary
-                  ? ` · 适用 ${assessment.scope_summary.total} · 必备 ${assessment.scope_summary.current_required} · 进阶 ${assessment.scope_summary.target_progressive}`
-                  : ''}
-              </p>
-            )}
           </div>
           <div className="assessment-actions">
             <button type="button" onClick={() => setDrawerOpen(true)}>
