@@ -1,6 +1,7 @@
 import asyncio
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 import psycopg
 import pytest
@@ -105,9 +106,9 @@ async def _asgi_request(
             "http_version": "1.1",
             "method": method,
             "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("utf-8"),
-            "query_string": b"",
+            "path": urlsplit(path).path,
+            "raw_path": urlsplit(path).path.encode("utf-8"),
+            "query_string": urlsplit(path).query.encode("utf-8"),
             "headers": headers,
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
@@ -187,8 +188,17 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
     cookies = _login(connection, username)
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+
+    assert status == 200
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assert body is not None

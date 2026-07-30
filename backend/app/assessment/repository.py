@@ -1,3 +1,4 @@
+import hashlib
 import json
 from typing import Any
 
@@ -5,7 +6,7 @@ import psycopg
 
 from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
-from ..catalog.standard_versions import StandardVersionError, published_matrix_for_model
+from .scope import AssessmentScopeError, compute_assessment_scope
 
 
 class AssessmentValidationError(ValueError):
@@ -580,37 +581,117 @@ def _now(connection: psycopg.Connection) -> Any:
     return connection.execute("SELECT NOW()").fetchone()[0]
 
 
+def _scope_response(
+    scope: dict[str, Any], assessment_id: int, revision: int
+) -> dict[str, Any]:
+    return {
+        "id": assessment_id,
+        "revision": revision,
+        "scope_version": scope["scope_version"],
+        "member_current_level": scope["member_current_level"],
+        "member_target_level": scope["member_target_level"],
+        "standard_version": scope["standard_version"],
+        "summary": scope["summary"],
+        "scope_token": scope["scope_token"],
+    }
+
+
 def create_assessment_draft(
     connection: psycopg.Connection,
     member_id: int,
     year: int,
     assessment_type: str = "年度",
-) -> int:
+    *,
+    scope_token: str,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
     with connection.transaction():
-        member_row = connection.execute(
-            "SELECT current_level, target_level FROM tcp_user WHERE id = %s",
-            (member_id,),
-        ).fetchone()
-        if member_row is None:
-            raise ValueError("member not found")
-        member_current_level, member_target_level = member_row
-        if not _is_job_level(member_current_level):
-            raise ValueError("member current_level is required")
-        if not _is_job_level(member_target_level):
-            raise ValueError("member target_level is required")
-        if int(member_current_level[1:]) > int(member_target_level[1:]):
-            raise ValueError("member current_level cannot exceed target_level")
+        # 1. model lock → 2. member row lock → 3. assessment writes.
         model = connection.execute(
-            "SELECT id FROM capability_model ORDER BY id LIMIT 1"
+            "SELECT id FROM capability_model ORDER BY id LIMIT 1 FOR SHARE"
         ).fetchone()
         if model is None:
-            raise ValueError("capability model not found")
-        try:
-            standard_version_id, capability_rows = published_matrix_for_model(
-                connection, int(model[0]), str(member_target_level)
+            raise AssessmentScopeError(
+                "capability_model_not_found",
+                "capability model not found",
+                status_code=404,
             )
-        except StandardVersionError as exc:
-            raise ValueError(str(exc)) from exc
+        scope = compute_assessment_scope(
+            connection,
+            member_id=member_id,
+            year=year,
+            assessment_type=assessment_type,
+            lock_member=True,
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "year": year,
+                    "assessment_type": assessment_type,
+                    "scope_token": scope_token,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
+        if idempotency_key is not None:
+            existing_key = connection.execute(
+                """
+                SELECT request_fingerprint, response
+                FROM assessment_idempotency_key
+                WHERE member_id = %s AND idempotency_key = %s
+                """,
+                (member_id, idempotency_key),
+            ).fetchone()
+            if existing_key is not None:
+                if str(existing_key[0]) != fingerprint:
+                    raise AssessmentScopeError(
+                        "idempotency_key_reused",
+                        "idempotency key reused with a different request",
+                        status_code=409,
+                    )
+                stored = existing_key[1]
+                if isinstance(stored, str):
+                    stored = json.loads(stored)
+                return stored
+
+        if scope_token != scope["scope_token"]:
+            raise AssessmentScopeError(
+                "assessment_scope_changed",
+                "assessment scope changed since preview",
+                status_code=409,
+                summary={
+                    "member_current_level": scope["member_current_level"],
+                    "member_target_level": scope["member_target_level"],
+                    "standard_version": scope["standard_version"],
+                    "summary": scope["summary"],
+                    "empty_scope": scope["empty_scope"],
+                    "scope_token": scope["scope_token"],
+                },
+            )
+        if scope["empty_scope"]:
+            raise AssessmentScopeError(
+                "assessment_scope_empty",
+                "assessment scope is empty",
+            )
+
+        open_draft = connection.execute(
+            """
+            SELECT id FROM assessment
+            WHERE member_id = %s AND year = %s AND assessment_type = %s
+              AND status IN ('草稿', '建议调整')
+            """,
+            (member_id, year, assessment_type),
+        ).fetchone()
+        if open_draft is not None:
+            raise AssessmentScopeError(
+                "open_draft_exists",
+                "an open assessment already exists",
+                status_code=409,
+                issues=[{"assessment_id": int(open_draft[0])}],
+            )
+
         source = get_latest_approved_assessment_for_member(connection, member_id)
         inherited = {}
         if source is not None:
@@ -625,35 +706,6 @@ def create_assessment_draft(
                     (source["id"],),
                 ).fetchall()
             }
-        snapshots = []
-        for code, applicable, standard_target, standard_source in capability_rows:
-            inherited_row = inherited.get(code)
-            inherited_current = inherited_row[1] if inherited_row else None
-            inherited_evidence = inherited_row[2] if inherited_row else None
-            can_inherit_level = (
-                applicable is True
-                and inherited_row is not None
-                and inherited_current is not None
-                and 1 <= int(inherited_current) <= 5
-            )
-            can_inherit_evidence = (
-                can_inherit_level
-                and isinstance(inherited_evidence, str)
-                and bool(inherited_evidence.strip())
-            )
-            can_inherit = can_inherit_level or can_inherit_evidence
-            snapshots.append(
-                (
-                    code,
-                    bool(applicable),
-                    standard_target,
-                    standard_target,
-                    f"published_standard_version:{standard_version_id}:{standard_source}",
-                    inherited_current if can_inherit_level else None,
-                    inherited_evidence.strip() if can_inherit_evidence else None,
-                    source["id"] if can_inherit and source else None,
-                )
-            )
 
         row = connection.execute(
             """
@@ -671,9 +723,9 @@ def create_assessment_draft(
             INSERT INTO assessment (
                 member_id, year, version, assessment_type, status,
                 member_current_level_snapshot, member_target_level_snapshot,
-                capability_standard_version_id
+                capability_standard_version_id, assessment_scope_version
             )
-            VALUES (%s, %s, %s, %s, '草稿', %s, %s, %s)
+            VALUES (%s, %s, %s, %s, '草稿', %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -681,13 +733,14 @@ def create_assessment_draft(
                 year,
                 version,
                 assessment_type,
-                member_current_level,
-                member_target_level,
-                standard_version_id,
+                scope["member_current_level"],
+                scope["member_target_level"],
+                scope["standard_version"]["id"],
+                scope["scope_version"],
             ),
         ).fetchone()
         assert row is not None
-        assessment_id = row[0]
+        assessment_id = int(row[0])
 
         with connection.cursor() as cursor:
             cursor.executemany(
@@ -699,41 +752,92 @@ def create_assessment_draft(
                     target_adjustment_reason, target_snapshot_source,
                     target_compatibility_error, gap_value, evidence_note,
                     plan_candidate, inherited_from_assessment_id,
-                    inherited_current_level, inherited_evidence_note
+                    inherited_current_level, inherited_evidence_note,
+                    l3_node_id, scope_type, standard_job_level_snapshot,
+                    l1_code, l1_name, l2_code, l2_name, l3_name
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, FALSE, NULL, NULL, %s,
-                    NULL, NULL, %s, FALSE, %s, %s, %s
+                    NULL, NULL, %s, FALSE, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
                 )
                 """,
                 [
                     (
                         assessment_id,
-                        code,
+                        item["l3_code"],
                         inherited_current,
-                        target,
-                        applicable,
-                        standard,
-                        snapshot_source,
+                        item["standard_target_level"],
+                        True,
+                        item["standard_target_level"],
+                        (
+                            f"published_standard_version:"
+                            f"{scope['standard_version']['id']}:{item['source']}"
+                        ),
                         inherited_evidence,
                         inherited_source,
                         inherited_current,
                         inherited_evidence,
+                        item["l3_node_id"],
+                        item["scope_type"],
+                        item["standard_job_level_snapshot"],
+                        item["l1_code"],
+                        item["l1_name"],
+                        item["l2_code"],
+                        item["l2_name"],
+                        item["l3_name"],
                     )
-                    for (
-                        code,
-                        applicable,
-                        standard,
-                        target,
-                        snapshot_source,
-                        inherited_current,
-                        inherited_evidence,
-                        inherited_source,
-                    ) in snapshots
+                    for item in scope["items"]
+                    for inherited_row in (inherited.get(item["l3_code"]),)
+                    for inherited_current in (
+                        (
+                            inherited_row[1]
+                            if inherited_row is not None
+                            and inherited_row[1] is not None
+                            and 1 <= int(inherited_row[1]) <= 5
+                            else None
+                        ),
+                    )
+                    for inherited_evidence in (
+                        (
+                            str(inherited_row[2]).strip()
+                            if inherited_row is not None
+                            and inherited_current is not None
+                            and isinstance(inherited_row[2], str)
+                            and inherited_row[2].strip()
+                            else None
+                        ),
+                    )
+                    for inherited_source in (
+                        (
+                            source["id"]
+                            if source is not None
+                            and (inherited_current is not None or inherited_evidence)
+                            else None
+                        ),
+                    )
                 ],
             )
 
-    return assessment_id
+        response = _scope_response(scope, assessment_id, 1)
+        if idempotency_key is not None:
+            connection.execute(
+                """
+                INSERT INTO assessment_idempotency_key (
+                    member_id, idempotency_key, request_fingerprint,
+                    assessment_id, response
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    member_id,
+                    idempotency_key,
+                    fingerprint,
+                    assessment_id,
+                    json.dumps(response, ensure_ascii=False),
+                ),
+            )
+        return response
 
 
 def get_latest_approved_assessment_for_member(
@@ -780,9 +884,14 @@ def get_assessment(
         """
         SELECT a.id, a.member_id, a.year, a.version, a.assessment_type, a.status,
                a.created_at, a.submitted_at, a.archived_at, a.revision,
-               u.current_level, u.target_level
+               u.current_level, u.target_level,
+               a.member_current_level_snapshot, a.member_target_level_snapshot,
+               a.capability_standard_version_id, a.assessment_scope_version,
+               sv.label
         FROM assessment AS a
         JOIN tcp_user AS u ON u.id = a.member_id
+        LEFT JOIN capability_standard_version AS sv
+          ON sv.id = a.capability_standard_version_id
         WHERE a.id = %s
         """,
         (assessment_id,),
@@ -792,7 +901,8 @@ def get_assessment(
 
     details = _get_assessment_details(connection, assessment_id)
     status_value = str(row[5])
-    return {
+    scope_version = row[15]
+    payload: dict[str, object] = {
         "id": row[0],
         "member_id": row[1],
         "year": row[2],
@@ -805,13 +915,58 @@ def get_assessment(
         "revision": row[9],
         "member_current_level": row[10],
         "member_target_level": row[11],
+        "member_current_level_snapshot": row[12],
+        "member_target_level_snapshot": row[13],
+        "capability_standard_version_id": row[14],
+        "assessment_scope_version": scope_version,
+        "standard_version_label": row[16],
         "details": details,
         "l2_groups": _get_assessment_l2_groups(
             connection,
             details,
             include_requirements=status_value in {"草稿", "待复核", "建议调整"},
+            frozen=scope_version is not None,
         ),
         "gap_summary": _get_gap_summary(connection, assessment_id),
+    }
+    if scope_version is not None:
+        payload["scope_summary"] = _scope_summary_from_details(details)
+    else:
+        payload["scope_summary"] = None
+    return payload
+
+
+def _scope_summary_from_details(
+    details: list[dict[str, object]],
+) -> dict[str, object]:
+    """Frozen summary for scope-v1 assessments: details + snapshots only."""
+    by_l1: dict[str, dict[str, object]] = {}
+    for detail in details:
+        l1_code = detail.get("l1_code")
+        if not isinstance(l1_code, str):
+            continue
+        bucket = by_l1.setdefault(
+            l1_code,
+            {
+                "l1_code": l1_code,
+                "l1_name": detail.get("l1_name"),
+                "current_required": 0,
+                "target_progressive": 0,
+                "total": 0,
+            },
+        )
+        scope_type = detail.get("scope_type")
+        if scope_type in ("current_required", "target_progressive"):
+            bucket[str(scope_type)] += 1  # type: ignore[operator]
+        bucket["total"] += 1  # type: ignore[operator]
+    current_required = sum(
+        1 for detail in details if detail.get("scope_type") == "current_required"
+    )
+    return {
+        "total": len(details),
+        "current_required": current_required,
+        "target_progressive": len(details) - current_required,
+        "by_l1": [by_l1[code] for code in sorted(by_l1)],
     }
 
 
@@ -829,7 +984,9 @@ def _get_assessment_details(
                ad.inherited_from_assessment_id,
                ad.inherited_current_level,
                ad.inherited_evidence_note,
-               ad.current_level_explicitly_cleared
+               ad.current_level_explicitly_cleared,
+               ad.l3_node_id, ad.scope_type, ad.standard_job_level_snapshot,
+               ad.l1_code, ad.l1_name, ad.l2_code, ad.l2_name, ad.l3_name
         FROM assessment_detail ad
         WHERE ad.assessment_id = %s
         ORDER BY ad.l3_code
@@ -856,13 +1013,31 @@ def _get_assessment_details(
             "inherited_current_level": row[15],
             "inherited_evidence_note": row[16],
             "current_level_explicitly_cleared": row[17],
+            "l3_node_id": row[18],
+            "scope_type": row[19],
+            "standard_job_level_snapshot": row[20],
         }
         for row in rows
     ]
-    contexts = get_l3_contexts(
-        connection, [str(detail["l3_code"]) for detail in details]
-    )
-    for detail in details:
+    legacy_codes = [
+        str(detail["l3_code"]) for detail in details if detail["l3_node_id"] is None
+    ]
+    contexts = get_l3_contexts(connection, legacy_codes) if legacy_codes else {}
+    for index, detail in enumerate(details):
+        row = rows[index]
+        if detail["l3_node_id"] is not None:
+            # Frozen path snapshots: catalog moves/renames must not rewrite them.
+            detail.update(
+                {
+                    "l3_name": row[25],
+                    "recommended_start_level": None,
+                    "l2_code": row[23],
+                    "l2_name": row[24],
+                    "l1_code": row[21],
+                    "l1_name": row[22],
+                }
+            )
+            continue
         context = contexts[str(detail["l3_code"])]
         detail.update(
             {
@@ -881,7 +1056,11 @@ def _get_assessment_l2_groups(
     connection: psycopg.Connection,
     details: list[dict[str, object]],
     include_requirements: bool,
+    *,
+    frozen: bool = False,
 ) -> list[dict[str, object]]:
+    if frozen:
+        return _frozen_l2_groups(connection, details, include_requirements)
     rows = connection.execute(
         """
         SELECT l1.code, l1.name, l2.code, l2.name,
@@ -949,6 +1128,59 @@ def _get_assessment_l2_groups(
     return groups
 
 
+def _frozen_l2_groups(
+    connection: psycopg.Connection,
+    details: list[dict[str, object]],
+    include_requirements: bool,
+) -> list[dict[str, object]]:
+    """scope-v1 grouping comes from frozen detail snapshots only."""
+    groups: list[dict[str, object]] = []
+    by_l2: dict[str, dict[str, object]] = {}
+    for detail in details:
+        l2_code = detail.get("l2_code")
+        if not isinstance(l2_code, str):
+            continue
+        group = by_l2.get(l2_code)
+        if group is None:
+            group = {
+                "l1_code": detail.get("l1_code"),
+                "l1_name": detail.get("l1_name"),
+                "l2_code": l2_code,
+                "l2_name": detail.get("l2_name"),
+                "l3_count": 0,
+                "is_empty": False,
+                "details": [],
+            }
+            by_l2[l2_code] = group
+            groups.append(group)
+        group["l3_count"] += 1  # type: ignore[operator]
+        group["details"].append(detail)
+    if include_requirements and by_l2:
+        requirement_rows = {
+            str(row[0]): row
+            for row in connection.execute(
+                """
+                SELECT code, p4_description, p5_description, p6_description,
+                       p7_description, p8_description
+                FROM capability_node
+                WHERE node_type = 'L2' AND code = ANY(%s)
+                """,
+                (list(by_l2),),
+            ).fetchall()
+        }
+        for l2_code, group in by_l2.items():
+            row = requirement_rows.get(l2_code)
+            if row is not None:
+                group["requirements"] = {
+                    "P4": row[1],
+                    "P5": row[2],
+                    "P6": row[3],
+                    "P7": row[4],
+                    "P8": row[5],
+                }
+    return groups
+
+
 def _get_gap_summary(
     connection: psycopg.Connection, assessment_id: int
 ) -> dict[str, object]:
@@ -988,11 +1220,15 @@ def list_member_assessments(
 ) -> list[dict[str, object]]:
     rows = connection.execute(
         """
-        SELECT id, member_id, year, version, assessment_type, status,
-               created_at, submitted_at, archived_at, revision
-        FROM assessment
-        WHERE member_id = %s
-        ORDER BY created_at DESC
+        SELECT a.id, a.member_id, a.year, a.version, a.assessment_type, a.status,
+               a.created_at, a.submitted_at, a.archived_at, a.revision,
+               a.member_current_level_snapshot, a.member_target_level_snapshot,
+               a.assessment_scope_version, sv.label
+        FROM assessment AS a
+        LEFT JOIN capability_standard_version AS sv
+          ON sv.id = a.capability_standard_version_id
+        WHERE a.member_id = %s
+        ORDER BY a.created_at DESC
         """,
         (member_id,),
     ).fetchall()
@@ -1008,6 +1244,10 @@ def list_member_assessments(
             "submitted_at": row[7],
             "archived_at": row[8],
             "revision": row[9],
+            "member_current_level_snapshot": row[10],
+            "member_target_level_snapshot": row[11],
+            "assessment_scope_version": row[12],
+            "standard_version_label": row[13],
         }
         for row in rows
     ]
@@ -1310,9 +1550,13 @@ def batch_fill_l2(
         """
         SELECT ad.l3_code
         FROM assessment_detail ad
-        JOIN capability_node l3 ON l3.code = ad.l3_code AND l3.node_type = 'L3'
-        JOIN capability_node l2 ON l2.id = l3.parent_node_id
-        WHERE ad.assessment_id = %s AND l2.code = %s
+        LEFT JOIN capability_node l3n ON l3n.id = ad.l3_node_id
+        LEFT JOIN capability_node l3c
+          ON ad.l3_node_id IS NULL AND l3c.code = ad.l3_code
+         AND l3c.node_type = 'L3'
+        LEFT JOIN capability_node l2
+          ON l2.id = COALESCE(l3n.parent_node_id, l3c.parent_node_id)
+        WHERE ad.assessment_id = %s AND COALESCE(ad.l2_code, l2.code) = %s
           AND ad.current_level IS NULL
           AND ad.current_level_explicitly_cleared = FALSE
           AND ad.inherited_current_level IS NULL
@@ -1326,9 +1570,13 @@ def batch_fill_l2(
         """
         SELECT ad.l3_code, ad.current_level
         FROM assessment_detail ad
-        JOIN capability_node l3 ON l3.code = ad.l3_code AND l3.node_type = 'L3'
-        JOIN capability_node l2 ON l2.id = l3.parent_node_id
-        WHERE ad.assessment_id = %s AND l2.code = %s
+        LEFT JOIN capability_node l3n ON l3n.id = ad.l3_node_id
+        LEFT JOIN capability_node l3c
+          ON ad.l3_node_id IS NULL AND l3c.code = ad.l3_code
+         AND l3c.node_type = 'L3'
+        LEFT JOIN capability_node l2
+          ON l2.id = COALESCE(l3n.parent_node_id, l3c.parent_node_id)
+        WHERE ad.assessment_id = %s AND COALESCE(ad.l2_code, l2.code) = %s
         ORDER BY ad.l3_code
         """,
         (assessment_id, l2_code),

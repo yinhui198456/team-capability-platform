@@ -124,9 +124,7 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: '创建年度自评草稿' }),
-      ).toBeTruthy()
+      expect(screen.getByRole('button', { name: '预览评估范围' })).toBeTruthy()
     })
   })
 
@@ -186,7 +184,35 @@ describe('AssessmentGapPage', () => {
   })
 
   it('creates draft with a read-only standard target and null current level', async () => {
-    vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({ id: 7 })
+    vi.spyOn(assessmentApi, 'fetchScopePreview').mockResolvedValue({
+      member_id: 1,
+      year: 2026,
+      assessment_type: '年度',
+      member_current_level: 'P4',
+      member_target_level: 'P5',
+      standard_version: { id: 1, label: 'Legacy Baseline v1' },
+      scope_version: 'scope-v1',
+      summary: {
+        total: 10,
+        current_required: 8,
+        target_progressive: 2,
+        by_l1: [],
+      },
+      empty_scope: false,
+      scope_token: 'token-abc',
+      open_draft_id: null,
+    })
+    vi.spyOn(assessmentApi, 'createAssessment').mockResolvedValue({
+      id: 7,
+      revision: 1,
+      summary: {
+        total: 10,
+        current_required: 8,
+        target_progressive: 2,
+        by_l1: [],
+      },
+      scope_token: 'token-abc',
+    })
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(mockDraft())
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
@@ -194,11 +220,17 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
+      expect(screen.getByRole('button', { name: '预览评估范围' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '预览评估范围' }))
+    await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: '创建年度自评草稿' }),
+        screen.getByRole('button', { name: '确认创建年度自评草稿' }),
       ).toBeTruthy()
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建年度自评草稿' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: '确认创建年度自评草稿' }),
+    )
     await waitFor(() => {
       expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
     })
@@ -1010,7 +1042,7 @@ describe('AssessmentHistoryPage', () => {
 
     expect(
       await screen.findByText(
-        /当前模型映射上下文：P01.01 · 数据基础 → P01.01.01 · 数据管道/,
+        /历史未分类：P01.01 · 数据基础 → P01.01.01 · 数据管道/,
       ),
     ).toBeTruthy()
     expect(screen.getByText(/当前掌握度.*目标掌握度.*Gap/)).toBeTruthy()
@@ -1116,8 +1148,23 @@ describe('assessment api helpers', () => {
     vi.unstubAllGlobals()
   })
   it('createAssessment', async () => {
-    await assessmentApi.createAssessment(2026)
+    await assessmentApi.createAssessment(2026, 'token-abc')
     expect(fetch).toHaveBeenCalled()
+    const body = JSON.parse(
+      (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
+    )
+    expect(body).toEqual({
+      year: 2026,
+      assessment_type: '年度',
+      scope_token: 'token-abc',
+    })
+  })
+
+  it('fetchScopePreview passes year and type as query params', async () => {
+    await assessmentApi.fetchScopePreview(2026)
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).toContain('/api/assessments/scope-preview?')
+    expect(url).toContain('year=2026')
   })
 
   it('saveDraft omits server-calculated target fields', async () => {

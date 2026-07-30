@@ -13,9 +13,44 @@ export type Assessment = {
   revision?: number
   member_current_level?: string | null
   member_target_level?: string | null
+  member_current_level_snapshot?: string | null
+  member_target_level_snapshot?: string | null
+  capability_standard_version_id?: number | null
+  assessment_scope_version?: string | null
+  standard_version_label?: string | null
+  scope_summary?: ScopeSummary | null
   details?: AssessmentDetail[]
   l2_groups?: AssessmentL2Group[]
   gap_summary?: GapSummary
+}
+
+export type ScopeL1Summary = {
+  l1_code: string
+  l1_name: string
+  current_required: number
+  target_progressive: number
+  total: number
+}
+
+export type ScopeSummary = {
+  total: number
+  current_required: number
+  target_progressive: number
+  by_l1: ScopeL1Summary[]
+}
+
+export type ScopePreview = {
+  member_id: number
+  year: number
+  assessment_type: string
+  member_current_level: string
+  member_target_level: string
+  standard_version: { id: number; label: string }
+  scope_version: string
+  summary: ScopeSummary
+  empty_scope: boolean
+  scope_token: string
+  open_draft_id: number | null
 }
 
 export type L2Requirements = Record<
@@ -66,6 +101,9 @@ export type AssessmentDetail = {
   id?: number
   l3_code: string
   l3_name?: string
+  l3_node_id?: number | null
+  scope_type?: 'current_required' | 'target_progressive' | null
+  standard_job_level_snapshot?: string | null
   current_level: number | null
   target_level: number | null
   standard_target_applicable?: boolean | null
@@ -149,14 +187,36 @@ export type AssessmentReview = {
   status: string
 }
 
-export async function createAssessment(
+export async function fetchScopePreview(
   year: number,
   assessmentType = '年度',
-): Promise<{ id: number; revision?: number }> {
-  return request<{ id: number; revision?: number }>(
+): Promise<ScopePreview> {
+  const params = new URLSearchParams({
+    year: String(year),
+    assessment_type: assessmentType,
+  })
+  return request<ScopePreview>(`/api/assessments/scope-preview?${params}`, {
+    method: 'GET',
+  })
+}
+
+export async function createAssessment(
+  year: number,
+  scopeToken: string,
+  assessmentType = '年度',
+  idempotencyKey?: string,
+): Promise<{
+  id: number
+  revision?: number
+  summary: ScopeSummary
+  scope_token: string
+}> {
+  const headers: HeadersInit = {}
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+  return request(
     '/api/assessments',
-    { method: 'POST' },
-    { year, assessment_type: assessmentType },
+    { method: 'POST', headers },
+    { year, assessment_type: assessmentType, scope_token: scopeToken },
   )
 }
 

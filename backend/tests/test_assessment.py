@@ -1,6 +1,7 @@
 import asyncio
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 import psycopg
 import pytest
@@ -8,13 +9,13 @@ import pytest
 from app.access.repository import assign_role, create_buddy_relationship, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    create_assessment_draft,
     get_assessment,
 )
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.main import app
 from app.migrations import run_migrations
+from tests.standard_target_support import create_scoped_draft
 
 SESSION_COOKIE = "tcp_session"
 
@@ -103,9 +104,9 @@ async def _asgi_request(
             "http_version": "1.1",
             "method": method,
             "scheme": "http",
-            "path": path,
-            "raw_path": path.encode("utf-8"),
-            "query_string": b"",
+            "path": urlsplit(path).path,
+            "raw_path": urlsplit(path).path.encode("utf-8"),
+            "query_string": urlsplit(path).query.encode("utf-8"),
             "headers": headers,
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
@@ -183,8 +184,17 @@ def test_create_draft_save_details_submit_review(
 
     cookies = _login(assessment_schema, "member_a")
 
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+
+    assert status == 200
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assert body is not None
@@ -262,7 +272,7 @@ def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
         """,
         (member_id,),
     )
-    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(assessment_schema, member_id, 2026)
 
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -271,8 +281,10 @@ def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
     groups = {group["l2_code"]: group for group in assessment["l2_groups"]}
     assert groups["P01.01"]["l1_code"] == "P01"
     assert groups["P01.01"]["requirements"]["P8"]
-    assert groups["P02.07"]["details"] == []
-    assert groups["P02.07"]["is_empty"] is True
+    # scope-v1 frozen groups only contain L2s that are actually in scope
+    detail_l2s = {detail["l2_code"] for detail in assessment["details"]}
+    assert set(groups) == detail_l2s
+    assert "P02.07" not in groups
     assert not {
         "p4_description",
         "p5_description",
@@ -300,7 +312,27 @@ def test_assessment_groups_preserve_unmapped_historical_details(
         "SET enabled = (code = 'C01.01.01') WHERE node_type = 'L3'"
     )
     assessment_schema.commit()
-    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+    # a legacy (pre-#60) draft: no scope columns, live-catalog mapping
+    assessment_id = int(
+        assessment_schema.execute(
+            """
+            INSERT INTO assessment (member_id, year, version, assessment_type, status)
+            VALUES (%s, 2026, 1, '年度', '草稿') RETURNING id
+            """,
+            (member_id,),
+        ).fetchone()[0]
+    )
+    assessment_schema.execute(
+        """
+        INSERT INTO assessment_detail (
+            assessment_id, l3_code, current_level, target_level,
+            gap_value, evidence_note, standard_target_applicable,
+            standard_target_level
+        )
+        VALUES (%s, 'C01.01.01', NULL, 4, NULL, NULL, TRUE, 4)
+        """,
+        (assessment_id,),
+    )
     assessment_schema.execute(
         """
         UPDATE assessment_detail
@@ -345,8 +377,17 @@ def test_assessment_writes_require_expected_revision_token(
 ) -> None:
     _create_test_user(assessment_schema, "member_revision_token", ["Member"])
     cookies = _login(assessment_schema, "member_revision_token")
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+
+    assert status == 200, f"preview failed: {preview}"
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assert body is not None
@@ -383,8 +424,17 @@ def test_submit_validation_returns_structured_l3_error(
     )
     assessment_schema.commit()
     cookies = _login(assessment_schema, "member_structured_error")
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+
+    assert status == 200, f"preview failed: {preview}"
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assessment_id = body["id"]
@@ -419,7 +469,7 @@ def test_member_cannot_view_or_edit_other_draft(
 ) -> None:
     member_a = _create_test_user(assessment_schema, "member_a2", ["Member"])
     _create_test_user(assessment_schema, "member_b2", ["Member"])
-    assessment_id = create_assessment_draft(assessment_schema, member_a, 2026)
+    assessment_id = create_scoped_draft(assessment_schema, member_a, 2026)
     assessment_schema.commit()
 
     cookies_b = _login(assessment_schema, "member_b2")
@@ -445,7 +495,7 @@ def test_buddy_can_view_assigned_member_assessment(
     buddy_id = _create_test_user(assessment_schema, "buddy_a3", ["Buddy"])
     _create_test_user(assessment_schema, "buddy_b3", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
-    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(assessment_schema, member_id, 2026)
     assessment_schema.commit()
 
     cookies_buddy = _login(assessment_schema, "buddy_a3")
@@ -465,8 +515,13 @@ def test_version_increments_for_same_member_year(
     assessment_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(assessment_schema, "member_a4", ["Member"])
-    id1 = create_assessment_draft(assessment_schema, member_id, 2026)
-    id2 = create_assessment_draft(assessment_schema, member_id, 2026)
+    id1 = create_scoped_draft(assessment_schema, member_id, 2026)
+    # the business key allows a new draft only after the previous one closes
+    assessment_schema.execute(
+        "UPDATE assessment SET status = '已归档' WHERE id = %s", (id1,)
+    )
+    assessment_schema.commit()
+    id2 = create_scoped_draft(assessment_schema, member_id, 2026)
     assessment_schema.commit()
 
     a1 = get_assessment(assessment_schema, id1)
@@ -479,7 +534,7 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
     member_id = _create_test_user(assessment_schema, "member_a5", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_a5", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
-    assessment_id = create_assessment_draft(assessment_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(assessment_schema, member_id, 2026)
     assessment_schema.execute(
         "UPDATE assessment SET status = '待复核' WHERE id = %s", (assessment_id,)
     )
@@ -509,7 +564,7 @@ def test_draft_target_repair_api_enforces_permissions_and_all_or_nothing(
         "UPDATE tcp_user SET current_level = 'P4', target_level = 'P5' WHERE id = %s",
         (owner_id,),
     )
-    assessment_id = create_assessment_draft(assessment_schema, owner_id, 2026)
+    assessment_id = create_scoped_draft(assessment_schema, owner_id, 2026)
     assessment_schema.execute(
         """
         UPDATE assessment
@@ -579,7 +634,7 @@ def test_draft_target_repair_api_enforces_permissions_and_all_or_nothing(
     assert status == 200
     assert noop["result"] == "noop"
 
-    blocked_id = create_assessment_draft(assessment_schema, owner_id, 2027)
+    blocked_id = create_scoped_draft(assessment_schema, owner_id, 2027)
     assessment_schema.execute(
         "UPDATE assessment_detail SET l3_code = 'legacy-unknown' "
         "WHERE id = (SELECT min(id) FROM assessment_detail WHERE assessment_id = %s)",

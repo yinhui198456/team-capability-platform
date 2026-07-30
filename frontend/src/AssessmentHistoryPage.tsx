@@ -77,6 +77,21 @@ export function AssessmentHistoryPage() {
                 ? ` · 提交于 ${new Date(assessment.submitted_at).toLocaleString()}`
                 : ''}
             </button>
+            <p
+              className="muted"
+              data-testid={`history-snapshot-${assessment.id}`}
+            >
+              {assessment.member_current_level_snapshot &&
+              assessment.member_target_level_snapshot
+                ? `当前 ${assessment.member_current_level_snapshot} → 年度目标 ${assessment.member_target_level_snapshot}`
+                : '历史快照缺失'}
+              {assessment.standard_version_label
+                ? ` · ${assessment.standard_version_label}`
+                : ''}
+              {assessment.assessment_scope_version
+                ? ` · ${assessment.assessment_scope_version}`
+                : ''}
+            </p>
             {expanded.has(assessment.id) && (
               <div className="assessment-details">
                 {(detailsMap[assessment.id] ?? []).length === 0 && (
@@ -85,7 +100,12 @@ export function AssessmentHistoryPage() {
                 <ul>
                   {(detailsMap[assessment.id] ?? []).map((detail) => (
                     <li key={detail.l3_code}>
-                      当前模型映射上下文：
+                      {detail.scope_type
+                        ? detail.scope_type === 'current_required'
+                          ? '当前职级必备'
+                          : '目标职级进阶'
+                        : '历史未分类'}
+                      ：
                       {detail.l2_code && detail.l2_name
                         ? `${detail.l2_code} · ${detail.l2_name} → `
                         : ''}
@@ -93,6 +113,9 @@ export function AssessmentHistoryPage() {
                       {detail.l3_name ? ` · ${detail.l3_name}` : ''}
                       ：当前掌握度 {detail.current_level} → 目标掌握度{' '}
                       {detail.target_level}（Gap {detail.gap_value}）
+                      {detail.standard_job_level_snapshot
+                        ? ` · ${detail.standard_job_level_snapshot} 标准`
+                        : ''}
                       {detail.plan_candidate ? ' · 计划候选' : ''}
                     </li>
                   ))}

@@ -131,6 +131,8 @@ export type MemberDashboardAssessment = {
   archived_at: string | null
   review_status: '待复核' | '已闭环' | null
   review_conclusion: '认可' | '建议调整' | null
+  member_current_level_snapshot?: string | null
+  member_target_level_snapshot?: string | null
 }
 
 export type MemberDashboard = {

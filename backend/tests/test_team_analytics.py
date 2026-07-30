@@ -13,7 +13,6 @@ from app.access.repository import (
 )
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    create_assessment_draft,
     get_assessment,
     get_pending_reviews_for_buddy,
     save_assessment_draft,
@@ -31,6 +30,7 @@ from app.planning.repository import (
     list_eligible_gaps,
 )
 from app.planning.schema import create_planning_schema
+from tests.standard_target_support import create_scoped_draft
 
 SESSION_COOKIE = "tcp_session"
 
@@ -269,7 +269,7 @@ def _submit_and_approve_assessment(
     year: int,
     details: list[dict[str, object]],
 ) -> int:
-    assessment_id = create_assessment_draft(connection, member_id, year)
+    assessment_id = create_scoped_draft(connection, member_id, year)
     assessment = get_assessment(connection, assessment_id)
     assert assessment is not None
     supplied = {detail["l3_code"]: detail for detail in details}

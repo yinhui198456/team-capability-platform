@@ -26,8 +26,16 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                 OR member_target_level_snapshot IN ('P4', 'P5', 'P6', 'P7', 'P8')
             ),
             capability_standard_version_id BIGINT,
+            assessment_scope_version TEXT,
             UNIQUE(member_id, year, version)
         )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS assessment_one_open_per_scope
+        ON assessment (member_id, year, assessment_type)
+        WHERE status IN ('草稿', '建议调整')
         """
     )
     connection.execute(
@@ -66,6 +74,20 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                 OR inherited_current_level BETWEEN 1 AND 5
             ),
             inherited_evidence_note TEXT,
+            l3_node_id BIGINT,
+            scope_type TEXT CHECK (
+                scope_type IS NULL
+                OR scope_type IN ('current_required', 'target_progressive')
+            ),
+            standard_job_level_snapshot TEXT CHECK (
+                standard_job_level_snapshot IS NULL
+                OR standard_job_level_snapshot IN ('P4', 'P5', 'P6', 'P7', 'P8')
+            ),
+            l1_code TEXT,
+            l1_name TEXT,
+            l2_code TEXT,
+            l2_name TEXT,
+            l3_name TEXT,
             CHECK (
                 standard_target_applicable IS DISTINCT FROM FALSE
                 OR standard_target_level IS NULL
@@ -81,6 +103,26 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                  AND BTRIM(target_adjustment_reason) <> '')
             ),
             UNIQUE(assessment_id, l3_code)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS assessment_detail_node_identity
+        ON assessment_detail (assessment_id, l3_node_id)
+        WHERE l3_node_id IS NOT NULL
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS assessment_idempotency_key (
+            member_id BIGINT NOT NULL REFERENCES tcp_user(id) ON DELETE CASCADE,
+            idempotency_key TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            assessment_id BIGINT NOT NULL REFERENCES assessment(id) ON DELETE CASCADE,
+            response JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (member_id, idempotency_key)
         )
         """
     )
