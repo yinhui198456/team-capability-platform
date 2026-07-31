@@ -52,7 +52,7 @@ def _draft_repair_baseline(
 
 
 def _draft_repair_profile(
-    row: tuple[object, ...]
+    row: tuple[object, ...],
 ) -> tuple[str | None, str | None, str | None, str | None]:
     snapshot_current, snapshot_target, profile_current, profile_target = row
     current = (
@@ -605,7 +605,42 @@ def create_assessment_draft(
     scope_token: str,
     idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    # Fingerprint from request identity only — independent of current domain state.
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "year": year,
+                "assessment_type": assessment_type,
+                "scope_token": scope_token,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
     with connection.transaction():
+        # 0. idempotency check first, before any domain recomputation.
+        if idempotency_key is not None:
+            existing_key = connection.execute(
+                """
+                SELECT request_fingerprint, response
+                FROM assessment_idempotency_key
+                WHERE member_id = %s AND idempotency_key = %s
+                """,
+                (member_id, idempotency_key),
+            ).fetchone()
+            if existing_key is not None:
+                if str(existing_key[0]) != fingerprint:
+                    raise AssessmentScopeError(
+                        "idempotency_key_reused",
+                        "idempotency key reused with a different request",
+                        status_code=409,
+                    )
+                stored = existing_key[1]
+                if isinstance(stored, str):
+                    stored = json.loads(stored)
+                return stored
+
         # 1. model lock → 2. member row lock → 3. assessment writes.
         model = connection.execute(
             "SELECT id FROM capability_model ORDER BY id LIMIT 1 FOR SHARE"
@@ -623,18 +658,10 @@ def create_assessment_draft(
             assessment_type=assessment_type,
             lock_member=True,
         )
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {
-                    "year": year,
-                    "assessment_type": assessment_type,
-                    "scope_token": scope_token,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
 
+        # 2. Re-check idempotency after acquiring locks to close the concurrent
+        #    window where two callers both pass the first check, then race to
+        #    acquire locks and write.
         if idempotency_key is not None:
             existing_key = connection.execute(
                 """
@@ -676,14 +703,33 @@ def create_assessment_draft(
                 "assessment scope is empty",
             )
 
-        open_draft = connection.execute(
-            """
-            SELECT id FROM assessment
-            WHERE member_id = %s AND year = %s AND assessment_type = %s
-              AND status IN ('草稿', '建议调整')
-            """,
-            (member_id, year, assessment_type),
-        ).fetchone()
+        try:
+            open_draft = connection.execute(
+                """
+                SELECT id FROM assessment
+                WHERE member_id = %s AND year = %s AND assessment_type = %s
+                  AND status IN ('草稿', '建议调整')
+                """,
+                (member_id, year, assessment_type),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            # Concurrent insert slipped past the open-draft check; the unique
+            # index is the last line of defence.  Convert to a structured 409.
+            row = connection.execute(
+                """
+                SELECT id FROM assessment
+                WHERE member_id = %s AND year = %s AND assessment_type = %s
+                  AND status IN ('草稿', '建议调整')
+                ORDER BY id
+                """,
+                (member_id, year, assessment_type),
+            ).fetchone()
+            raise AssessmentScopeError(
+                "open_draft_exists",
+                "an open assessment already exists",
+                status_code=409,
+                issues=[{"assessment_id": int(row[0])}] if row is not None else [],
+            ) from None
         if open_draft is not None:
             raise AssessmentScopeError(
                 "open_draft_exists",
@@ -693,19 +739,21 @@ def create_assessment_draft(
             )
 
         source = get_latest_approved_assessment_for_member(connection, member_id)
-        inherited = {}
+        inherited_by_node: dict[int, tuple[object, ...]] = {}
+        inherited_by_code: dict[str, tuple[object, ...]] = {}
         if source is not None:
-            inherited = {
-                row[0]: row
-                for row in connection.execute(
-                    """
-                    SELECT l3_code, current_level, evidence_note
-                    FROM assessment_detail
-                    WHERE assessment_id = %s
-                    """,
-                    (source["id"],),
-                ).fetchall()
-            }
+            for row in connection.execute(
+                """
+                SELECT l3_code, current_level, evidence_note, l3_node_id
+                FROM assessment_detail
+                WHERE assessment_id = %s
+                """,
+                (source["id"],),
+            ).fetchall():
+                node_id = row[3]
+                if node_id is not None:
+                    inherited_by_node[int(node_id)] = (row[0], row[1], row[2])
+                inherited_by_code[str(row[0])] = (row[0], row[1], row[2])
 
         row = connection.execute(
             """
@@ -788,7 +836,12 @@ def create_assessment_draft(
                         item["l3_name"],
                     )
                     for item in scope["items"]
-                    for inherited_row in (inherited.get(item["l3_code"]),)
+                    for inherited_row in (
+                        (
+                            inherited_by_node.get(item["l3_node_id"])
+                            or inherited_by_code.get(item["l3_code"])
+                        ),
+                    )
                     for inherited_current in (
                         (
                             inherited_row[1]

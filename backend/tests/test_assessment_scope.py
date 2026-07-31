@@ -612,13 +612,11 @@ def test_concurrent_create_same_business_key_one_winner(scope_schema) -> None:
                 return "created"
             except AssessmentScopeError as error:
                 return error.code
-            except psycopg.errors.UniqueViolation:
-                return "unique_violation"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         outcomes = sorted(executor.map(lambda _: attempt(), range(2)))
     assert outcomes[0] == "created"
-    assert outcomes[1] in {"open_draft_exists", "unique_violation"}
+    assert outcomes[1] == "open_draft_exists", f"unexpected outcomes: {outcomes}"
     assert _draft_count(connection) == 1
 
 
@@ -1097,3 +1095,571 @@ def test_api_idempotency_key_header_replay(scope_schema) -> None:
     )
     assert status == 409
     assert reused["detail"]["code"] == "idempotency_key_reused"
+
+
+# --- P1-2: idempotency replay survives level/version/matrix changes ----------
+
+
+def test_idempotency_replay_survives_level_change(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2026, assessment_type="年度"
+    )
+    first = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-level",
+    )
+    # Change member target level after the first create
+    connection.execute(
+        "UPDATE tcp_user SET target_level = 'P6' WHERE id = %s", (member_id,)
+    )
+    connection.commit()
+    # Replay with same key + same scope_token must return the first response
+    replay = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-level",
+    )
+    assert replay["id"] == first["id"]
+    assert replay["summary"] == first["summary"]
+    assert _draft_count(connection) == 1
+
+
+def test_idempotency_replay_survives_version_change(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2026, assessment_type="年度"
+    )
+    first = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-version",
+    )
+    # Archive published version and publish a new one
+    old_version_id = int(first["standard_version"]["id"])
+    connection.execute(
+        "UPDATE capability_standard_version SET status = '已归档' WHERE id = %s",
+        (old_version_id,),
+    )
+    connection.execute(
+        """
+        INSERT INTO capability_standard_version (model_id, version_no, label, status,
+            revision, published_at)
+        SELECT model_id, version_no + 1, 'v2', '已发布', 1, NOW()
+        FROM capability_standard_version WHERE id = %s
+        """,
+        (old_version_id,),
+    )
+    new_version_id = int(
+        connection.execute(
+            "SELECT id FROM capability_standard_version WHERE status = '已发布'"
+        ).fetchone()[0]
+    )
+    connection.execute(
+        """
+        INSERT INTO capability_standard_item (version_id, l3_node_id, l1_code,
+            l1_name, l2_code, l2_name, l3_code, l3_name, job_level, applicable,
+            target_level, source)
+        SELECT %s, l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+               job_level, applicable, target_level, 'copied'
+        FROM capability_standard_item WHERE version_id = %s
+        """,
+        (new_version_id, old_version_id),
+    )
+    connection.commit()
+    replay = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-version",
+    )
+    assert replay["id"] == first["id"]
+    assert _draft_count(connection) == 1
+
+
+def test_idempotency_replay_survives_matrix_change(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2026, assessment_type="年度"
+    )
+    first = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-matrix",
+    )
+    # Flip a cell in the matrix so the scope token would differ
+    version_id = int(first["standard_version"]["id"])
+    connection.execute(
+        """
+        UPDATE capability_standard_item
+        SET applicable = FALSE, target_level = NULL
+        WHERE version_id = %s AND job_level = 'P4' AND applicable
+          AND l3_node_id = (
+              SELECT l3_node_id FROM capability_standard_item
+              WHERE version_id = %s AND job_level = 'P4' AND applicable
+              ORDER BY l3_node_id LIMIT 1
+          )
+        """,
+        (version_id, version_id),
+    )
+    connection.commit()
+    replay = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(preview["scope_token"]),
+        idempotency_key="idem-matrix",
+    )
+    assert replay["id"] == first["id"]
+    assert _draft_count(connection) == 1
+
+
+# --- P1-1: lifespan order test ------------------------------------------------
+
+
+def test_lifespan_v0006_preflight_handles_duplicate_open_drafts(
+    connection: psycopg.Connection,
+) -> None:
+    """Simulate pre-v0006 DB with duplicates and exercise the real lifespan."""
+    from app.access.schema import create_access_schema
+    from app.assessment.schema import create_assessment_schema
+    from app.catalog.importer import import_catalog, resolve_workbook_dir
+    from app.main import lifespan
+    from app.planning.schema import create_planning_schema
+
+    with connection.transaction():
+        for table in (
+            "schema_migration",
+            "assessment_idempotency_key",
+            "assessment_draft_target_repair_audit",
+            "assessment_review",
+            "gap",
+            "assessment_detail",
+            "assessment",
+            "tcp_session",
+            "tcp_user_role",
+            "tcp_role",
+            "tcp_user",
+            "capability_standard_version_audit",
+            "capability_standard_item",
+            "capability_standard_version",
+            "capability_node_resource",
+            "learning_resource",
+            "capability_node",
+            "capability_model",
+            "buddy_relationship",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+
+    create_access_schema(connection)
+    create_assessment_schema(connection)
+    create_planning_schema(connection)
+    import_catalog(resolve_workbook_dir(), connection)
+    connection.commit()
+
+    # Simulate pre-v0006: drop v0006 columns and indexes, insert duplicates
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS scope_type")
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l3_node_id")
+    connection.execute(
+        "ALTER TABLE assessment_detail DROP COLUMN IF EXISTS "
+        "standard_job_level_snapshot"
+    )
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l1_code")
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l1_name")
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l2_code")
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l2_name")
+    connection.execute("ALTER TABLE assessment_detail DROP COLUMN IF EXISTS l3_name")
+    connection.execute(
+        "ALTER TABLE assessment DROP COLUMN IF EXISTS assessment_scope_version"
+    )
+    connection.execute("DROP INDEX IF EXISTS assessment_one_open_per_scope")
+    connection.execute("DROP INDEX IF EXISTS assessment_detail_node_identity")
+    connection.execute("DROP TABLE IF EXISTS assessment_idempotency_key")
+    # Create schema_migration table and insert pre-v0006 markers
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migration (
+            version TEXT PRIMARY KEY,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    for version in (
+        "0001_standard_targets",
+        "0002_assessment_inheritance_revision",
+        "0003_assessment_explicit_clear",
+        "0004_legacy_draft_target_repair",
+        "0005_capability_standard_versioning",
+    ):
+        connection.execute(
+            "INSERT INTO schema_migration (version) VALUES (%s)", (version,)
+        )
+    connection.commit()
+
+    member_id = _member(connection, "P4", "P5")
+    for version in (1, 2):
+        connection.execute(
+            """
+            INSERT INTO assessment (member_id, year, version, assessment_type, status)
+            VALUES (%s, 2026, %s, '年度', '草稿')
+            """,
+            (member_id, version),
+        )
+    duplicate_ids = sorted(
+        int(row[0])
+        for row in connection.execute(
+            "SELECT id FROM assessment WHERE member_id = %s", (member_id,)
+        ).fetchall()
+    )
+    assert len(duplicate_ids) == 2
+    connection.commit()
+
+    # lifespan runs in its own connection; it must see our committed duplicates.
+    # We borrow the lifespan async context manager and drive it synchronously.
+    import asyncio
+    import os
+
+    original_url = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+        async def drive() -> None:
+            async with lifespan(app) as _:
+                pass
+
+        with pytest.raises(ValueError, match="duplicate open assessments"):
+            asyncio.run(drive())
+    finally:
+        if original_url is not None:
+            os.environ["DATABASE_URL"] = original_url
+
+    # v0006 DDL must not have landed: index, marker, idempotency table
+    with psycopg.connect(TEST_DATABASE_URL) as verify:
+        assert (
+            verify.execute(
+                "SELECT COUNT(*) FROM pg_indexes "
+                "WHERE indexname = 'assessment_one_open_per_scope'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            verify.execute(
+                "SELECT COUNT(*) FROM schema_migration "
+                "WHERE version = '0006_assessment_scope_snapshots'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            verify.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'assessment_idempotency_key'"
+            ).fetchone()
+            is None
+        )
+        # Conflict data preserved
+        remaining = sorted(
+            int(row[0])
+            for row in verify.execute(
+                "SELECT id FROM assessment WHERE member_id = %s", (member_id,)
+            ).fetchall()
+        )
+        assert remaining == duplicate_ids
+
+
+# --- P1-4: API-layer concurrent create test ----------------------------------
+
+
+def test_api_concurrent_create_one_200_one_409(scope_schema) -> None:
+    connection = scope_schema
+    _member(connection, "P4", "P5")
+    cookies = _login(connection, "member")
+    status, preview = _request(
+        "GET",
+        "/api/assessments/scope-preview",
+        query="year=2026&assessment_type=%E5%B9%B4%E5%BA%A6",
+        cookies=cookies,
+    )
+    assert status == 200
+    body = {
+        "year": 2026,
+        "assessment_type": "年度",
+        "scope_token": preview["scope_token"],
+    }
+
+    barrier = Barrier(2)
+    outcomes: list[tuple[int, dict[str, object] | None]] = []
+
+    def attempt() -> None:
+        import asyncio as aio
+
+        async def go() -> None:
+            barrier.wait()
+            messages: list[dict[str, object]] = []
+            body_bytes = json.dumps(body).encode()
+
+            async def receive() -> dict[str, Any]:
+                return {
+                    "type": "http.request",
+                    "body": body_bytes,
+                    "more_body": False,
+                }
+
+            async def send(message: dict[str, Any]) -> None:
+                messages.append(message)
+
+            await app(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0"},
+                    "http_version": "1.1",
+                    "method": "POST",
+                    "scheme": "http",
+                    "path": "/api/assessments",
+                    "raw_path": b"/api/assessments",
+                    "query_string": b"",
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body_bytes)).encode()),
+                        (
+                            b"cookie",
+                            "; ".join(f"{k}={v}" for k, v in cookies.items()).encode(),
+                        ),
+                    ],
+                    "client": ("testclient", 50000),
+                    "server": ("testserver", 80),
+                },
+                receive,
+                send,
+            )
+            sc = next(m["status"] for m in messages if "status" in m)
+            raw = b"".join(
+                m["body"] for m in messages if m["type"] == "http.response.body"
+            )
+            outcomes.append((sc, json.loads(raw) if raw else None))
+
+        aio.run(go())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(attempt),
+            executor.submit(attempt),
+        ]
+        for f in futures:
+            f.result()
+
+    statuses = sorted(code for code, _ in outcomes)
+    assert statuses == [200, 409], f"unexpected statuses: {statuses}"
+    success = next(
+        ((code, payload) for code, payload in outcomes if code == 200),
+        None,
+    )
+    assert success is not None
+    assert success[1] is not None
+    assessment_id = int(success[1]["id"])
+    conflict = next(
+        ((code, payload) for code, payload in outcomes if code == 409),
+        None,
+    )
+    assert conflict is not None
+    assert conflict[1]["detail"]["code"] == "open_draft_exists"
+    assert conflict[1]["detail"]["issues"][0]["assessment_id"] == assessment_id
+    assert (
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM assessment WHERE member_id = "
+                "(SELECT id FROM tcp_user WHERE username = 'member')"
+            ).fetchone()[0]
+        )
+        == 1
+    )
+
+
+# --- P1-5: invalid assessment_type API tests ---------------------------------
+
+
+def test_api_scope_preview_invalid_assessment_type_422(scope_schema) -> None:
+    connection = scope_schema
+    _member(connection, "P4", "P5")
+    cookies = _login(connection, "member")
+    status, data = _request(
+        "GET",
+        "/api/assessments/scope-preview",
+        query="year=2026&assessment_type=INVALID",
+        cookies=cookies,
+    )
+    assert status == 422
+    assert data["detail"]["code"] == "invalid_assessment_type"
+    assert _draft_count(connection) == 0
+
+
+def test_api_create_invalid_assessment_type_422_zero_write(scope_schema) -> None:
+    connection = scope_schema
+    _member(connection, "P4", "P5")
+    cookies = _login(connection, "member")
+    status, data = _request(
+        "POST",
+        "/api/assessments",
+        body={
+            "year": 2026,
+            "assessment_type": "INVALID",
+            "scope_token": "0" * 64,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert data["detail"]["code"] == "invalid_assessment_type"
+    assert _draft_count(connection) == 0
+
+
+# --- P1-7: l3_node_id inheritance tests --------------------------------------
+
+
+def test_inheritance_matches_by_l3_node_id_not_code(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    # Create first approved assessment
+    first_id = create_scoped_draft(connection, member_id, 2026)
+    # Fill in a current_level for one L3 to be inherited
+    l3_code = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail "
+        "WHERE assessment_id = %s AND scope_type = 'current_required' "
+        "ORDER BY l3_code LIMIT 1",
+        (first_id,),
+    ).fetchone()
+    assert l3_code is not None
+    first_l3_code, first_node_id = l3_code
+    connection.execute(
+        "UPDATE assessment_detail "
+        "SET current_level = 3, evidence_note = 'inherited note' "
+        "WHERE assessment_id = %s AND l3_code = %s",
+        (first_id, str(first_l3_code)),
+    )
+    # Submit/review/approve
+    connection.execute(
+        "UPDATE assessment SET status = '已复核' WHERE id = %s", (first_id,)
+    )
+    connection.execute(
+        """
+        INSERT INTO assessment_review (assessment_id, sequence, buddy_id,
+            status, conclusion, reviewed_at)
+        VALUES (%s, 1, %s, '已闭环', '认可', NOW())
+        """,
+        (first_id, member_id),
+    )
+    connection.commit()
+
+    # Rename the L3 in the catalog so code matching would fail
+    connection.execute(
+        "UPDATE capability_node SET name = 'renamed-node' WHERE id = %s",
+        (int(first_node_id),),
+    )
+    connection.commit()
+
+    # Create second draft — inheritance must still work via node_id
+    second_preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2026, assessment_type="年度"
+    )
+    second_result = create_assessment_draft(
+        connection,
+        member_id,
+        2026,
+        "年度",
+        scope_token=str(second_preview["scope_token"]),
+    )
+    second_assessment = get_assessment(connection, int(second_result["id"]))
+    assert second_assessment is not None
+    inherited_detail = next(
+        (
+            d
+            for d in second_assessment["details"]
+            if int(d["l3_node_id"]) == int(first_node_id)
+        ),
+        None,
+    )
+    assert inherited_detail is not None
+    assert inherited_detail["inherited_from_assessment_id"] == first_id
+    assert inherited_detail["inherited_current_level"] == 3
+
+
+def test_inheritance_legacy_code_fallback_when_node_id_is_null(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    # Pick an existing L3 node from the catalog for the legacy draft
+    l3_row = connection.execute(
+        "SELECT code, id FROM capability_node WHERE node_type = 'L3' "
+        "AND enabled = TRUE ORDER BY code LIMIT 1"
+    ).fetchone()
+    assert l3_row is not None
+    legacy_l3_code = str(l3_row[0])
+
+    # Legacy approved assessment with l3_node_id=NULL details
+    legacy_id = int(
+        connection.execute(
+            """
+            INSERT INTO assessment (member_id, year, version, assessment_type,
+                status, member_current_level_snapshot, member_target_level_snapshot)
+            VALUES (%s, 2026, 1, '年度', '已复核', 'P4', 'P5')
+            RETURNING id
+            """,
+            (member_id,),
+        ).fetchone()[0]
+    )
+    connection.execute(
+        """
+        INSERT INTO assessment_detail (assessment_id, l3_code, current_level,
+            evidence_note, target_level, standard_target_applicable,
+            standard_target_level, target_snapshot_source)
+        VALUES (%s, %s, 3, 'legacy evidence', 4, TRUE, 4, 'legacy')
+        """,
+        (legacy_id, legacy_l3_code),
+    )
+    connection.execute(
+        """
+        INSERT INTO assessment_review (assessment_id, sequence, buddy_id,
+            status, conclusion, reviewed_at)
+        VALUES (%s, 1, %s, '已闭环', '认可', NOW())
+        """,
+        (legacy_id, member_id),
+    )
+    connection.commit()
+
+    # New draft — should inherit from legacy via code fallback
+    # (since legacy detail has l3_node_id=NULL)
+    second_preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2027, assessment_type="年度"
+    )
+    second_result = create_assessment_draft(
+        connection,
+        member_id,
+        2027,
+        "年度",
+        scope_token=str(second_preview["scope_token"]),
+    )
+    second_assessment = get_assessment(connection, int(second_result["id"]))
+    assert second_assessment is not None
+    inherited_detail = next(
+        (d for d in second_assessment["details"] if d["l3_code"] == legacy_l3_code),
+        None,
+    )
+    assert inherited_detail is not None
+    assert inherited_detail["inherited_current_level"] == 3
+    assert inherited_detail["inherited_evidence_note"] == "legacy evidence"

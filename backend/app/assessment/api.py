@@ -26,6 +26,22 @@ from .repository import (
 )
 from .scope import AssessmentScopeError, compute_assessment_scope
 
+_VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
+
+
+def _validate_assessment_type(assessment_type: str) -> None:
+    if assessment_type not in _VALID_ASSESSMENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "invalid_assessment_type",
+                "message": (
+                    f"assessment_type must be one of "
+                    f"{', '.join(sorted(_VALID_ASSESSMENT_TYPES))}"
+                ),
+            },
+        )
+
 
 class CreateAssessmentRequest(BaseModel):
     year: int
@@ -109,6 +125,7 @@ def scope_preview(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+    _validate_assessment_type(assessment_type)
     try:
         # Fixed consistency scheme: one read-only REPEATABLE READ snapshot.
         # The auth dependency already queried on this connection, so close
@@ -153,6 +170,7 @@ def create_assessment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+    _validate_assessment_type(request.assessment_type)
     try:
         return create_assessment_draft(
             connection,

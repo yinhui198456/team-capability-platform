@@ -256,6 +256,9 @@ export function AssessmentGapPage() {
   const [repairExecuting, setRepairExecuting] = useState(false)
   const [scopePreview, setScopePreview] = useState<ScopePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [createIdempotencyKey, setCreateIdempotencyKey] = useState<
+    string | null
+  >(null)
   const [createBusy, setCreateBusy] = useState(false)
   const [scopeChanged, setScopeChanged] = useState<{
     member_current_level: string
@@ -321,6 +324,7 @@ export function AssessmentGapPage() {
         return
       }
       setScopePreview(preview)
+      setCreateIdempotencyKey(crypto.randomUUID())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '预览失败')
     } finally {
@@ -342,12 +346,11 @@ export function AssessmentGapPage() {
         year,
         token,
         '年度',
-        scopePreview
-          ? `create-${scopePreview.scope_token.slice(0, 16)}`
-          : undefined,
+        createIdempotencyKey ?? undefined,
       )
       setScopePreview(null)
       setScopeChanged(null)
+      setCreateIdempotencyKey(null)
       loadAssessment(await getAssessment(created.id))
     } catch (err: unknown) {
       const apiErr = err as ApiError
@@ -361,10 +364,12 @@ export function AssessmentGapPage() {
       if (detail?.code === 'assessment_scope_changed' && detail.summary) {
         setScopeChanged(detail.summary)
         setError('评估范围已变化，请根据最新范围重新确认。')
+        setCreateIdempotencyKey(crypto.randomUUID())
       } else if (detail?.code === 'open_draft_exists') {
         const draftId = detail.issues?.[0]?.assessment_id
         if (draftId) {
           setScopePreview(null)
+          setCreateIdempotencyKey(null)
           loadAssessment(await getAssessment(draftId))
           return
         }

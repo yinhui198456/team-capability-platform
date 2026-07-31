@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   Assessment,
   AssessmentDetail,
+  ScopeSummary,
   getAssessment,
   listAssessments,
 } from './assessment'
@@ -12,6 +13,9 @@ export function AssessmentHistoryPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [detailsMap, setDetailsMap] = useState<
     Record<number, AssessmentDetail[]>
+  >({})
+  const [scopeSummaryMap, setScopeSummaryMap] = useState<
+    Record<number, ScopeSummary | null | undefined>
   >({})
   const [error, setError] = useState('')
 
@@ -46,6 +50,10 @@ export function AssessmentHistoryPage() {
       try {
         const full = await getAssessment(id)
         setDetailsMap((prev) => ({ ...prev, [id]: full.details ?? [] }))
+        setScopeSummaryMap((prev) => ({
+          ...prev,
+          [id]: full.scope_summary,
+        }))
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载详情失败')
         return
@@ -94,6 +102,41 @@ export function AssessmentHistoryPage() {
             </p>
             {expanded.has(assessment.id) && (
               <div className="assessment-details">
+                {(() => {
+                  const summary = scopeSummaryMap[assessment.id]
+                  if (summary === undefined) return null
+                  if (summary === null) {
+                    return (
+                      <p
+                        className="muted"
+                        data-testid={`history-classification-${assessment.id}`}
+                      >
+                        历史未分类
+                      </p>
+                    )
+                  }
+                  return (
+                    <p
+                      className="muted"
+                      data-testid={`history-classification-${assessment.id}`}
+                    >
+                      适用{' '}
+                      <strong data-testid={`history-total-${assessment.id}`}>
+                        {summary.total}
+                      </strong>{' '}
+                      · 必备{' '}
+                      <strong data-testid={`history-required-${assessment.id}`}>
+                        {summary.current_required}
+                      </strong>{' '}
+                      · 进阶{' '}
+                      <strong
+                        data-testid={`history-progressive-${assessment.id}`}
+                      >
+                        {summary.target_progressive}
+                      </strong>
+                    </p>
+                  )
+                })()}
                 {(detailsMap[assessment.id] ?? []).length === 0 && (
                   <p className="muted">没有详情。</p>
                 )}
