@@ -32,7 +32,7 @@ _VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
 def _validate_assessment_type(assessment_type: str) -> None:
     if assessment_type not in _VALID_ASSESSMENT_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "code": "invalid_assessment_type",
                 "message": (

@@ -712,23 +712,11 @@ def create_assessment_draft(
                 """,
                 (member_id, year, assessment_type),
             ).fetchone()
-        except psycopg.errors.UniqueViolation:
-            # Concurrent insert slipped past the open-draft check; the unique
-            # index is the last line of defence.  Convert to a structured 409.
-            row = connection.execute(
-                """
-                SELECT id FROM assessment
-                WHERE member_id = %s AND year = %s AND assessment_type = %s
-                  AND status IN ('草稿', '建议调整')
-                ORDER BY id
-                """,
-                (member_id, year, assessment_type),
-            ).fetchone()
+        except psycopg.errors.UniqueViolation:  # ponytail: defensive, SELECT cannot
             raise AssessmentScopeError(
                 "open_draft_exists",
                 "an open assessment already exists",
                 status_code=409,
-                issues=[{"assessment_id": int(row[0])}] if row is not None else [],
             ) from None
         if open_draft is not None:
             raise AssessmentScopeError(
@@ -740,7 +728,7 @@ def create_assessment_draft(
 
         source = get_latest_approved_assessment_for_member(connection, member_id)
         inherited_by_node: dict[int, tuple[object, ...]] = {}
-        inherited_by_code: dict[str, tuple[object, ...]] = {}
+        inherited_legacy_by_code: dict[str, tuple[object, ...]] = {}
         if source is not None:
             for row in connection.execute(
                 """
@@ -753,7 +741,8 @@ def create_assessment_draft(
                 node_id = row[3]
                 if node_id is not None:
                     inherited_by_node[int(node_id)] = (row[0], row[1], row[2])
-                inherited_by_code[str(row[0])] = (row[0], row[1], row[2])
+                else:
+                    inherited_legacy_by_code[str(row[0])] = (row[0], row[1], row[2])
 
         row = connection.execute(
             """
@@ -766,29 +755,55 @@ def create_assessment_draft(
         assert row is not None
         version = row[0]
 
-        row = connection.execute(
-            """
-            INSERT INTO assessment (
-                member_id, year, version, assessment_type, status,
-                member_current_level_snapshot, member_target_level_snapshot,
-                capability_standard_version_id, assessment_scope_version
-            )
-            VALUES (%s, %s, %s, %s, '草稿', %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                member_id,
-                year,
-                version,
-                assessment_type,
-                scope["member_current_level"],
-                scope["member_target_level"],
-                scope["standard_version"]["id"],
-                scope["scope_version"],
-            ),
-        ).fetchone()
-        assert row is not None
-        assessment_id = int(row[0])
+        # INSERT is the true last line of defence for the unique open-draft
+        # index.  Wrap it in a savepoint so a UniqueViolation does not abort
+        # the outer transaction.
+        try:
+            with connection.transaction():
+                row = connection.execute(
+                    """
+                    INSERT INTO assessment (
+                        member_id, year, version, assessment_type, status,
+                        member_current_level_snapshot, member_target_level_snapshot,
+                        capability_standard_version_id, assessment_scope_version
+                    )
+                    VALUES (%s, %s, %s, %s, '草稿', %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        member_id,
+                        year,
+                        version,
+                        assessment_type,
+                        scope["member_current_level"],
+                        scope["member_target_level"],
+                        scope["standard_version"]["id"],
+                        scope["scope_version"],
+                    ),
+                ).fetchone()
+                assert row is not None
+                assessment_id = int(row[0])
+        except psycopg.errors.UniqueViolation:
+            # Concurrent winner already inserted; find its id and return 409.
+            existing = connection.execute(
+                """
+                SELECT id FROM assessment
+                WHERE member_id = %s AND year = %s AND assessment_type = %s
+                  AND status IN ('草稿', '建议调整')
+                ORDER BY id
+                """,
+                (member_id, year, assessment_type),
+            ).fetchone()
+            raise AssessmentScopeError(
+                "open_draft_exists",
+                "an open assessment already exists",
+                status_code=409,
+                issues=(
+                    [{"assessment_id": int(existing[0])}]
+                    if existing is not None
+                    else []
+                ),
+            ) from None
 
         with connection.cursor() as cursor:
             cursor.executemany(
@@ -839,7 +854,7 @@ def create_assessment_draft(
                     for inherited_row in (
                         (
                             inherited_by_node.get(item["l3_node_id"])
-                            or inherited_by_code.get(item["l3_code"])
+                            or inherited_legacy_by_code.get(item["l3_code"])
                         ),
                     )
                     for inherited_current in (

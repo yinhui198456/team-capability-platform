@@ -13,8 +13,9 @@ import {
   getAssessment,
   getDraftTargetRepairPreview,
   listAssessments,
-  saveDraft,
+  newIdempotencyKey,
   repairDraftTargetSnapshots,
+  saveDraft,
   selectL2Requirement,
   submitAssessment,
 } from './assessment'
@@ -324,7 +325,7 @@ export function AssessmentGapPage() {
         return
       }
       setScopePreview(preview)
-      setCreateIdempotencyKey(crypto.randomUUID())
+      setCreateIdempotencyKey(newIdempotencyKey())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '预览失败')
     } finally {
@@ -364,7 +365,7 @@ export function AssessmentGapPage() {
       if (detail?.code === 'assessment_scope_changed' && detail.summary) {
         setScopeChanged(detail.summary)
         setError('评估范围已变化，请根据最新范围重新确认。')
-        setCreateIdempotencyKey(crypto.randomUUID())
+        setCreateIdempotencyKey(newIdempotencyKey())
       } else if (detail?.code === 'open_draft_exists') {
         const draftId = detail.issues?.[0]?.assessment_id
         if (draftId) {

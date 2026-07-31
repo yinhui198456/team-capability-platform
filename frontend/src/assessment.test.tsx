@@ -1235,3 +1235,54 @@ describe('L2 职级要求选择', () => {
     ).toBeNull()
   })
 })
+
+describe('newIdempotencyKey', () => {
+  it('returns a non-empty string', () => {
+    const key = assessmentApi.newIdempotencyKey()
+    expect(key).toBeTruthy()
+    expect(key.length).toBeGreaterThan(0)
+  })
+
+  it('produces distinct keys on successive calls', () => {
+    const a = assessmentApi.newIdempotencyKey()
+    const b = assessmentApi.newIdempotencyKey()
+    expect(a).not.toBe(b)
+  })
+
+  it('falls back to getRandomValues when randomUUID is not available', () => {
+    const orig = crypto.randomUUID as (() => string) | undefined
+    // Replace so the check in newIdempotencyKey sees no randomUUID
+    Object.defineProperty(crypto, 'randomUUID', {
+      value: undefined,
+      writable: true,
+    })
+    try {
+      const key = assessmentApi.newIdempotencyKey()
+      expect(key).toBeTruthy()
+      // Fallback key: prefix + getRandomValues hex
+      expect(key.length).toBeGreaterThanOrEqual(22)
+    } finally {
+      if (orig) {
+        Object.defineProperty(crypto, 'randomUUID', {
+          value: orig,
+          writable: true,
+        })
+      } else {
+        // ponytail: if randomUUID wasn't there originally, restore absence
+        Object.defineProperty(crypto, 'randomUUID', {
+          value: undefined,
+          writable: true,
+        })
+      }
+    }
+  })
+
+  it('uses randomUUID when available', () => {
+    const key = assessmentApi.newIdempotencyKey()
+    expect(key).toBeTruthy()
+    // If randomUUID is available, the result has the UUID dash pattern
+    if (typeof crypto.randomUUID === 'function') {
+      expect(key).toContain('-')
+    }
+  })
+})

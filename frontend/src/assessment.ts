@@ -1,5 +1,20 @@
 import { request } from './shared/api'
 
+export function newIdempotencyKey(): string {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID()
+  }
+  const buf = new Uint8Array(16)
+  crypto.getRandomValues(buf)
+  return (
+    'abcdef' + // ponytail: prefix distinguishes from UUID v4 while staying hex-safe
+    Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('')
+  )
+}
+
 export type Assessment = {
   id: number
   member_id: number

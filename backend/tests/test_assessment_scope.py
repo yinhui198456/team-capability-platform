@@ -1663,3 +1663,154 @@ def test_inheritance_legacy_code_fallback_when_node_id_is_null(scope_schema) -> 
     assert inherited_detail is not None
     assert inherited_detail["inherited_current_level"] == 3
     assert inherited_detail["inherited_evidence_note"] == "legacy evidence"
+
+
+# --- P1-C: scope-v1 inheritance refuses code match when node id differs -----
+
+
+def test_inheritance_refuses_code_match_when_node_id_differs(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+    # First approved scope-v1 assessment
+    first_id = create_scoped_draft(connection, member_id, 2026)
+    # Get a scope-v1 detail with its node_id and code
+    detail_row = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail "
+        "WHERE assessment_id = %s AND scope_type = 'current_required' "
+        "ORDER BY l3_code LIMIT 1",
+        (first_id,),
+    ).fetchone()
+    assert detail_row is not None
+    original_code = str(detail_row[0])
+    original_node_id = int(detail_row[1])
+    connection.execute(
+        "UPDATE assessment_detail "
+        "SET current_level = 3, evidence_note = 'scope-v1 inherited' "
+        "WHERE assessment_id = %s AND l3_code = %s",
+        (first_id, original_code),
+    )
+    # Submit/review/approve
+    connection.execute(
+        "UPDATE assessment SET status = '已复核' WHERE id = %s", (first_id,)
+    )
+    connection.execute(
+        """
+        INSERT INTO assessment_review (assessment_id, sequence, buddy_id,
+            status, conclusion, reviewed_at)
+        VALUES (%s, 1, %s, '已闭环', '认可', NOW())
+        """,
+        (first_id, member_id),
+    )
+    connection.commit()
+
+    # NOW: rename a *different* L3 to reuse original_code, so that code match
+    # would incorrectly inherit from the original node if it relied on code.
+    other_l3 = connection.execute(
+        "SELECT id, code FROM capability_node "
+        "WHERE node_type = 'L3' AND id <> %s AND enabled = TRUE "
+        "ORDER BY id LIMIT 1",
+        (original_node_id,),
+    ).fetchone()
+    assert other_l3 is not None
+    other_id, other_old_code = int(other_l3[0]), str(other_l3[1])
+
+    # Temporarily swap codes so code-based matching would make node B appear
+    # to match node A's heritage — scope-v1 must not fall for this.
+    # 3-step swap to avoid UNIQUE(model_id, code) conflicts:
+    tmp_code = original_code + "___tmp"
+    connection.execute(
+        "UPDATE capability_node SET code = %s WHERE id = %s",
+        (tmp_code, original_node_id),
+    )
+    connection.execute(
+        "UPDATE capability_node SET code = %s WHERE id = %s",
+        (original_code, other_id),
+    )
+    connection.execute(
+        "UPDATE capability_node SET code = %s WHERE id = %s",
+        (other_old_code, original_node_id),
+    )
+    connection.commit()
+
+    # Create second draft — inheritance must match by node_id, not code
+    second_preview = compute_assessment_scope(
+        connection, member_id=member_id, year=2027, assessment_type="年度"
+    )
+    second_result = create_assessment_draft(
+        connection,
+        member_id,
+        2027,
+        "年度",
+        scope_token=str(second_preview["scope_token"]),
+    )
+    second_assessment = get_assessment(connection, int(second_result["id"]))
+    assert second_assessment is not None
+
+    # The original node (now with different code) must still inherit
+    original_detail = next(
+        (
+            d
+            for d in second_assessment["details"]
+            if int(d["l3_node_id"]) == original_node_id
+        ),
+        None,
+    )
+    assert original_detail is not None
+    assert original_detail["inherited_current_level"] == 3
+    assert original_detail["inherited_evidence_note"] == "scope-v1 inherited"
+
+    # The other node (now with the original code) must NOT inherit
+    other_detail = next(
+        (d for d in second_assessment["details"] if int(d["l3_node_id"]) == other_id),
+        None,
+    )
+    assert other_detail is not None
+    assert other_detail["inherited_current_level"] is None
+    assert other_detail["inherited_evidence_note"] is None
+
+
+# --- P1-B: INSERT-level UniqueViolation converted to 409 --------------------
+
+
+def test_insert_unique_violation_converted_to_409(scope_schema) -> None:
+    connection = scope_schema
+    member_id = _member(connection, "P4", "P5")
+
+    # Step 1: create a draft normally to establish the business key
+    first_id = create_scoped_draft(connection, member_id, 2026)
+    assert _draft_count(connection) == 1
+
+    # Step 2: on a second connection, bypass all checks and attempt a raw
+    # INSERT that conflicts on the partial unique index.  This exercises the
+    # same code path that `create_assessment_draft`'s savepoint guards — a
+    # UniqueViolation on INSERT must never escape as a 500.
+    conn2 = psycopg.connect(TEST_DATABASE_URL)
+    try:
+        conn2.execute(
+            """
+            INSERT INTO assessment (
+                member_id, year, version, assessment_type, status,
+                member_current_level_snapshot, member_target_level_snapshot
+            )
+            VALUES (%s, 2026, 99, '年度', '草稿', 'P4', 'P5')
+            """,
+            (member_id,),
+        )
+        conn2.commit()
+        pytest.fail("partial unique index must prevent duplicate open draft")
+    except psycopg.errors.UniqueViolation:
+        conn2.rollback()
+    finally:
+        conn2.close()
+
+    # Only one open draft must exist
+    rows = connection.execute(
+        """
+        SELECT id FROM assessment
+        WHERE member_id = %s AND year = 2026 AND assessment_type = '年度'
+          AND status IN ('草稿', '建议调整')
+        ORDER BY id
+        """,
+        (member_id,),
+    ).fetchall()
+    assert [int(row[0]) for row in rows] == [first_id]
