@@ -136,7 +136,6 @@ def standard_target_payload(
                     "l3_code": l3_code,
                     "current_level": target_level if applicable else None,
                     "evidence_note": "测试辅助已达标项",
-                    "plan_candidate": False,
                 }
             )
             continue

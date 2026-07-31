@@ -219,7 +219,10 @@ def test_create_draft_save_details_submit_review(
                     "adjusted_target_level": 4,
                     "target_adjustment_reason": "岗位项目要求",
                     "evidence_note": "测试中",
-                    "plan_candidate": True,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             "expected_revision": 1,
@@ -439,11 +442,13 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
+    # Set current_level low enough to create a positive gap (standard target is 3),
+    # but DON'T provide plan fields — submit must fail validation.
     status, _, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": "C01.01.01", "current_level": 3}],
+            "details": [{"l3_code": "C01.01.01", "current_level": 0}],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -455,13 +460,15 @@ def test_submit_validation_returns_structured_l3_error(
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 400
-    assert body["detail"] == {
-        "code": "assessment_validation_failed",
-        "l3_code": "C01.01.01",
-        "reason": "requires_evidence",
-        "message": "assessment detail C01.01.01 requires evidence",
-    }
+    assert status == 422
+    detail = body["detail"]
+    assert detail["code"] == "assessment_validation_failed"
+    assert detail["l3_code"] == "C01.01.01"
+    assert "l3_node_id" in detail
+    assert isinstance(detail["l3_node_id"], int)
+    # With #61: evidence gate removed; validation now catches missing plan fields.
+    assert detail["reason"] == "priority_required"
+    assert "message" in detail
 
 
 def test_member_cannot_view_or_edit_other_draft(
@@ -547,7 +554,7 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
         {"details": [], "expected_revision": 1},
         cookies=cookies,
     )
-    assert status == 400
+    assert status == 422
 
 
 def test_draft_target_repair_api_enforces_permissions_and_all_or_nothing(

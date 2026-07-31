@@ -10,10 +10,18 @@ from .scope import AssessmentScopeError, compute_assessment_scope
 
 
 class AssessmentValidationError(ValueError):
-    def __init__(self, l3_code: str, reason: str, message: str) -> None:
+    def __init__(
+        self,
+        l3_code: str,
+        reason: str,
+        message: str,
+        *,
+        l3_node_id: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = "assessment_validation_failed"
         self.l3_code = l3_code
+        self.l3_node_id = l3_node_id
         self.reason = reason
 
 
@@ -1054,7 +1062,9 @@ def _get_assessment_details(
                ad.inherited_evidence_note,
                ad.current_level_explicitly_cleared,
                ad.l3_node_id, ad.scope_type, ad.standard_job_level_snapshot,
-               ad.l1_code, ad.l1_name, ad.l2_code, ad.l2_name, ad.l3_name
+               ad.l1_code, ad.l1_name, ad.l2_code, ad.l2_name, ad.l3_name,
+               ad.member_priority, ad.include_in_plan,
+               ad.plan_quarter, ad.plan_month
         FROM assessment_detail ad
         WHERE ad.assessment_id = %s
         ORDER BY ad.l3_code
@@ -1084,6 +1094,10 @@ def _get_assessment_details(
             "l3_node_id": row[18],
             "scope_type": row[19],
             "standard_job_level_snapshot": row[20],
+            "member_priority": row[26],
+            "include_in_plan": row[27],
+            "plan_quarter": row[28],
+            "plan_month": row[29],
         }
         for row in rows
     ]
@@ -1252,34 +1266,41 @@ def _frozen_l2_groups(
 def _get_gap_summary(
     connection: psycopg.Connection, assessment_id: int
 ) -> dict[str, object]:
-    """Aggregate gap statistics for the assessment's Gap sidebar."""
-    gaps = [
-        max(int(row[0]) - int(row[1]), 0)
-        for row in connection.execute(
-            """
-            SELECT target_level, current_level
-            FROM assessment_detail
-            WHERE assessment_id = %s AND target_level > current_level
-            """,
-            (assessment_id,),
-        ).fetchall()
-    ]
-    total = len(gaps)
-    avg = round(sum(gaps) / total, 1) if total > 0 else 0
-    by_priority: dict[str, int] = {"高": 0, "中": 0, "低": 0}
-    for g in gaps:
-        if g >= 3:
-            by_priority["高"] += 1
-        elif g > 0:
-            by_priority["中"] += 1
-        else:
-            by_priority["低"] += 1
+    """Aggregate gap + plan statistics from the canonical assessment_detail."""
+    rows = connection.execute(
+        """
+        SELECT gap_value, member_priority, include_in_plan,
+               plan_quarter
+        FROM assessment_detail
+        WHERE assessment_id = %s AND gap_value IS NOT NULL AND gap_value > 0
+        """,
+        (assessment_id,),
+    ).fetchall()
+    total = len(rows)
+    avg = (
+        round(sum(int(row[0]) for row in rows) / total, 1) if total > 0 else 0
+    )
+    by_priority: dict[str, int] = {"高": 0, "中": 0, "低": 0, "暂缓": 0}
+    in_plan = 0
+    by_quarter: dict[str, int] = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
+    for row in rows:
+        pri = str(row[1]) if row[1] in ("高", "中", "低", "暂缓") else None
+        if pri:
+            by_priority[pri] += 1
+        if row[2] is True:
+            in_plan += 1
+            q = str(row[3]) if row[3] in ("Q1", "Q2", "Q3", "Q4") else None
+            if q:
+                by_quarter[q] += 1
     return {
         "total_gaps": total,
         "avg_gap": avg,
         "high_priority": by_priority["高"],
         "medium_priority": by_priority["中"],
         "low_priority": by_priority["低"],
+        "on_hold": by_priority["暂缓"],
+        "in_plan": in_plan,
+        "by_quarter": by_quarter,
     }
 
 
@@ -1352,9 +1373,13 @@ def save_assessment_draft(
             """
             SELECT id, l3_code, standard_target_applicable,
                    standard_target_level, target_compatibility_error,
-                   target_level, gap_value, target_snapshot_source, plan_candidate,
+                   target_level, gap_value, target_snapshot_source,
                    inherited_current_level, inherited_evidence_note,
-                   current_level_explicitly_cleared
+                   current_level_explicitly_cleared, l3_node_id,
+                   member_priority AS existing_priority,
+                   include_in_plan AS existing_plan,
+                   plan_quarter AS existing_quarter,
+                   plan_month AS existing_month
             FROM assessment_detail
             WHERE assessment_id = %s
             ORDER BY l3_code
@@ -1393,10 +1418,14 @@ def save_assessment_draft(
                 existing_target,
                 existing_gap,
                 snapshot_source,
-                existing_plan_candidate,
                 inherited_current_level,
                 inherited_evidence,
                 existing_explicitly_cleared,
+                l3_node_id,
+                _existing_priority,
+                _existing_plan,
+                _existing_quarter,
+                _existing_month,
             ) = snapshots[str(detail["l3_code"])]
             if compatibility_error and detail.get("_detail_present", True):
                 raise ValueError(
@@ -1410,18 +1439,21 @@ def save_assessment_draft(
             if current_level is None and not current_level_present:
                 explicitly_cleared = bool(existing_explicitly_cleared)
             if current_level is not None and (
-                isinstance(cl, bool) or not 1 <= current_level <= 5
+                isinstance(cl, bool) or not 0 <= current_level <= 5
             ):
-                raise ValueError("current_level must be between 1 and 5")
+                raise ValueError("current_level must be between 0 and 5")
 
             target_adjusted = detail.get("target_adjusted", False)
             if not isinstance(target_adjusted, bool):
                 raise ValueError("target_adjusted must be boolean")
             adjusted = detail.get("adjusted_target_level")
             reason = detail.get("target_adjustment_reason")
-            plan_candidate = detail.get("plan_candidate", False)
-            if not isinstance(plan_candidate, bool):
-                raise ValueError("plan_candidate must be boolean")
+
+            # ── Canonical plan fields ──────────────────────────
+            member_priority = detail.get("member_priority")
+            include_in_plan = detail.get("include_in_plan")  # tri-state
+            plan_quarter = detail.get("plan_quarter")
+            plan_month = detail.get("plan_month")
 
             legacy_preserved = (
                 snapshot_source == "legacy_preserved"
@@ -1447,14 +1479,16 @@ def save_assessment_draft(
                 current_level = None
                 final_target = None
                 gap_value = None
-                if plan_candidate and not existing_plan_candidate:
-                    raise ValueError(
-                        f"not applicable item {code} cannot be adjusted or planned"
-                    )
-                plan_candidate = False
+                # Clear all plan fields for non-applicable items.
+                member_priority = None
+                include_in_plan = None
+                plan_quarter = None
+                plan_month = None
             else:
                 if standard_target is None:
-                    raise ValueError(f"assessment detail {code} has no standard target")
+                    raise ValueError(
+                        f"assessment detail {code} has no standard target"
+                    )
                 if target_adjusted:
                     if (
                         isinstance(adjusted, bool)
@@ -1470,7 +1504,9 @@ def save_assessment_draft(
                     reason = reason.strip()
                 else:
                     if adjusted is not None or reason is not None:
-                        raise ValueError("adjustment fields require target_adjusted")
+                        raise ValueError(
+                            "adjustment fields require target_adjusted"
+                        )
                     final_target = int(standard_target)
                 gap_value = (
                     max(final_target - current_level, 0)
@@ -1478,28 +1514,49 @@ def save_assessment_draft(
                     else None
                 )
 
-            if plan_candidate:
-                evidence = detail.get("evidence_note")
-                valid_evidence = _evidence_is_valid(
-                    current_level,
-                    evidence,
-                    inherited_current_level,
-                    inherited_evidence,
+            # ── Plan field business rules ──────────────────────
+            can_plan = (
+                applicable is True
+                and current_level is not None
+                and final_target is not None
+                and gap_value is not None
+                and gap_value > 0
+            )
+
+            # Priority allowed only for positive-gap items.
+            if member_priority is not None and not can_plan:
+                raise ValueError(
+                    f"priority not allowed for {code}: no positive gap"
                 )
-                candidate_valid = (
-                    (applicable is True or legacy_preserved)
-                    and current_level is not None
-                    and final_target is not None
-                    and gap_value > 0
-                    and not compatibility_error
-                    and valid_evidence
+
+            # 暂缓 forces include_in_plan = FALSE.
+            if member_priority == "暂缓" and include_in_plan is True:
+                raise ValueError(
+                    f"暂缓 and include_in_plan are mutually exclusive for {code}"
                 )
-                if not candidate_valid:
-                    if existing_plan_candidate:
-                        plan_candidate = False
-                        auto_cancelled.append(code)
-                    else:
-                        raise ValueError(f"invalid plan candidate for {code}")
+
+            if not can_plan:
+                # Gap<=0 / unassessed / invalid → clear all plan fields.
+                member_priority = None
+                include_in_plan = None
+                plan_quarter = None
+                plan_month = None
+
+            # include_in_plan tri-state validation.
+            if include_in_plan is True:
+                if member_priority is None or member_priority == "暂缓":
+                    raise ValueError(
+                        f"include_in_plan requires valid priority for {code}"
+                    )
+                if plan_quarter is None or plan_month is None:
+                    raise ValueError(
+                        f"include_in_plan requires quarter and month for {code}"
+                    )
+            elif include_in_plan is False:
+                plan_quarter = None
+                plan_month = None
+            # include_in_plan=None (未决定) — leave quarter/month as-is but
+            # they must be consistent with the NULL tri-state.
 
             connection.execute(
                 """
@@ -1512,7 +1569,10 @@ def save_assessment_draft(
                     target_level = %s,
                     gap_value = %s,
                     evidence_note = %s,
-                    plan_candidate = %s
+                    member_priority = %s,
+                    include_in_plan = %s,
+                    plan_quarter = %s,
+                    plan_month = %s
                 WHERE id = %s
                 """,
                 (
@@ -1524,7 +1584,10 @@ def save_assessment_draft(
                     final_target,
                     gap_value,
                     detail.get("evidence_note"),
-                    plan_candidate,
+                    member_priority,
+                    include_in_plan,
+                    plan_quarter,
+                    plan_month,
                     detail_id,
                 ),
             )
@@ -1553,7 +1616,8 @@ def patch_assessment_draft(
         """
         SELECT l3_code, current_level, target_adjusted,
                adjusted_target_level, target_adjustment_reason,
-               evidence_note, plan_candidate,
+               evidence_note, member_priority, include_in_plan,
+               plan_quarter, plan_month,
                current_level_explicitly_cleared
         FROM assessment_detail
         WHERE assessment_id = %s
@@ -1569,8 +1633,11 @@ def patch_assessment_draft(
             "adjusted_target_level": row[3],
             "target_adjustment_reason": row[4],
             "evidence_note": row[5],
-            "plan_candidate": row[6],
-            "current_level_explicitly_cleared": row[7],
+            "member_priority": row[6],
+            "include_in_plan": row[7],
+            "plan_quarter": row[8],
+            "plan_month": row[9],
+            "current_level_explicitly_cleared": row[10],
             "_current_level_present": False,
             "_detail_present": False,
         }
@@ -1582,7 +1649,10 @@ def patch_assessment_draft(
         "adjusted_target_level",
         "target_adjustment_reason",
         "evidence_note",
-        "plan_candidate",
+        "member_priority",
+        "include_in_plan",
+        "plan_quarter",
+        "plan_month",
     }
     for detail in details:
         code = str(detail.get("l3_code", ""))
@@ -1712,8 +1782,9 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
     rows = connection.execute(
         """
         SELECT l3_code, current_level, standard_target_applicable,
-               target_level, evidence_note, target_compatibility_error,
-               plan_candidate, inherited_current_level, inherited_evidence_note
+               target_level, target_compatibility_error,
+               member_priority, include_in_plan, plan_quarter, plan_month,
+               gap_value, l3_node_id
         FROM assessment_detail
         WHERE assessment_id = %s
         ORDER BY l3_code
@@ -1727,52 +1798,99 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
         current_level,
         applicable,
         target_level,
-        evidence,
         compatibility_error,
-        plan_candidate,
-        inherited_current,
-        inherited_evidence,
+        member_priority,
+        include_in_plan,
+        plan_quarter,
+        plan_month,
+        gap_value,
+        l3_node_id,
     ) in rows:
         if compatibility_error:
             raise AssessmentValidationError(
                 code,
                 "compatibility_repair_required",
                 f"assessment detail {code} requires compatibility repair",
+                l3_node_id=l3_node_id,
             )
         if applicable is False:
-            if current_level is not None or target_level is not None or plan_candidate:
+            if current_level is not None or target_level is not None:
                 raise AssessmentValidationError(
                     code,
                     "not_applicable_incomplete",
                     f"not applicable item {code} is incomplete",
+                    l3_node_id=l3_node_id,
                 )
             continue
-        if current_level is None or target_level is None:
+        # All applicable items must have current_level 0–5 (NULL = not yet assessed).
+        if current_level is None:
             raise AssessmentValidationError(
                 code,
                 "requires_current_level",
-                f"assessment detail {code} requires current level",
+                f"assessment detail {code} requires current level (0–5)",
+                l3_node_id=l3_node_id,
             )
-        if not _evidence_is_valid(
-            current_level, evidence, inherited_current, inherited_evidence
-        ):
-            reason = (
-                "requires_updated_evidence"
-                if inherited_current is not None and current_level > inherited_current
-                else "requires_evidence"
-            )
-            message = (
-                f"assessment detail {code} requires updated evidence"
-                if reason == "requires_updated_evidence"
-                else f"assessment detail {code} requires evidence"
-            )
-            raise AssessmentValidationError(code, reason, message)
-        if plan_candidate and (target_level - current_level) <= 0:
+        if target_level is None:
             raise AssessmentValidationError(
                 code,
-                "invalid_plan_candidate",
-                f"invalid plan candidate for {code}",
+                "requires_target_level",
+                f"assessment detail {code} has no effective target",
+                l3_node_id=l3_node_id,
             )
+
+        # ── Plan field validation ──────────────────────────────
+        has_positive_gap = (
+            gap_value is not None and int(gap_value) > 0
+        )
+        if has_positive_gap:
+            # Must have a priority.
+            if member_priority is None:
+                raise AssessmentValidationError(
+                    code,
+                    "priority_required",
+                    f"positive gap item {code} requires member_priority",
+                    l3_node_id=l3_node_id,
+                )
+            # include_in_plan must be explicitly decided (not NULL).
+            if include_in_plan is None:
+                raise AssessmentValidationError(
+                    code,
+                    "plan_decision_required",
+                    f"positive gap item {code} requires include_in_plan decision",
+                    l3_node_id=l3_node_id,
+                )
+            if include_in_plan is True:
+                if member_priority == "暂缓":
+                    raise AssessmentValidationError(
+                        code,
+                        "hold_plan_conflict",
+                        f"暂缓 item {code} cannot be include_in_plan=TRUE",
+                        l3_node_id=l3_node_id,
+                    )
+                if plan_quarter is None or plan_month is None:
+                    raise AssessmentValidationError(
+                        code,
+                        "plan_time_required",
+                        f"include_in_plan=TRUE requires quarter and month for {code}",
+                        l3_node_id=l3_node_id,
+                    )
+            # include_in_plan=FALSE with 暂缓 is valid.
+        else:
+            # Gap<=0: plan fields must be cleared.
+            if member_priority is not None:
+                raise AssessmentValidationError(
+                    code,
+                    "priority_not_applicable",
+                    f"item {code} with gap<=0 cannot have priority",
+                    l3_node_id=l3_node_id,
+                )
+            if include_in_plan is not None:
+                raise AssessmentValidationError(
+                    code,
+                    "plan_not_applicable",
+                    f"item {code} with gap<=0 cannot have plan selection",
+                    l3_node_id=l3_node_id,
+                )
 
 
 def submit_assessment(
@@ -1858,50 +1976,75 @@ def submit_assessment(
 def generate_gaps_for_assessment(
     connection: psycopg.Connection, assessment_id: int
 ) -> None:
-    details = _get_assessment_details(connection, assessment_id)
-    for detail in details:
-        raw_gap_value = detail["gap_value"]
-        if raw_gap_value is None:
+    """One-way compat projection: assessment_detail → gap table.
+
+    The canonical source is assessment_detail.  Gap rows are derived within
+    the same transaction for the legacy Planning read path.  If this projection
+    fails the whole Detail transaction rolls back.
+
+    Priority is projected only when Member has explicitly set it (not NULL,
+    not 暂缓).  include_in_plan=TRUE is projected as plan_candidate=TRUE.
+    """
+    rows = connection.execute(
+        """
+        SELECT l3_code, current_level, target_level, gap_value,
+               member_priority, include_in_plan
+        FROM assessment_detail
+        WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    ).fetchall()
+    for row in rows:
+        code = str(row[0])
+        cl = row[1]
+        tl = row[2]
+        gv = row[3]
+        mpri = row[4]
+        iip = row[5]
+
+        if gv is None:
             connection.execute(
-                """
-                DELETE FROM gap
-                WHERE assessment_id = %s AND l3_code = %s
-                """,
-                (assessment_id, detail["l3_code"]),
+                "DELETE FROM gap WHERE assessment_id=%s AND l3_code=%s",
+                (assessment_id, code),
             )
             continue
-        gap_value = int(raw_gap_value)
+        gap_value = int(gv)
         if gap_value > 0:
+            # Only project Member-confirmed priority (not NULL, not 暂缓).
+            gap_priority = (
+                str(mpri)
+                if mpri in ("高", "中", "低")
+                else None
+            )
             connection.execute(
                 """
                 INSERT INTO gap (
                     assessment_id, l3_code, current_level, target_level,
-                    gap_value, plan_candidate
+                    gap_value, priority, plan_candidate
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (assessment_id, l3_code)
                 DO UPDATE SET
                     current_level = EXCLUDED.current_level,
                     target_level = EXCLUDED.target_level,
                     gap_value = EXCLUDED.gap_value,
+                    priority = EXCLUDED.priority,
                     plan_candidate = EXCLUDED.plan_candidate
                 """,
                 (
                     assessment_id,
-                    detail["l3_code"],
-                    detail["current_level"],
-                    detail["target_level"],
+                    code,
+                    cl,
+                    tl,
                     gap_value,
-                    detail["plan_candidate"],
+                    gap_priority,
+                    bool(iip) if iip is True else False,
                 ),
             )
         else:
             connection.execute(
-                """
-                DELETE FROM gap
-                WHERE assessment_id = %s AND l3_code = %s
-                """,
-                (assessment_id, detail["l3_code"]),
+                "DELETE FROM gap WHERE assessment_id=%s AND l3_code=%s",
+                (assessment_id, code),
             )
 
 
@@ -1924,7 +2067,7 @@ def list_gaps(
         f"""
         SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
                g.target_level, g.gap_value, g.priority, g.plan_candidate,
-               a.member_id
+               a.member_id, a.assessment_scope_version
         FROM gap g
         JOIN assessment a ON a.id = g.assessment_id
         {where}
@@ -1943,6 +2086,7 @@ def list_gaps(
             "priority": row[6],
             "plan_candidate": row[7],
             "member_id": row[8],
+            "assessment_scope_version": row[9],
         }
         for row in rows
     ]
@@ -1953,7 +2097,7 @@ def get_gap(connection: psycopg.Connection, gap_id: int) -> dict[str, object] | 
         """
         SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
                g.target_level, g.gap_value, g.priority, g.plan_candidate,
-               a.member_id
+               a.member_id, a.assessment_scope_version
         FROM gap g
         JOIN assessment a ON a.id = g.assessment_id
         WHERE g.id = %s
@@ -1972,6 +2116,7 @@ def get_gap(connection: psycopg.Connection, gap_id: int) -> dict[str, object] | 
         "priority": row[6],
         "plan_candidate": row[7],
         "member_id": row[8],
+        "assessment_scope_version": row[9],
     }
 
 

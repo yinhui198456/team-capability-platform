@@ -38,7 +38,7 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             assessment_id BIGINT NOT NULL REFERENCES assessment(id) ON DELETE CASCADE,
             l3_code TEXT NOT NULL,
             current_level INT CHECK (
-                current_level IS NULL OR current_level BETWEEN 1 AND 5
+                current_level IS NULL OR current_level BETWEEN 0 AND 5
             ),
             current_level_explicitly_cleared BOOLEAN NOT NULL DEFAULT FALSE,
             target_level INT CHECK (
@@ -81,6 +81,17 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             l2_code TEXT,
             l2_name TEXT,
             l3_name TEXT,
+            member_priority TEXT CHECK (
+                member_priority IS NULL
+                OR member_priority IN ('高', '中', '低', '暂缓')
+            ),
+            include_in_plan BOOLEAN,
+            plan_quarter TEXT CHECK (
+                plan_quarter IS NULL OR plan_quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+            ),
+            plan_month INT CHECK (
+                plan_month IS NULL OR plan_month BETWEEN 1 AND 12
+            ),
             CHECK (
                 standard_target_applicable IS DISTINCT FROM FALSE
                 OR standard_target_level IS NULL
@@ -95,7 +106,25 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                  AND adjusted_target_level BETWEEN 1 AND 5
                  AND BTRIM(target_adjustment_reason) <> '')
             ),
-            UNIQUE(assessment_id, l3_code)
+            UNIQUE(assessment_id, l3_code),
+            CHECK (
+                plan_quarter IS NULL OR plan_month IS NULL
+                OR (plan_quarter = 'Q1' AND plan_month BETWEEN 1 AND 3)
+                OR (plan_quarter = 'Q2' AND plan_month BETWEEN 4 AND 6)
+                OR (plan_quarter = 'Q3' AND plan_month BETWEEN 7 AND 9)
+                OR (plan_quarter = 'Q4' AND plan_month BETWEEN 10 AND 12)
+            ),
+            CHECK (
+                include_in_plan IS DISTINCT FROM TRUE
+                OR (plan_quarter IS NOT NULL AND plan_month IS NOT NULL)
+            ),
+            CHECK (
+                include_in_plan IS DISTINCT FROM FALSE
+                OR (plan_quarter IS NULL AND plan_month IS NULL)
+            ),
+            CHECK (
+                NOT (member_priority = '暂缓' AND include_in_plan = TRUE)
+            )
         )
         """
     )
@@ -108,8 +137,8 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             current_level INT NOT NULL,
             target_level INT NOT NULL,
             gap_value INT NOT NULL,
-            priority TEXT NOT NULL DEFAULT '中'
-                CHECK (priority IN ('高', '中', '低')),
+            priority TEXT
+                CHECK (priority IS NULL OR priority IN ('高', '中', '低', '暂缓')),
             plan_candidate BOOLEAN NOT NULL DEFAULT FALSE,
             UNIQUE(assessment_id, l3_code)
         )

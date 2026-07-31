@@ -174,7 +174,10 @@ def _create_and_submit_assessment(
             "current_level": 2,
             "target_level": 4,
             "evidence_note": "测试中",
-            "plan_candidate": True,
+            "member_priority": "高",
+            "include_in_plan": True,
+            "plan_quarter": "Q2",
+            "plan_month": 5,
         }
     ]
     ensure_capability_nodes(
@@ -232,7 +235,7 @@ def test_gap_generated_on_submit(assessment_schema: psycopg.Connection) -> None:
     assert gaps[0]["current_level"] == 2
     assert gaps[0]["target_level"] == 4
     assert gaps[0]["gap_value"] == 2
-    assert gaps[0]["priority"] == "中"
+    assert gaps[0]["priority"] == "高"
     assert gaps[0]["plan_candidate"] is True
 
 
@@ -253,7 +256,6 @@ def test_gap_not_generated_when_gap_value_zero(
                 "current_level": 4,
                 "target_level": 4,
                 "evidence_note": "无差距",
-                "plan_candidate": False,
             }
         ],
     )
@@ -262,7 +264,10 @@ def test_gap_not_generated_when_gap_value_zero(
     assert len(gaps) == 0
 
 
-def test_member_can_update_gap(assessment_schema: psycopg.Connection) -> None:
+def test_member_update_gap_blocked_by_scope_v1(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    """#61: scope-v1 assessments disable legacy gap writes."""
     member_id = _create_test_user(assessment_schema, "member_update", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_update", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
@@ -279,14 +284,14 @@ def test_member_can_update_gap(assessment_schema: psycopg.Connection) -> None:
         {"priority": "高", "plan_candidate": True},
         cookies=cookies,
     )
-    assert status == 200
-
-    updated = list_gaps(assessment_schema, assessment_id=assessment_id)
-    assert updated[0]["priority"] == "高"
-    assert updated[0]["plan_candidate"] is True
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_gap_write_disabled"
 
 
-def test_non_member_cannot_update_gap(assessment_schema: psycopg.Connection) -> None:
+def test_non_member_update_gap_blocked_by_scope_v1(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    """#61: scope-v1 block fires before permission check."""
     member_id = _create_test_user(assessment_schema, "member_owner", ["Member"])
     _create_test_user(assessment_schema, "member_other_gap", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_owner", ["Buddy"])
@@ -304,7 +309,8 @@ def test_non_member_cannot_update_gap(assessment_schema: psycopg.Connection) -> 
         {"priority": "高", "plan_candidate": True},
         cookies=cookies,
     )
-    assert status == 403
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_gap_write_disabled"
 
 
 def test_buddy_can_view_assigned_member_gaps(
@@ -383,7 +389,10 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
                         "current_level": 2,
                         "target_level": 5,
                         "evidence_note": "已补充",
-                        "plan_candidate": True,
+                        "member_priority": "高",
+                        "include_in_plan": True,
+                        "plan_quarter": "Q2",
+                        "plan_month": 5,
                     }
                 ],
             ),
