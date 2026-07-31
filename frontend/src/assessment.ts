@@ -278,13 +278,13 @@ export async function saveDraft(
 ): Promise<{
   ok: boolean
   revision?: number
-  auto_cancelled_plan_candidates?: string[]
+  auto_cleared?: Array<{ l3_node_id: number; fields: string[] }>
   gap_summary?: GapSummary
 }> {
   return request<{
     ok: boolean
     revision?: number
-    auto_cancelled_plan_candidates?: string[]
+    auto_cleared?: Array<{ l3_node_id: number; fields: string[] }>
     gap_summary?: GapSummary
   }>(
     `/api/assessments/${id}/draft`,
@@ -292,6 +292,7 @@ export async function saveDraft(
     {
       expected_revision: expectedRevision,
       details: details.map((detail) => ({
+        l3_node_id: detail.l3_node_id,
         l3_code: detail.l3_code,
         current_level: detail.current_level,
         target_adjusted: detail.target_adjusted ?? false,
@@ -310,7 +311,7 @@ export async function saveDraft(
 export async function batchFillL2(
   id: number,
   l2Code: string,
-  currentLevel: 1 | 2,
+  currentLevel: 0 | 1 | 2,
   expectedRevision: number,
 ): Promise<{
   revision: number

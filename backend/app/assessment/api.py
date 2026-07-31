@@ -6,6 +6,7 @@ from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
     AssessmentValidationError,
+    DetailValidationError,
     DraftTargetRepairError,
     batch_fill_l2,
     create_assessment_draft,
@@ -124,6 +125,25 @@ class SubmitReviewRequest(BaseModel):
 
 
 assessment_router = APIRouter(prefix="/api/assessments")
+
+
+def _detail_validation_error(exc: DetailValidationError) -> HTTPException:
+    detail: dict[str, object] = {
+        "code": exc.code,
+        "message": str(exc),
+    }
+    if exc.l3_node_id is not None:
+        detail["l3_node_id"] = exc.l3_node_id
+    if exc.l3_code is not None:
+        detail["l3_code"] = exc.l3_code
+    if exc.field is not None:
+        detail["field"] = exc.field
+    if exc.reason is not None:
+        detail["reason"] = exc.reason
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=detail,
+    )
 
 
 def _draft_repair_error(exc: DraftTargetRepairError) -> HTTPException:
@@ -436,6 +456,23 @@ def save_draft(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+    # R1: scope-v1 requires l3_node_id on every detail.
+    assessment_scope_version = assessment.get("assessment_scope_version")
+    if assessment_scope_version is not None:
+        missing = [item.l3_code for item in request.details if item.l3_node_id is None]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "l3_node_id_required",
+                    "field": "l3_node_id",
+                    "reason": "required_for_scope_v1",
+                    "message": (
+                        "scope-v1 assessment requires l3_node_id for "
+                        f"every detail; missing: {', '.join(missing)}"
+                    ),
+                },
+            )
     # Reject deprecated fields.
     for item in request.details:
         deprecated = _DEPRECATED_FIELDS & item.model_fields_set
@@ -475,6 +512,8 @@ def save_draft(
             details,
             expected_revision=request.expected_revision,
         )
+    except DetailValidationError as exc:
+        raise _detail_validation_error(exc) from exc
     except ValueError as exc:
         if str(exc) == "revision conflict":
             raise HTTPException(
@@ -547,6 +586,8 @@ def patch_draft(
             request.expected_revision,
             details,
         )
+    except DetailValidationError as exc:
+        raise _detail_validation_error(exc) from exc
     except ValueError as exc:
         code = (
             status.HTTP_409_CONFLICT

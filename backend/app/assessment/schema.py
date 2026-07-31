@@ -124,6 +124,10 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             ),
             CHECK (
                 NOT (member_priority = '暂缓' AND include_in_plan = TRUE)
+            ),
+            CHECK (
+                include_in_plan IS NOT NULL
+                OR (plan_quarter IS NULL AND plan_month IS NULL)
             )
         )
         """

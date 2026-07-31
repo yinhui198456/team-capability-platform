@@ -27,6 +27,27 @@ class AssessmentValidationError(ValueError):
         self.reason = reason
 
 
+class DetailValidationError(ValueError):
+    """Business-rule violation during draft save/patch."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        l3_node_id: int | None = None,
+        l3_code: str | None = None,
+        field: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.l3_node_id = l3_node_id
+        self.l3_code = l3_code
+        self.field = field
+        self.reason = reason
+
+
 class DraftTargetRepairError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -1352,7 +1373,7 @@ def save_assessment_draft(
     with connection.transaction():
         row = connection.execute(
             """
-            SELECT status, member_id, revision
+            SELECT status, member_id, revision, assessment_scope_version
             FROM assessment
             WHERE id = %s
             FOR UPDATE
@@ -1361,7 +1382,7 @@ def save_assessment_draft(
         ).fetchone()
         if row is None:
             raise ValueError("assessment not found")
-        status, owner_id, revision = row
+        status, owner_id, revision, scope_version = row
         if status not in ("草稿", "建议调整"):
             raise ValueError("assessment is not editable")
         if owner_id != member_id:
@@ -1386,31 +1407,91 @@ def save_assessment_draft(
             """,
             (assessment_id,),
         ).fetchall()
+
+        # R1: scope-v1 — every snapshot detail must have l3_node_id.
+        if scope_version is not None:
+            for srow in snapshot_rows:
+                if srow[11] is None:
+                    raise DetailValidationError(
+                        "l3_node_id_required",
+                        f"scope-v1 assessment detail {srow[1]} missing "
+                        f"l3_node_id; cannot save without catalog mapping",
+                        l3_code=str(srow[1]),
+                        field="l3_node_id",
+                        reason="required_for_scope_v1",
+                    )
+
+        # R1: scope-v1 uses node_id keys only (no code fallback).
+        # Legacy assessments keep both.
         snapshots: dict[int | str, tuple] = {}
-        for row in snapshot_rows:
-            node_id = row[11]  # l3_node_id
+        for srow in snapshot_rows:
+            node_id = srow[11]  # l3_node_id
             if node_id is not None:
-                snapshots[int(node_id)] = row
-            snapshots[row[1]] = row  # l3_code fallback
+                snapshots[int(node_id)] = srow
+            if scope_version is None:
+                snapshots[srow[1]] = srow  # l3_code fallback for legacy only
 
         def _snapshot_row(detail: dict[str, object]) -> tuple:
             l3_node_id = detail.get("l3_node_id")
             l3_code = detail.get("l3_code")
-            if isinstance(l3_node_id, int) and l3_node_id in snapshots:
-                row = snapshots[l3_node_id]
-                if str(row[1]) != str(l3_code):
-                    raise ValueError(
-                        f"l3_code_mismatch: node {l3_node_id} "
-                        f"→ {row[1]}, got {l3_code}"
+
+            if scope_version is not None:
+                # scope-v1: node_id required; no code fallback.
+                if not isinstance(l3_node_id, int):
+                    raise DetailValidationError(
+                        "l3_node_id_required",
+                        f"scope-v1 PUT requires l3_node_id for {l3_code}",
+                        l3_code=str(l3_code),
+                        field="l3_node_id",
+                        reason="required_for_scope_v1",
                     )
-                return row
+                if l3_node_id not in snapshots:
+                    raise DetailValidationError(
+                        "l3_node_id_not_found",
+                        f"l3_node_id {l3_node_id} not in assessment scope",
+                        l3_node_id=l3_node_id,
+                        l3_code=str(l3_code),
+                        field="l3_node_id",
+                        reason="not_in_scope",
+                    )
+                snap = snapshots[l3_node_id]
+                if str(snap[1]) != str(l3_code):
+                    raise DetailValidationError(
+                        "l3_code_mismatch",
+                        f"l3_code_mismatch: node {l3_node_id} → {snap[1]}, "
+                        f"got {l3_code}",
+                        l3_node_id=l3_node_id,
+                        l3_code=str(l3_code),
+                        field="l3_code",
+                        reason="mismatch",
+                    )
+                return snap
+
+            # Legacy path
+            if isinstance(l3_node_id, int) and l3_node_id in snapshots:
+                snap = snapshots[l3_node_id]
+                if str(snap[1]) != str(l3_code):
+                    raise DetailValidationError(
+                        "l3_code_mismatch",
+                        f"l3_code_mismatch: node {l3_node_id} → {snap[1]}, "
+                        f"got {l3_code}",
+                        l3_node_id=l3_node_id,
+                        l3_code=str(l3_code),
+                        field="l3_code",
+                        reason="mismatch",
+                    )
+                return snap
             return snapshots[str(l3_code)]
 
         submitted_codes = [str(detail.get("l3_code", "")) for detail in details]
         if len(submitted_codes) != len(set(submitted_codes)):
-            raise ValueError("duplicate assessment detail")
+            raise DetailValidationError(
+                "duplicate_detail", "duplicate assessment detail"
+            )
         if set(submitted_codes) != {row[1] for row in snapshot_rows}:
-            raise ValueError("batch must include every assessment detail")
+            raise DetailValidationError(
+                "batch_coverage", "batch must include every assessment detail"
+            )
 
         forbidden_fields = {
             "target_level",
@@ -1424,9 +1505,11 @@ def save_assessment_draft(
         for detail in details:
             forbidden = forbidden_fields.intersection(detail)
             if forbidden:
-                raise ValueError(
+                raise DetailValidationError(
+                    "forbidden_field",
                     "member cannot set calculated target fields: "
-                    + ", ".join(sorted(forbidden))
+                    + ", ".join(sorted(forbidden)),
+                    field=sorted(forbidden)[0],
                 )
             row = _snapshot_row(detail)
             (
@@ -1448,8 +1531,12 @@ def save_assessment_draft(
                 _existing_month,
             ) = row
             if compatibility_error and detail.get("_detail_present", True):
-                raise ValueError(
-                    f"assessment detail {code} requires compatibility repair"
+                raise DetailValidationError(
+                    "compatibility_repair_required",
+                    f"assessment detail {code} requires compatibility repair",
+                    l3_code=str(code),
+                    field="target_compatibility_error",
+                    reason="compatibility_repair_required",
                 )
 
             cl = detail.get("current_level")
@@ -1461,11 +1548,23 @@ def save_assessment_draft(
             if current_level is not None and (
                 isinstance(cl, bool) or not 0 <= current_level <= 5
             ):
-                raise ValueError("current_level must be between 0 and 5")
+                raise DetailValidationError(
+                    "plan_validation",
+                    "current_level must be between 0 and 5",
+                    l3_code=str(code),
+                    field="current_level",
+                    reason="invalid_range",
+                )
 
             target_adjusted = detail.get("target_adjusted", False)
             if not isinstance(target_adjusted, bool):
-                raise ValueError("target_adjusted must be boolean")
+                raise DetailValidationError(
+                    "plan_validation",
+                    "target_adjusted must be boolean",
+                    l3_code=str(code),
+                    field="target_adjusted",
+                    reason="invalid_type",
+                )
             adjusted = detail.get("adjusted_target_level")
             reason = detail.get("target_adjustment_reason")
 
@@ -1482,8 +1581,12 @@ def save_assessment_draft(
             )
             if legacy_preserved:
                 if target_adjusted or adjusted is not None or reason is not None:
-                    raise ValueError(
-                        f"legacy preserved target {code} cannot be adjusted"
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"legacy preserved target {code} cannot be adjusted",
+                        l3_code=str(code),
+                        field="target_adjusted",
+                        reason="legacy_preserved_readonly",
                     )
                 final_target = int(existing_target)
                 gap_value = (
@@ -1493,8 +1596,12 @@ def save_assessment_draft(
                 )
             elif applicable is not True:
                 if target_adjusted or adjusted is not None or reason is not None:
-                    raise ValueError(
-                        f"not applicable item {code} cannot be adjusted or planned"
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"not applicable item {code} cannot be adjusted or planned",
+                        l3_code=str(code),
+                        field="target_adjusted",
+                        reason="not_applicable",
                     )
                 current_level = None
                 final_target = None
@@ -1506,23 +1613,45 @@ def save_assessment_draft(
                 plan_month = None
             else:
                 if standard_target is None:
-                    raise ValueError(f"assessment detail {code} has no standard target")
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"assessment detail {code} has no standard target",
+                        l3_code=str(code),
+                        field="standard_target_level",
+                        reason="missing_standard_target",
+                    )
                 if target_adjusted:
                     if (
                         isinstance(adjusted, bool)
                         or not isinstance(adjusted, int)
                         or not 1 <= adjusted <= 5
                     ):
-                        raise ValueError(
-                            "adjusted_target_level must be between 1 and 5"
+                        raise DetailValidationError(
+                            "plan_validation",
+                            "adjusted_target_level must be between 1 and 5",
+                            l3_code=str(code),
+                            field="adjusted_target_level",
+                            reason="invalid_range",
                         )
                     if not isinstance(reason, str) or not reason.strip():
-                        raise ValueError("adjustment reason is required")
+                        raise DetailValidationError(
+                            "plan_validation",
+                            "adjustment reason is required",
+                            l3_code=str(code),
+                            field="target_adjustment_reason",
+                            reason="missing_required",
+                        )
                     final_target = adjusted
                     reason = reason.strip()
                 else:
                     if adjusted is not None or reason is not None:
-                        raise ValueError("adjustment fields require target_adjusted")
+                        raise DetailValidationError(
+                            "plan_validation",
+                            "adjustment fields require target_adjusted",
+                            l3_code=str(code),
+                            field="target_adjusted",
+                            reason="adjustment_fields_without_flag",
+                        )
                     final_target = int(standard_target)
                 gap_value = (
                     max(final_target - current_level, 0)
@@ -1558,14 +1687,25 @@ def save_assessment_draft(
             # (auto-clear above handles can_plan=False, this gate rejects
             # priority on items that still have it despite the auto-clear).
             if member_priority is not None and not can_plan:
-                raise ValueError(f"priority not allowed for {code}: no positive gap")
+                raise DetailValidationError(
+                    "plan_validation",
+                    f"priority not allowed for {code}: no positive gap",
+                    l3_code=str(code),
+                    l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
+                    field="member_priority",
+                    reason="no_positive_gap",
+                )
 
             # 暂缓 auto-sets include_in_plan=FALSE and clears timing
             if member_priority == "暂缓":
                 if include_in_plan is True:
-                    # Explicit 暂缓+TRUE → 422
-                    raise ValueError(
-                        f"暂缓 and include_in_plan are mutually exclusive for {code}"
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"暂缓 and include_in_plan are mutually exclusive for {code}",
+                        l3_code=str(code),
+                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
+                        field="include_in_plan",
+                        reason="hold_plan_mutex",
                     )
                 include_in_plan = False
                 plan_quarter = None
@@ -1579,12 +1719,22 @@ def save_assessment_draft(
             # include_in_plan tri-state validation.
             if include_in_plan is True:
                 if member_priority is None or member_priority == "暂缓":
-                    raise ValueError(
-                        f"include_in_plan requires valid priority for {code}"
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"include_in_plan requires valid priority for {code}",
+                        l3_code=str(code),
+                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
+                        field="include_in_plan",
+                        reason="requires_valid_priority",
                     )
                 if plan_quarter is None or plan_month is None:
-                    raise ValueError(
-                        f"include_in_plan requires quarter and month for {code}"
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"include_in_plan requires quarter and month for {code}",
+                        l3_code=str(code),
+                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
+                        field="include_in_plan",
+                        reason="requires_quarter_and_month",
                     )
                 # Validate quarter-month mapping
                 if plan_quarter is not None and plan_month is not None:
@@ -1598,9 +1748,16 @@ def save_assessment_draft(
                     elif plan_quarter == "Q4" and not (10 <= plan_month <= 12):
                         valid = False
                     if not valid:
-                        raise ValueError(
+                        raise DetailValidationError(
+                            "plan_validation",
                             f"invalid quarter-month combination: "
-                            f"{plan_quarter}+{plan_month}"
+                            f"{plan_quarter}+{plan_month}",
+                            l3_code=str(code),
+                            l3_node_id=(
+                                l3_node_id if isinstance(l3_node_id, int) else None
+                            ),
+                            field="plan_quarter",
+                            reason="invalid_quarter_month",
                         )
 
             # Track auto-cleared fields
@@ -1715,10 +1872,19 @@ def patch_assessment_draft(
     for detail in details:
         code = str(detail.get("l3_code", ""))
         if code not in merged:
-            raise ValueError("unknown assessment detail")
+            raise DetailValidationError(
+                "unknown_detail",
+                f"unknown assessment detail: {code}",
+                l3_code=code,
+            )
         forbidden = set(detail) - (allowed | {"l3_code", "l3_node_id"})
         if forbidden:
-            raise ValueError("member cannot set calculated target fields")
+            raise DetailValidationError(
+                "forbidden_field",
+                "member cannot set calculated target fields: "
+                + ", ".join(sorted(forbidden)),
+                field=sorted(forbidden)[0],
+            )
         if "current_level" in detail:
             merged[code]["_current_level_present"] = True
         merged[code]["_detail_present"] = True

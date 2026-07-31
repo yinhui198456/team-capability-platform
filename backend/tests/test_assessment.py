@@ -20,6 +20,17 @@ from tests.standard_target_support import create_scoped_draft
 SESSION_COOKIE = "tcp_session"
 
 
+def _detail_l3_node_id(
+    connection: psycopg.Connection, assessment_id: int, l3_code: str
+) -> int | None:
+    row = connection.execute(
+        "SELECT l3_node_id FROM assessment_detail "
+        "WHERE assessment_id = %s AND l3_code = %s",
+        (assessment_id, l3_code),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS assessment_review")
@@ -207,13 +218,18 @@ def test_create_draft_save_details_submit_review(
     assert assessment["status"] == "草稿"
 
     # Save with a single real L3 code.
+    l3_code = "C01.01.01"
+    node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
                 {
-                    "l3_code": "C01.01.01",
+                    "l3_node_id": node_id,
+                    "l3_code": l3_code,
                     "current_level": 2,
                     "target_adjusted": True,
                     "adjusted_target_level": 4,
@@ -444,11 +460,17 @@ def test_submit_validation_returns_structured_l3_error(
 
     # Set current_level low enough to create a positive gap (standard target is 3),
     # but DON'T provide plan fields — submit must fail validation.
+    l3_code = "C01.01.01"
+    node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
     status, _, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": "C01.01.01", "current_level": 0}],
+            "details": [
+                {"l3_node_id": node_id, "l3_code": l3_code, "current_level": 0}
+            ],
             "expected_revision": 1,
         },
         cookies=cookies,

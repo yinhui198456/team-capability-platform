@@ -37,6 +37,17 @@ from tests.standard_target_support import (
 _L3_CODE = "C01.01.01"
 
 
+def _detail_l3_node_id(
+    connection: psycopg.Connection, assessment_id: int, l3_code: str
+) -> int | None:
+    row = connection.execute(
+        "SELECT l3_node_id FROM assessment_detail "
+        "WHERE assessment_id = %s AND l3_code = %s",
+        (assessment_id, l3_code),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _enable_one_l3(connection: psycopg.Connection) -> str:
     """Enable exactly one L3 from the imported catalog and return its code.
 
@@ -347,6 +358,8 @@ def test_current_level_zero_submits_successfully(
     ).fetchone()
     assert detail is not None
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # current_level=0, no evidence
     status, body = _request(
@@ -355,6 +368,7 @@ def test_current_level_zero_submits_successfully(
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 0,
                     "member_priority": "低",
@@ -403,6 +417,8 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body = _request(
         "PUT",
@@ -410,6 +426,7 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -442,6 +459,8 @@ def test_include_in_plan_requires_quarter_month(
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body = _request(
         "PUT",
@@ -449,6 +468,7 @@ def test_include_in_plan_requires_quarter_month(
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -477,6 +497,8 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # Invalid: Q1 + 5月 (need positive gap to reach quarter validation)
     status, body = _request(
@@ -485,6 +507,7 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -535,6 +558,8 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
     ).fetchone()
     code = detail[0]
     std_target = int(detail[1])
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # Set current_level = target → Gap=0
     status, body = _request(
@@ -543,6 +568,7 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": std_target,
                     "member_priority": "高",
@@ -577,6 +603,8 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # First set plan
     status, body = _request(
@@ -585,6 +613,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -640,6 +669,8 @@ def test_priority_auto_cleared_when_no_gap(plan_schema: psycopg.Connection) -> N
     ).fetchone()
     code = detail[0]
     std_target = int(detail[1])
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body = _request(
         "PUT",
@@ -647,6 +678,7 @@ def test_priority_auto_cleared_when_no_gap(plan_schema: psycopg.Connection) -> N
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": std_target,  # Gap=0
                     "member_priority": "高",
@@ -675,6 +707,8 @@ def test_deprecated_plan_candidate_422(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     for method in ("PUT", "PATCH"):
         status, body = _request(
@@ -683,6 +717,7 @@ def test_deprecated_plan_candidate_422(plan_schema: psycopg.Connection) -> None:
             {
                 "details": [
                     {
+                        "l3_node_id": node_id,
                         "l3_code": code,
                         "current_level": 2,
                         "plan_candidate": True,
@@ -713,6 +748,8 @@ def test_legacy_gap_write_blocked_for_scope_v1(plan_schema: psycopg.Connection) 
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     _request(
         "PUT",
@@ -720,6 +757,7 @@ def test_legacy_gap_write_blocked_for_scope_v1(plan_schema: psycopg.Connection) 
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "member_priority": "高",
@@ -970,6 +1008,8 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, _ = _request(
         "PUT",
@@ -977,6 +1017,7 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 4,
                     "target_adjusted": True,
@@ -1015,12 +1056,21 @@ def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "current_level": 2, "gap_value": 3}],
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": 2,
+                    "gap_value": 3,
+                }
+            ],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -1042,6 +1092,8 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
     ).fetchone()
     code = detail[0]
     _std_target = int(detail[1])
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # Set current_level far below target, with adjustment to make gap=0
     status, _ = _request(
@@ -1050,6 +1102,7 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 1,
                     "target_adjusted": True,

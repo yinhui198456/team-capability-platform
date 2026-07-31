@@ -242,7 +242,7 @@ export function AssessmentGapPage() {
   const [loading, setLoading] = useState(true)
   const [batchConfirm, setBatchConfirm] = useState<{
     l2Code: string
-    level: 1 | 2
+    level: 0 | 1 | 2
   } | null>(null)
   const [selectedRequirement, setSelectedRequirement] = useState<
     Record<string, 'P4' | 'P5' | 'P6' | 'P7' | 'P8'>
@@ -422,21 +422,27 @@ export function AssessmentGapPage() {
           : current,
       )
       setDirtyIds(new Set())
-      const autoCancelled = result.auto_cancelled_plan_candidates ?? []
-      if (autoCancelled.length) {
+      const autoCleared = result.auto_cleared ?? []
+      for (const cleared of autoCleared) {
         setDetails((current) =>
-          current.map((detail) =>
-            autoCancelled.includes(detail.l3_code)
-              ? { ...detail, include_in_plan: false }
-              : detail,
-          ),
+          current.map((detail) => {
+            if (detail.l3_node_id === cleared.l3_node_id) {
+              const patch: Partial<AssessmentDetail> = {}
+              for (const f of cleared.fields) {
+                if (f === 'member_priority') patch.member_priority = null
+                if (f === 'include_in_plan') patch.include_in_plan = null
+                if (f === 'plan_quarter') patch.plan_quarter = null
+                if (f === 'plan_month') patch.plan_month = null
+              }
+              return { ...detail, ...patch }
+            }
+            return detail
+          }),
         )
       }
-      setMessage(
-        autoCancelled.length
-          ? `草稿已保存，已自动取消 ${autoCancelled.join('、')} 的计划`
-          : '草稿已保存',
-      )
+      const updated = await getAssessment(assessment.id)
+      loadAssessment(updated)
+      setMessage('草稿已保存')
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       setError(
@@ -449,7 +455,7 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleBatchFill(l2Code: string, currentLevel: 1 | 2) {
+  async function handleBatchFill(l2Code: string, currentLevel: 0 | 1 | 2) {
     if (!assessment) return
     setError('')
     setMessage('')
@@ -519,14 +525,24 @@ export function AssessmentGapPage() {
       if (changed.length) {
         const saved = await saveDraft(assessment.id, changed, revision)
         revision = saved.revision ?? revision + 1
-        const autoCancelled = saved.auto_cancelled_plan_candidates ?? []
-        setDetails((current) =>
-          current.map((detail) =>
-            autoCancelled.includes(detail.l3_code)
-              ? { ...detail, include_in_plan: false }
-              : detail,
-          ),
-        )
+        const autoCleared = saved.auto_cleared ?? []
+        for (const cleared of autoCleared) {
+          setDetails((current) =>
+            current.map((detail) => {
+              if (detail.l3_node_id === cleared.l3_node_id) {
+                const patch: Partial<AssessmentDetail> = {}
+                for (const f of cleared.fields) {
+                  if (f === 'member_priority') patch.member_priority = null
+                  if (f === 'include_in_plan') patch.include_in_plan = null
+                  if (f === 'plan_quarter') patch.plan_quarter = null
+                  if (f === 'plan_month') patch.plan_month = null
+                }
+                return { ...detail, ...patch }
+              }
+              return detail
+            }),
+          )
+        }
         setAssessment((current) =>
           current
             ? {
@@ -1174,8 +1190,8 @@ export function AssessmentGapPage() {
                       </small>
                       {editable &&
                         items.some(canBatchFill) &&
-                        [1, 2].map((level) => {
-                          const typedLevel = level as 1 | 2
+                        [0, 1, 2].map((level) => {
+                          const typedLevel = level as 0 | 1 | 2
                           const confirming =
                             batchConfirm?.l2Code === l2Code &&
                             batchConfirm?.level === typedLevel
@@ -1493,14 +1509,24 @@ export function AssessmentGapPage() {
                                     <td>
                                       <select
                                         value={detail.member_priority ?? ''}
-                                        onChange={(event) =>
-                                          updateDetail(index, {
-                                            member_priority:
-                                              (event.target.value as
-                                                '高' | '中' | '低' | '暂缓') ||
-                                              null,
-                                          })
-                                        }
+                                        onChange={(e) => {
+                                          const val =
+                                            (e.target.value as
+                                              '高' | '中' | '低' | '暂缓') ||
+                                            null
+                                          if (val === '暂缓') {
+                                            updateDetail(index, {
+                                              member_priority: '暂缓',
+                                              include_in_plan: false,
+                                              plan_quarter: null,
+                                              plan_month: null,
+                                            })
+                                          } else {
+                                            updateDetail(index, {
+                                              member_priority: val,
+                                            })
+                                          }
+                                        }}
                                         disabled={!editable || !hasGap}
                                         aria-label={`优先级 ${detail.l3_code}`}
                                       >
