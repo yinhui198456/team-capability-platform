@@ -659,9 +659,7 @@ export function AssessmentGapPage() {
   // --- stats ---
   const stats = useMemo(() => {
     const applicable = assessedDetails
-    const unassessed = applicable.filter(
-      (d) => d.current_level == null,
-    ).length
+    const unassessed = applicable.filter((d) => d.current_level == null).length
     const totalGap = applicable.filter((d) => {
       const g = computeGap(d)
       return g != null && g > 0
@@ -672,12 +670,8 @@ export function AssessmentGapPage() {
     const progressive = applicable.filter(
       (d) => d.scope_type === 'target_progressive',
     ).length
-    const inPlan = applicable.filter(
-      (d) => d.include_in_plan === true,
-    ).length
-    const onHold = applicable.filter(
-      (d) => d.member_priority === '暂缓',
-    ).length
+    const inPlan = applicable.filter((d) => d.include_in_plan === true).length
+    const onHold = applicable.filter((d) => d.member_priority === '暂缓').length
     const byQ = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }
     for (const d of applicable) {
       if (d.plan_quarter && d.plan_quarter in byQ) {
@@ -806,9 +800,7 @@ export function AssessmentGapPage() {
         d.member_priority !== '暂缓' &&
         !d.member_priority,
     ).length
-    const undecided = hasGap.filter(
-      (d) => d.include_in_plan == null,
-    ).length
+    const undecided = hasGap.filter((d) => d.include_in_plan == null).length
     return { inPlanNoPriority, undecided }
   }, [assessedDetails])
 
@@ -932,8 +924,9 @@ export function AssessmentGapPage() {
             暂缓 <strong>{stats.onHold}</strong>
           </span>
           <span>
-            Q1:<strong>{stats.byQ.Q1}</strong> Q2:<strong>{stats.byQ.Q2}</strong>{' '}
-            Q3:<strong>{stats.byQ.Q3}</strong> Q4:<strong>{stats.byQ.Q4}</strong>
+            Q1:<strong>{stats.byQ.Q1}</strong> Q2:
+            <strong>{stats.byQ.Q2}</strong> Q3:<strong>{stats.byQ.Q3}</strong>{' '}
+            Q4:<strong>{stats.byQ.Q4}</strong>
           </span>
         </section>
 
@@ -1353,7 +1346,11 @@ export function AssessmentGapPage() {
                                         }
                                         disabled={!editable || !applicable}
                                         aria-label={`当前等级 ${detail.l3_code}`}
-                                        title={LEVEL_LABELS[detail.current_level ?? -1] ?? ''}
+                                        title={
+                                          LEVEL_LABELS[
+                                            detail.current_level ?? -1
+                                          ] ?? ''
+                                        }
                                       >
                                         <option value="">请选择</option>
                                         {LEVELS.map((level) => (
@@ -1491,9 +1488,7 @@ export function AssessmentGapPage() {
                                       )}
                                     </td>
                                     {/* Column 4: Gap */}
-                                    <td className={s.gapCell}>
-                                      {gap ?? '—'}
-                                    </td>
+                                    <td className={s.gapCell}>{gap ?? '—'}</td>
                                     {/* Column 5: 优先级 */}
                                     <td>
                                       <select
@@ -1502,10 +1497,8 @@ export function AssessmentGapPage() {
                                           updateDetail(index, {
                                             member_priority:
                                               (event.target.value as
-                                                | '高'
-                                                | '中'
-                                                | '低'
-                                                | '暂缓') || null,
+                                                '高' | '中' | '低' | '暂缓') ||
+                                              null,
                                           })
                                         }
                                         disabled={!editable || !hasGap}
@@ -1520,34 +1513,40 @@ export function AssessmentGapPage() {
                                     </td>
                                     {/* Column 6: 纳入年度计划 */}
                                     <td>
-                                      <input
-                                        type="checkbox"
-                                        aria-label={`纳入计划 ${detail.l3_code}`}
-                                        checked={
+                                      <select
+                                        value={
                                           detail.include_in_plan === true
+                                            ? 'yes'
+                                            : detail.include_in_plan === false
+                                              ? 'no'
+                                              : ''
                                         }
-                                        disabled={!editable || !canPlan}
-                                        onChange={(event) => {
-                                          // Tri-state: checked -> true, unchecked -> null when re-clicked
-                                          if (event.target.checked) {
-                                            updateDetail(index, {
-                                              include_in_plan: true,
-                                            })
-                                          } else {
-                                            // If was true, become null (未决定)
-                                            // If was null, become false (explicit no)
-                                            updateDetail(index, {
-                                              include_in_plan:
-                                                detail.include_in_plan === null
+                                        onChange={(e) => {
+                                          const val = e.target.value
+                                          updateDetail(index, {
+                                            include_in_plan:
+                                              val === 'yes'
+                                                ? true
+                                                : val === 'no'
                                                   ? false
-                                                  : detail.include_in_plan ===
-                                                      false
-                                                    ? null
-                                                    : null,
-                                            })
-                                          }
+                                                  : null,
+                                            plan_quarter:
+                                              val === 'yes'
+                                                ? (detail.plan_quarter ?? null)
+                                                : null,
+                                            plan_month:
+                                              val === 'yes'
+                                                ? (detail.plan_month ?? null)
+                                                : null,
+                                          })
                                         }}
-                                      />
+                                        disabled={!editable || !canPlan}
+                                        aria-label={`纳入计划 ${detail.l3_code}`}
+                                      >
+                                        <option value="">未选择</option>
+                                        <option value="yes">是</option>
+                                        <option value="no">否</option>
+                                      </select>
                                     </td>
                                     {/* Column 7: 计划时间 */}
                                     <td>
@@ -1679,9 +1678,7 @@ export function AssessmentGapPage() {
           <footer className={s.stickyActions}>
             {unfilled > 0 && <span>还有 {unfilled} 项未完成</span>}
             {stickyStats.inPlanNoPriority > 0 && (
-              <span>
-                {stickyStats.inPlanNoPriority} 项纳入计划但未填优先级
-              </span>
+              <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
             )}
             {stickyStats.undecided > 0 && (
               <span>{stickyStats.undecided} 项未决定计划</span>

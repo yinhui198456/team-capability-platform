@@ -405,6 +405,9 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
                 {
                     "l3_code": code,
                     "current_level": 2,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "target for positive gap",
                     "member_priority": "暂缓",
                     "include_in_plan": True,
                     "plan_quarter": "Q2",
@@ -439,6 +442,9 @@ def test_include_in_plan_requires_quarter_month(plan_schema: psycopg.Connection)
                 {
                     "l3_code": code,
                     "current_level": 2,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
                 }
@@ -463,7 +469,7 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
     ).fetchone()
     code = detail[0]
 
-    # Invalid: Q1 + 5月
+    # Invalid: Q1 + 5月 (need positive gap to reach quarter validation)
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -472,7 +478,9 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
                 {
                     "l3_code": code,
                     "current_level": 2,
-
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
                     "member_priority": "中",
                     "include_in_plan": True,
                     "plan_quarter": "Q1",
@@ -612,8 +620,8 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
     assert gap_detail["plan_month"] is None
 
 
-def test_priority_blocked_when_no_gap(plan_schema: psycopg.Connection) -> None:
-    """member_priority not allowed when Gap <= 0."""
+def test_priority_auto_cleared_when_no_gap(plan_schema: psycopg.Connection) -> None:
+    """member_priority auto-cleared when Gap <= 0 (P1-3 atomic cleanup)."""
     member_id = _create_test_user(plan_schema, "m_nogap", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -641,7 +649,11 @@ def test_priority_blocked_when_no_gap(plan_schema: psycopg.Connection) -> None:
         },
         cookies=cookies,
     )
-    assert status == 422, f"priority with no gap should fail: {body}"
+    assert status == 200, f"auto-clear should succeed: {body}"
+    # Verify priority was auto-cleared
+    assessment = get_assessment(plan_schema, assessment_id)
+    detail = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert detail["member_priority"] is None
 
 
 def test_deprecated_plan_candidate_422(plan_schema: psycopg.Connection) -> None:

@@ -138,9 +138,9 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     const select = screen.getByRole('combobox', { name: /当前等级/ })
-    const options = Array.from(
-      (select as HTMLSelectElement).options,
-    ).map((o) => o.textContent)
+    const options = Array.from((select as HTMLSelectElement).options).map(
+      (o) => o.textContent,
+    )
     expect(options).toContain('0 · 未接触/无可验证输出')
     expect(options).toContain('5 · 专家')
   })
@@ -303,9 +303,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     // Should show "1 项纳入计划但未填优先级"
-    expect(
-      screen.getByText(/纳入计划但未填优先级/),
-    ).toBeTruthy()
+    expect(screen.getByText(/纳入计划但未填优先级/)).toBeTruthy()
   })
 
   it('uses a single L1 view and keeps Gap details in a closed drawer', async () => {
@@ -688,15 +686,11 @@ describe('AssessmentGapPage', () => {
     // Click the adjustment expand button
     fireEvent.click(screen.getByText('调整▸'))
     // Enable adjustment
-    fireEvent.click(
-      screen.getByLabelText('启用个人调整 P01.01.01'),
-    )
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     expect(screen.getByText('需填写调整原因')).toBeTruthy()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
     // Cancel adjustment
-    fireEvent.click(
-      screen.getByLabelText('启用个人调整 P01.01.01'),
-    )
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     await waitFor(() =>
       expect((submit as HTMLButtonElement).disabled).toBe(false),
     )
@@ -721,9 +715,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     fireEvent.click(screen.getByText('调整▸'))
-    fireEvent.click(
-      screen.getByLabelText('启用个人调整 P01.01.01'),
-    )
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
       target: { value: '调整原因' },
     })
@@ -941,9 +933,7 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力自评与 Gap 分析')
 
     fireEvent.click(screen.getByText('调整▸'))
-    fireEvent.click(
-      screen.getByLabelText('启用个人调整 P01.01.01'),
-    )
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
       target: { value: '5' },
     })

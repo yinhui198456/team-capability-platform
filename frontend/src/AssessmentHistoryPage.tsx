@@ -159,16 +159,18 @@ export function AssessmentHistoryPage() {
                       {detail.standard_job_level_snapshot
                         ? ` · ${detail.standard_job_level_snapshot} 标准`
                         : ''}
-                      {detail.include_in_plan === true
-                        ? ' · 已纳入计划'
+                      {detail.include_in_plan !== undefined
+                        ? ` · 年度计划: ${detail.include_in_plan === true ? '是' : detail.include_in_plan === false ? '否' : '未选择'}`
                         : detail.plan_candidate
-                          ? ' · 计划候选(旧)'
+                          ? ' · 历史计划候选（系统建议）'
                           : ''}
                       {detail.member_priority
-                        ? ` · ${detail.member_priority}`
-                        : ''}
+                        ? ` · Member优先级: ${detail.member_priority}`
+                        : detail.plan_candidate && detail.member_priority === undefined
+                          ? ' · 历史系统优先级'
+                          : ''}
                       {detail.plan_quarter && detail.plan_month
-                        ? ` · ${detail.plan_quarter} ${detail.plan_month}月`
+                        ? ` · 计划时间: ${detail.plan_quarter} ${detail.plan_month}月`
                         : ''}
                     </li>
                   ))}

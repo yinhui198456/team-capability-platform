@@ -602,26 +602,56 @@
     padding: 2px var(--space-3);
   }
   /* Tighter widths at 1280 */
-  .table th:nth-child(1) { width: 20%; }
-  .table th:nth-child(2) { width: 10%; }
-  .table th:nth-child(3) { width: 16%; }
-  .table th:nth-child(4) { width: 8%; }
-  .table th:nth-child(5) { width: 10%; }
-  .table th:nth-child(6) { width: 8%; }
-  .table th:nth-child(7) { width: 16%; }
+  .table th:nth-child(1) {
+    width: 20%;
+  }
+  .table th:nth-child(2) {
+    width: 10%;
+  }
+  .table th:nth-child(3) {
+    width: 16%;
+  }
+  .table th:nth-child(4) {
+    width: 8%;
+  }
+  .table th:nth-child(5) {
+    width: 10%;
+  }
+  .table th:nth-child(6) {
+    width: 8%;
+  }
+  .table th:nth-child(7) {
+    width: 16%;
+  }
 }
 @media (min-width: 1440px) {
   /* Wider layout: give more space to col 1 and 3 */
-  .table th:nth-child(1) { width: 24%; }
-  .table th:nth-child(2) { width: 11%; }
-  .table th:nth-child(3) { width: 18%; }
-  .table th:nth-child(7) { width: 13%; }
+  .table th:nth-child(1) {
+    width: 24%;
+  }
+  .table th:nth-child(2) {
+    width: 11%;
+  }
+  .table th:nth-child(3) {
+    width: 18%;
+  }
+  .table th:nth-child(7) {
+    width: 13%;
+  }
 }
 @media (min-width: 1920px) {
-  .table th:nth-child(1) { width: 25%; }
-  .table th:nth-child(2) { width: 10%; }
-  .table th:nth-child(3) { width: 20%; }
-  .table th:nth-child(7) { width: 12%; }
+  .table th:nth-child(1) {
+    width: 25%;
+  }
+  .table th:nth-child(2) {
+    width: 10%;
+  }
+  .table th:nth-child(3) {
+    width: 20%;
+  }
+  .table th:nth-child(7) {
+    width: 12%;
+  }
 }
 @media (max-width: 960px) {
   .navigationRow {

@@ -54,6 +54,7 @@ class CreateAssessmentRequest(BaseModel):
 class DetailItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    l3_node_id: int | None = None
     l3_code: str
     current_level: int | None = Field(default=None, ge=0, le=5)
     target_adjusted: bool = False
@@ -82,6 +83,7 @@ class SaveDraftRequest(BaseModel):
 class PatchDetailItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    l3_node_id: int | None = None
     l3_code: str
     current_level: int | None = Field(default=None, ge=0, le=5)
     target_adjusted: bool | None = None
@@ -112,7 +114,7 @@ class PatchSaveDraftRequest(BaseModel):
 
 class BatchLevelRequest(BaseModel):
     l2_code: str
-    current_level: int = Field(ge=1, le=2)
+    current_level: int = Field(ge=0, le=2)
     expected_revision: int = Field(ge=1)
 
 
@@ -459,6 +461,7 @@ def save_draft(
             )
     details: list[dict[str, object]] = [
         {
+            "l3_node_id": item.l3_node_id,
             "l3_code": item.l3_code,
             "current_level": item.current_level,
             "target_adjusted": item.target_adjusted,
@@ -526,7 +529,7 @@ def patch_draft(
     # Distinguish unset vs explicit-null via model_fields_set.
     details: list[dict[str, object]] = []
     for item in request.details:
-        merged: dict[str, object] = {"l3_code": item.l3_code}
+        merged: dict[str, object] = {"l3_node_id": item.l3_node_id, "l3_code": item.l3_code}
         for key in (
             "current_level",
             "target_adjusted",
@@ -628,6 +631,7 @@ def submit(
                 "code": exc.code,
                 "l3_code": exc.l3_code,
                 "l3_node_id": exc.l3_node_id,
+                "field": exc.field,
                 "reason": exc.reason,
                 "message": str(exc),
             },

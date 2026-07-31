@@ -283,7 +283,8 @@ def _submit_and_approve_assessment(
                     1 if snapshot["standard_target_applicable"] is True else None
                 ),
                 "evidence_note": "非本场景能力项",
-                "plan_candidate": False,
+                "member_priority": "低",
+                "include_in_plan": False,
             }
             if snapshot["l3_code"] == "P02-L2B-L3A":
                 migrated.update(
@@ -353,14 +354,14 @@ def _build_two_member_team(
                 "current_level": 2,
                 "target_level": 4,
                 "evidence_note": "a p01",
-                "plan_candidate": True,
+                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
             },
             {
                 "l3_code": "P02-L2B-L3A",
                 "current_level": 1,
                 "target_level": 3,
                 "evidence_note": "a p02",
-                "plan_candidate": True,
+                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
             },
         ],
     )
@@ -375,7 +376,7 @@ def _build_two_member_team(
                 "current_level": 3,
                 "target_level": 4,
                 "evidence_note": "b p01",
-                "plan_candidate": True,
+                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
             }
         ],
     )
@@ -725,7 +726,7 @@ def test_team_analytics_preserves_personal_plan_endpoints(
                 "current_level": 2,
                 "target_level": 4,
                 "evidence_note": "regression",
-                "plan_candidate": True,
+                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
             }
         ],
     )
