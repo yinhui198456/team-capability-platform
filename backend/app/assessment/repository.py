@@ -1279,9 +1279,7 @@ def _get_gap_summary(
         (assessment_id,),
     ).fetchall()
     total = len(rows)
-    avg = (
-        round(sum(int(row[0]) for row in rows) / total, 1) if total > 0 else 0
-    )
+    avg = round(sum(int(row[0]) for row in rows) / total, 1) if total > 0 else 0
     by_priority: dict[str, int] = {"高": 0, "中": 0, "低": 0, "暂缓": 0}
     in_plan = 0
     by_quarter: dict[str, int] = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
@@ -1401,12 +1399,14 @@ def save_assessment_draft(
             if isinstance(l3_node_id, int) and l3_node_id in snapshots:
                 row = snapshots[l3_node_id]
                 if str(row[1]) != str(l3_code):
-                    raise ValueError(f"l3_code_mismatch: l3_node_id {l3_node_id} maps to {row[1]}, got {l3_code}")
+                    raise ValueError(
+                        f"l3_code_mismatch: node {l3_node_id} "
+                        f"→ {row[1]}, got {l3_code}"
+                    )
                 return row
             return snapshots[str(l3_code)]
 
         submitted_codes = [str(detail.get("l3_code", "")) for detail in details]
-        submitted_node_ids = [detail.get("l3_node_id") for detail in details]
         if len(submitted_codes) != len(set(submitted_codes)):
             raise ValueError("duplicate assessment detail")
         if set(submitted_codes) != {row[1] for row in snapshot_rows}:
@@ -1506,9 +1506,7 @@ def save_assessment_draft(
                 plan_month = None
             else:
                 if standard_target is None:
-                    raise ValueError(
-                        f"assessment detail {code} has no standard target"
-                    )
+                    raise ValueError(f"assessment detail {code} has no standard target")
                 if target_adjusted:
                     if (
                         isinstance(adjusted, bool)
@@ -1524,9 +1522,7 @@ def save_assessment_draft(
                     reason = reason.strip()
                 else:
                     if adjusted is not None or reason is not None:
-                        raise ValueError(
-                            "adjustment fields require target_adjusted"
-                        )
+                        raise ValueError("adjustment fields require target_adjusted")
                     final_target = int(standard_target)
                 gap_value = (
                     max(final_target - current_level, 0)
@@ -1562,9 +1558,7 @@ def save_assessment_draft(
             # (auto-clear above handles can_plan=False, this gate rejects
             # priority on items that still have it despite the auto-clear).
             if member_priority is not None and not can_plan:
-                raise ValueError(
-                    f"priority not allowed for {code}: no positive gap"
-                )
+                raise ValueError(f"priority not allowed for {code}: no positive gap")
 
             # 暂缓 auto-sets include_in_plan=FALSE and clears timing
             if member_priority == "暂缓":
@@ -1605,7 +1599,8 @@ def save_assessment_draft(
                         valid = False
                     if not valid:
                         raise ValueError(
-                            f"invalid quarter-month combination: {plan_quarter}+{plan_month}"
+                            f"invalid quarter-month combination: "
+                            f"{plan_quarter}+{plan_month}"
                         )
 
             # Track auto-cleared fields
@@ -1618,9 +1613,7 @@ def save_assessment_draft(
             if orig_month != plan_month:
                 cleared_fields.append("plan_month")
             if cleared_fields:
-                auto_cleared.append(
-                    {"l3_code": str(code), "fields": cleared_fields}
-                )
+                auto_cleared.append({"l3_code": str(code), "fields": cleared_fields})
 
             connection.execute(
                 """
@@ -1908,9 +1901,7 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
             )
 
         # ── Plan field validation ──────────────────────────────
-        has_positive_gap = (
-            gap_value is not None and int(gap_value) > 0
-        )
+        has_positive_gap = gap_value is not None and int(gap_value) > 0
         if has_positive_gap:
             # Must have a priority.
             if member_priority is None:
@@ -2086,11 +2077,7 @@ def generate_gaps_for_assessment(
         gap_value = int(gv)
         if gap_value > 0:
             # Only project Member-confirmed priority (not NULL, not 暂缓).
-            gap_priority = (
-                str(mpri)
-                if mpri in ("高", "中", "低")
-                else None
-            )
+            gap_priority = str(mpri) if mpri in ("高", "中", "低") else None
             connection.execute(
                 """
                 INSERT INTO gap (

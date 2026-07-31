@@ -355,7 +355,7 @@ def test_plan_fields_work_with_inherited_level_increase(
     inherited_level: int,
     current_level: int,
 ) -> None:
-    """Plan fields (include_in_plan) work even with inherited level increases (no evidence gate)."""
+    """Plan fields (include_in_plan) survive inherited level bump (no evidence gate)."""
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
@@ -469,7 +469,7 @@ def test_batch_fill_excludes_na_compatibility_inherited_and_cleared_items(
 def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     issue50_schema: psycopg.Connection,
 ) -> None:
-    """When current_level reaches target → gap=0 → plan fields auto-cleared with tracking."""
+    """When current_level reaches target (gap=0), plan fields auto-cleared."""
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
@@ -480,17 +480,19 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
         assessment_id,
         member_id,
         1,
-        [{
-            "l3_code": codes[0],
-            "current_level": 1,
-            "target_adjusted": True,
-            "adjusted_target_level": 5,
-            "target_adjustment_reason": "test",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q1",
-            "plan_month": 3,
-        }],
+        [
+            {
+                "l3_code": codes[0],
+                "current_level": 1,
+                "target_adjusted": True,
+                "adjusted_target_level": 5,
+                "target_adjustment_reason": "test",
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q1",
+                "plan_month": 3,
+            }
+        ],
     )
     # Now set current_level to match target → gap=0, plan fields auto-cleared.
     result = patch_assessment_draft(
@@ -503,7 +505,10 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert len(result["auto_cleared"]) == 1
     assert result["auto_cleared"][0]["l3_code"] == codes[0]
     assert set(result["auto_cleared"][0]["fields"]) == {
-        "member_priority", "include_in_plan", "plan_quarter", "plan_month"
+        "member_priority",
+        "include_in_plan",
+        "plan_quarter",
+        "plan_month",
     }
     detail = next(
         row

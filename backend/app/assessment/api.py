@@ -62,13 +62,9 @@ class DetailItem(BaseModel):
     target_adjustment_reason: str | None = None
     evidence_note: str | None = None
     # Canonical plan fields
-    member_priority: str | None = Field(
-        default=None, pattern=r"^(高|中|低|暂缓)$"
-    )
+    member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
     include_in_plan: bool | None = None  # tri-state: None=未决定
-    plan_quarter: str | None = Field(
-        default=None, pattern=r"^(Q1|Q2|Q3|Q4)$"
-    )
+    plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
     plan_month: int | None = Field(default=None, ge=1, le=12)
     # Accepted for backward compat but rejected in handler
     plan_candidate: bool = False
@@ -90,13 +86,9 @@ class PatchDetailItem(BaseModel):
     adjusted_target_level: int | None = Field(default=None, ge=1, le=5)
     target_adjustment_reason: str | None = None
     evidence_note: str | None = None
-    member_priority: str | None = Field(
-        default=None, pattern=r"^(高|中|低|暂缓)$"
-    )
+    member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
     include_in_plan: bool | None = None
-    plan_quarter: str | None = Field(
-        default=None, pattern=r"^(Q1|Q2|Q3|Q4)$"
-    )
+    plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
     plan_month: int | None = Field(default=None, ge=1, le=12)
     # Accepted for backward compat but rejected in handler
     plan_candidate: bool | None = None
@@ -529,7 +521,10 @@ def patch_draft(
     # Distinguish unset vs explicit-null via model_fields_set.
     details: list[dict[str, object]] = []
     for item in request.details:
-        merged: dict[str, object] = {"l3_node_id": item.l3_node_id, "l3_code": item.l3_code}
+        merged: dict[str, object] = {
+            "l3_node_id": item.l3_node_id,
+            "l3_code": item.l3_code,
+        }
         for key in (
             "current_level",
             "target_adjusted",

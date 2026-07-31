@@ -167,7 +167,10 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                 "adjusted_target_level": 4,
                 "target_adjustment_reason": "岗位项目要求",
                 "evidence_note": "已完成基础练习",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             }
         ],
         expected_revision=1,
@@ -220,7 +223,10 @@ def test_not_applicable_item_rejects_adjustment(
                     "target_adjusted": True,
                     "adjusted_target_level": 3,
                     "target_adjustment_reason": "提前适用",
-                    "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             expected_revision=1,

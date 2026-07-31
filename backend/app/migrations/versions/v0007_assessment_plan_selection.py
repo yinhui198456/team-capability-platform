@@ -24,30 +24,23 @@ def upgrade(connection: psycopg.Connection) -> None:
 
     # 2. Add canonical plan columns (all nullable — old rows stay NULL).
     connection.execute(
-        "ALTER TABLE assessment_detail "
-        "ADD COLUMN IF NOT EXISTS member_priority TEXT"
+        "ALTER TABLE assessment_detail " "ADD COLUMN IF NOT EXISTS member_priority TEXT"
     )
     connection.execute(
         "ALTER TABLE assessment_detail "
         "ADD COLUMN IF NOT EXISTS include_in_plan BOOLEAN"
     )
     connection.execute(
-        "ALTER TABLE assessment_detail "
-        "ADD COLUMN IF NOT EXISTS plan_quarter TEXT"
+        "ALTER TABLE assessment_detail " "ADD COLUMN IF NOT EXISTS plan_quarter TEXT"
     )
     connection.execute(
-        "ALTER TABLE assessment_detail "
-        "ADD COLUMN IF NOT EXISTS plan_month INT"
+        "ALTER TABLE assessment_detail " "ADD COLUMN IF NOT EXISTS plan_month INT"
     )
 
     # 3. Gap table: priority becomes nullable (historical auto-values stay;
     #    new rows may be NULL when not yet decided by Member).
-    connection.execute(
-        "ALTER TABLE gap ALTER COLUMN priority DROP NOT NULL"
-    )
-    connection.execute(
-        "ALTER TABLE gap ALTER COLUMN priority DROP DEFAULT"
-    )
+    connection.execute("ALTER TABLE gap ALTER COLUMN priority DROP NOT NULL")
+    connection.execute("ALTER TABLE gap ALTER COLUMN priority DROP DEFAULT")
 
     # 4. Domain CHECKs.
     for name, stmt in [

@@ -166,7 +166,8 @@ export function AssessmentHistoryPage() {
                           : ''}
                       {detail.member_priority
                         ? ` · Member优先级: ${detail.member_priority}`
-                        : detail.plan_candidate && detail.member_priority === undefined
+                        : detail.plan_candidate &&
+                            detail.member_priority === undefined
                           ? ' · 历史系统优先级'
                           : ''}
                       {detail.plan_quarter && detail.plan_month

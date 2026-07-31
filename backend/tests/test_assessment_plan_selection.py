@@ -17,7 +17,6 @@ Covers:
 """
 
 import json
-import threading
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -33,7 +32,6 @@ from app.main import app
 from app.migrations import run_migrations
 from tests.standard_target_support import (
     create_scoped_draft,
-    standard_target_payload,
 )
 
 _L3_CODE = "C01.01.01"
@@ -68,14 +66,10 @@ def _asgi_request(
     if body is not None:
         body_bytes = json.dumps(body).encode("utf-8")
         headers.append((b"content-type", b"application/json"))
-        headers.append(
-            (b"content-length", str(len(body_bytes)).encode("utf-8"))
-        )
+        headers.append((b"content-length", str(len(body_bytes)).encode("utf-8")))
 
     if cookies:
-        cookie_header = "; ".join(
-            f"{name}={value}" for name, value in cookies.items()
-        )
+        cookie_header = "; ".join(f"{name}={value}" for name, value in cookies.items())
         headers.append((b"cookie", cookie_header.encode("utf-8")))
 
     async def receive() -> dict[str, Any]:
@@ -109,9 +103,7 @@ def _asgi_request(
 
     asyncio.run(_run())
 
-    status_message = next(
-        message for message in messages if "status" in message
-    )
+    status_message = next(message for message in messages if "status" in message)
     status_code = status_message["status"]
     raw_body = b"".join(
         message["body"]
@@ -144,6 +136,7 @@ def _cookie_attributes(headers: list[tuple[str, str]]) -> dict[str, str]:
 
 SESSION_COOKIE = "tcp_session"
 
+
 # Full ASGI request with cookie tracking.
 async def _full_asgi(
     method: str,
@@ -160,14 +153,10 @@ async def _full_asgi(
     if body is not None:
         body_bytes = json.dumps(body).encode("utf-8")
         headers.append((b"content-type", b"application/json"))
-        headers.append(
-            (b"content-length", str(len(body_bytes)).encode("utf-8"))
-        )
+        headers.append((b"content-length", str(len(body_bytes)).encode("utf-8")))
 
     if cookies:
-        cookie_header = "; ".join(
-            f"{name}={value}" for name, value in cookies.items()
-        )
+        cookie_header = "; ".join(f"{name}={value}" for name, value in cookies.items())
         headers.append((b"cookie", cookie_header.encode("utf-8")))
 
     async def receive() -> dict[str, Any]:
@@ -201,9 +190,7 @@ async def _full_asgi(
 
     asyncio.run(_run())
 
-    status_message = next(
-        message for message in messages if "status" in message
-    )
+    status_message = next(message for message in messages if "status" in message)
     status_code = status_message["status"]
     raw_body = b"".join(
         message["body"]
@@ -212,18 +199,16 @@ async def _full_asgi(
     )
     parsed_body = json.loads(raw_body) if raw_body else None
 
-    response_headers: list[list[str]] = [
-        msg.get("headers", []) for msg in messages
-    ]
+    response_headers: list[list[str]] = [msg.get("headers", []) for msg in messages]
     cookies_dict = _cookie_attributes(
         [
-            [name.decode() if isinstance(name, bytes) else name, value.decode() if isinstance(value, bytes) else value]
+            [
+                name.decode() if isinstance(name, bytes) else name,
+                value.decode() if isinstance(value, bytes) else value,
+            ]
             for msg_list in response_headers
             for name, value in msg_list
-            if (
-                name.decode() if isinstance(name, bytes) else name
-            )
-            == "set-cookie"
+            if (name.decode() if isinstance(name, bytes) else name) == "set-cookie"
         ]
         if response_headers
         else []
@@ -247,27 +232,46 @@ def _login(
     password: str = "secret",
 ) -> dict[str, str]:
     import asyncio
-    status, body = _asgi_request("POST", "/api/auth/login", {"username": username, "password": password})
+
+    login_body = {"username": username, "password": password}
+    status, body = _asgi_request("POST", "/api/auth/login", login_body)
     assert status == 200, f"login failed: {body}"
     # Quick cookie extraction via full ASGI
     import json as _j
+
     async def _run():
         messages = []
         headers = [
             (b"content-type", b"application/json"),
-            (b"content-length", str(len(_j.dumps({"username": username, "password": password}).encode())).encode()),
+            (
+                b"content-length",
+                str(len(_j.dumps(login_body).encode())).encode(),
+            ),
         ]
-        body_bytes = _j.dumps({"username": username, "password": password}).encode()
+        body_bytes = _j.dumps(login_body).encode()
+
         async def recv():
             return {"type": "http.request", "body": body_bytes, "more_body": False}
+
         async def snd(msg):
             messages.append(msg)
+
         await app(
-            {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-             "method": "POST", "scheme": "http", "path": "/api/auth/login",
-             "raw_path": b"/api/auth/login", "query_string": b"",
-             "headers": headers, "client": ("testclient", 50000), "server": ("testserver", 80)},
-            recv, snd,
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/api/auth/login",
+                "raw_path": b"/api/auth/login",
+                "query_string": b"",
+                "headers": headers,
+                "client": ("testclient", 50000),
+                "server": ("testserver", 80),
+            },
+            recv,
+            snd,
         )
         for msg in messages:
             for n, v in msg.get("headers", []):
@@ -279,6 +283,7 @@ def _login(
                         key, value = parts[0].split("=", 1)
                         return {SESSION_COOKIE: value}
         return {}
+
     return asyncio.run(_run())
 
 
@@ -327,7 +332,9 @@ def plan_schema(connection: psycopg.Connection) -> psycopg.Connection:
 # ── Tests ────────────────────────────────────────────────────────
 
 
-def test_current_level_zero_submits_successfully(plan_schema: psycopg.Connection) -> None:
+def test_current_level_zero_submits_successfully(
+    plan_schema: psycopg.Connection,
+) -> None:
     """0 is a valid current_level; submits without evidence gate."""
     member_id = _create_test_user(plan_schema, "m_zero", ["Member"])
     _enable_one_l3(plan_schema)
@@ -379,9 +386,9 @@ def test_priority_not_auto_generated(plan_schema: psycopg.Connection) -> None:
 
     assessment = get_assessment(plan_schema, assessment_id)
     for detail in assessment["details"]:
-        assert detail["member_priority"] is None, (
-            f"member_priority should be NULL, got {detail['member_priority']}"
-        )
+        assert (
+            detail["member_priority"] is None
+        ), f"member_priority should be NULL, got {detail['member_priority']}"
 
 
 def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> None:
@@ -421,7 +428,9 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_include_in_plan_requires_quarter_month(plan_schema: psycopg.Connection) -> None:
+def test_include_in_plan_requires_quarter_month(
+    plan_schema: psycopg.Connection,
+) -> None:
     """include_in_plan=TRUE without quarter+month → 422."""
     member_id = _create_test_user(plan_schema, "m_noqm", ["Member"])
     _enable_one_l3(plan_schema)
@@ -520,7 +529,8 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
     cookies = _login(plan_schema, "m_gapzero")
 
     detail = plan_schema.execute(
-        "SELECT l3_code, standard_target_level FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        "SELECT l3_code, standard_target_level "
+        "FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
         (assessment_id,),
     ).fetchone()
     code = detail[0]
@@ -549,9 +559,7 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
     # the server should clear them in the transaction. This may be 200 or 422
     # depending on exact validation order.
     assessment = get_assessment(plan_schema, assessment_id)
-    gap_detail = next(
-        d for d in assessment["details"] if d["l3_code"] == code
-    )
+    gap_detail = next(d for d in assessment["details"] if d["l3_code"] == code)
     assert gap_detail["gap_value"] == 0 or gap_detail["gap_value"] is None
     assert gap_detail["member_priority"] is None
     assert gap_detail["include_in_plan"] is None
@@ -612,9 +620,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
     assert status == 200, f"uncheck patch: {body}"
 
     assessment = get_assessment(plan_schema, assessment_id)
-    gap_detail = next(
-        d for d in assessment["details"] if d["l3_code"] == code
-    )
+    gap_detail = next(d for d in assessment["details"] if d["l3_code"] == code)
     assert gap_detail["include_in_plan"] is False
     assert gap_detail["plan_quarter"] is None
     assert gap_detail["plan_month"] is None
@@ -628,7 +634,8 @@ def test_priority_auto_cleared_when_no_gap(plan_schema: psycopg.Connection) -> N
     cookies = _login(plan_schema, "m_nogap")
 
     detail = plan_schema.execute(
-        "SELECT l3_code, standard_target_level FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        "SELECT l3_code, standard_target_level "
+        "FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
         (assessment_id,),
     ).fetchone()
     code = detail[0]
@@ -687,7 +694,8 @@ def test_deprecated_plan_candidate_422(plan_schema: psycopg.Connection) -> None:
         )
         assert status == 422, f"{method} plan_candidate: {status}"
         assert isinstance(body, dict)
-    assert body.get("detail", {}) if isinstance(body.get("detail"), dict) else body.get("detail") is not None
+    d = body.get("detail")
+    assert d if isinstance(d, dict) else d is not None
     detail = body.get("detail")
     assert isinstance(detail, dict) and detail.get("code") == "deprecated_field"
 
@@ -849,7 +857,14 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
-                {"l3_code": code, "current_level": 2, "target_adjusted": True, "adjusted_target_level": 5, "target_adjustment_reason": "test", "member_priority": "高"}
+                {
+                    "l3_code": code,
+                    "current_level": 2,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
+                    "member_priority": "高",
+                }
             ],
             "expected_revision": 1,
         },
@@ -1005,9 +1020,7 @@ def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [
-                {"l3_code": code, "current_level": 2, "gap_value": 3}
-            ],
+            "details": [{"l3_code": code, "current_level": 2, "gap_value": 3}],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -1023,11 +1036,12 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
     cookies = _login(plan_schema, "m_adj")
 
     detail = plan_schema.execute(
-        "SELECT l3_code, standard_target_level FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        "SELECT l3_code, standard_target_level "
+        "FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
         (assessment_id,),
     ).fetchone()
     code = detail[0]
-    std_target = int(detail[1])
+    _std_target = int(detail[1])
 
     # Set current_level far below target, with adjustment to make gap=0
     status, _ = _request(

@@ -354,14 +354,20 @@ def _build_two_member_team(
                 "current_level": 2,
                 "target_level": 4,
                 "evidence_note": "a p01",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             },
             {
                 "l3_code": "P02-L2B-L3A",
                 "current_level": 1,
                 "target_level": 3,
                 "evidence_note": "a p02",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             },
         ],
     )
@@ -376,7 +382,10 @@ def _build_two_member_team(
                 "current_level": 3,
                 "target_level": 4,
                 "evidence_note": "b p01",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             }
         ],
     )
@@ -726,7 +735,10 @@ def test_team_analytics_preserves_personal_plan_endpoints(
                 "current_level": 2,
                 "target_level": 4,
                 "evidence_note": "regression",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             }
         ],
     )

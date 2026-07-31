@@ -191,7 +191,10 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
                 "l3_code": "P01.01.01",
                 "current_level": 2,
                 "evidence_note": "补充历史草稿依据",
-                "member_priority": "高", "include_in_plan": True, "plan_quarter": "Q2", "plan_month": 5,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             }
         ],
         expected_revision=1,
