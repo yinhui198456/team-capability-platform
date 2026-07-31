@@ -159,7 +159,17 @@ export function AssessmentHistoryPage() {
                       {detail.standard_job_level_snapshot
                         ? ` · ${detail.standard_job_level_snapshot} 标准`
                         : ''}
-                      {detail.plan_candidate ? ' · 计划候选' : ''}
+                      {detail.include_in_plan === true
+                        ? ' · 已纳入计划'
+                        : detail.plan_candidate
+                          ? ' · 计划候选(旧)'
+                          : ''}
+                      {detail.member_priority
+                        ? ` · ${detail.member_priority}`
+                        : ''}
+                      {detail.plan_quarter && detail.plan_month
+                        ? ` · ${detail.plan_quarter} ${detail.plan_month}月`
+                        : ''}
                     </li>
                   ))}
                 </ul>

@@ -52,6 +52,8 @@ export type EligibleGap = CapabilityContext & {
   gap_value: number
   priority: '高' | '中' | '低'
   plan_candidate: boolean
+  member_priority?: '高' | '中' | '低' | '暂缓' | null
+  include_in_plan?: boolean | null
 }
 
 export type GrowthGoal = CapabilityContext & {

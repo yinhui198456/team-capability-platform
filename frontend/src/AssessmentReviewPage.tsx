@@ -128,7 +128,15 @@ export function AssessmentReviewPage() {
                     : '；未调整'}
                   ；最终 {detail.target_level ?? '—'}（Gap{' '}
                   {detail.gap_value ?? '—'}）
-                  {detail.plan_candidate ? ' · 计划候选' : ''}
+                  {detail.plan_candidate ? ' · 计划候选(旧)' : ''}
+                  {detail.include_in_plan === true
+                    ? ' · 已纳入计划'
+                    : detail.include_in_plan === false
+                      ? ' · 未纳入计划'
+                      : ''}
+                  {detail.member_priority
+                    ? ` · ${detail.member_priority}`
+                    : ''}
                 </li>
               ))}
             </ul>

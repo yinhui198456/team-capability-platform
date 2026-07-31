@@ -562,6 +562,14 @@ export function BuddyReviewCenter() {
                                           detail.current_level
                                         : 0)}
                                     ）
+                                    {detail.include_in_plan === true
+                                      ? ' · 已纳入计划'
+                                      : detail.plan_candidate
+                                        ? ' · 计划候选(旧)'
+                                        : ''}
+                                    {detail.member_priority
+                                      ? ` · ${detail.member_priority}`
+                                      : ''}
                                     {detail.evidence_note && (
                                       <span className="muted">
                                         {' '}
