@@ -9,7 +9,6 @@ from app.assessment.repository import (
     AssessmentValidationError,
     _evidence_is_valid,
     batch_fill_l2,
-    create_assessment_draft,
     get_assessment,
     get_latest_approved_assessment_for_member,
     patch_assessment_draft,
@@ -19,6 +18,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.migrations import run_migrations
 from app.settings import settings
+from tests.standard_target_support import create_scoped_draft
 
 
 @pytest.fixture
@@ -137,8 +137,8 @@ def test_history_source_is_cross_year_cross_type_and_review_time_ordered(
 ) -> None:
     connection = issue50_schema
     member_id = _member(connection)
-    older = create_assessment_draft(connection, member_id, 2024, "晋升复核")
-    newer = create_assessment_draft(connection, member_id, 2025, "年中更新")
+    older = create_scoped_draft(connection, member_id, 2024, "晋升复核")
+    newer = create_scoped_draft(connection, member_id, 2025, "年中更新")
     _mark_approved(connection, older, "2025-01-01T00:00:00Z")
     _mark_approved(connection, newer, "2025-06-01T00:00:00Z")
 
@@ -153,7 +153,7 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    previous = create_assessment_draft(connection, member_id, 2024, "年度")
+    previous = create_scoped_draft(connection, member_id, 2024, "年度")
     previous_details = get_assessment(connection, previous)["details"]
     patch_assessment_draft(
         connection,
@@ -163,7 +163,7 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
         [
             {
                 "l3_code": codes[0],
-                "current_level": 2,
+                "current_level": 1,
                 "evidence_note": "旧依据",
                 "plan_candidate": True,
             },
@@ -172,16 +172,16 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
     )
     _mark_approved(connection, previous, "2025-01-01T00:00:00Z")
 
-    current = create_assessment_draft(connection, member_id, 2026, "年度")
+    current = create_scoped_draft(connection, member_id, 2026, "年度")
     details = {
         row["l3_code"]: row for row in get_assessment(connection, current)["details"]
     }
-    assert details[codes[0]]["current_level"] == 2
+    assert details[codes[0]]["current_level"] == 1
     assert details[codes[0]]["evidence_note"] == "旧依据"
     assert details[codes[0]]["plan_candidate"] is False
     assert details[codes[0]]["target_adjusted"] is False
     assert details[codes[0]]["inherited_from_assessment_id"] == previous
-    assert details[codes[0]]["inherited_current_level"] == 2
+    assert details[codes[0]]["inherited_current_level"] == 1
     assert details[codes[0]]["inherited_evidence_note"] == "旧依据"
     assert (
         details[codes[0]]["target_level"] == details[codes[0]]["standard_target_level"]
@@ -195,7 +195,7 @@ def test_patch_requires_revision_and_preserves_omitted_details(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
 
     response = patch_assessment_draft(
         connection,
@@ -229,7 +229,7 @@ def test_concurrent_patches_allow_one_revision_and_do_not_lose_or_cross_write(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
 
     first_code = codes[0]
     second_code = codes[0] if same_l3 else codes[1]
@@ -277,7 +277,7 @@ def test_batch_fill_only_writes_empty_l2_values_and_uses_single_revision(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
     patch_assessment_draft(
         connection,
         assessment_id,
@@ -303,7 +303,7 @@ def test_batch_fill_does_not_refill_explicitly_cleared_or_inherited_values(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
     patch_assessment_draft(
         connection,
         assessment_id,
@@ -354,7 +354,7 @@ def test_plan_candidate_rejects_any_inherited_level_increase_without_new_evidenc
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    previous = create_assessment_draft(connection, member_id, 2025, "年度")
+    previous = create_scoped_draft(connection, member_id, 2025, "年度")
     patch_assessment_draft(
         connection,
         previous,
@@ -370,7 +370,7 @@ def test_plan_candidate_rejects_any_inherited_level_increase_without_new_evidenc
         ],
     )
     _mark_approved(connection, previous, "2026-01-01T00:00:00Z")
-    current = create_assessment_draft(connection, member_id, 2026, "晋升复核")
+    current = create_scoped_draft(connection, member_id, 2026, "晋升复核")
 
     with pytest.raises(ValueError, match="invalid plan candidate"):
         patch_assessment_draft(
@@ -434,7 +434,7 @@ def test_batch_fill_excludes_na_compatibility_inherited_and_cleared_items(
         (codes,),
     )
     connection.commit()
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
     connection.execute(
         """
         UPDATE assessment_detail
@@ -479,7 +479,7 @@ def test_invalid_candidate_is_rejected_and_existing_candidate_is_auto_cancelled(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
     with pytest.raises(ValueError, match="invalid plan candidate"):
         patch_assessment_draft(
             connection,
@@ -518,7 +518,7 @@ def test_submit_enforces_full_detail_and_evidence_gate(
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
-    assessment_id = create_assessment_draft(connection, member_id, 2026)
+    assessment_id = create_scoped_draft(connection, member_id, 2026)
     with pytest.raises(ValueError, match="requires current level"):
         submit_assessment(connection, assessment_id, member_id, expected_revision=1)
     patch_assessment_draft(

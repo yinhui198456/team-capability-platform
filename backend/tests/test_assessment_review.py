@@ -180,8 +180,17 @@ def _create_and_submit_assessment(
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
     cookies = _login(connection, username)
+    status, preview, _ = _request(
+        "GET", f"/api/assessments/scope-preview?year={year}", cookies=cookies
+    )
+
+    assert status == 200
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": year}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": year, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assert body is not None

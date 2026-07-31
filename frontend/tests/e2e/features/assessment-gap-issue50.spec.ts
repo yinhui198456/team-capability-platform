@@ -77,11 +77,27 @@ test.describe('Issue #50 assessment gap workflow', () => {
       'Issue #50 writes assessment data and requires an isolated database',
     )
     await loginAs(page, 'member2')
-    const created = await page.request.post('/api/assessments', {
-      data: { year: 2026, assessment_type: '年度' },
-    })
-    expect(created.ok()).toBeTruthy()
-    activeDraftId = ((await created.json()) as { id: number }).id
+    const preview = await page.request.get(
+      '/api/assessments/scope-preview?year=2026',
+    )
+    expect(preview.ok()).toBeTruthy()
+    const previewBody = (await preview.json()) as {
+      scope_token: string
+      open_draft_id: number | null
+    }
+    if (previewBody.open_draft_id) {
+      activeDraftId = previewBody.open_draft_id
+    } else {
+      const created = await page.request.post('/api/assessments', {
+        data: {
+          year: 2026,
+          assessment_type: '年度',
+          scope_token: previewBody.scope_token,
+        },
+      })
+      expect(created.ok()).toBeTruthy()
+      activeDraftId = ((await created.json()) as { id: number }).id
+    }
     await page.route('**/api/assessments', async (route) => {
       if (route.request().method() !== 'GET') return route.continue()
       await route.fulfill({
@@ -91,11 +107,8 @@ test.describe('Issue #50 assessment gap workflow', () => {
       })
     })
     await page.goto('/capability/assessment')
-    const createDraft = page.getByRole('button', { name: '创建年度自评草稿' })
     const summary = page.getByLabel('评估摘要')
-    await expect(createDraft.or(summary)).toBeVisible()
-    if (await createDraft.isVisible()) await createDraft.click()
-    await expect(summary).toBeVisible({ timeout: 10000 })
+    await expect(summary).toBeVisible({ timeout: 15000 })
     await expect(page.getByTestId('assessment-table').first()).toBeVisible()
   })
 
@@ -439,8 +452,19 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
       'Issue #50 writes assessment data and requires an isolated database',
     )
     await loginAs(page, 'member2')
+    const previousPreview = await page.request.get(
+      '/api/assessments/scope-preview?year=2025',
+    )
+    expect(previousPreview.ok()).toBeTruthy()
+    const previousToken = (
+      (await previousPreview.json()) as { scope_token: string }
+    ).scope_token
     const previousCreated = await page.request.post('/api/assessments', {
-      data: { year: 2025, assessment_type: '年度' },
+      data: {
+        year: 2025,
+        assessment_type: '年度',
+        scope_token: previousToken,
+      },
     })
     expect(previousCreated.ok()).toBeTruthy()
     const previousId = ((await previousCreated.json()) as { id: number }).id
@@ -506,11 +530,28 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     expect(reviewed.ok()).toBeTruthy()
     await buddy.close()
 
-    const currentCreated = await page.request.post('/api/assessments', {
-      data: { year: 2026, assessment_type: '晋升复核' },
-    })
-    expect(currentCreated.ok()).toBeTruthy()
-    const currentId = ((await currentCreated.json()) as { id: number }).id
+    const currentPreview = await page.request.get(
+      `/api/assessments/scope-preview?year=2026&assessment_type=${encodeURIComponent('晋升复核')}`,
+    )
+    expect(currentPreview.ok()).toBeTruthy()
+    const currentPreviewBody = (await currentPreview.json()) as {
+      scope_token: string
+      open_draft_id: number | null
+    }
+    let currentId: number
+    if (currentPreviewBody.open_draft_id) {
+      currentId = currentPreviewBody.open_draft_id
+    } else {
+      const currentCreated = await page.request.post('/api/assessments', {
+        data: {
+          year: 2026,
+          assessment_type: '晋升复核',
+          scope_token: currentPreviewBody.scope_token,
+        },
+      })
+      expect(currentCreated.ok()).toBeTruthy()
+      currentId = ((await currentCreated.json()) as { id: number }).id
+    }
     const currentResponse = await page.request.get(
       `/api/assessments/${currentId}`,
     )
@@ -532,23 +573,21 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     await page.goto('/capability/assessment')
     await expect(page.getByText('沿用上次评估').first()).toBeVisible()
     const lowSelect = page.getByLabel(`当前等级 ${low.l3_code}`)
-    if (await lowSelect.isVisible()) {
-      await lowSelect.selectOption('2')
-      const lowRow = page.locator(`#row-${inheritedLow.id}`)
-      await expect(lowRow.getByText('需更新依据')).toBeVisible()
-      await expect(
-        page.getByRole('button', { name: '提交自评' }),
-      ).toBeDisabled()
-      await lowRow.getByRole('button', { name: '填写' }).click()
-      await lowRow.locator('textarea').fill('   ')
-      await lowRow.getByRole('button', { name: '确认依据' }).click()
-      await expect(lowRow.getByText('需更新依据')).toBeVisible()
-      await lowRow.getByRole('button', { name: '填写' }).click()
-      await lowRow.locator('textarea').fill('本次新依据')
-      await lowRow.getByRole('button', { name: '确认依据' }).click()
-      await expect(lowRow.getByText('需更新依据')).toHaveCount(0)
-      await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-    }
+    await expect(lowSelect).toBeVisible()
+    await lowSelect.selectOption('2')
+    const lowRow = page.locator(`#row-${inheritedLow.id}`)
+    const evidenceRow = page.locator(`#row-${inheritedLow.id} + tr`)
+    await expect(lowRow.getByText('需更新依据')).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+    await lowRow.getByRole('button', { name: '填写' }).click()
+    await evidenceRow.locator('textarea').fill('   ')
+    await evidenceRow.getByRole('button', { name: '确认依据' }).click()
+    await expect(lowRow.getByText('需更新依据')).toBeVisible()
+    await lowRow.getByRole('button', { name: '填写' }).click()
+    await evidenceRow.locator('textarea').fill('本次新依据')
+    await evidenceRow.getByRole('button', { name: '确认依据' }).click()
+    await expect(lowRow.getByText('需更新依据')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
 
     const lowUpdate = await page.request.patch(
       `/api/assessments/${currentId}/draft`,

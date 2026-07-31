@@ -122,6 +122,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
         submit_assessment_review,
         update_gap,
     )
+    from ..assessment.scope import compute_assessment_scope
     from ..planning.repository import (
         create_evidence_draft,
         create_growth_goal,
@@ -137,21 +138,35 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
     buddy_id = users["buddy"]
     year = date.today().year
     with connection.transaction():
-        assessment_id = create_assessment_draft(connection, member_id, year)
+        seed_scope = compute_assessment_scope(
+            connection,
+            member_id=member_id,
+            year=year,
+            assessment_type="年度",
+        )
+        created = create_assessment_draft(
+            connection,
+            member_id,
+            year,
+            scope_token=str(seed_scope["scope_token"]),
+        )
+        assessment_id = int(created["id"])
         assessment = get_assessment(connection, assessment_id)
         assert assessment is not None
         details = []
         for detail in assessment["details"]:
             applicable = detail["standard_target_applicable"] is True
             is_demo_gap = detail["l3_code"] == l3[0]
+            target = detail["target_level"] if applicable else None
+            demo_current = (
+                max(1, int(target) - 1)
+                if is_demo_gap and target is not None
+                else target if applicable else None
+            )
             details.append(
                 {
                     "l3_code": detail["l3_code"],
-                    "current_level": (
-                        2
-                        if is_demo_gap
-                        else detail["target_level"] if applicable else None
-                    ),
+                    "current_level": demo_current,
                     "evidence_note": (
                         "本地演示自评" if is_demo_gap else "本地演示已达标项"
                     ),

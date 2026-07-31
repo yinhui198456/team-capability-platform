@@ -19,23 +19,30 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
-      const created = await page.request.post('/api/assessments', {
-        data: { year: 2026, assessment_type: '年度' },
-      })
-      expect(created.ok()).toBeTruthy()
+      const preview = await page.request.get(
+        '/api/assessments/scope-preview?year=2026',
+      )
+      expect(preview.ok()).toBeTruthy()
+      const previewBody = (await preview.json()) as {
+        scope_token: string
+        open_draft_id: number | null
+      }
+      if (!previewBody.open_draft_id) {
+        const created = await page.request.post('/api/assessments', {
+          data: {
+            year: 2026,
+            assessment_type: '年度',
+            scope_token: previewBody.scope_token,
+          },
+        })
+        expect(created.ok()).toBeTruthy()
+      }
       await page.goto('/capability/assessment')
       await expect(
         page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
       ).toBeVisible()
-      const createDraft = page.getByRole('button', {
-        name: '创建年度自评草稿',
-      })
       const summary = page.getByLabel('评估摘要')
-      await expect(createDraft.or(summary)).toBeVisible()
-      if (await createDraft.isVisible()) {
-        await createDraft.click()
-      }
-      await expect(summary).toBeVisible({ timeout: 10000 })
+      await expect(summary).toBeVisible({ timeout: 15000 })
       await expect(page.getByTestId('assessment-table').first()).toBeVisible()
       await expect(page.getByTestId('gap-sidebar')).toHaveCount(0)
     })

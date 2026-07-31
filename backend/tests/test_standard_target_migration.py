@@ -78,16 +78,20 @@ def _seed_catalog(connection: psycopg.Connection) -> None:
 
 
 def _assessment(
-    connection: psycopg.Connection, member_id: int, status: str, version: int
+    connection: psycopg.Connection,
+    member_id: int,
+    status: str,
+    version: int,
+    year: int = 2026,
 ) -> int:
     return connection.execute(
         """
         INSERT INTO assessment
             (member_id, year, version, assessment_type, status)
-        VALUES (%s, 2026, %s, '年度', %s)
+        VALUES (%s, %s, %s, '年度', %s)
         RETURNING id
         """,
-        (member_id, version, status),
+        (member_id, year, version, status),
     ).fetchone()[0]
 
 
@@ -104,7 +108,8 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
     draft_id = _assessment(connection, member_id, "草稿", 1)
     pending_id = _assessment(connection, member_id, "待复核", 2)
     archived_id = _assessment(connection, member_id, "已归档", 3)
-    legacy_draft_id = _assessment(connection, member_id, "草稿", 4)
+    # a second open draft may only exist under a different business key
+    legacy_draft_id = _assessment(connection, member_id, "草稿", 1, year=2027)
     connection.execute(
         """
         INSERT INTO assessment_detail
@@ -124,7 +129,7 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
     run_migrations(connection)
 
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 5
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 6
     )
     assert (
         connection.execute(

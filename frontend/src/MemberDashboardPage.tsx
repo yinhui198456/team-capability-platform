@@ -6,6 +6,7 @@ import {
 } from './estimatedHours'
 
 import { useYear } from './YearContext'
+import { useMe } from './catalog'
 import {
   formatCapabilityPath,
   getMemberDashboard,
@@ -266,15 +267,48 @@ function ReviewStatusCard({
   )
 }
 
-function SelfAssessmentCTA({ year }: { year: number }) {
+function SelfAssessmentCTA({
+  year,
+  assessment,
+  profileCurrent,
+  profileTarget,
+}: {
+  year: number
+  assessment: MemberDashboardAssessment | null
+  profileCurrent?: string | null
+  profileTarget?: string | null
+}) {
+  const snapshotCurrent = assessment?.member_current_level_snapshot ?? null
+  const snapshotTarget = assessment?.member_target_level_snapshot ?? null
+  const displayCurrent = snapshotCurrent ?? profileCurrent ?? null
+  const displayTarget = snapshotTarget ?? profileTarget ?? null
+  const drift =
+    snapshotCurrent !== null &&
+    profileCurrent != null &&
+    (snapshotCurrent !== profileCurrent || snapshotTarget !== profileTarget)
+  const isOpenDraft =
+    assessment?.status === '草稿' || assessment?.status === '建议调整'
   return (
-    <article className={`card ${styles.stageCard} ${styles.ctaCard}`}>
-      <h2>开始能力自评</h2>
+    <article
+      className={`card ${styles.stageCard} ${styles.ctaCard}`}
+      data-testid="self-assessment-cta"
+    >
+      <h2>{isOpenDraft ? '继续能力自评' : '开始能力自评'}</h2>
+      {displayCurrent && displayTarget && (
+        <p data-testid="dashboard-levels">
+          当前职级 {displayCurrent} · 年度目标 {displayTarget}
+        </p>
+      )}
+      {drift && (
+        <p className="muted" data-testid="dashboard-level-drift">
+          成员职级已变化，当前评估仍按创建时快照执行。
+        </p>
+      )}
       <p className="muted">
         完成自评后，平台将自动生成 Gap 分析，并支持制定年度成长计划。
       </p>
       <a className="primary-link" href={`/capability/assessment?year=${year}`}>
-        完成能力自评
+        {isOpenDraft ? '继续能力自评' : '完成能力自评'}
       </a>
     </article>
   )
@@ -706,6 +740,7 @@ function PlanDashboard({
 
 export function MemberDashboardPage() {
   const year = useYear()
+  const { user } = useMe()
   const [dashboard, setDashboard] = useState<MemberDashboard | null>(null)
   const [error, setError] = useState('')
   const [selectedDomain, setSelectedDomain] = useState('全部')
@@ -763,7 +798,14 @@ export function MemberDashboardPage() {
       {!dashboard && !error && <p className="muted">正在加载成长数据…</p>}
       {dashboard && stage && (
         <>
-          {stage === 'self-assessment' && <SelfAssessmentCTA year={year} />}
+          {stage === 'self-assessment' && (
+            <SelfAssessmentCTA
+              year={year}
+              assessment={dashboard.assessment}
+              profileCurrent={user?.current_level}
+              profileTarget={user?.target_level}
+            />
+          )}
           {stage === 'plan-pending' && <PlanPendingCTA year={year} />}
           {stage === 'pending-review' && (
             <>

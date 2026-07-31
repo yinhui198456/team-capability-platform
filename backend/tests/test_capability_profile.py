@@ -264,8 +264,17 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
     cookies = _login(connection, username)
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+
+    assert status == 200
+
     status, body, _ = _request(
-        "POST", "/api/assessments", {"year": 2026}, cookies=cookies
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
     )
     assert status == 200
     assert body is not None

@@ -10,7 +10,6 @@ from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.api import DetailItem
 from app.assessment.repository import (
-    create_assessment_draft,
     get_assessment,
     save_assessment_draft,
     submit_assessment,
@@ -19,6 +18,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.migrations import run_migrations
 from tests.conftest import TEST_DATABASE_URL
+from tests.standard_target_support import create_scoped_draft
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_create_requires_member_target_level(
     member_id = _member(standard_target_schema, None)
 
     with pytest.raises(ValueError, match="member target_level is required"):
-        create_assessment_draft(standard_target_schema, member_id, 2026)
+        create_scoped_draft(standard_target_schema, member_id, 2026)
 
     assert (
         standard_target_schema.execute("SELECT count(*) FROM assessment").fetchone()[0]
@@ -76,27 +76,28 @@ def test_create_requires_member_target_level(
     )
 
 
-def test_create_snapshots_published_matrix_and_not_applicable(
+def test_create_snapshots_published_matrix_and_scope_exclusion(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P5")
     _, override_code = _node_at_start(standard_target_schema, "P4")
     _, below_start_code = _node_at_start(standard_target_schema, "P6")
 
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
     assessment = get_assessment(standard_target_schema, assessment_id)
     assert assessment is not None
     details = {detail["l3_code"]: detail for detail in assessment["details"]}
 
+    # P4-start L3 for a P4→P5 member: current_required with the P4 cell
     assert details[override_code]["standard_target_applicable"] is True
-    assert details[override_code]["standard_target_level"] == 3
-    assert details[override_code]["target_level"] == 3
+    assert details[override_code]["standard_target_level"] == 2
+    assert details[override_code]["target_level"] == 2
+    assert details[override_code]["scope_type"] == "current_required"
+    assert details[override_code]["standard_job_level_snapshot"] == "P4"
     assert details[override_code]["target_snapshot_source"].endswith(":legacy_derived")
 
-    assert details[below_start_code]["standard_target_applicable"] is False
-    assert details[below_start_code]["standard_target_level"] is None
-    assert details[below_start_code]["target_level"] is None
-    assert details[below_start_code]["gap_value"] is None
+    # P6-start L3 is outside the P4→P5 scope: no detail is created at all
+    assert below_start_code not in details
 
 
 def test_snapshot_is_immutable_after_model_and_member_changes(
@@ -108,7 +109,7 @@ def test_snapshot_is_immutable_after_model_and_member_changes(
         "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
 
     standard_target_schema.execute(
         "UPDATE capability_node SET recommended_start_level = 'P6' WHERE id = %s",
@@ -135,7 +136,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
         "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
 
     with pytest.raises(ValueError, match="adjustment reason is required"):
         save_assessment_draft(
@@ -183,12 +184,29 @@ def test_not_applicable_item_rejects_adjustment_and_plan_candidate(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P5")
-    node_id, code = _node_at_start(standard_target_schema, "P6")
+    _, code = _node_at_start(standard_target_schema, "P6")
+    # legacy (pre-#60) draft carrying a not-applicable detail; the save path
+    # must keep rejecting adjustments on it
+    assessment_id = int(
+        standard_target_schema.execute(
+            """
+            INSERT INTO assessment (member_id, year, version, assessment_type, status)
+            VALUES (%s, 2026, 1, '年度', '草稿') RETURNING id
+            """,
+            (member_id,),
+        ).fetchone()[0]
+    )
     standard_target_schema.execute(
-        "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
+        """
+        INSERT INTO assessment_detail (
+            assessment_id, l3_code, standard_target_applicable,
+            standard_target_level, target_level
+        )
+        VALUES (%s, %s, FALSE, NULL, NULL)
+        """,
+        (assessment_id, code),
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
 
     with pytest.raises(ValueError, match="not applicable"):
         save_assessment_draft(
@@ -225,7 +243,7 @@ def test_batch_save_is_atomic_and_requires_every_snapshot_row(
         "UPDATE capability_node SET enabled = (id = ANY(%s))", (ids,)
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
 
     with pytest.raises(ValueError, match="must include every assessment detail"):
         save_assessment_draft(
@@ -249,7 +267,7 @@ def test_concurrent_save_waits_for_assessment_row_lock(
         "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
     started = Event()
 
     def save_from_second_connection() -> None:
@@ -292,7 +310,7 @@ def test_unresolved_legacy_draft_cannot_be_submitted(
         "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
     )
     standard_target_schema.commit()
-    assessment_id = create_assessment_draft(standard_target_schema, member_id, 2026)
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
     standard_target_schema.execute(
         """
         UPDATE assessment_detail

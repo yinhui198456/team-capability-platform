@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, status
+import psycopg
+from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.policies import Connection, CurrentUser, require_any_role
@@ -23,11 +24,29 @@ from .repository import (
     submit_assessment_review,
     update_gap,
 )
+from .scope import AssessmentScopeError, compute_assessment_scope
+
+_VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
+
+
+def _validate_assessment_type(assessment_type: str) -> None:
+    if assessment_type not in _VALID_ASSESSMENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_assessment_type",
+                "message": (
+                    f"assessment_type must be one of "
+                    f"{', '.join(sorted(_VALID_ASSESSMENT_TYPES))}"
+                ),
+            },
+        )
 
 
 class CreateAssessmentRequest(BaseModel):
     year: int
     assessment_type: str = Field(default="年度")
+    scope_token: str = Field(min_length=64, max_length=64)
 
 
 class DetailItem(BaseModel):
@@ -83,30 +102,86 @@ def _draft_repair_error(exc: DraftTargetRepairError) -> HTTPException:
     )
 
 
-@assessment_router.post("")
-def create_assessment(
-    request: CreateAssessmentRequest,
+def _scope_error(exc: AssessmentScopeError) -> HTTPException:
+    detail: dict[str, object] = {
+        "code": exc.code,
+        "message": str(exc),
+        "issues": exc.issues,
+    }
+    if exc.summary is not None:
+        detail["summary"] = exc.summary
+    return HTTPException(status_code=exc.status_code, detail=detail)
+
+
+@assessment_router.get("/scope-preview")
+def scope_preview(
     user: CurrentUser,
     connection: Connection,
-) -> dict[str, int]:
+    year: int,
+    assessment_type: str = "年度",
+) -> dict[str, object]:
     if "Member" not in user["roles"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+    _validate_assessment_type(assessment_type)
     try:
-        assessment_id = create_assessment_draft(
+        # Fixed consistency scheme: one read-only REPEATABLE READ snapshot.
+        # The auth dependency already queried on this connection, so close
+        # that implicit transaction before pinning the isolation level.
+        connection.rollback()
+        connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        connection.read_only = True
+        try:
+            with connection.transaction():
+                scope = compute_assessment_scope(
+                    connection,
+                    member_id=int(user["id"]),
+                    year=year,
+                    assessment_type=assessment_type,
+                )
+                open_draft = connection.execute(
+                    """
+                    SELECT id FROM assessment
+                    WHERE member_id = %s AND year = %s AND assessment_type = %s
+                      AND status IN ('草稿', '建议调整')
+                    """,
+                    (int(user["id"]), year, assessment_type),
+                ).fetchone()
+        finally:
+            connection.read_only = False
+            connection.isolation_level = None
+    except AssessmentScopeError as exc:
+        raise _scope_error(exc) from exc
+    scope["open_draft_id"] = int(open_draft[0]) if open_draft is not None else None
+    return scope
+
+
+@assessment_router.post("")
+def create_assessment(
+    request: CreateAssessmentRequest,
+    user: CurrentUser,
+    connection: Connection,
+    idempotency_key: str | None = Header(default=None),
+) -> dict[str, object]:
+    if "Member" not in user["roles"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    _validate_assessment_type(request.assessment_type)
+    try:
+        return create_assessment_draft(
             connection,
             int(user["id"]),
             request.year,
             request.assessment_type,
+            scope_token=request.scope_token,
+            idempotency_key=idempotency_key,
         )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    return {"id": assessment_id, "revision": 1}
+    except AssessmentScopeError as exc:
+        raise _scope_error(exc) from exc
 
 
 @assessment_router.get("")
@@ -120,10 +195,15 @@ def list_assessments(
         # ponytail: MVP single-team leader view returns all assessments.
         rows = connection.execute(
             """
-            SELECT id, member_id, year, version, assessment_type, status,
-                   created_at, submitted_at, archived_at, revision
-            FROM assessment
-            ORDER BY created_at DESC
+            SELECT a.id, a.member_id, a.year, a.version, a.assessment_type,
+                   a.status, a.created_at, a.submitted_at, a.archived_at,
+                   a.revision, a.member_current_level_snapshot,
+                   a.member_target_level_snapshot, a.assessment_scope_version,
+                   sv.label
+            FROM assessment AS a
+            LEFT JOIN capability_standard_version AS sv
+              ON sv.id = a.capability_standard_version_id
+            ORDER BY a.created_at DESC
             """
         ).fetchall()
         return [
@@ -138,6 +218,10 @@ def list_assessments(
                 "submitted_at": row[7],
                 "archived_at": row[8],
                 "revision": row[9],
+                "member_current_level_snapshot": row[10],
+                "member_target_level_snapshot": row[11],
+                "assessment_scope_version": row[12],
+                "standard_version_label": row[13],
             }
             for row in rows
         ]
@@ -154,11 +238,16 @@ def list_assessments(
             return []
         rows = connection.execute(
             """
-            SELECT id, member_id, year, version, assessment_type, status,
-                   created_at, submitted_at, archived_at, revision
-            FROM assessment
-            WHERE member_id = ANY(%s)
-            ORDER BY created_at DESC
+            SELECT a.id, a.member_id, a.year, a.version, a.assessment_type,
+                   a.status, a.created_at, a.submitted_at, a.archived_at,
+                   a.revision, a.member_current_level_snapshot,
+                   a.member_target_level_snapshot, a.assessment_scope_version,
+                   sv.label
+            FROM assessment AS a
+            LEFT JOIN capability_standard_version AS sv
+              ON sv.id = a.capability_standard_version_id
+            WHERE a.member_id = ANY(%s)
+            ORDER BY a.created_at DESC
             """,
             (member_ids,),
         ).fetchall()
@@ -174,6 +263,10 @@ def list_assessments(
                 "submitted_at": row[7],
                 "archived_at": row[8],
                 "revision": row[9],
+                "member_current_level_snapshot": row[10],
+                "member_target_level_snapshot": row[11],
+                "assessment_scope_version": row[12],
+                "standard_version_label": row[13],
             }
             for row in rows
         ]

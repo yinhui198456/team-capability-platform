@@ -979,7 +979,8 @@ def get_member_dashboard(
     # Latest assessment of the year (including draft) drives the dashboard stage.
     latest_assessment_row = connection.execute(
         """
-        SELECT id, status, submitted_at, archived_at
+        SELECT id, status, submitted_at, archived_at,
+               member_current_level_snapshot, member_target_level_snapshot
         FROM assessment
         WHERE member_id = %s AND year = %s
         ORDER BY created_at DESC, id DESC
@@ -994,6 +995,8 @@ def get_member_dashboard(
             "status": latest_assessment_row[1],
             "submitted_at": _serialize_datetime(latest_assessment_row[2]),
             "archived_at": _serialize_datetime(latest_assessment_row[3]),
+            "member_current_level_snapshot": latest_assessment_row[4],
+            "member_target_level_snapshot": latest_assessment_row[5],
         }
 
     # Latest submitted assessment of the year feeds the radar and Gap list.

@@ -6,16 +6,20 @@ import {
   type AssessmentDetail,
   type AssessmentL2Group,
   type DraftTargetRepairPreview,
+  type ScopePreview,
   createAssessment,
   batchFillL2,
+  fetchScopePreview,
   getAssessment,
   getDraftTargetRepairPreview,
   listAssessments,
-  saveDraft,
+  newIdempotencyKey,
   repairDraftTargetSnapshots,
+  saveDraft,
   selectL2Requirement,
   submitAssessment,
 } from './assessment'
+import { type ApiError } from './shared/api'
 import {
   mockAssessment,
   mockAssessmentSubmitted,
@@ -251,6 +255,23 @@ export function AssessmentGapPage() {
     useState<DraftTargetRepairPreview | null>(null)
   const [repairLoading, setRepairLoading] = useState(false)
   const [repairExecuting, setRepairExecuting] = useState(false)
+  const [scopePreview, setScopePreview] = useState<ScopePreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [createIdempotencyKey, setCreateIdempotencyKey] = useState<
+    string | null
+  >(null)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [scopeChanged, setScopeChanged] = useState<{
+    member_current_level: string
+    member_target_level: string
+    standard_version: { id: number; label: string }
+    summary: ScopePreview['summary']
+    empty_scope: boolean
+    scope_token: string
+  } | null>(null)
+  const [scopeFilter, setScopeFilter] = useState<
+    '全部' | 'current_required' | 'target_progressive'
+  >('全部')
 
   function loadAssessment(value: Assessment) {
     setAssessment(value)
@@ -293,17 +314,72 @@ export function AssessmentGapPage() {
     }
   }, [])
 
-  async function handleCreate() {
+  async function handlePreview() {
     setError('')
+    setPreviewLoading(true)
+    setScopeChanged(null)
     try {
-      if (isMockEnabled()) {
-        loadAssessment(mockAssessment)
+      const preview = await fetchScopePreview(year)
+      if (preview.open_draft_id) {
+        loadAssessment(await getAssessment(preview.open_draft_id))
         return
       }
-      const created = await createAssessment(year)
+      setScopePreview(preview)
+      setCreateIdempotencyKey(newIdempotencyKey())
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '预览失败')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  async function handleCreate(tokenOverride?: string) {
+    if (isMockEnabled()) {
+      loadAssessment(mockAssessment)
+      return
+    }
+    const token = tokenOverride ?? scopePreview?.scope_token
+    if (!token) return
+    setError('')
+    setCreateBusy(true)
+    try {
+      const created = await createAssessment(
+        year,
+        token,
+        '年度',
+        createIdempotencyKey ?? undefined,
+      )
+      setScopePreview(null)
+      setScopeChanged(null)
+      setCreateIdempotencyKey(null)
       loadAssessment(await getAssessment(created.id))
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '创建失败')
+      const apiErr = err as ApiError
+      const detail = apiErr.detail as
+        | {
+            code?: string
+            summary?: ScopePreview
+            issues?: Array<{ assessment_id?: number }>
+          }
+        | undefined
+      if (detail?.code === 'assessment_scope_changed' && detail.summary) {
+        setScopeChanged(detail.summary)
+        setError('评估范围已变化，请根据最新范围重新确认。')
+        setCreateIdempotencyKey(newIdempotencyKey())
+      } else if (detail?.code === 'open_draft_exists') {
+        const draftId = detail.issues?.[0]?.assessment_id
+        if (draftId) {
+          setScopePreview(null)
+          setCreateIdempotencyKey(null)
+          loadAssessment(await getAssessment(draftId))
+          return
+        }
+        setError(apiErr.message)
+      } else {
+        setError(apiErr.message || '创建失败')
+      }
+    } finally {
+      setCreateBusy(false)
     }
   }
 
@@ -592,6 +668,14 @@ export function AssessmentGapPage() {
   )
   const filtered = useMemo(() => {
     let list = details.filter((detail) => l1Of(detail) === activeDomain)
+    if (scopeFilter !== '全部') {
+      if (assessment?.assessment_scope_version) {
+        list = list.filter((detail) => detail.scope_type === scopeFilter)
+      } else {
+        // Legacy details have no scope classification — never fabricate it.
+        list = []
+      }
+    }
     if (statusFilter === '未完成')
       list = list.filter(
         (detail) => isApplicableDetail(detail) && !isFilled(detail),
@@ -607,7 +691,7 @@ export function AssessmentGapPage() {
     if (statusFilter === '计划候选')
       list = list.filter((detail) => detail.plan_candidate)
     return list
-  }, [details, activeDomain, statusFilter])
+  }, [details, activeDomain, statusFilter, scopeFilter, assessment])
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return []
@@ -662,12 +746,55 @@ export function AssessmentGapPage() {
 
   if (loading) return <p className="muted">加载中…</p>
   if (!assessment) {
+    const preview = scopeChanged ?? scopePreview
     return (
       <section className="page">
         <h1>能力自评与 Gap 分析</h1>
         <p>当前年度暂无草稿。</p>
-        <button onClick={handleCreate}>创建年度自评草稿</button>
-        {error && <p className="error">{error}</p>}
+        {!preview && (
+          <button
+            type="button"
+            onClick={() => void handlePreview()}
+            disabled={previewLoading}
+          >
+            {previewLoading ? '计算范围中…' : '预览评估范围'}
+          </button>
+        )}
+        {preview && (
+          <section aria-label="评估范围预览" data-testid="scope-preview">
+            <p>
+              当前 {preview.member_current_level} → 年度目标{' '}
+              {preview.member_target_level} · {preview.standard_version.label}
+            </p>
+            <p>
+              适用 <strong>{preview.summary.total}</strong> · 必备{' '}
+              <strong>{preview.summary.current_required}</strong> · 进阶{' '}
+              <strong>{preview.summary.target_progressive}</strong>
+            </p>
+            {preview.empty_scope ? (
+              <p className="error" role="alert">
+                当前职级与目标职级下没有可评估的能力项，无法创建评估。
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleCreate(preview.scope_token)}
+                disabled={createBusy}
+              >
+                {createBusy
+                  ? '创建中…'
+                  : scopeChanged
+                    ? '按最新范围重新确认创建'
+                    : '确认创建年度自评草稿'}
+              </button>
+            )}
+          </section>
+        )}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
       </section>
     )
   }
@@ -681,9 +808,18 @@ export function AssessmentGapPage() {
           <div>
             <p className="eyebrow">能力成长 / 能力自评与 Gap</p>
             <h1>能力自评与 Gap 分析</h1>
-            <p className="muted">
+            <p className="muted" data-testid="scope-header">
               {assessment.year} 年度 · 版本 {assessment.version} ·{' '}
               {assessment.status}
+              {assessment.assessment_scope_version
+                ? ` · 当前 ${assessment.member_current_level_snapshot} → 年度目标 ${assessment.member_target_level_snapshot}`
+                : ''}
+              {assessment.standard_version_label
+                ? ` · ${assessment.standard_version_label}`
+                : ''}
+              {assessment.scope_summary
+                ? ` · 适用 ${assessment.scope_summary.total} · 必备 ${assessment.scope_summary.current_required} · 进阶 ${assessment.scope_summary.target_progressive}`
+                : ''}
             </p>
           </div>
           <div className="assessment-actions">
@@ -807,6 +943,21 @@ export function AssessmentGapPage() {
           </nav>
           <div className={s.toolbar}>
             <select
+              aria-label="范围筛选"
+              data-testid="scope-filter"
+              value={scopeFilter}
+              onChange={(e) =>
+                setScopeFilter(
+                  e.target.value as
+                    '全部' | 'current_required' | 'target_progressive',
+                )
+              }
+            >
+              <option value="全部">全部适用</option>
+              <option value="current_required">当前职级必备</option>
+              <option value="target_progressive">目标职级进阶</option>
+            </select>
+            <select
               aria-label="状态筛选"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -893,6 +1044,11 @@ export function AssessmentGapPage() {
         </div>
 
         <div className={s.mainArea} data-testid="assessment-main-area">
+          {scopeFilter !== '全部' && !assessment.assessment_scope_version && (
+            <p className="muted" data-testid="legacy-scope-hint">
+              历史评估未按范围分类，必备/进阶筛选不可用。
+            </p>
+          )}
           <div className={s.tableArea}>
             {l2Groups.map((group) => {
               const l2Code = group.l2_code

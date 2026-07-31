@@ -1,6 +1,37 @@
 import psycopg
 
+from app.assessment.repository import create_assessment_draft
+from app.assessment.scope import compute_assessment_scope
 from app.migrations import run_migrations
+
+
+def create_scoped_draft(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    assessment_type: str = "年度",
+    *,
+    idempotency_key: str | None = None,
+) -> int:
+    """Test helper: preview-equivalent token then create; returns the new id."""
+    scope = compute_assessment_scope(
+        connection,
+        member_id=member_id,
+        year=year,
+        assessment_type=assessment_type,
+    )
+    result = create_assessment_draft(
+        connection,
+        member_id,
+        year,
+        assessment_type,
+        scope_token=str(scope["scope_token"]),
+        idempotency_key=idempotency_key,
+    )
+    # compute_assessment_scope opened an implicit transaction, so the create
+    # ran in a savepoint; commit so other connections see the new draft.
+    connection.commit()
+    return int(result["id"])
 
 
 def ensure_capability_nodes(
