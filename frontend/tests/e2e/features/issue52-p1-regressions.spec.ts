@@ -29,8 +29,8 @@ test.describe('Issue #52 P1 regressions', () => {
     // Issue #62 workspace: frozen facts in the summary grid and grouped table
     await expect(page.getByText('适用 3')).toBeVisible()
     await expect(page.getByText('未映射历史项')).toBeVisible()
-    await expect(page.getByText(/unknown-legacy-l3/)).toBeVisible()
-    await expect(page.getByText('数据管道基础')).toBeVisible()
+    await expect(page.getByText(/unknown-legacy-l3/).first()).toBeVisible()
+    await expect(page.getByText('数据管道基础', { exact: true })).toBeVisible()
     // personal adjustment shown only when it happened
     await expect(page.getByText(/3 → 4（岗位项目要求）/)).toBeVisible()
   })
