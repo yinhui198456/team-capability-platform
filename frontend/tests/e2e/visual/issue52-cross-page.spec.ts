@@ -29,57 +29,20 @@ async function mockMemberAuth(page: Page) {
   })
 }
 
-test('Issue #52 growth goals show L2 standard and L3 path at 1440x900', async ({
+test('Issue #52 growth-goals route redirects to the annual plan page', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockMemberAuth(page)
-  await page.route('**/api/planning/annual-plan-eligibility', (route) =>
-    route.fulfill({ status: 200, json: { eligible: true, reason: null } }),
-  )
-  await page.route('**/api/planning/eligible-gaps', (route) =>
-    route.fulfill({
-      status: 200,
-      json: [
-        {
-          id: 52,
-          assessment_id: 1,
-          l3_code: 'P01.01.01',
-          l1_code: 'P01',
-          l1_name: 'P01 能力域',
-          l2_code: 'P01.01',
-          l2_name: 'Data Infra 产品体系认知',
-          l3_name: 'TDC / TDH / ArgoDB / TDS 产品定位',
-          current_level: 2,
-          target_level: 4,
-          gap_value: 2,
-          priority: '高',
-          plan_candidate: true,
-        },
-      ],
-    }),
-  )
-  await page.route('**/api/planning/growth-goals', (route) =>
-    route.fulfill({ status: 200, json: [] }),
+  await page.route('**/api/planning/annual-plan*', (route) =>
+    route.fulfill({ status: 200, json: null }),
   )
 
   await loginAs(page, 'member')
   await page.goto('/growth/goals')
   await expect(
-    page.getByRole('heading', { name: '成长目标', exact: true }),
+    page.getByRole('heading', { name: '年度成长计划', exact: true }),
   ).toBeVisible()
-  await expect(
-    page.getByText(
-      'P01.01 · Data Infra 产品体系认知 → P01.01.01 · TDC / TDH / ArgoDB / TDS 产品定位',
-    ),
-  ).toBeVisible()
-  await expect(
-    page.getByText('掌握度提升：当前 2 → 目标 4（Gap 2）'),
-  ).toBeVisible()
-  await expect(page).toHaveScreenshot('issue52-growth-goals-1440x900.png', {
-    fullPage: false,
-    maxDiffPixels: 1500,
-  })
 })
 
 test('Issue #52 learning resources show L2 and L3 context at 1440x900', async ({

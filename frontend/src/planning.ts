@@ -81,7 +81,7 @@ export type LearningTaskStatus =
 export type PlanItem = CapabilityContext & {
   id: number
   annual_growth_plan_id: number
-  growth_goal_id: number
+  growth_goal_id: number | null
   l3_code: string
   current_level: number
   target_level: number
@@ -95,6 +95,30 @@ export type PlanItem = CapabilityContext & {
   plan_end_date: string | null
   target_month: number | null
   status: PlanItemStatus
+  // #62 frozen source snapshot (assessment-approval items)
+  source_assessment_id?: number | null
+  source_assessment_detail_id?: number | null
+  capability_standard_version_id?: number | null
+  planning_snapshot_id?: number | null
+  l3_node_id?: number | null
+  l1_code?: string | null
+  l1_name?: string | null
+  l2_code?: string | null
+  l2_name?: string | null
+  l3_name?: string | null
+  scope_type?: 'current_required' | 'target_progressive' | null
+  standard_target_level?: number | null
+  adjusted_target_level?: number | null
+  effective_target_level?: number | null
+  standard_job_level_snapshot?: string | null
+  member_current_level_snapshot?: string | null
+  member_target_level_snapshot?: string | null
+  plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month?: number | null
+  planning_source_type?: 'assessment_approval' | null
+  assessment_revision?: number | null
+  gap_value?: number | null
+  include_in_plan?: boolean | null
 }
 
 export type LearningTask = CapabilityContext & {
@@ -181,6 +205,72 @@ export type AnnualPlan = {
   created_at: string
   items: PlanItem[]
   estimated_hours_summary?: EstimatedHoursSummary
+  source_assessment_id?: number | null
+  planning_source_type?: 'assessment_approval' | null
+  source_standard_version_label?: string | null
+}
+
+export type ChangeProposalDetail = {
+  id: number
+  source_assessment_detail_id: number
+  assessment_id: number
+  l3_node_id: number
+  l1_code: string
+  l1_name: string
+  l2_code: string
+  l2_name: string
+  l3_code: string
+  l3_name: string
+  scope_type: 'current_required' | 'target_progressive' | null
+  current_level: number | null
+  standard_target_level: number | null
+  adjusted_target_level: number | null
+  effective_target_level: number | null
+  gap_value: number | null
+  member_priority: '高' | '中' | '低' | '暂缓' | null
+  include_in_plan: boolean | null
+  plan_quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month: number | null
+  standard_job_level_snapshot: string | null
+  member_current_level_snapshot: string | null
+  member_target_level_snapshot: string | null
+  capability_standard_version_id: number
+  planning_snapshot_id: number | null
+  assessment_revision: number
+  planning_source_type: 'assessment_approval'
+}
+
+export type ChangeProposal = {
+  id: number
+  member_id: number
+  year: number
+  source_assessment_id: number
+  target_annual_growth_plan_id: number
+  status: '待处理'
+  created_by: number
+  summary: {
+    source_assessment_id: number
+    source_assessment_version: number
+    source_assessment_revision: number
+    year: number
+    member_id: number
+    items_count: number
+    target_annual_growth_plan_id: number
+    target_is_legacy: boolean
+  }
+  created_at: string
+  details: ChangeProposalDetail[]
+}
+
+export async function listChangeProposals(
+  year: number,
+  memberId?: number,
+): Promise<ChangeProposal[]> {
+  const query = new URLSearchParams({ year: String(year) })
+  if (memberId !== undefined) query.set('member_id', String(memberId))
+  return request<ChangeProposal[]>(`/api/planning/change-proposals?${query}`, {
+    method: 'GET',
+  })
 }
 
 export type EvidenceStatus =

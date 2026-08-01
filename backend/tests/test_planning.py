@@ -23,6 +23,11 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -62,6 +67,9 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
 
 def _reset_catalog_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -130,9 +138,11 @@ def _ensure_l3_node(
         INSERT INTO capability_node (
             model_id, parent_node_id, node_type, code, name, sort_order,
             materials_text, expected_output, estimated_hours,
+            recommended_start_level,
             source_workbook, source_sheet, source_row
         )
-        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'test.xlsx', 'sheet', 4)
+        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'P4',
+                'test.xlsx', 'sheet', 4)
         """,
         (model_id, l2[0], l3_code, materials_text, expected_output, estimated_hours),
     )
@@ -270,6 +280,10 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -320,13 +334,13 @@ def _approve_assessment(
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
 
 
-def test_generate_without_submitted_assessment_returns_409(
+def test_legacy_generate_endpoint_blocked(
     planning_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(planning_schema, "member_no_assess", ["Member"])
@@ -335,11 +349,11 @@ def test_generate_without_submitted_assessment_returns_409(
     status, body, _ = _request(
         "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
     )
-    assert status == 409
-    assert body == {"detail": "暂无已提交的能力评估"}
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_planning_write_disabled"
 
 
-def test_generate_creates_plan_items_and_is_idempotent(
+def test_approval_creates_plan_items_and_is_idempotent(
     planning_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(planning_schema, "member_plan", ["Member"])
@@ -352,83 +366,46 @@ def test_generate_creates_plan_items_and_is_idempotent(
     _approve_assessment(planning_schema, assessment_id, "buddy_plan")
 
     member_cookies = _login(planning_schema, "member_plan")
-
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
-    )
-    assert status == 200
-    assert len(gaps) == 2
-    for gap in gaps:
-        status, _, _ = _request(
-            "POST",
-            "/api/planning/growth-goals",
-            {"gap_id": gap["id"]},
-            cookies=member_cookies,
-        )
-        assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 2
-    items = result["items"]
-    assert len(items) == 2
-    items_by_code = {item["l3_code"]: item for item in items}
-    assert "P01-L2A-L3A" in items_by_code
-    assert "P01-L2A-L3B" in items_by_code
-    item = items_by_code["P01-L2A-L3A"]
-    assert item["l1_code"] == "P01"
-    assert item["l2_code"] == "P01-L2A"
-    assert item["l2_name"] is not None
-    assert item["l3_name"] is not None
-    assert item["current_level"] == 2
-    assert item["target_level"] == 4
-    assert item["priority"] == "高"
-    assert item["learning_material"] == "test materials"
-    assert item["expected_output"] == "test output"
-    assert item["estimated_hours"] == "10"
-    assert item["estimated_hours_parsed"] == {
-        "raw": "10",
-        "min_hours": 10.0,
-        "max_hours": 10.0,
-        "is_valid": True,
-        "is_range": False,
-    }
-    assert item["status"] == "未开始"
-    assert item["target_month"] is None
-
-    status, tasks, _ = _request(
-        "GET", "/api/planning/learning-tasks", cookies=member_cookies
-    )
-    assert status == 200
-    assert {task["plan_item_id"] for task in tasks} == {item["id"] for item in items}
-    assert {task["status"] for task in tasks} == {"未开始"}
-    assert (
-        next(task for task in tasks if task["l3_code"] == "P01-L2A-L3A")["l2_code"]
-        == "P01-L2A"
-    )
-
+    # The approval atomically created the plan, items and tasks.
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
     assert plan is not None
-    assert plan["year"] == 2026
-    assert plan["estimated_hours_summary"] == {
-        "min_hours": 10.0,
-        "max_hours": 10.0,
-        "has_values": True,
-        "has_unparsed": False,
-    }
-    assert plan["status"] == "制定中"
-    assert len(plan["items"]) == 2
+    assert plan["planning_source_type"] == "assessment_approval"
+    assert plan["source_assessment_id"] == assessment_id
+    items = plan["items"]
+    assert len(items) == 2
+    for item in items:
+        assert item["source_assessment_detail_id"] is not None
+        assert item["planning_source_type"] == "assessment_approval"
 
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
+    status, plan2, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert result["created"] == 0
+    assert len(plan2["items"]) == 2
+
+    # re-approval (without key) is rejected; nothing is duplicated
+    from app.assessment.repository import ReviewError, submit_assessment_review
+
+    review_id = planning_schema.execute(
+        "SELECT id FROM assessment_review WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchone()[0]
+    try:
+        submit_assessment_review(
+            planning_schema,
+            int(review_id),
+            buddy_id,
+            "认可",
+            "重复",
+            expected_revision=3,
+            assessment_id_from_url=assessment_id,
+        )
+        raise AssertionError("duplicate approval should be rejected")
+    except ReviewError as exc:
+        assert exc.code == "assessment_already_reviewed"
 
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
@@ -437,7 +414,7 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert len(tasks) == 2
 
 
-def test_generate_plan_item_parses_hour_suffix_ranges(
+def test_approval_plan_item_parses_hour_suffix_ranges(
     planning_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(planning_schema, "member_range", ["Member"])
@@ -450,25 +427,13 @@ def test_generate_plan_item_parses_hour_suffix_ranges(
     _approve_assessment(planning_schema, assessment_id, "buddy_range")
 
     member_cookies = _login(planning_schema, "member_range")
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert len(gaps) == 2
-    status, _, _ = _request(
-        "POST",
-        "/api/planning/growth-goals",
-        {"gap_id": gaps[0]["id"]},
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 1
-    item = result["items"][0]
+    assert plan is not None
+    item = plan["items"][0]
+    # frozen snapshot copied the node's hour text at generation time
     assert item["estimated_hours"] == "4–6h"
     assert item["estimated_hours_parsed"] == {
         "raw": "4–6h",
@@ -477,12 +442,6 @@ def test_generate_plan_item_parses_hour_suffix_ranges(
         "is_valid": True,
         "is_range": True,
     }
-
-    status, plan, _ = _request(
-        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
-    )
-    assert status == 200
-    assert plan is not None
     assert plan["estimated_hours_summary"] == {
         "min_hours": 4.0,
         "max_hours": 6.0,
@@ -503,17 +462,20 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
     assessment_id = _create_and_submit_assessment(planning_schema, "member_adjust_plan")
     _approve_assessment(planning_schema, assessment_id, "buddy_adjust_plan")
     cookies = _login(planning_schema, "member_adjust_plan")
-    status, gaps, _ = _request("GET", "/api/planning/eligible-gaps", cookies=cookies)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
     assert status == 200
+    item_id = int(plan["items"][0]["id"])
+
+    # legacy target_month is frozen for assessment-approved items
     status, _, _ = _request(
-        "POST", "/api/planning/growth-goals", {"gap_id": gaps[0]["id"]}, cookies=cookies
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {"target_month": 5},
+        cookies=cookies,
     )
-    assert status == 200
-    status, generated, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
-    )
-    assert status == 200
-    item_id = int(generated["items"][0]["id"])
+    assert status == 422
 
     status, item, _ = _request(
         "PUT",
@@ -521,7 +483,6 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
         {
             "plan_start_date": "2026-04-01",
             "plan_end_date": "2026-05-31",
-            "target_month": 5,
             "status": "暂停",
         },
         cookies=cookies,
@@ -529,7 +490,6 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
     assert status == 200
     assert item["plan_start_date"] == "2026-04-01"
     assert item["plan_end_date"] == "2026-05-31"
-    assert item["target_month"] == 5
     assert item["status"] == "暂停"
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
@@ -564,6 +524,11 @@ def test_annual_plan_returns_null_when_missing(
     planning_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(planning_schema, "member_empty_plan", ["Member"])
+    ensure_capability_nodes(planning_schema, ["P01-L2A-L3A"])
+    from app.migrations import run_migrations
+
+    run_migrations(planning_schema)
+    planning_schema.commit()
     cookies = _login(planning_schema, "member_empty_plan")
 
     status, body, _ = _request(

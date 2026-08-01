@@ -24,10 +24,8 @@ from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.migrations import run_migrations
 from app.planning.repository import (
-    create_growth_goal,
     create_progress_log,
-    generate_plan_items,
-    list_eligible_gaps,
+    list_plan_items,
 )
 from app.planning.schema import create_planning_schema
 from tests.standard_target_support import create_scoped_draft
@@ -45,6 +43,11 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
         connection.execute("DROP TABLE IF EXISTS annual_growth_plan")
@@ -57,6 +60,9 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
         connection.execute("DROP TABLE IF EXISTS tcp_role")
         connection.execute("DROP TABLE IF EXISTS tcp_user")
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -69,8 +75,8 @@ def team_analytics_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_full_schema(connection)
     create_access_schema(connection)
     create_assessment_schema(connection)
-    create_planning_schema(connection)
     create_catalog_schema(connection)
+    create_planning_schema(connection)
     return connection
 
 
@@ -314,7 +320,15 @@ def _submit_and_approve_assessment(
     submit_assessment(connection, assessment_id, member_id, expected_revision=2)
     pending = get_pending_reviews_for_buddy(connection, buddy_id)
     review = next(r for r in pending if r["assessment_id"] == assessment_id)
-    submit_assessment_review(connection, review["id"], buddy_id, "认可", "符合预期")
+    submit_assessment_review(
+        connection,
+        review["id"],
+        buddy_id,
+        "认可",
+        "符合预期",
+        expected_revision=3,
+        assessment_id_from_url=assessment_id,
+    )
     return assessment_id
 
 
@@ -325,11 +339,9 @@ def _create_plan_item_data(
     year: int,
     details: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    # Approval atomically creates the plan, items and tasks.
     _submit_and_approve_assessment(connection, member_id, buddy_id, year, details)
-    eligible = list_eligible_gaps(connection, member_id)
-    for gap in eligible:
-        create_growth_goal(connection, member_id, int(gap["id"]))
-    return generate_plan_items(connection, member_id)
+    return list_plan_items(connection, member_id)
 
 
 def _build_two_member_team(

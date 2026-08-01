@@ -124,9 +124,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
     from ..assessment.scope import compute_assessment_scope
     from ..planning.repository import (
         create_evidence_draft,
-        create_growth_goal,
         create_progress_log,
-        generate_plan_items,
         get_capability_profile,
         submit_evidence,
         submit_evidence_review,
@@ -183,23 +181,36 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             details,
             expected_revision=1,
         )
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
+        submitted = submit_assessment(
+            connection, assessment_id, member_id, expected_revision=2
+        )
         assessment_review_id = connection.execute(
             "SELECT id FROM assessment_review WHERE assessment_id = %s",
             (assessment_id,),
         ).fetchone()[0]
-        submit_assessment_review(
-            connection, assessment_review_id, buddy_id, "认可", "演示复核通过"
+        # Approval atomically creates the Annual Plan, Plan Item and Task.
+        review_result = submit_assessment_review(
+            connection,
+            assessment_review_id,
+            buddy_id,
+            "认可",
+            "演示复核通过",
+            expected_revision=int(submitted["revision"]),
+            assessment_id_from_url=assessment_id,
         )
-
-        gap_id = connection.execute(
-            "SELECT id FROM gap WHERE assessment_id = %s", (assessment_id,)
-        ).fetchone()[0]
-        create_growth_goal(connection, member_id, gap_id)
-        plan_item = generate_plan_items(connection, member_id)[0]
+        plan_item = connection.execute(
+            """
+            SELECT pi.id FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s AND agp.year = %s
+            ORDER BY pi.l3_code LIMIT 1
+            """,
+            (member_id, year),
+        ).fetchone()
+        assert plan_item is not None and review_result["plan"]["created"]
         task_id = connection.execute(
             "SELECT id FROM learning_task WHERE plan_item_id = %s",
-            (plan_item["id"],),
+            (plan_item[0],),
         ).fetchone()[0]
         # 补齐 UAT Mock 数据的计划预计时长，避免“有计划但时长 0h”的歧义。
         current_month = date.today().month
@@ -209,7 +220,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             SET estimated_hours = %s, target_month = %s
             WHERE id = %s
             """,
-            ("10", current_month, plan_item["id"]),
+            ("10", current_month, plan_item[0]),
         )
         connection.execute(
             """

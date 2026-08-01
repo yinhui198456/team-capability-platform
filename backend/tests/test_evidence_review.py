@@ -26,6 +26,11 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -71,6 +76,9 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
 
 def _reset_catalog_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -142,9 +150,11 @@ def _ensure_l3_node(
         INSERT INTO capability_node (
             model_id, parent_node_id, node_type, code, name, sort_order,
             materials_text, expected_output, estimated_hours,
+            recommended_start_level,
             source_workbook, source_sheet, source_row
         )
-        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'test.xlsx', 'sheet', 4)
+        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'P4',
+                'test.xlsx', 'sheet', 4)
         ON CONFLICT (model_id, code) DO UPDATE SET
             materials_text = EXCLUDED.materials_text,
             expected_output = EXCLUDED.expected_output,
@@ -326,7 +336,7 @@ def _approve_assessment(
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
@@ -348,27 +358,13 @@ def _seed_submitted_evidence(
 
     member_cookies = _login(connection, member_username)
 
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert len(gaps) == 1
+    assert plan is not None
 
-    status, _, _ = _request(
-        "POST",
-        "/api/planning/growth-goals",
-        {"gap_id": gaps[0]["id"]},
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 1
-
-    item_id = int(result["items"][0]["id"])
+    item_id = int(plan["items"][0]["id"])
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )

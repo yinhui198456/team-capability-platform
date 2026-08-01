@@ -60,6 +60,8 @@ def create_access_schema(connection: psycopg.Connection) -> None:
             effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
             effective_to DATE,
             is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+            effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+            expiry_date DATE,
             CHECK (member_id <> buddy_id)
         )
         """
@@ -125,6 +127,13 @@ def create_access_schema(connection: psycopg.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS unique_active_primary_buddy
         ON buddy_relationship(member_id)
         WHERE is_primary = TRUE AND effective_to IS NULL
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_primary_buddy_v2
+        ON buddy_relationship(member_id)
+        WHERE is_primary = TRUE AND expiry_date IS NULL
         """
     )
     connection.execute(

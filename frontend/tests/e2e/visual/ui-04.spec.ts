@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 import {
   mockBuddyReviewData,
+  mockBuddyReviewWorkspaceRoutes,
   mockBuddyReviewEmptyData,
 } from '../fixtures/buddy-review-mock'
 
@@ -17,6 +18,7 @@ for (const viewport of VIEWPORTS) {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
       await mockBuddyReviewData(page)
+      await mockBuddyReviewWorkspaceRoutes(page)
       await loginAs(page, 'buddy')
       await page.goto('/mentoring/dashboard')
       await expect(
@@ -66,13 +68,14 @@ for (const viewport of VIEWPORTS) {
       await expect(
         workspace.getByRole('heading', { name: '复核工作区' }),
       ).toBeVisible()
-      await expect(workspace).toContainText(
-        '标准 3；个人调整 4（岗位项目要求）',
-      )
-      await expect(workspace).toContainText(
-        '目标职级 P6 要求：能够负责复杂场景',
-      )
-      await expect(workspace).toContainText('三级达成路径：P01.01.01')
+      // #62 workspace: frozen summary grid + first-approval notice
+      await expect(workspace).toContainText('适用 3')
+      await expect(workspace).toContainText('必备 2')
+      await expect(workspace).toContainText('纳入计划 1')
+      await expect(workspace).toContainText('个人调整 1')
+      await expect(workspace).toContainText('首次认可将原子生成正式年度计划')
+      // personal adjustment shown only when it happened
+      await expect(workspace).toContainText('3 → 4（岗位项目要求）')
     })
 
     test('default all members screenshot', async ({ page }) => {

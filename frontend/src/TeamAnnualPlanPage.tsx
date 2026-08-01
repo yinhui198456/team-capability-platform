@@ -9,8 +9,10 @@ import {
 import {
   archiveTeamAnnualPlan,
   getTeamAnnualPlan,
+  listChangeProposals,
   publishTeamAnnualPlan,
   updateTeamAnnualPlan,
+  type ChangeProposal,
   type TeamAnnualCapabilityPlan,
   type TeamAnnualPlanSave,
 } from './planning'
@@ -31,6 +33,10 @@ export function TeamAnnualPlanPage() {
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // #62 read-only aggregate: pending change proposals (the team plan entity
+  // itself is never written with assessment sources).
+  const [proposals, setProposals] = useState<ChangeProposal[]>([])
+  const [sourceLoading, setSourceLoading] = useState(false)
 
   async function load() {
     if (!isLeader) return
@@ -53,6 +59,28 @@ export function TeamAnnualPlanPage() {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, isLeader])
+
+  // #62: read-only aggregate of pending change proposals for the selected
+  // year.  The team plan entity itself is never written with assessment
+  // sources; member plan sources stay on the member annual-plan pages.
+  useEffect(() => {
+    if (!isLeader) return
+    let cancelled = false
+    async function loadSources() {
+      setSourceLoading(true)
+      try {
+        const proposalList = await listChangeProposals(year)
+        if (!cancelled) setProposals(proposalList)
+      } catch {
+        // non-fatal: the proposals section stays empty
+      }
+      if (!cancelled) setSourceLoading(false)
+    }
+    loadSources()
+    return () => {
+      cancelled = true
+    }
   }, [year, isLeader])
 
   function toggleDomain(code: string) {
@@ -253,6 +281,37 @@ export function TeamAnnualPlanPage() {
             </div>
           )}
         </form>
+      )}
+
+      {isLeader && (
+        <section
+          className="plan-overview"
+          aria-label="成员年度计划变更提案（只读）"
+        >
+          <h2>成员年度计划变更提案（只读）</h2>
+          {sourceLoading && <p className="muted">加载中…</p>}
+          {!sourceLoading && proposals.length === 0 && (
+            <p className="muted">当前年度暂无待处理变更提案。</p>
+          )}
+          {proposals.map((proposal) => (
+            <div key={proposal.id} className="plan-summary">
+              <p>
+                <strong>
+                  {proposal.summary.target_is_legacy ? '历史计划' : '正式计划'}{' '}
+                  变更提案 #{proposal.id}
+                </strong>
+                · 来源评估 #{proposal.source_assessment_id}（版本{' '}
+                {proposal.summary.source_assessment_version}，revision{' '}
+                {proposal.summary.source_assessment_revision}）· 目标计划 #
+                {proposal.target_annual_growth_plan_id} · 状态 {proposal.status}
+              </p>
+              <p className="muted">
+                提案项 {proposal.summary.items_count} 项：仅只读展示，应用流程
+                未开放。
+              </p>
+            </div>
+          ))}
+        </section>
       )}
     </section>
   )

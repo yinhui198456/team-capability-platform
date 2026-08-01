@@ -15,6 +15,9 @@ def reset_catalog(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node")
         connection.execute("DROP TABLE IF EXISTS capability_model")
 

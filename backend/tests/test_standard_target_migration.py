@@ -28,9 +28,12 @@ def _reset_schema(connection: psycopg.Connection) -> None:
             "tcp_user",
         ):
             connection.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+    from app.planning.schema import create_planning_schema
+
     create_access_schema(connection)
     create_catalog_schema(connection)
     create_assessment_schema(connection)
+    create_planning_schema(connection)
     connection.commit()
 
 
@@ -129,7 +132,7 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
     run_migrations(connection)
 
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 8
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 9
     )
     assert (
         connection.execute(

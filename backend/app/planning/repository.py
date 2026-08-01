@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from typing import Any
 
@@ -8,7 +9,6 @@ from ..access.repository import (
     get_primary_buddy,
     is_member_assigned_to_buddy,
 )
-from ..assessment.repository import get_gap
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 from .hours import parse_estimated_hours, summarize_estimated_hours
@@ -74,7 +74,11 @@ def _attach_l3_contexts(
     for item in items:
         code = item.get("l3_code")
         if isinstance(code, str):
-            item.update(contexts[code])
+            # Frozen snapshot fields (source plan items) win over live catalog
+            # context; live context only fills keys that are still missing.
+            for key, value in contexts[code].items():
+                if key not in item or item[key] is None:
+                    item[key] = value
     return items
 
 
@@ -97,6 +101,15 @@ _MEMBER_MANAGED_TASK_STATUSES = {
 }
 
 _MEMBER_MANAGED_PLAN_ITEM_STATUSES = {"进行中", "暂停", "取消"}
+
+
+class LegacyPlanningWriteDisabled(ValueError):
+    """Old manual planning write paths are closed (API and repository).
+
+    Modern plans can only be created atomically by an approved Assessment.
+    """
+
+    code = "legacy_planning_write_disabled"
 
 
 _UPDATABLE_TASK_FIELDS = {
@@ -201,67 +214,10 @@ def list_eligible_gaps(
 def create_growth_goal(
     connection: psycopg.Connection, member_id: int, gap_id: int
 ) -> dict[str, object]:
-    gate = check_annual_plan_gate(connection, member_id)
-    if not gate["eligible"]:
-        raise ValueError(gate["reason"] or "annual plan gate not passed")
-
-    gap = get_gap(connection, gap_id)
-    if gap is None:
-        raise ValueError("gap not found")
-
-    latest = get_latest_submitted_assessment(connection, member_id)
-    assert latest is not None
-    if int(gap["assessment_id"]) != latest["id"] or int(gap["member_id"]) != member_id:
-        raise ValueError("gap is not from latest approved assessment")
-
-    year = int(latest["year"])
-    annual_plan = get_or_create_annual_plan(connection, member_id, year)
-    annual_plan_id = int(annual_plan["id"])
-
-    existing = connection.execute(
-        """
-        SELECT 1 FROM growth_goal
-        WHERE annual_growth_plan_id = %s AND l3_code = %s
-        LIMIT 1
-        """,
-        (annual_plan_id, gap["l3_code"]),
-    ).fetchone()
-    if existing is not None:
-        raise ValueError("growth goal already exists for this l3 code")
-
-    row = connection.execute(
-        """
-        INSERT INTO growth_goal (
-            gap_id, annual_growth_plan_id, l3_code, year, target_level, priority
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id, gap_id, annual_growth_plan_id, l3_code,
-                  year, target_level, priority
-        """,
-        (
-            gap_id,
-            annual_plan_id,
-            gap["l3_code"],
-            year,
-            gap["target_level"],
-            gap["priority"],
-        ),
-    ).fetchone()
-    assert row is not None
-    return _attach_l3_contexts(
-        connection,
-        [
-            {
-                "id": row[0],
-                "gap_id": row[1],
-                "annual_growth_plan_id": row[2],
-                "l3_code": row[3],
-                "year": row[4],
-                "target_level": row[5],
-                "priority": row[6],
-            }
-        ],
-    )[0]
+    raise LegacyPlanningWriteDisabled(
+        "manual growth goal creation is disabled; plans are generated "
+        "atomically from an approved assessment"
+    )
 
 
 def list_growth_goals(
@@ -298,22 +254,10 @@ def list_growth_goals(
 def delete_growth_goal(
     connection: psycopg.Connection, member_id: int, goal_id: int
 ) -> None:
-    with connection.transaction():
-        row = connection.execute(
-            """
-            SELECT agp.member_id
-            FROM growth_goal gg
-            JOIN annual_growth_plan agp ON agp.id = gg.annual_growth_plan_id
-            WHERE gg.id = %s
-            """,
-            (goal_id,),
-        ).fetchone()
-        if row is None:
-            raise ValueError("growth goal not found")
-        if int(row[0]) != member_id:
-            raise PermissionError("growth goal does not belong to member")
-
-        connection.execute("DELETE FROM growth_goal WHERE id = %s", (goal_id,))
+    raise LegacyPlanningWriteDisabled(
+        "manual growth goal deletion is disabled; plans are generated "
+        "atomically from an approved assessment"
+    )
 
 
 def get_annual_plan_with_items(
@@ -321,9 +265,15 @@ def get_annual_plan_with_items(
 ) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, member_id, year, plan_cycle, status, start_date, end_date, created_at
-        FROM annual_growth_plan
-        WHERE member_id = %s AND year = %s
+        SELECT agp.id, agp.member_id, agp.year, agp.plan_cycle, agp.status,
+               agp.start_date, agp.end_date, agp.created_at,
+               agp.source_assessment_id, agp.planning_source_type,
+               sv.label AS source_standard_version_label
+        FROM annual_growth_plan agp
+        LEFT JOIN assessment a ON a.id = agp.source_assessment_id
+        LEFT JOIN capability_standard_version sv
+          ON sv.id = a.capability_standard_version_id
+        WHERE agp.member_id = %s AND agp.year = %s
         """,
         (member_id, year),
     ).fetchone()
@@ -334,7 +284,16 @@ def get_annual_plan_with_items(
         SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
                pi.current_level, pi.target_level, pi.priority, pi.learning_material,
                pi.learning_task_content, pi.expected_output, pi.estimated_hours,
-               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status,
+               pi.source_assessment_id, pi.source_assessment_detail_id,
+               pi.capability_standard_version_id, pi.planning_snapshot_id,
+               pi.l3_node_id, pi.l1_code, pi.l1_name, pi.l2_code, pi.l2_name,
+               pi.l3_name, pi.scope_type, pi.standard_target_level,
+               pi.adjusted_target_level, pi.effective_target_level,
+               pi.standard_job_level_snapshot, pi.member_current_level_snapshot,
+               pi.member_target_level_snapshot, pi.plan_quarter, pi.plan_month,
+               pi.planning_source_type, pi.assessment_revision, pi.gap_value,
+               pi.include_in_plan
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
@@ -342,9 +301,38 @@ def get_annual_plan_with_items(
         """,
         (member_id, year),
     ).fetchall()
-    plan_items = _attach_l3_contexts(
-        connection, [_plan_item_row(item) for item in items]
-    )
+    plan_items: list[dict[str, object]] = []
+    for item in items:
+        payload = _plan_item_row(item)
+        payload.update(
+            {
+                "source_assessment_id": item[15],
+                "source_assessment_detail_id": item[16],
+                "capability_standard_version_id": item[17],
+                "planning_snapshot_id": item[18],
+                "l3_node_id": item[19],
+                "l1_code": item[20],
+                "l1_name": item[21],
+                "l2_code": item[22],
+                "l2_name": item[23],
+                "l3_name": item[24],
+                "scope_type": item[25],
+                "standard_target_level": item[26],
+                "adjusted_target_level": item[27],
+                "effective_target_level": item[28],
+                "standard_job_level_snapshot": item[29],
+                "member_current_level_snapshot": item[30],
+                "member_target_level_snapshot": item[31],
+                "plan_quarter": item[32],
+                "plan_month": item[33],
+                "planning_source_type": item[34],
+                "assessment_revision": item[35],
+                "gap_value": item[36],
+                "include_in_plan": item[37],
+            }
+        )
+        plan_items.append(payload)
+    plan_items = _attach_l3_contexts(connection, plan_items)
 
     return {
         "id": row[0],
@@ -355,6 +343,9 @@ def get_annual_plan_with_items(
         "start_date": row[5],
         "end_date": row[6],
         "created_at": row[7],
+        "source_assessment_id": row[8],
+        "planning_source_type": row[9],
+        "source_standard_version_label": row[10],
         "items": plan_items,
         "estimated_hours_summary": _estimated_hours_summary(plan_items),
     }
@@ -388,88 +379,10 @@ def _get_l3_defaults(
 def generate_plan_items(
     connection: psycopg.Connection, member_id: int
 ) -> list[dict[str, object]]:
-    gate = check_annual_plan_gate(connection, member_id)
-    if not gate["eligible"]:
-        raise ValueError(gate["reason"] or "annual plan gate not passed")
-
-    latest = get_latest_submitted_assessment(connection, member_id)
-    assert latest is not None
-    year = int(latest["year"])
-
-    annual_plan = get_or_create_annual_plan(connection, member_id, year)
-    annual_plan_id = int(annual_plan["id"])
-
-    rows = connection.execute(
-        """
-        SELECT gg.id, gg.l3_code, gg.target_level, gg.priority, gap.current_level
-        FROM growth_goal gg
-        JOIN annual_growth_plan agp ON agp.id = gg.annual_growth_plan_id
-        JOIN gap ON gap.id = gg.gap_id
-        WHERE agp.member_id = %s AND agp.year = %s
-          AND NOT EXISTS (
-              SELECT 1 FROM plan_item pi
-              WHERE pi.growth_goal_id = gg.id
-          )
-        ORDER BY gg.l3_code
-        """,
-        (member_id, year),
-    ).fetchall()
-
-    created: list[dict[str, object]] = []
-    for row in rows:
-        goal_id = row[0]
-        l3_code = row[1]
-        target_level = row[2]
-        priority = row[3]
-        current_level = row[4]
-        defaults = _get_l3_defaults(connection, l3_code)
-        inserted = connection.execute(
-            """
-            INSERT INTO plan_item (
-                annual_growth_plan_id, growth_goal_id, l3_code, current_level,
-                target_level, priority, learning_material, expected_output,
-                estimated_hours, status
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, '未开始')
-            RETURNING id, annual_growth_plan_id, growth_goal_id, l3_code,
-                      current_level, target_level, priority, learning_material,
-                      learning_task_content, expected_output, estimated_hours,
-                      plan_start_date, plan_end_date, target_month, status
-            """,
-            (
-                annual_plan_id,
-                goal_id,
-                l3_code,
-                current_level,
-                target_level,
-                priority,
-                defaults["learning_material"],
-                defaults["expected_output"],
-                defaults["estimated_hours"],
-            ),
-        ).fetchone()
-        assert inserted is not None
-        item = _plan_item_row(inserted)
-        _insert_learning_task(connection, int(item["id"]), l3_code)
-        created.append(item)
-
-    # Existing plans created before the 1:1 task invariant are repaired on the
-    # next generation attempt. The unique constraint keeps this idempotent.
-    missing_tasks = connection.execute(
-        """
-        SELECT pi.id, pi.l3_code
-        FROM plan_item pi
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE agp.member_id = %s AND agp.year = %s
-          AND NOT EXISTS (
-              SELECT 1 FROM learning_task lt WHERE lt.plan_item_id = pi.id
-          )
-        """,
-        (member_id, year),
-    ).fetchall()
-    for plan_item_id, l3_code in missing_tasks:
-        _insert_learning_task(connection, int(plan_item_id), str(l3_code))
-    return _attach_l3_contexts(connection, created)
+    raise LegacyPlanningWriteDisabled(
+        "manual plan generation is disabled; plans are generated "
+        "atomically from an approved assessment"
+    )
 
 
 def list_plan_items(
@@ -509,28 +422,10 @@ def _learning_task_row(row: tuple[Any, ...]) -> dict[str, object]:
 def create_learning_task(
     connection: psycopg.Connection, member_id: int, plan_item_id: int
 ) -> dict[str, object]:
-    row = connection.execute(
-        """
-        SELECT pi.id, pi.l3_code
-        FROM plan_item pi
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE pi.id = %s AND agp.member_id = %s
-        """,
-        (plan_item_id, member_id),
-    ).fetchone()
-    if row is None:
-        raise PermissionError("plan item does not belong to member")
-
-    existing = connection.execute(
-        "SELECT 1 FROM learning_task WHERE plan_item_id = %s LIMIT 1",
-        (plan_item_id,),
-    ).fetchone()
-    if existing is not None:
-        raise ValueError("learning task already exists for this plan item")
-
-    return _attach_l3_contexts(
-        connection, [_insert_learning_task(connection, plan_item_id, str(row[1]))]
-    )[0]
+    raise LegacyPlanningWriteDisabled(
+        "manual learning task creation is disabled; tasks are generated "
+        "atomically from an approved assessment"
+    )
 
 
 def _insert_learning_task(
@@ -558,7 +453,7 @@ def update_plan_item(
 ) -> dict[str, object]:
     owned = connection.execute(
         """
-        SELECT pi.id
+        SELECT pi.id, pi.planning_source_type
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE pi.id = %s AND agp.member_id = %s
@@ -567,6 +462,10 @@ def update_plan_item(
     ).fetchone()
     if owned is None:
         raise PermissionError("plan item does not belong to member")
+    if owned[1] == "assessment_approval" and "target_month" in fields:
+        # Legacy target_month is a legacy-column write; new source items keep
+        # plan_quarter/plan_month frozen from the approved assessment.
+        raise ValueError("target_month is frozen for assessment-approved items")
 
     updates: dict[str, object] = {}
     for key, value in fields.items():
@@ -2789,3 +2688,91 @@ def get_team_analytics(
         ),
         "overdue_items": overdue_items,
     }
+
+
+def list_change_proposals(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+) -> list[dict[str, object]]:
+    """Read-only change proposals for a member/year (all statuses, none writable)."""
+    proposals = connection.execute(
+        """
+        SELECT id, member_id, year, source_assessment_id,
+               target_annual_growth_plan_id, status, created_by, summary,
+               created_at
+        FROM annual_plan_change_proposal
+        WHERE member_id = %s AND year = %s
+        ORDER BY id
+        """,
+        (member_id, year),
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    for row in proposals:
+        proposal_id = int(row[0])
+        details = connection.execute(
+            """
+            SELECT id, source_assessment_detail_id, assessment_id, l3_node_id,
+                   l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                   scope_type, current_level, standard_target_level,
+                   adjusted_target_level, effective_target_level, gap_value,
+                   member_priority, include_in_plan, plan_quarter, plan_month,
+                   standard_job_level_snapshot, member_current_level_snapshot,
+                   member_target_level_snapshot, capability_standard_version_id,
+                   planning_snapshot_id, assessment_revision,
+                   planning_source_type
+            FROM annual_plan_change_proposal_detail
+            WHERE proposal_id = %s
+            ORDER BY l3_code
+            """,
+            (proposal_id,),
+        ).fetchall()
+        summary = row[7]
+        if isinstance(summary, str):
+            summary = json.loads(summary)
+        result.append(
+            {
+                "id": proposal_id,
+                "member_id": int(row[1]),
+                "year": int(row[2]),
+                "source_assessment_id": int(row[3]),
+                "target_annual_growth_plan_id": int(row[4]),
+                "status": str(row[5]),
+                "created_by": int(row[6]),
+                "summary": summary,
+                "created_at": row[8],
+                "details": [
+                    {
+                        "id": int(d[0]),
+                        "source_assessment_detail_id": int(d[1]),
+                        "assessment_id": int(d[2]),
+                        "l3_node_id": int(d[3]),
+                        "l1_code": d[4],
+                        "l1_name": d[5],
+                        "l2_code": d[6],
+                        "l2_name": d[7],
+                        "l3_code": d[8],
+                        "l3_name": d[9],
+                        "scope_type": d[10],
+                        "current_level": d[11],
+                        "standard_target_level": d[12],
+                        "adjusted_target_level": d[13],
+                        "effective_target_level": d[14],
+                        "gap_value": d[15],
+                        "member_priority": d[16],
+                        "include_in_plan": d[17],
+                        "plan_quarter": d[18],
+                        "plan_month": d[19],
+                        "standard_job_level_snapshot": d[20],
+                        "member_current_level_snapshot": d[21],
+                        "member_target_level_snapshot": d[22],
+                        "capability_standard_version_id": d[23],
+                        "planning_snapshot_id": d[24],
+                        "assessment_revision": d[25],
+                        "planning_source_type": d[26],
+                    }
+                    for d in details
+                ],
+            }
+        )
+    return result

@@ -108,6 +108,12 @@ describe('TeamAnnualPlanPage', () => {
             json: () => Promise.resolve(mockModel),
           })
         }
+        if (String(input).includes('/api/planning/change-proposals')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([]),
+          })
+        }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
       }),
     )

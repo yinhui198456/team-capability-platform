@@ -5,15 +5,12 @@ from fastapi import APIRouter, HTTPException, Response, status
 from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
+    LegacyPlanningWriteDisabled,
     archive_team_annual_plan,
     create_evidence_draft,
-    create_growth_goal,
-    create_learning_task,
     create_or_publish_team_annual_plan,
     create_progress_log,
-    delete_growth_goal,
     delete_progress_log,
-    generate_plan_items,
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
@@ -23,6 +20,7 @@ from .repository import (
     get_monthly_hours,
     get_team_analytics,
     get_team_annual_plan_by_year,
+    list_change_proposals,
     list_eligible_gaps,
     list_evidence_reviews_for_buddy_task,
     list_evidence_reviews_for_task,
@@ -68,6 +66,19 @@ def _require_leader(user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+
+
+def _legacy_write_disabled() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": LegacyPlanningWriteDisabled.code,
+            "message": (
+                "manual planning writes are disabled; plans are generated "
+                "atomically from an approved assessment"
+            ),
+        },
+    )
 
 
 @planning_router.get("/available-years")
@@ -137,20 +148,7 @@ def post_growth_goal(
     user: CurrentUser, connection: Connection, body: dict[str, object]
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        gap_id = int(body["gap_id"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="gap_id is required",
-        ) from exc
-    try:
-        return create_growth_goal(connection, int(user["id"]), gap_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/growth-goals")
@@ -166,19 +164,7 @@ def remove_growth_goal(
     user: CurrentUser, connection: Connection, goal_id: int
 ) -> Response:
     _require_member(user)
-    try:
-        delete_growth_goal(connection, int(user["id"]), goal_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/annual-plan")
@@ -189,19 +175,46 @@ def get_annual_plan(
     return get_annual_plan_with_items(connection, int(user["id"]), year)
 
 
+@planning_router.get("/change-proposals")
+def get_change_proposals(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    member_id: int | None = None,
+) -> list[dict[str, object]]:
+    """Read-only change proposals. Member sees their own; a current responsible
+    Buddy, Leader or Admin may query a specific member."""
+    roles: list[str] = user["roles"]
+    if member_id is None:
+        _require_member(user)
+        target_member_id = int(user["id"])
+    elif int(user["id"]) == member_id:
+        target_member_id = int(user["id"])
+    elif "Admin" in roles or "Leader" in roles:
+        target_member_id = member_id
+    elif "Buddy" in roles:
+        from ..access.repository import is_current_responsible_buddy
+
+        if not is_current_responsible_buddy(connection, member_id, int(user["id"])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient permissions",
+            )
+        target_member_id = member_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return list_change_proposals(connection, target_member_id, year)
+
+
 @planning_router.post("/annual-plan/generate")
 def post_generate_plan_items(
     user: CurrentUser, connection: Connection
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        items = generate_plan_items(connection, int(user["id"]))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
-    return {"created": len(items), "items": items}
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/plan-items")
@@ -239,18 +252,7 @@ def post_learning_task(
     user: CurrentUser, connection: Connection, plan_item_id: int
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        return create_learning_task(connection, int(user["id"]), plan_item_id)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/learning-tasks")

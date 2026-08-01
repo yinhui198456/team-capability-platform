@@ -8,7 +8,6 @@ import { useYear } from './YearContext'
 import {
   formatCapabilityPath,
   getAnnualPlan,
-  generatePlanItems,
   type AnnualPlan,
   type Evidence,
   type LearningTask,
@@ -73,7 +72,6 @@ export function AnnualPlanTaskPage() {
   const [loading, setLoading] = useState(true)
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
   const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     let c = false
@@ -108,20 +106,6 @@ export function AnnualPlanTaskPage() {
     }
   }, [year])
 
-  async function handleGenerate() {
-    setError('')
-    setGenerating(true)
-    try {
-      await generatePlanItems()
-      const p = await getAnnualPlan(year)
-      setPlan(p)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '生成失败')
-    } finally {
-      setGenerating(false)
-    }
-  }
-
   const items = plan?.items ?? []
   const visibleItems = selectedMonth
     ? items.filter((i) => i.target_month === selectedMonth)
@@ -153,13 +137,9 @@ export function AnnualPlanTaskPage() {
         </div>
         <div>
           {items.length === 0 && (
-            <button
-              className="primary"
-              onClick={handleGenerate}
-              disabled={generating}
-            >
-              {generating ? '生成中…' : '生成计划项'}
-            </button>
+            <p className="muted">
+              暂无计划项：年度计划由 Buddy 认可评估时原子生成。
+            </p>
           )}
           <a
             href="/growth/review/monthly"
@@ -169,6 +149,17 @@ export function AnnualPlanTaskPage() {
           </a>
         </div>
       </header>
+      {plan?.source_assessment_id != null && (
+        <p className="muted">
+          来源：评估 #{plan.source_assessment_id}
+          {plan.source_standard_version_label
+            ? ` · ${plan.source_standard_version_label}`
+            : ''}
+          {plan.planning_source_type === 'assessment_approval'
+            ? ' · 认可生成'
+            : ''}
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
 
       {/* Summary cards */}

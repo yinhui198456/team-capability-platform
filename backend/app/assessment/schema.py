@@ -159,6 +159,7 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
             feedback TEXT,
             reviewed_at TIMESTAMPTZ,
             status TEXT NOT NULL CHECK (status IN ('待复核', '已闭环')),
+            reviewed_by_buddy_id BIGINT REFERENCES tcp_user(id) ON DELETE SET NULL,
             UNIQUE(assessment_id, sequence)
         )
         """

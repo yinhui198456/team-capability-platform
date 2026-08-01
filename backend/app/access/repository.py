@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import psycopg
@@ -175,20 +175,83 @@ def create_buddy_relationship(
     member_id: int,
     buddy_id: int,
     is_primary: bool = True,
+    *,
+    effective_date: date | None = None,
+    expiry_date: date | None = None,
 ) -> int:
     _require_role(connection, member_id, "Member", "member_id")
     _require_role(connection, buddy_id, "Buddy", "buddy_id")
+    today = connection.execute("SELECT CURRENT_DATE").fetchone()[0]
+    effective_date = effective_date or today
     with connection.transaction():
-        row = connection.execute(
-            """
-            INSERT INTO buddy_relationship (member_id, buddy_id, is_primary)
-            VALUES (%s, %s, %s)
-            RETURNING id
-            """,
-            (member_id, buddy_id, is_primary),
-        ).fetchone()
+        # Serialise concurrent relationship writes for the same member; the
+        # interval-overlap trigger and unique index are the DB last line.
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"tcp_buddy_rel:{member_id}",),
+        )
+        try:
+            row = connection.execute(
+                """
+                INSERT INTO buddy_relationship (
+                    member_id, buddy_id, is_primary,
+                    effective_from, effective_to, effective_date, expiry_date
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    member_id,
+                    buddy_id,
+                    is_primary,
+                    effective_date,
+                    expiry_date,
+                    effective_date,
+                    expiry_date,
+                ),
+            ).fetchone()
+        except psycopg.errors.RaiseException as exc:
+            raise ValueError(
+                "buddy relationship overlaps existing primary range"
+            ) from exc
+        except psycopg.errors.UniqueViolation as exc:
+            raise ValueError(
+                "buddy relationship conflicts with existing primary"
+            ) from exc
     assert row is not None
     return row[0]
+
+
+def is_current_responsible_buddy(
+    connection: psycopg.Connection, member_id: int, buddy_id: int
+) -> bool:
+    """Canonical current-responsible-Buddy check.
+
+    Same helper for pending lists, workspace reads and Review writes:
+    - is_primary = TRUE;
+    - effective_date <= CURRENT_DATE;
+    - expiry_date IS NULL OR expiry_date >= CURRENT_DATE;
+    - the Buddy user is active and still holds the Buddy role.
+    Legacy effective_from/effective_to are not part of this check.
+    """
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM buddy_relationship br
+        JOIN tcp_user u ON u.id = br.buddy_id
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE br.member_id = %s AND br.buddy_id = %s
+          AND br.is_primary = TRUE
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+          AND u.is_active = TRUE
+          AND r.code = 'Buddy'
+        LIMIT 1
+        """,
+        (member_id, buddy_id),
+    ).fetchone()
+    return row is not None
 
 
 def get_primary_buddy(
@@ -201,7 +264,9 @@ def get_primary_buddy(
         JOIN buddy_relationship br ON br.buddy_id = u.id
         WHERE br.member_id = %s
           AND br.is_primary = TRUE
-          AND br.effective_to IS NULL
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+          AND u.is_active = TRUE
         """,
         (member_id,),
     ).fetchone()
@@ -225,7 +290,9 @@ def get_assigned_members(
         JOIN buddy_relationship br ON br.member_id = u.id
         WHERE br.buddy_id = %s
           AND br.is_primary = TRUE
-          AND br.effective_to IS NULL
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+          AND u.is_active = TRUE
         ORDER BY u.username
         """,
         (buddy_id,),
@@ -244,15 +311,7 @@ def get_assigned_members(
 def is_member_assigned_to_buddy(
     connection: psycopg.Connection, member_id: int, buddy_id: int
 ) -> bool:
-    row = connection.execute(
-        """
-        SELECT 1 FROM buddy_relationship
-        WHERE member_id = %s AND buddy_id = %s
-          AND is_primary = TRUE AND effective_to IS NULL
-        """,
-        (member_id, buddy_id),
-    ).fetchone()
-    return row is not None
+    return is_current_responsible_buddy(connection, member_id, buddy_id)
 
 
 _ROLE_CODES = {"Member", "Buddy", "Leader", "Admin"}

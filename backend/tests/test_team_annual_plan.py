@@ -26,6 +26,11 @@ def _reset_team_annual_plan_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
         connection.execute("DROP TABLE IF EXISTS annual_growth_plan")
@@ -38,6 +43,9 @@ def _reset_team_annual_plan_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
         connection.execute("DROP TABLE IF EXISTS tcp_role")
         connection.execute("DROP TABLE IF EXISTS tcp_user")
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -107,8 +115,8 @@ def team_annual_plan_schema(
     _reset_team_annual_plan_schema(connection)
     create_access_schema(connection)
     create_assessment_schema(connection)
-    create_planning_schema(connection)
     create_catalog_schema(connection)
+    create_planning_schema(connection)
     _ensure_l1_domains(connection)
     connection.commit()
     return connection

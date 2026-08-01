@@ -9,7 +9,6 @@ import { LoginPage } from './LoginPage'
 import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
-import { GrowthGoalPage } from './GrowthGoalPage'
 import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
@@ -90,7 +89,10 @@ export function App() {
             path="/capability/assessment/history"
             element={<AssessmentHistoryPage />}
           />
-          <Route path="/growth/goals" element={<GrowthGoalPage />} />
+          <Route
+            path="/growth/goals"
+            element={<Navigate to="/growth/annual-plan" replace />}
+          />
           <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
           <Route path="/growth/profile" element={<ProfilePage />} />
           <Route

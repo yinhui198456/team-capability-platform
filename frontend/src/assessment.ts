@@ -145,6 +145,8 @@ export type AssessmentDetail = {
   include_in_plan?: boolean | null // tri-state: true/false/null
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
   plan_month?: number | null // 1–12
+  /** Buddy Review workspace: advisory consistency flag (never overwrites canonical). */
+  data_issue?: boolean
 }
 
 export type GapSummary = {
