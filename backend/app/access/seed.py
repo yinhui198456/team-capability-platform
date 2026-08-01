@@ -165,6 +165,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             details.append(
                 {
                     "l3_code": detail["l3_code"],
+                    "l3_node_id": detail.get("l3_node_id"),
                     "current_level": demo_current,
                     "evidence_note": (
                         "本地演示自评" if is_demo_gap else "本地演示已达标项"

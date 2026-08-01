@@ -54,7 +54,7 @@ async function ensureFreshDraft(
       (a: { year: number; assessment_type: string; status: string }) =>
         a.year === year &&
         a.assessment_type === '年度' &&
-        ['draft', 'open'].includes(a.status),
+        ['草稿', '建议调整'].includes(a.status),
     )
     if (existing) {
       const getResp = await request.get(
@@ -119,7 +119,7 @@ async function cleanupDraft(
     const getResp = await request.get(`${BACKEND}/api/assessments/${state.id}`)
     if (getResp.ok()) {
       const detail = await getResp.json()
-      if (detail.status !== 'submitted') {
+      if (detail.status !== '待复核') {
         await request.post(`${BACKEND}/api/assessments/${state.id}/submit`, {
           data: { expected_revision: detail.revision },
         })
@@ -168,8 +168,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const verify = await page.request.get(
       `${BACKEND}/api/assessments/${state.id}`,
     )
-    verify.ok() &&
-      ((await verify.json()).details[0] satisfies { current_level: number })
+    expect(verify.ok()).toBeTruthy()
     const saved = (await verify.json()).details.find(
       (d: { l3_code: string }) => d.l3_code === detail.l3_code,
     )

@@ -279,6 +279,7 @@ def _submit_and_approve_assessment(
         if detail is None:
             migrated = {
                 "l3_code": snapshot["l3_code"],
+                "l3_node_id": snapshot.get("l3_node_id"),
                 "current_level": (
                     1 if snapshot["standard_target_applicable"] is True else None
                 ),
@@ -296,6 +297,8 @@ def _submit_and_approve_assessment(
                 )
         else:
             migrated = dict(detail)
+            migrated.pop("l3_node_id", None)
+            migrated.setdefault("l3_node_id", snapshot.get("l3_node_id"))
             target_level = migrated.pop("target_level")
             migrated.update(
                 {
