@@ -532,6 +532,7 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "plan_quarter": "Q1",
                     "plan_month": 2,
@@ -638,6 +639,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "include_in_plan": False,
                 }
@@ -800,13 +802,15 @@ def test_revision_conflict_409_zero_writes(plan_schema: psycopg.Connection) -> N
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # Save once
     status, _ = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "current_level": 2}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 2}],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -818,7 +822,7 @@ def test_revision_conflict_409_zero_writes(plan_schema: psycopg.Connection) -> N
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "current_level": 3}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -843,6 +847,8 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # Fill current_level, set priority, but leave include_in_plan=NULL
     status, _ = _request(
@@ -851,6 +857,7 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -877,7 +884,12 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
 
 
 def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
-    """PATCH: unset field preserves existing value; explicit null clears it."""
+    """PATCH: unset field preserves existing value; explicit null clears it.
+
+    Covers the sparse-PATCH contract: a second PATCH that only changes
+    current_level must preserve member_priority, include_in_plan,
+    plan_quarter and plan_month while the gap stays positive (E2E-13).
+    """
     member_id = _create_test_user(plan_schema, "m_patch", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -888,20 +900,26 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Set priority
+    # Set priority + full plan selection (adjusted target 5 keeps gap > 0).
     status, _ = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
+                    "current_level": 1,
                     "target_adjusted": True,
                     "adjusted_target_level": 5,
                     "target_adjustment_reason": "test",
-                    "member_priority": "高",
+                    "member_priority": "中",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 6,
                 }
             ],
             "expected_revision": 1,
@@ -910,27 +928,59 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     )
     assert status == 200
 
-    # Patch without touching priority — should stay "高"
-    status, _ = _request(
+    # Patch only current_level — every omitted field must be preserved.
+    status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "current_level": 3}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
             "expected_revision": 2,
         },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, f"second patch: {body}"
+    assert isinstance(body, dict)
+    assert body.get("auto_cleared") == []
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["member_priority"] == "高"
+    assert saved["current_level"] == 3
+    assert saved["member_priority"] == "中"
+    assert saved["include_in_plan"] is True
+    assert saved["plan_quarter"] == "Q2"
+    assert saved["plan_month"] == 6
 
-    # Patch with explicit null → clear priority
+    # Explicit null on priority while include_in_plan=TRUE → 422 conflict,
+    # zero writes (include requires a valid priority).
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {"l3_node_id": node_id, "l3_code": code, "member_priority": None}
+            ],
+            "expected_revision": 3,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, f"null priority + include=TRUE must 422: {body}"
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["member_priority"] == "中"
+    assert int(assessment["revision"]) == 3
+
+    # Patch with explicit null + include_in_plan=FALSE → priority cleared.
     status, _ = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "member_priority": None}],
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "member_priority": None,
+                    "include_in_plan": False,
+                }
+            ],
             "expected_revision": 3,
         },
         cookies=cookies,
@@ -939,6 +989,157 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
     assert saved["member_priority"] is None
+    assert saved["include_in_plan"] is False
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+
+def test_patch_zero_vs_omitted_current_level(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """current_level=0 is 已评估 and distinct from omitted (保持原值)."""
+    member_id = _create_test_user(plan_schema, "m_zero", ["Member"])
+    _enable_one_l3(plan_schema)
+    assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
+    cookies = _login(plan_schema, "m_zero")
+
+    detail = plan_schema.execute(
+        "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        (assessment_id,),
+    ).fetchone()
+    code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
+    # Initial: NULL (unassessed).
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["current_level"] is None
+
+    # Explicit 0 → stored as 0 (assessed), not confused with unset.
+    status, _ = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 0}],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["current_level"] == 0
+    assert saved["current_level_explicitly_cleared"] is False
+
+    # Omitted current_level → previous value (0) preserved.
+    status, _ = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "evidence_note": "note only",
+                }
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["current_level"] == 0
+
+    # Explicit null → cleared to NULL (unassessed) and flagged.
+    status, _ = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {"l3_node_id": node_id, "l3_code": code, "current_level": None}
+            ],
+            "expected_revision": 3,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["current_level"] is None
+    assert saved["current_level_explicitly_cleared"] is True
+
+
+def test_patch_scope_v1_identity(plan_schema: psycopg.Connection) -> None:
+    """scope-v1 PATCH: missing/unknown/duplicate l3_node_id and node/code
+    mismatch → structured 422, zero writes."""
+    member_id = _create_test_user(plan_schema, "m_ident", ["Member"])
+    _enable_one_l3(plan_schema)
+    assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
+    cookies = _login(plan_schema, "m_ident")
+
+    detail = plan_schema.execute(
+        "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        (assessment_id,),
+    ).fetchone()
+    code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
+    def _patch(details: list[dict[str, object]]) -> tuple[int, Any]:
+        return _request(
+            "PATCH",
+            f"/api/assessments/{assessment_id}/draft",
+            {"details": details, "expected_revision": 1},
+            cookies=cookies,
+        )
+
+    def _assert_structured_422(body: Any, code_: str) -> None:
+        assert isinstance(body, dict)
+        d = body.get("detail")
+        assert isinstance(d, dict), f"detail not structured: {body}"
+        assert d.get("code") == code_
+        assert "message" in d
+        assert "field" in d
+
+    # 1. missing l3_node_id → 422 l3_node_id_required
+    status, body = _patch([{"l3_code": code, "current_level": 2}])
+    assert status == 422, f"missing node id: {status} {body}"
+    _assert_structured_422(body, "l3_node_id_required")
+
+    # 2. unknown l3_node_id → 422 l3_node_id_not_found
+    status, body = _patch(
+        [{"l3_node_id": node_id + 99999, "l3_code": code, "current_level": 2}]
+    )
+    assert status == 422, f"unknown node id: {status} {body}"
+    _assert_structured_422(body, "l3_node_id_not_found")
+    assert body["detail"].get("l3_node_id") == node_id + 99999
+
+    # 3. duplicate l3_node_id → 422 duplicate_detail
+    status, body = _patch(
+        [
+            {"l3_node_id": node_id, "l3_code": code, "current_level": 2},
+            {"l3_node_id": node_id, "l3_code": code, "current_level": 3},
+        ]
+    )
+    assert status == 422, f"duplicate node id: {status} {body}"
+    _assert_structured_422(body, "duplicate_detail")
+
+    # 4. node/code mismatch → 422 l3_code_mismatch
+    status, body = _patch(
+        [{"l3_node_id": node_id, "l3_code": "C01.01.02", "current_level": 2}]
+    )
+    assert status == 422, f"mismatch: {status} {body}"
+    _assert_structured_422(body, "l3_code_mismatch")
+    assert body["detail"].get("l3_code") == "C01.01.02"
+
+    # Zero writes: current_level still NULL, revision unchanged.
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["current_level"] is None
+    assert int(assessment["revision"]) == 1
 
 
 def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
@@ -953,6 +1154,8 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # First set plan=TRUE
     status, _ = _request(
@@ -961,6 +1164,7 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
         {
             "details": [
                 {
+                    "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
                     "target_adjusted": True,
@@ -983,7 +1187,13 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": code, "include_in_plan": False}],
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "include_in_plan": False,
+                }
+            ],
             "expected_revision": 2,
         },
         cookies=cookies,
@@ -1121,3 +1331,107 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
     assert saved["gap_value"] == 0
     assert saved["member_priority"] is None
     assert saved["include_in_plan"] is None
+
+
+def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> None:
+    """Sparse PATCH member_priority=暂缓 on an include_in_plan=TRUE item:
+    server auto-sets FALSE + clears quarter/month and reports auto_cleared
+    with l3_node_id; explicit 暂缓+TRUE in one request stays 422 zero-write.
+    """
+    member_id = _create_test_user(plan_schema, "m_holdsp", ["Member"])
+    _enable_one_l3(plan_schema)
+    assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
+    cookies = _login(plan_schema, "m_holdsp")
+
+    detail = plan_schema.execute(
+        "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        (assessment_id,),
+    ).fetchone()
+    code = detail[0]
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
+    # 1. Establish a full plan selection (positive gap, include=TRUE).
+    status, _ = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": 0,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+
+    # 2. Sparse PATCH: only member_priority=暂缓 → auto-clear plan fields.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {"l3_node_id": node_id, "l3_code": code, "member_priority": "暂缓"}
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"hold sparse patch: {body}"
+    assert isinstance(body, dict)
+    cleared = [
+        entry for entry in body.get("auto_cleared", []) if entry.get("l3_code") == code
+    ]
+    assert cleared, f"auto_cleared missing entry: {body}"
+    assert cleared[0].get("l3_node_id") == node_id
+    assert set(cleared[0].get("fields", [])) >= {
+        "include_in_plan",
+        "plan_quarter",
+        "plan_month",
+    }
+
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["member_priority"] == "暂缓"
+    assert saved["include_in_plan"] is False
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+    # 3. Explicit 暂缓 + include_in_plan=TRUE → 422, zero writes.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "member_priority": "暂缓",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q3",
+                    "plan_month": 8,
+                }
+            ],
+            "expected_revision": 3,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, f"explicit 暂缓+TRUE must 422: {body}"
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["member_priority"] == "暂缓"
+    assert saved["include_in_plan"] is False
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+    assert int(assessment["revision"]) == 3

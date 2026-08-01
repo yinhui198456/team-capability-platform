@@ -506,7 +506,7 @@ describe('AssessmentGapPage', () => {
     [1, 2, 'old evidence'],
     [3, 4, 'old evidence'],
   ])(
-    'requires new evidence when inherited level increases from %s to %s',
+    'allows inherited level increase from %s to %s without new evidence (#61)',
     async (inheritedLevel, currentLevel, evidence) => {
       const draft = mockDraft({
         details: [
@@ -527,11 +527,13 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      await screen.findByText('需更新依据')
+      // evidence is no longer a submit gate
+      await screen.findByText('能力自评与 Gap 分析')
+      expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
           .disabled,
-      ).toBe(true)
+      ).toBe(false)
     },
   )
 
@@ -540,7 +542,7 @@ describe('AssessmentGapPage', () => {
     [null, '   '],
     ['旧依据', ' 旧依据 '],
   ])(
-    'requires normalized new evidence for an inherited increase (%s → %s)',
+    'does not gate an inherited increase on normalized new evidence (%s → %s)',
     async (inheritedEvidence, evidence) => {
       const draft = mockDraft({
         details: [
@@ -561,11 +563,12 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      await screen.findByText('需更新依据')
+      await screen.findByText('能力自评与 Gap 分析')
+      expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
           .disabled,
-      ).toBe(true)
+      ).toBe(false)
     },
   )
 

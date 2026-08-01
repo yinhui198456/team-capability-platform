@@ -1696,9 +1696,13 @@ def save_assessment_draft(
                     reason="no_positive_gap",
                 )
 
-            # 暂缓 auto-sets include_in_plan=FALSE and clears timing
+            # 暂缓 auto-sets include_in_plan=FALSE and clears timing.
+            # The mutex 422 fires only when include_in_plan=TRUE was sent
+            # explicitly in THIS request; a DB-carried TRUE (sparse PATCH
+            # changing only priority) is auto-cleared instead.
+            include_present = bool(detail.get("_include_in_plan_present", True))
             if member_priority == "暂缓":
-                if include_in_plan is True:
+                if include_in_plan is True and include_present:
                     raise DetailValidationError(
                         "plan_validation",
                         f"暂缓 and include_in_plan are mutually exclusive for {code}",
@@ -1770,7 +1774,15 @@ def save_assessment_draft(
             if orig_month != plan_month:
                 cleared_fields.append("plan_month")
             if cleared_fields:
-                auto_cleared.append({"l3_code": str(code), "fields": cleared_fields})
+                auto_cleared.append(
+                    {
+                        "l3_node_id": (
+                            l3_node_id if isinstance(l3_node_id, int) else None
+                        ),
+                        "l3_code": str(code),
+                        "fields": cleared_fields,
+                    }
+                )
 
             connection.execute(
                 """
@@ -1854,6 +1866,7 @@ def patch_assessment_draft(
             "plan_month": row[9],
             "current_level_explicitly_cleared": row[10],
             "_current_level_present": False,
+            "_include_in_plan_present": False,
             "_detail_present": False,
         }
         for row in rows
@@ -1869,8 +1882,70 @@ def patch_assessment_draft(
         "plan_quarter",
         "plan_month",
     }
+    scope_row = connection.execute(
+        "SELECT assessment_scope_version FROM assessment WHERE id = %s",
+        (assessment_id,),
+    ).fetchone()
+    scope_version = scope_row[0] if scope_row else None
+    node_index: dict[int, str] = {}
+    if scope_version is not None:
+        for row in rows:
+            if row[11] is not None:
+                node_index[int(row[11])] = row[0]
+    seen_codes: set[str] = set()
+    seen_nodes: set[int] = set()
     for detail in details:
         code = str(detail.get("l3_code", ""))
+        if code in seen_codes:
+            raise DetailValidationError(
+                "duplicate_detail",
+                "duplicate assessment detail",
+                l3_code=code,
+                field="l3_code",
+                reason="duplicate",
+            )
+        seen_codes.add(code)
+        if scope_version is not None:
+            # scope-v1: l3_node_id is the stable identity — required, known,
+            # unique within the batch, and consistent with l3_code.
+            node_id = detail.get("l3_node_id")
+            if not isinstance(node_id, int) or isinstance(node_id, bool):
+                raise DetailValidationError(
+                    "l3_node_id_required",
+                    f"scope-v1 PATCH requires l3_node_id for {code}",
+                    l3_code=code,
+                    field="l3_node_id",
+                    reason="required_for_scope_v1",
+                )
+            if node_id in seen_nodes:
+                raise DetailValidationError(
+                    "duplicate_detail",
+                    "duplicate l3_node_id in batch",
+                    l3_node_id=node_id,
+                    l3_code=code,
+                    field="l3_node_id",
+                    reason="duplicate",
+                )
+            seen_nodes.add(node_id)
+            if node_id not in node_index:
+                raise DetailValidationError(
+                    "l3_node_id_not_found",
+                    f"l3_node_id {node_id} not in assessment scope",
+                    l3_node_id=node_id,
+                    l3_code=code,
+                    field="l3_node_id",
+                    reason="not_in_scope",
+                )
+            if node_index[node_id] != code:
+                raise DetailValidationError(
+                    "l3_code_mismatch",
+                    f"l3_code_mismatch: node {node_id} → {node_index[node_id]}, "
+                    f"got {code}",
+                    l3_node_id=node_id,
+                    l3_code=code,
+                    field="l3_code",
+                    reason="mismatch",
+                )
         if code not in merged:
             raise DetailValidationError(
                 "unknown_detail",
@@ -1887,6 +1962,8 @@ def patch_assessment_draft(
             )
         if "current_level" in detail:
             merged[code]["_current_level_present"] = True
+        if "include_in_plan" in detail:
+            merged[code]["_include_in_plan_present"] = True
         merged[code]["_detail_present"] = True
         merged[code].update({key: detail[key] for key in allowed if key in detail})
     return save_assessment_draft(
@@ -1910,7 +1987,7 @@ def batch_fill_l2(
         raise ValueError("batch current_level must be 0, 1, or 2")
     rows = connection.execute(
         """
-        SELECT ad.l3_code
+        SELECT ad.l3_code, ad.l3_node_id
         FROM assessment_detail ad
         LEFT JOIN capability_node l3n ON l3n.id = ad.l3_node_id
         LEFT JOIN capability_node l3c
@@ -1976,7 +2053,14 @@ def batch_fill_l2(
         assessment_id,
         member_id,
         expected_revision,
-        [{"l3_code": row[0], "current_level": current_level} for row in rows],
+        [
+            {
+                "l3_node_id": row[1],
+                "l3_code": row[0],
+                "current_level": current_level,
+            }
+            for row in rows
+        ],
     )
     updated_codes = [row[0] for row in rows]
     return {

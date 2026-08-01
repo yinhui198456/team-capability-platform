@@ -12,7 +12,9 @@ for (const viewport of VIEWPORTS) {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
       await loginAs(page, 'member')
-      await page.goto('/dashboard/member')
+      // Pin to 2026: the seed's complete plan/task data lives there; the
+      // active-year resolver otherwise follows future-year smoke drafts.
+      await page.goto('/dashboard/member?year=2026')
       await expect(page.getByText('我的成长总览')).toBeVisible()
       // Wait for async dashboard data to avoid screenshot height instability
       await expect(page.getByTestId('current-tasks-table')).toBeVisible()

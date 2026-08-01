@@ -257,6 +257,7 @@ test.describe('capability standard targets', () => {
           current_level: 2,
           standard_target_applicable: true,
           standard_target_level: 4,
+          standard_job_level_snapshot: 'P4',
           target_adjusted: false,
           adjusted_target_level: null,
           target_adjustment_reason: null,
@@ -276,6 +277,7 @@ test.describe('capability standard targets', () => {
           current_level: null,
           standard_target_applicable: false,
           standard_target_level: null,
+          standard_job_level_snapshot: 'P6',
           target_adjusted: false,
           adjusted_target_level: null,
           target_adjustment_reason: null,
@@ -308,11 +310,16 @@ test.describe('capability standard targets', () => {
 
     await loginAs(page, 'member')
     await page.goto('/capability/assessment')
-    await expect(page.getByText('标准 4')).toBeVisible()
+    await expect(page.getByText('4 · P4 标准')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
-    await expect(page.getByLabel('申请调整 P01.01.02')).toBeDisabled()
+    // N/A row has no adjustment entry point
+    await expect(
+      page.locator('#row-2').getByRole('button', { name: '调整▸' }),
+    ).toHaveCount(0)
 
-    await page.getByLabel('申请调整 P01.01.01').check()
+    const okRow = page.locator('#row-1')
+    await okRow.getByRole('button', { name: '调整▸' }).click()
+    await page.getByLabel('启用个人调整 P01.01.01').check()
     await page.getByLabel('调整目标 P01.01.01').selectOption('5')
     await page.getByLabel('调整原因 P01.01.01').fill('晋升准备')
     await page.getByRole('button', { name: '保存草稿' }).click()

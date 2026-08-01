@@ -173,15 +173,8 @@ function unfilledReason(detail: AssessmentDetail) {
   if (detail.current_level == null || effectiveTarget(detail) == null) {
     return '需评估等级'
   }
-  if (!isEvidenceValid(detail)) {
-    if (
-      detail.inherited_current_level != null &&
-      detail.current_level > detail.inherited_current_level
-    ) {
-      return '需更新依据'
-    }
-    if (detail.current_level >= 3) return '需自评依据'
-  }
+  // #61: evidence is no longer a submit gate — historical evidence stays
+  // readable/writable but never blocks submission.
   return ''
 }
 
