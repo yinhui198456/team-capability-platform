@@ -591,6 +591,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await expect(
       page.getByRole('heading', { name: 'Buddy 复核中心' }),
     ).toBeVisible()
+    // select THIS scenario's pending review (other suites may leave pending
+    // reviews for other members/years in the shared queue)
+    await page
+      .locator('tr', { hasText: String(year) })
+      .getByRole('button')
+      .first()
+      .click()
     // summary grid + first-approval notice
     await expect(
       page.getByText(/首次认可将原子生成正式年度计划/).first(),
