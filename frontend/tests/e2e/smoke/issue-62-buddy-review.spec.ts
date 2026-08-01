@@ -61,7 +61,11 @@ async function ensureDraft(
     return { id: assessment.id, revision: assessment.revision }
   }
   const createResp = await request.post(`${BACKEND}/api/assessments`, {
-    data: { year, assessment_type: assessmentType, scope_token: preview.scope_token },
+    data: {
+      year,
+      assessment_type: assessmentType,
+      scope_token: preview.scope_token,
+    },
   })
   if (!createResp.ok()) {
     throw new Error(`create assessment failed: ${createResp.status()}`)
@@ -218,7 +222,6 @@ interface PickedDetail {
 /** Pick applicable details for a draft and build member decisions. */
 async function pickAndFill(
   page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-
 
   request: ApiRequest,
   draft: DraftState,
@@ -568,9 +571,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).toBe('assessment_already_reviewed')
   })
 
-  test('E2E-62-07 Buddy 工作区 UI：汇总、提示与提交', async ({
-    page,
-  }) => {
+  test('E2E-62-07 Buddy 工作区 UI：汇总、提示与提交', async ({ page }) => {
     const request = page.request
     const year = yearFor('E2E-62-07')
     await loginAs(page, 'member')

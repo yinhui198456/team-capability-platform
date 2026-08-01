@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: tcp
       POSTGRES_PASSWORD: tcp_dev_only
     ports:
-      - "127.0.0.1:15463:5432"
+      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "127.0.0.1:18082:80"
+      - "18081:80"
 
 volumes:
   postgres-data:

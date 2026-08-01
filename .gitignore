@@ -27,3 +27,4 @@ playwright/.cache/
 e2e-snapshots-diff/
 
 output/
+docker-compose.override.yml
