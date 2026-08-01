@@ -269,7 +269,10 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "current_level": 2,
             "target_level": 4,
             "evidence_note": "测试中",
-            "plan_candidate": True,
+            "member_priority": "高",
+            "include_in_plan": True,
+            "plan_quarter": "Q2",
+            "plan_month": 5,
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])

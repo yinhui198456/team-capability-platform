@@ -119,7 +119,7 @@ export type AssessmentDetail = {
   l3_node_id?: number | null
   scope_type?: 'current_required' | 'target_progressive' | null
   standard_job_level_snapshot?: string | null
-  current_level: number | null
+  current_level: number | null // 0–5, NULL = not assessed
   target_level: number | null
   standard_target_applicable?: boolean | null
   standard_target_level?: number | null
@@ -130,6 +130,7 @@ export type AssessmentDetail = {
   target_compatibility_error?: string | null
   gap_value?: number | null
   evidence_note?: string
+  /** @deprecated use include_in_plan instead */
   plan_candidate?: boolean
   recommended_start_level?: string
   l1_code?: string
@@ -140,6 +141,10 @@ export type AssessmentDetail = {
   inherited_current_level?: number | null
   inherited_evidence_note?: string | null
   current_level_explicitly_cleared?: boolean
+  member_priority?: '高' | '中' | '低' | '暂缓' | null
+  include_in_plan?: boolean | null // tri-state: true/false/null
+  plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month?: number | null // 1–12
 }
 
 export type GapSummary = {
@@ -148,6 +153,9 @@ export type GapSummary = {
   high_priority: number
   medium_priority: number
   low_priority: number
+  on_hold?: number
+  in_plan?: number
+  by_quarter?: { Q1: number; Q2: number; Q3: number; Q4: number }
 }
 
 export type DraftTargetRepairDetail = {
@@ -270,13 +278,13 @@ export async function saveDraft(
 ): Promise<{
   ok: boolean
   revision?: number
-  auto_cancelled_plan_candidates?: string[]
+  auto_cleared?: Array<{ l3_node_id: number; fields: string[] }>
   gap_summary?: GapSummary
 }> {
   return request<{
     ok: boolean
     revision?: number
-    auto_cancelled_plan_candidates?: string[]
+    auto_cleared?: Array<{ l3_node_id: number; fields: string[] }>
     gap_summary?: GapSummary
   }>(
     `/api/assessments/${id}/draft`,
@@ -284,13 +292,17 @@ export async function saveDraft(
     {
       expected_revision: expectedRevision,
       details: details.map((detail) => ({
+        l3_node_id: detail.l3_node_id,
         l3_code: detail.l3_code,
         current_level: detail.current_level,
         target_adjusted: detail.target_adjusted ?? false,
         adjusted_target_level: detail.adjusted_target_level ?? null,
         target_adjustment_reason: detail.target_adjustment_reason ?? null,
         evidence_note: detail.evidence_note ?? null,
-        plan_candidate: detail.plan_candidate ?? false,
+        member_priority: detail.member_priority ?? null,
+        include_in_plan: detail.include_in_plan,
+        plan_quarter: detail.plan_quarter ?? null,
+        plan_month: detail.plan_month ?? null,
       })),
     },
   )
@@ -299,7 +311,7 @@ export async function saveDraft(
 export async function batchFillL2(
   id: number,
   l2Code: string,
-  currentLevel: 1 | 2,
+  currentLevel: 0 | 1 | 2,
   expectedRevision: number,
 ): Promise<{
   revision: number

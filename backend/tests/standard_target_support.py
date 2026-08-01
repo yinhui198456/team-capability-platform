@@ -120,7 +120,7 @@ def standard_target_payload(
     desired = {str(detail["l3_code"]): detail for detail in desired_details}
     rows = connection.execute(
         """
-        SELECT l3_code, standard_target_applicable, target_level
+        SELECT l3_code, standard_target_applicable, target_level, l3_node_id
         FROM assessment_detail
         WHERE assessment_id = %s
         ORDER BY l3_code
@@ -128,19 +128,21 @@ def standard_target_payload(
         (assessment_id,),
     ).fetchall()
     payload = []
-    for l3_code, applicable, target_level in rows:
+    for l3_code, applicable, target_level, node_id in rows:
         old = desired.get(str(l3_code))
         if old is None:
-            payload.append(
-                {
-                    "l3_code": l3_code,
-                    "current_level": target_level if applicable else None,
-                    "evidence_note": "测试辅助已达标项",
-                    "plan_candidate": False,
-                }
-            )
+            item: dict[str, object] = {
+                "l3_code": l3_code,
+                "current_level": target_level if applicable else None,
+                "evidence_note": "测试辅助已达标项",
+            }
+            if node_id is not None:
+                item["l3_node_id"] = int(node_id)
+            payload.append(item)
             continue
         item = {key: value for key, value in old.items() if key != "target_level"}
+        if node_id is not None:
+            item.setdefault("l3_node_id", int(node_id))
         requested_target = old.get("target_level")
         if requested_target is not None:
             item.update(

@@ -253,14 +253,20 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "current_level": 2,
             "target_level": 4,
             "evidence_note": "测试中",
-            "plan_candidate": True,
+            "member_priority": "高",
+            "include_in_plan": True,
+            "plan_quarter": "Q2",
+            "plan_month": 5,
         },
         {
             "l3_code": "P01-L2A-L3B",
             "current_level": 1,
             "target_level": 3,
             "evidence_note": "测试中",
-            "plan_candidate": True,
+            "member_priority": "高",
+            "include_in_plan": True,
+            "plan_quarter": "Q2",
+            "plan_month": 5,
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
@@ -378,7 +384,7 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert item["l3_name"] is not None
     assert item["current_level"] == 2
     assert item["target_level"] == 4
-    assert item["priority"] == "中"
+    assert item["priority"] == "高"
     assert item["learning_material"] == "test materials"
     assert item["expected_output"] == "test output"
     assert item["estimated_hours"] == "10"

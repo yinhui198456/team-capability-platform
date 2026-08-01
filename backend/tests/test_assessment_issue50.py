@@ -61,6 +61,20 @@ def _enable_two_nodes(connection: psycopg.Connection) -> list[str]:
     return codes
 
 
+def _with_node_ids(
+    connection: psycopg.Connection,
+    assessment_id: int,
+    details: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """scope-v1: every PATCH detail must carry its stable l3_node_id."""
+    rows = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail WHERE assessment_id = %s",
+        (assessment_id,),
+    ).fetchall()
+    node_by_code = {str(row[0]): row[1] for row in rows}
+    return [{"l3_node_id": node_by_code[str(d["l3_code"])], **d} for d in details]
+
+
 def _mark_approved(
     connection: psycopg.Connection,
     assessment_id: int,
@@ -160,15 +174,22 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
         previous,
         member_id,
         1,
-        [
-            {
-                "l3_code": codes[0],
-                "current_level": 1,
-                "evidence_note": "旧依据",
-                "plan_candidate": True,
-            },
-            {"l3_code": codes[1], "current_level": 1, "evidence_note": "另一依据"},
-        ],
+        _with_node_ids(
+            connection,
+            previous,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": 1,
+                    "evidence_note": "旧依据",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q3",
+                    "plan_month": 7,
+                },
+                {"l3_code": codes[1], "current_level": 1, "evidence_note": "另一依据"},
+            ],
+        ),
     )
     _mark_approved(connection, previous, "2025-01-01T00:00:00Z")
 
@@ -178,7 +199,8 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
     }
     assert details[codes[0]]["current_level"] == 1
     assert details[codes[0]]["evidence_note"] == "旧依据"
-    assert details[codes[0]]["plan_candidate"] is False
+    assert details[codes[0]]["member_priority"] is None
+    assert details[codes[0]]["include_in_plan"] is None
     assert details[codes[0]]["target_adjusted"] is False
     assert details[codes[0]]["inherited_from_assessment_id"] == previous
     assert details[codes[0]]["inherited_current_level"] == 1
@@ -202,7 +224,9 @@ def test_patch_requires_revision_and_preserves_omitted_details(
         assessment_id,
         member_id,
         1,
-        [{"l3_code": codes[0], "current_level": 2}],
+        _with_node_ids(
+            connection, assessment_id, [{"l3_code": codes[0], "current_level": 2}]
+        ),
     )
     assert response["revision"] == 2
     details = {
@@ -218,7 +242,9 @@ def test_patch_requires_revision_and_preserves_omitted_details(
             assessment_id,
             member_id,
             1,
-            [{"l3_code": codes[1], "current_level": 1}],
+            _with_node_ids(
+                connection, assessment_id, [{"l3_code": codes[1], "current_level": 1}]
+            ),
         )
 
 
@@ -233,6 +259,11 @@ def test_concurrent_patches_allow_one_revision_and_do_not_lose_or_cross_write(
 
     first_code = codes[0]
     second_code = codes[0] if same_l3 else codes[1]
+    node_rows = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail WHERE assessment_id = %s",
+        (assessment_id,),
+    ).fetchall()
+    node_by_code = {str(row[0]): row[1] for row in node_rows}
 
     def write(code: str, level: int) -> tuple[str, object]:
         try:
@@ -244,7 +275,13 @@ def test_concurrent_patches_allow_one_revision_and_do_not_lose_or_cross_write(
                         assessment_id,
                         member_id,
                         1,
-                        [{"l3_code": code, "current_level": level}],
+                        [
+                            {
+                                "l3_node_id": node_by_code[code],
+                                "l3_code": code,
+                                "current_level": level,
+                            }
+                        ],
                     ),
                 )
         except ValueError as exc:
@@ -283,7 +320,9 @@ def test_batch_fill_only_writes_empty_l2_values_and_uses_single_revision(
         assessment_id,
         member_id,
         1,
-        [{"l3_code": codes[0], "current_level": 2}],
+        _with_node_ids(
+            connection, assessment_id, [{"l3_code": codes[0], "current_level": 2}]
+        ),
     )
     l2_code = codes[0].rsplit(".", 1)[0]
     result = batch_fill_l2(connection, assessment_id, member_id, l2_code, 1, 2)
@@ -309,7 +348,11 @@ def test_batch_fill_does_not_refill_explicitly_cleared_or_inherited_values(
         assessment_id,
         member_id,
         1,
-        [{"l3_code": codes[0], "current_level": None}],
+        _with_node_ids(
+            connection,
+            assessment_id,
+            [{"l3_code": codes[0], "current_level": None}],
+        ),
     )
     result = batch_fill_l2(
         connection,
@@ -346,11 +389,12 @@ def test_evidence_validator_covers_optional_levels_and_all_increases() -> None:
 
 
 @pytest.mark.parametrize("inherited_level,current_level", [(1, 2), (3, 4)])
-def test_plan_candidate_rejects_any_inherited_level_increase_without_new_evidence(
+def test_plan_fields_work_with_inherited_level_increase(
     issue50_schema: psycopg.Connection,
     inherited_level: int,
     current_level: int,
 ) -> None:
+    """Plan fields (include_in_plan) survive inherited level bump (no evidence gate)."""
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
@@ -360,52 +404,48 @@ def test_plan_candidate_rejects_any_inherited_level_increase_without_new_evidenc
         previous,
         member_id,
         1,
-        [
-            {
-                "l3_code": codes[0],
-                "current_level": inherited_level,
-                "evidence_note": "继承依据",
-            },
-            {"l3_code": codes[1], "current_level": 1},
-        ],
+        _with_node_ids(
+            connection,
+            previous,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": inherited_level,
+                    "evidence_note": "继承依据",
+                },
+                {"l3_code": codes[1], "current_level": 1},
+            ],
+        ),
     )
     _mark_approved(connection, previous, "2026-01-01T00:00:00Z")
     current = create_scoped_draft(connection, member_id, 2026, "晋升复核")
 
-    with pytest.raises(ValueError, match="invalid plan candidate"):
-        patch_assessment_draft(
-            connection,
-            current,
-            member_id,
-            1,
-            [
-                {
-                    "l3_code": codes[0],
-                    "current_level": current_level,
-                    "evidence_note": "继承依据",
-                    "plan_candidate": True,
-                },
-                {"l3_code": codes[1], "current_level": 1},
-            ],
-        )
-
+    # Level increase without new evidence is now allowed (#61).
+    # Need adjusted target to create positive gap for plan fields.
     accepted = patch_assessment_draft(
         connection,
         current,
         member_id,
         1,
-        [
-            {
-                "l3_code": codes[0],
-                "current_level": inherited_level,
-                "evidence_note": "继承依据",
-                "target_adjusted": True,
-                "adjusted_target_level": 5,
-                "target_adjustment_reason": "晋升目标",
-                "plan_candidate": True,
-            },
-            {"l3_code": codes[1], "current_level": 1},
-        ],
+        _with_node_ids(
+            connection,
+            current,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": current_level,
+                    "evidence_note": "继承依据",
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "晋升目标",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 3,
+                },
+                {"l3_code": codes[1], "current_level": 1},
+            ],
+        ),
     )
     assert accepted["revision"] == 2
 
@@ -473,46 +513,67 @@ def test_batch_fill_excludes_na_compatibility_inherited_and_cleared_items(
     assert set(result["skipped_l3_codes"]) == set(codes[:3])
 
 
-def test_invalid_candidate_is_rejected_and_existing_candidate_is_auto_cancelled(
+def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     issue50_schema: psycopg.Connection,
 ) -> None:
+    """When current_level reaches target (gap=0), plan fields auto-cleared."""
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
     assessment_id = create_scoped_draft(connection, member_id, 2026)
-    with pytest.raises(ValueError, match="invalid plan candidate"):
-        patch_assessment_draft(
-            connection,
-            assessment_id,
-            member_id,
-            1,
-            [{"l3_code": codes[0], "plan_candidate": True}],
-        )
+    # Set current_level=1 for gap>0 with plan fields.
     patch_assessment_draft(
         connection,
         assessment_id,
         member_id,
         1,
-        [{"l3_code": codes[0], "current_level": 1, "plan_candidate": True}],
+        _with_node_ids(
+            connection,
+            assessment_id,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": 1,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 3,
+                }
+            ],
+        ),
     )
+    # Now set current_level to match target → gap=0, plan fields auto-cleared.
     result = patch_assessment_draft(
         connection,
         assessment_id,
         member_id,
         2,
-        [{"l3_code": codes[0], "current_level": 4}],
+        _with_node_ids(
+            connection, assessment_id, [{"l3_code": codes[0], "current_level": 5}]
+        ),
     )
-    assert result["auto_cancelled_plan_candidates"] == [codes[0]]
+    assert len(result["auto_cleared"]) == 1
+    assert result["auto_cleared"][0]["l3_code"] == codes[0]
+    assert set(result["auto_cleared"][0]["fields"]) == {
+        "member_priority",
+        "include_in_plan",
+        "plan_quarter",
+        "plan_month",
+    }
     detail = next(
         row
         for row in get_assessment(connection, assessment_id)["details"]
         if row["l3_code"] == codes[0]
     )
-    assert detail["plan_candidate"] is False
+    assert detail["member_priority"] is None
+    assert detail["include_in_plan"] is None
     assert detail["gap_value"] == 0
 
 
-def test_submit_enforces_full_detail_and_evidence_gate(
+def test_submit_requires_priority_for_positive_gap(
     issue50_schema: psycopg.Connection,
 ) -> None:
     connection = issue50_schema
@@ -526,13 +587,24 @@ def test_submit_enforces_full_detail_and_evidence_gate(
         assessment_id,
         member_id,
         1,
-        [
-            {"l3_code": codes[0], "current_level": 3},
-            {"l3_code": codes[1], "current_level": 2},
-        ],
+        _with_node_ids(
+            connection,
+            assessment_id,
+            [
+                {
+                    "l3_code": codes[0],
+                    "current_level": 3,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
+                },
+                {"l3_code": codes[1], "current_level": 2},
+            ],
+        ),
     )
     with pytest.raises(AssessmentValidationError) as error:
         submit_assessment(connection, assessment_id, member_id, expected_revision=2)
     assert error.value.code == "assessment_validation_failed"
     assert error.value.l3_code == codes[0]
-    assert error.value.reason == "requires_evidence"
+    assert error.value.reason == "priority_required"
+    assert error.value.field == "member_priority"

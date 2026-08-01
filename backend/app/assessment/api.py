@@ -6,6 +6,7 @@ from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
     AssessmentValidationError,
+    DetailValidationError,
     DraftTargetRepairError,
     batch_fill_l2,
     create_assessment_draft,
@@ -27,6 +28,7 @@ from .repository import (
 from .scope import AssessmentScopeError, compute_assessment_scope
 
 _VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
+_DEPRECATED_FIELDS = frozenset({"plan_candidate"})
 
 
 def _validate_assessment_type(assessment_type: str) -> None:
@@ -49,15 +51,23 @@ class CreateAssessmentRequest(BaseModel):
     scope_token: str = Field(min_length=64, max_length=64)
 
 
+# ── PUT model: full replacement, all fields required ──────────────
 class DetailItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    l3_node_id: int | None = None
     l3_code: str
-    current_level: int | None = Field(default=None, ge=1, le=5)
+    current_level: int | None = Field(default=None, ge=0, le=5)
     target_adjusted: bool = False
     adjusted_target_level: int | None = Field(default=None, ge=1, le=5)
     target_adjustment_reason: str | None = None
     evidence_note: str | None = None
+    # Canonical plan fields
+    member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
+    include_in_plan: bool | None = None  # tri-state: None=未决定
+    plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
+    plan_month: int | None = Field(default=None, ge=1, le=12)
+    # Accepted for backward compat but rejected in handler
     plan_candidate: bool = False
 
 
@@ -66,9 +76,38 @@ class SaveDraftRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+# ── PATCH model: sparse, null = explicit clear ────────────────────
+class PatchDetailItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    l3_node_id: int | None = None
+    l3_code: str
+    current_level: int | None = Field(default=None, ge=0, le=5)
+    target_adjusted: bool | None = None
+    adjusted_target_level: int | None = Field(default=None, ge=1, le=5)
+    target_adjustment_reason: str | None = None
+    evidence_note: str | None = None
+    member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
+    include_in_plan: bool | None = None
+    plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
+    plan_month: int | None = Field(default=None, ge=1, le=12)
+    # Accepted for backward compat but rejected in handler
+    plan_candidate: bool | None = None
+
+
+# ponytail: distinguish from PUT model by field-set introspection.
+# Fields not present in the JSON body are absent from model_fields_set;
+# fields sent as explicit null are present with value None.
+
+
+class PatchSaveDraftRequest(BaseModel):
+    details: list[PatchDetailItem]
+    expected_revision: int = Field(ge=1)
+
+
 class BatchLevelRequest(BaseModel):
     l2_code: str
-    current_level: int = Field(ge=1, le=2)
+    current_level: int = Field(ge=0, le=2)
     expected_revision: int = Field(ge=1)
 
 
@@ -86,6 +125,25 @@ class SubmitReviewRequest(BaseModel):
 
 
 assessment_router = APIRouter(prefix="/api/assessments")
+
+
+def _detail_validation_error(exc: DetailValidationError) -> HTTPException:
+    detail: dict[str, object] = {
+        "code": exc.code,
+        "message": str(exc),
+    }
+    if exc.l3_node_id is not None:
+        detail["l3_node_id"] = exc.l3_node_id
+    if exc.l3_code is not None:
+        detail["l3_code"] = exc.l3_code
+    if exc.field is not None:
+        detail["field"] = exc.field
+    if exc.reason is not None:
+        detail["reason"] = exc.reason
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=detail,
+    )
 
 
 def _draft_repair_error(exc: DraftTargetRepairError) -> HTTPException:
@@ -398,15 +456,51 @@ def save_draft(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+    # R1: scope-v1 requires l3_node_id on every detail.
+    assessment_scope_version = assessment.get("assessment_scope_version")
+    if assessment_scope_version is not None:
+        missing = [item.l3_code for item in request.details if item.l3_node_id is None]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "l3_node_id_required",
+                    "field": "l3_node_id",
+                    "reason": "required_for_scope_v1",
+                    "message": (
+                        "scope-v1 assessment requires l3_node_id for "
+                        f"every detail; missing: {', '.join(missing)}"
+                    ),
+                },
+            )
+    # Reject deprecated fields.
+    for item in request.details:
+        deprecated = _DEPRECATED_FIELDS & item.model_fields_set
+        if deprecated:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "deprecated_field",
+                    "field": sorted(deprecated)[0],
+                    "message": (
+                        f"'{sorted(deprecated)[0]}' is deprecated; "
+                        f"use include_in_plan"
+                    ),
+                },
+            )
     details: list[dict[str, object]] = [
         {
+            "l3_node_id": item.l3_node_id,
             "l3_code": item.l3_code,
             "current_level": item.current_level,
             "target_adjusted": item.target_adjusted,
             "adjusted_target_level": item.adjusted_target_level,
             "target_adjustment_reason": item.target_adjustment_reason,
             "evidence_note": item.evidence_note,
-            "plan_candidate": item.plan_candidate,
+            "member_priority": item.member_priority,
+            "include_in_plan": item.include_in_plan,
+            "plan_quarter": item.plan_quarter,
+            "plan_month": item.plan_month,
         }
         for item in request.details
     ]
@@ -418,13 +512,15 @@ def save_draft(
             details,
             expected_revision=request.expected_revision,
         )
+    except DetailValidationError as exc:
+        raise _detail_validation_error(exc) from exc
     except ValueError as exc:
         if str(exc) == "revision conflict":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     return {"ok": True, **result}
@@ -433,7 +529,7 @@ def save_draft(
 @assessment_router.patch("/{assessment_id}/draft")
 def patch_draft(
     assessment_id: int,
-    request: SaveDraftRequest,
+    request: PatchSaveDraftRequest,
     user: CurrentUser,
     connection: Connection,
 ) -> dict[str, object]:
@@ -446,22 +542,42 @@ def patch_draft(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions"
         )
-    details = [
-        {
-            key: value
-            for key, value in {
-                "l3_code": item.l3_code,
-                "current_level": item.current_level,
-                "target_adjusted": item.target_adjusted,
-                "adjusted_target_level": item.adjusted_target_level,
-                "target_adjustment_reason": item.target_adjustment_reason,
-                "evidence_note": item.evidence_note,
-                "plan_candidate": item.plan_candidate,
-            }.items()
-            if key == "l3_code" or key in item.model_fields_set
+    # Reject deprecated fields.
+    for item in request.details:
+        deprecated = _DEPRECATED_FIELDS & item.model_fields_set
+        if deprecated:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "deprecated_field",
+                    "field": sorted(deprecated)[0],
+                    "message": (
+                        f"'{sorted(deprecated)[0]}' is deprecated; "
+                        f"use include_in_plan"
+                    ),
+                },
+            )
+    # Distinguish unset vs explicit-null via model_fields_set.
+    details: list[dict[str, object]] = []
+    for item in request.details:
+        merged: dict[str, object] = {
+            "l3_node_id": item.l3_node_id,
+            "l3_code": item.l3_code,
         }
-        for item in request.details
-    ]
+        for key in (
+            "current_level",
+            "target_adjusted",
+            "adjusted_target_level",
+            "target_adjustment_reason",
+            "evidence_note",
+            "member_priority",
+            "include_in_plan",
+            "plan_quarter",
+            "plan_month",
+        ):
+            if key in item.model_fields_set:
+                merged[key] = getattr(item, key)
+        details.append(merged)
     try:
         result = patch_assessment_draft(
             connection,
@@ -470,11 +586,13 @@ def patch_draft(
             request.expected_revision,
             details,
         )
+    except DetailValidationError as exc:
+        raise _detail_validation_error(exc) from exc
     except ValueError as exc:
         code = (
             status.HTTP_409_CONFLICT
             if str(exc) == "revision conflict"
-            else status.HTTP_400_BAD_REQUEST
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
         )
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     return {"ok": True, **result}
@@ -544,10 +662,12 @@ def submit(
         )
     except AssessmentValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "code": exc.code,
                 "l3_code": exc.l3_code,
+                "l3_node_id": exc.l3_node_id,
+                "field": exc.field,
                 "reason": exc.reason,
                 "message": str(exc),
             },
@@ -623,7 +743,7 @@ def submit_review(
 
 
 class UpdateGapRequest(BaseModel):
-    priority: str = Field(pattern=r"^(高|中|低)$")
+    priority: str = Field(pattern=r"^(高|中|低|暂缓)$")
     plan_candidate: bool
 
 
@@ -683,6 +803,20 @@ def update_gap_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="gap not found",
+        )
+
+    # Block gap writes for scope-v1 assessments: canonical source is
+    # assessment_detail; the gap table is a one-way compat projection.
+    if gap.get("assessment_scope_version") is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "legacy_gap_write_disabled",
+                "message": (
+                    "This assessment uses scope-v1.  Update member_priority "
+                    "and include_in_plan on the assessment detail instead."
+                ),
+            },
         )
 
     if not policies.can_member_update_gap(connection, user, gap):

@@ -50,19 +50,24 @@ for (const viewport of VIEWPORTS) {
     test('semantic alignment', async ({ page }) => {
       const summary = page.getByLabel('评估摘要')
       await expect(summary).toContainText('进度')
-      await expect(summary).toContainText('未完成')
-      await expect(summary).toContainText('Review')
+      await expect(summary).toContainText('未评估')
+      await expect(summary).toContainText('Gap')
+      await expect(summary).toContainText('已纳入计划')
+      await expect(summary).toContainText('暂缓')
+      await expect(summary).toContainText('Q1:')
+      await expect(summary).toContainText('Q4:')
 
       const tables = page.getByTestId('assessment-table')
       await expect(tables.first()).toBeVisible()
       const firstTable = tables.first()
-      await expect(firstTable).toContainText('三级达成路径 / 学习实践项')
+      // #61 7-column contract
+      await expect(firstTable).toContainText('能力项')
       await expect(firstTable).toContainText('当前掌握度')
-      await expect(firstTable).toContainText('标准目标')
-      await expect(firstTable).toContainText('个人调整')
-      await expect(firstTable).toContainText('最终目标')
+      await expect(firstTable).toContainText('目标掌握度')
       await expect(firstTable).toContainText('Gap')
       await expect(firstTable).toContainText('优先级')
+      await expect(firstTable).toContainText('纳入计划')
+      await expect(firstTable).toContainText('计划时间')
       await expect(page.getByText('职级要求 P4–P8').first()).toBeVisible()
 
       await expect(

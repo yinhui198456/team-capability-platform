@@ -59,6 +59,10 @@ function mockDraft(overrides: Partial<assessmentApi.Assessment> = {}) {
         evidence_note: '',
         plan_candidate: false,
         recommended_start_level: 'P4',
+        include_in_plan: null,
+        member_priority: null,
+        plan_quarter: null,
+        plan_month: null,
       },
     ],
     ...overrides,
@@ -73,6 +77,233 @@ describe('AssessmentGapPage', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('renders 7-column table', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            l2_name: '数据基础',
+            current_level: 2,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.length).toBe(7)
+    expect(headers.map((h) => h.textContent)).toEqual([
+      '能力项',
+      '当前掌握度',
+      '目标掌握度',
+      'Gap',
+      '优先级',
+      '纳入计划',
+      '计划时间',
+    ])
+  })
+
+  it('0 is selectable in level dropdown', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: null,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const select = screen.getByRole('combobox', { name: /当前等级/ })
+    const options = Array.from((select as HTMLSelectElement).options).map(
+      (o) => o.textContent,
+    )
+    expect(options).toContain('0 · 未接触/无可验证输出')
+    expect(options).toContain('5 · 专家')
+  })
+
+  it('priority dropdown conditionally disabled when no gap', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: 5,
+            standard_target_level: 4,
+            target_level: 4,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const prioSelect = screen.getByRole('combobox', {
+      name: /优先级 P01.01.01/,
+    })
+    expect((prioSelect as HTMLSelectElement).disabled).toBe(true)
+  })
+
+  it('plan time conditionally visible when include_in_plan=true', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: 2,
+            standard_target_level: 4,
+            target_level: 4,
+            include_in_plan: true,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    expect(
+      screen.getByRole('combobox', { name: /计划季度 P01.01.01/ }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('combobox', { name: /计划月份 P01.01.01/ }),
+    ).toBeTruthy()
+  })
+
+  it('filters work: 未评估, 有Gap, 已纳入计划, 暂缓', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: null,
+            member_priority: null,
+            include_in_plan: null,
+          },
+          {
+            ...mockDraft().details![0],
+            id: 2,
+            l3_code: 'P01.01.02',
+            l3_name: '任务2',
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: 2,
+            standard_target_level: 4,
+            target_level: 4,
+            member_priority: '暂缓',
+            include_in_plan: true,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+
+    const filterSelect = screen.getByTestId('status-filter')
+    fireEvent.change(filterSelect, { target: { value: '未评估' } })
+    await waitFor(() => {
+      expect(screen.queryByText('任务2')).toBeNull()
+      expect(screen.getByText('数据管道')).toBeTruthy()
+    })
+
+    fireEvent.change(filterSelect, { target: { value: '有Gap' } })
+    await waitFor(() => {
+      expect(screen.getByText('任务2')).toBeTruthy()
+    })
+
+    fireEvent.change(filterSelect, { target: { value: '已纳入计划' } })
+    await waitFor(() => {
+      expect(screen.getByText('任务2')).toBeTruthy()
+    })
+
+    fireEvent.change(filterSelect, { target: { value: '暂缓' } })
+    await waitFor(() => {
+      expect(screen.getByText('任务2')).toBeTruthy()
+    })
+
+    fireEvent.change(filterSelect, { target: { value: '全部' } })
+    await waitFor(() => {
+      expect(screen.getByText('数据管道')).toBeTruthy()
+      expect(screen.getByText('任务2')).toBeTruthy()
+    })
+  })
+
+  it('sticky bar counts show unfilled, no-priority, undecided', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            l1_code: 'P01',
+            l2_code: 'P01.01',
+            current_level: 2,
+            standard_target_level: 4,
+            target_level: 4,
+            evidence_note: '有依据',
+            include_in_plan: true,
+            member_priority: null,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    // Should show "1 项纳入计划但未填优先级"
+    expect(screen.getByText(/纳入计划但未填优先级/)).toBeTruthy()
   })
 
   it('uses a single L1 view and keeps Gap details in a closed drawer', async () => {
@@ -100,7 +331,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
     expect(screen.queryByTestId('gap-sidebar')).toBeNull()
     expect(screen.queryByTestId('gap-drawer')).toBeNull()
     const content = screen.getByTestId('assessment-content-area')
@@ -183,7 +414,7 @@ describe('AssessmentGapPage', () => {
     expect(screen.getByText('暂无三级达成路径，当前无可评估项')).toBeTruthy()
   })
 
-  it('creates draft with a read-only standard target and null current level', async () => {
+  it('creates draft with null current level', async () => {
     vi.spyOn(assessmentApi, 'fetchScopePreview').mockResolvedValue({
       member_id: 1,
       year: 2026,
@@ -240,7 +471,6 @@ describe('AssessmentGapPage', () => {
       (s) => (s as HTMLSelectElement).value === '',
     )
     expect(levelSelects.length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('标准 4')).toBeTruthy()
   })
 
   it('submit disabled when null levels', async () => {
@@ -276,7 +506,7 @@ describe('AssessmentGapPage', () => {
     [1, 2, 'old evidence'],
     [3, 4, 'old evidence'],
   ])(
-    'requires new evidence when inherited level increases from %s to %s',
+    'allows inherited level increase from %s to %s without new evidence (#61)',
     async (inheritedLevel, currentLevel, evidence) => {
       const draft = mockDraft({
         details: [
@@ -297,15 +527,13 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      await screen.findByText('需更新依据')
+      // evidence is no longer a submit gate
+      await screen.findByText('能力自评与 Gap 分析')
+      expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
           .disabled,
-      ).toBe(true)
-      expect(
-        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
-          .disabled,
-      ).toBe(true)
+      ).toBe(false)
     },
   )
 
@@ -314,7 +542,7 @@ describe('AssessmentGapPage', () => {
     [null, '   '],
     ['旧依据', ' 旧依据 '],
   ])(
-    'requires normalized new evidence for an inherited increase (%s → %s)',
+    'does not gate an inherited increase on normalized new evidence (%s → %s)',
     async (inheritedEvidence, evidence) => {
       const draft = mockDraft({
         details: [
@@ -335,15 +563,12 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      await screen.findByText('需更新依据')
+      await screen.findByText('能力自评与 Gap 分析')
+      expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
           .disabled,
-      ).toBe(true)
-      expect(
-        (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
-          .disabled,
-      ).toBe(true)
+      ).toBe(false)
     },
   )
 
@@ -373,12 +598,12 @@ describe('AssessmentGapPage', () => {
         .disabled,
     ).toBe(false)
     expect(
-      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+      (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
         .disabled,
     ).toBe(false)
   })
 
-  it('excludes not-applicable items from page, L1, and L2 progress', async () => {
+  it('excludes not-applicable items from progress', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -409,15 +634,11 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('不适用')
     expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 1/1')
-    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
     expect(
       within(screen.getByLabelText('一级能力域导航')).getByRole('button', {
         name: /P01/,
       }).textContent,
     ).toContain('1/1')
-    expect(
-      within(screen.getByTestId('assessment-main-area')).getByText('1/1'),
-    ).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
     expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
   })
@@ -442,8 +663,6 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('不适用')
-    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 0/0')
-    expect(screen.getByLabelText('评估摘要').textContent).toContain('未完成 0')
     fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
     expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
   })
@@ -465,13 +684,16 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
     const submit = screen.getByRole('button', { name: '提交自评' })
-    const adjustment = screen.getByLabelText('申请调整 P01.01.01')
-    fireEvent.click(adjustment)
+    // Click the adjustment expand button
+    fireEvent.click(screen.getByText('调整▸'))
+    // Enable adjustment
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     expect(screen.getByText('需填写调整原因')).toBeTruthy()
     expect((submit as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(adjustment)
+    // Cancel adjustment
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     await waitFor(() =>
       expect((submit as HTMLButtonElement).disabled).toBe(false),
     )
@@ -494,8 +716,9 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
-    fireEvent.click(screen.getByLabelText('申请调整 P01.01.01'))
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByText('调整▸'))
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
       target: { value: '调整原因' },
     })
@@ -531,7 +754,7 @@ describe('AssessmentGapPage', () => {
         .disabled,
     ).toBe(false)
     expect(
-      (screen.getByLabelText('计划候选 P01.01.01') as HTMLInputElement)
+      (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
         .disabled,
     ).toBe(false)
   })
@@ -582,7 +805,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '2' },
     })
@@ -630,7 +853,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '4' },
     })
@@ -669,7 +892,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
     fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
     fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
     await waitFor(() => {
@@ -677,7 +900,7 @@ describe('AssessmentGapPage', () => {
     })
   })
 
-  it('sends a personal adjustment without calculated target fields', async () => {
+  it('sends canonical fields instead of plan_candidate in saveDraft', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -710,9 +933,10 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('标准 4')
+    await screen.findByText('能力自评与 Gap 分析')
 
-    fireEvent.click(screen.getByLabelText('申请调整 P01.01.01'))
+    fireEvent.click(screen.getByText('调整▸'))
+    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
       target: { value: '5' },
     })
@@ -728,6 +952,11 @@ describe('AssessmentGapPage', () => {
       adjusted_target_level: 5,
       target_adjustment_reason: '晋升准备',
     })
+    // Must include canonical fields
+    expect(detail).toHaveProperty('member_priority')
+    expect(detail).toHaveProperty('include_in_plan')
+    expect(detail).toHaveProperty('plan_quarter')
+    expect(detail).toHaveProperty('plan_month')
   })
 
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
@@ -763,10 +992,8 @@ describe('AssessmentGapPage', () => {
     )
 
     await screen.findByText('不适用')
-    expect(
-      (screen.getByLabelText('申请调整 P01.01.01') as HTMLInputElement)
-        .disabled,
-    ).toBe(true)
+    // The adjust button should not appear for non-applicable items
+    expect(screen.queryByText('调整▸')).toBeNull()
     expect(
       (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
         .disabled,
@@ -809,10 +1036,8 @@ describe('AssessmentGapPage', () => {
     )
 
     await screen.findByText('历史保留')
-    expect(
-      (screen.getByLabelText('申请调整 P01.01.01') as HTMLInputElement)
-        .disabled,
-    ).toBe(true)
+    // No adjustment button since standard_target_level is null
+    expect(screen.queryByText('调整▸')).toBeNull()
   })
 })
 
@@ -898,7 +1123,6 @@ describe('Assessment draft target repair', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('alert', { name: '草稿目标快照需要兼容修复' })
-    expect(screen.queryByText('需兼容修复')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '查看修复影响' }))
     await waitFor(() => {
       expect(screen.getByTestId('draft-repair-preview').textContent).toContain(
@@ -1072,10 +1296,14 @@ describe('R2-B filter/search', () => {
     evidence_note: 'done',
     plan_candidate: false,
     recommended_start_level: 'P4',
+    include_in_plan: null,
+    member_priority: null,
+    plan_quarter: null,
+    plan_month: null,
     ...o,
   })
 
-  it('未完成 filter shows null-level items', async () => {
+  it('未评估 filter shows null-level items', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -1115,6 +1343,10 @@ describe('R2-B filter/search', () => {
           evidence_note: '',
           plan_candidate: false,
           recommended_start_level: 'P4',
+          include_in_plan: null,
+          member_priority: null,
+          plan_quarter: null,
+          plan_month: null,
         },
       ],
     })
@@ -1126,8 +1358,8 @@ describe('R2-B filter/search', () => {
     await waitFor(() => {
       expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
     })
-    fireEvent.change(screen.getByRole('combobox', { name: '状态筛选' }), {
-      target: { value: '未完成' },
+    fireEvent.change(screen.getByTestId('status-filter'), {
+      target: { value: '未评估' },
     })
     await waitFor(() => {
       expect(screen.getByText('P01.01.02')).toBeTruthy()
@@ -1167,7 +1399,7 @@ describe('assessment api helpers', () => {
     expect(url).toContain('year=2026')
   })
 
-  it('saveDraft omits server-calculated target fields', async () => {
+  it('saveDraft sends canonical fields and omits plan_candidate', async () => {
     await assessmentApi.saveDraft(
       7,
       [
@@ -1181,6 +1413,10 @@ describe('assessment api helpers', () => {
           adjusted_target_level: 5,
           target_adjustment_reason: '晋升准备',
           gap_value: 3,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q1',
+          plan_month: 3,
         },
       ],
       1,
@@ -1195,8 +1431,12 @@ describe('assessment api helpers', () => {
       adjusted_target_level: 5,
       target_adjustment_reason: '晋升准备',
       evidence_note: null,
-      plan_candidate: false,
+      member_priority: '高',
+      include_in_plan: true,
+      plan_quarter: 'Q1',
+      plan_month: 3,
     })
+    expect(body.details[0]).not.toHaveProperty('plan_candidate')
     expect(body.expected_revision).toBe(1)
   })
 })
@@ -1251,7 +1491,6 @@ describe('newIdempotencyKey', () => {
 
   it('falls back to getRandomValues when randomUUID is not available', () => {
     const orig = crypto.randomUUID as (() => string) | undefined
-    // Replace so the check in newIdempotencyKey sees no randomUUID
     Object.defineProperty(crypto, 'randomUUID', {
       value: undefined,
       writable: true,
@@ -1259,7 +1498,6 @@ describe('newIdempotencyKey', () => {
     try {
       const key = assessmentApi.newIdempotencyKey()
       expect(key).toBeTruthy()
-      // Fallback key: prefix + getRandomValues hex
       expect(key.length).toBeGreaterThanOrEqual(22)
     } finally {
       if (orig) {
@@ -1268,7 +1506,6 @@ describe('newIdempotencyKey', () => {
           writable: true,
         })
       } else {
-        // ponytail: if randomUUID wasn't there originally, restore absence
         Object.defineProperty(crypto, 'randomUUID', {
           value: undefined,
           writable: true,
@@ -1280,7 +1517,6 @@ describe('newIdempotencyKey', () => {
   it('uses randomUUID when available', () => {
     const key = assessmentApi.newIdempotencyKey()
     expect(key).toBeTruthy()
-    // If randomUUID is available, the result has the UUID dash pattern
     if (typeof crypto.randomUUID === 'function') {
       expect(key).toContain('-')
     }

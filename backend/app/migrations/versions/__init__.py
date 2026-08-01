@@ -14,6 +14,12 @@ from .v0005_capability_standard_versioning import (
 from .v0006_assessment_scope_snapshots import (
     upgrade as upgrade_assessment_scope_snapshots,
 )
+from .v0007_assessment_plan_selection import (
+    upgrade as upgrade_assessment_plan_selection,
+)
+from .v0008_plan_null_constraint import (
+    upgrade as upgrade_plan_null_constraint,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -25,6 +31,8 @@ MIGRATIONS = [
     ("0004_legacy_draft_target_repair", upgrade_legacy_draft_target_repair),
     ("0005_capability_standard_versioning", upgrade_capability_standard_versioning),
     ("0006_assessment_scope_snapshots", upgrade_assessment_scope_snapshots),
+    ("0007_assessment_plan_selection", upgrade_assessment_plan_selection),
+    ("0008_plan_null_constraint", upgrade_plan_null_constraint),
 ]
 
 __all__ = ["MIGRATIONS"]

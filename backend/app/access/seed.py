@@ -120,7 +120,6 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
         save_assessment_draft,
         submit_assessment,
         submit_assessment_review,
-        update_gap,
     )
     from ..assessment.scope import compute_assessment_scope
     from ..planning.repository import (
@@ -166,11 +165,15 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             details.append(
                 {
                     "l3_code": detail["l3_code"],
+                    "l3_node_id": detail.get("l3_node_id"),
                     "current_level": demo_current,
                     "evidence_note": (
                         "本地演示自评" if is_demo_gap else "本地演示已达标项"
                     ),
-                    "plan_candidate": is_demo_gap,
+                    "member_priority": "高" if is_demo_gap else None,
+                    "include_in_plan": True if is_demo_gap else None,
+                    "plan_quarter": "Q1" if is_demo_gap else None,
+                    "plan_month": 3 if is_demo_gap else None,
                 }
             )
         save_assessment_draft(
@@ -192,7 +195,6 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
         gap_id = connection.execute(
             "SELECT id FROM gap WHERE assessment_id = %s", (assessment_id,)
         ).fetchone()[0]
-        update_gap(connection, gap_id, member_id, "高", True)
         create_growth_goal(connection, member_id, gap_id)
         plan_item = generate_plan_items(connection, member_id)[0]
         task_id = connection.execute(

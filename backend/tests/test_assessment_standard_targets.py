@@ -146,6 +146,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
             [
                 {
                     "l3_code": code,
+                    "l3_node_id": node_id,
                     "current_level": 1,
                     "target_adjusted": True,
                     "adjusted_target_level": 4,
@@ -162,12 +163,16 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
         [
             {
                 "l3_code": code,
+                "l3_node_id": node_id,
                 "current_level": 1,
                 "target_adjusted": True,
                 "adjusted_target_level": 4,
                 "target_adjustment_reason": "岗位项目要求",
                 "evidence_note": "已完成基础练习",
-                "plan_candidate": True,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
             }
         ],
         expected_revision=1,
@@ -180,7 +185,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
     assert detail["gap_value"] == 3
 
 
-def test_not_applicable_item_rejects_adjustment_and_plan_candidate(
+def test_not_applicable_item_rejects_adjustment(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P5")
@@ -220,7 +225,10 @@ def test_not_applicable_item_rejects_adjustment_and_plan_candidate(
                     "target_adjusted": True,
                     "adjusted_target_level": 3,
                     "target_adjustment_reason": "提前适用",
-                    "plan_candidate": True,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             expected_revision=1,
@@ -250,7 +258,13 @@ def test_batch_save_is_atomic_and_requires_every_snapshot_row(
             standard_target_schema,
             assessment_id,
             member_id,
-            [{"l3_code": rows[0][1], "current_level": 2}],
+            [
+                {
+                    "l3_code": rows[0][1],
+                    "l3_node_id": int(rows[0][0]),
+                    "current_level": 2,
+                }
+            ],
             expected_revision=1,
         )
 
@@ -277,7 +291,7 @@ def test_concurrent_save_waits_for_assessment_row_lock(
                 second_connection,
                 assessment_id,
                 member_id,
-                [{"l3_code": code, "current_level": 2}],
+                [{"l3_code": code, "l3_node_id": node_id, "current_level": 2}],
                 expected_revision=1,
             )
 

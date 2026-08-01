@@ -57,7 +57,9 @@ export function GrowthGoalPage() {
 
   const goalL3Codes = new Set(goals.map((goal) => goal.l3_code))
   const availableGaps = gaps.filter(
-    (gap) => gap.plan_candidate && !goalL3Codes.has(gap.l3_code),
+    (gap) =>
+      (gap.include_in_plan ?? gap.plan_candidate) &&
+      !goalL3Codes.has(gap.l3_code),
   )
   const canCreate =
     user?.roles.includes('Member') && eligibility?.eligible === true

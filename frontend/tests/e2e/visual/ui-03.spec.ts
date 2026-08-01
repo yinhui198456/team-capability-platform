@@ -13,7 +13,9 @@ for (const viewport of VIEWPORTS) {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
       await loginAs(page, 'member')
-      await page.goto('/growth/annual-plan')
+      // Pin to 2026: the seed's annual plan lives there; the active-year
+      // resolver otherwise follows future-year smoke drafts.
+      await page.goto('/growth/annual-plan?year=2026')
       await expect(
         page.getByRole('heading', { name: '年度成长计划' }),
       ).toBeVisible()

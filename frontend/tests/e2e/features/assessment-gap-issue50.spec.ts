@@ -5,14 +5,19 @@ import { loginAs } from '../fixtures/auth'
 type AssessmentDetail = {
   id?: number
   l3_code: string
+  l3_node_id?: number | null
   l1_code?: string
   l2_code?: string
   current_level: number | null
   target_level: number | null
   standard_target_applicable?: boolean | null
   standard_target_level?: number | null
+  gap_value?: number | null
   evidence_note?: string | null
-  plan_candidate?: boolean
+  member_priority?: '高' | '中' | '低' | '暂缓' | null
+  include_in_plan?: boolean | null
+  plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month?: number | null
   inherited_current_level?: number | null
   inherited_evidence_note?: string | null
   inherited_from_assessment_id?: number | null
@@ -58,6 +63,7 @@ async function fillAllApplicable(page: Parameters<typeof loginAs>[0]) {
       data: {
         expected_revision: draft.revision,
         details: draft.details.map((detail) => ({
+          l3_node_id: detail.l3_node_id,
           l3_code: detail.l3_code,
           current_level: detail.standard_target_applicable === false ? null : 1,
         })),
@@ -157,16 +163,20 @@ test.describe('Issue #50 assessment gap workflow', () => {
     }
   })
 
-  test('level 3 without evidence is visibly incomplete before submit', async ({
+  test('unassessed level 3 is visibly incomplete before submit', async ({
     page,
   }) => {
     const current = page.getByRole('combobox', { name: /当前等级/ }).first()
-    await current.selectOption('3')
+    // the draft is shared across tests — clear the row first so the
+    // unfilled state is deterministic
+    if ((await current.inputValue()) !== '') await current.selectOption('')
     const row = current.locator('xpath=ancestor::tr')
-    await row.getByRole('button', { name: /^(编辑|填写)$/ }).click()
-    await page.locator('textarea').fill('')
-    await page.getByRole('button', { name: '确认依据' }).click()
-    await expect(page.getByText('需自评依据').first()).toBeVisible()
+    await expect(row.getByText('需评估等级')).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+    await current.selectOption('3')
+    await expect(row.getByText('需评估等级')).toHaveCount(0)
+    await current.selectOption('')
+    await expect(row.getByText('需评估等级')).toBeVisible()
     await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
   })
 
@@ -181,7 +191,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(summary).toContainText(
       `进度 ${applicable.length}/${applicable.length}`,
     )
-    await expect(summary).toContainText('未完成 0')
+    await expect(summary).toContainText('未评估 0')
     await page.getByRole('button', { name: '定位未完成' }).click()
     await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
   })
@@ -196,8 +206,10 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await search.press('Enter')
     const current = page.getByLabel(`当前等级 ${code}`)
     if ((await current.inputValue()) === '') await current.selectOption('1')
-    const adjustment = page.getByLabel(`申请调整 ${code}`)
-    await adjustment.click()
+    const row = current.locator('xpath=ancestor::tr')
+    await row.getByRole('button', { name: '调整▸' }).click()
+    const enable = page.getByLabel(`启用个人调整 ${code}`)
+    await enable.check()
     await page.getByLabel(`调整目标 ${code}`).selectOption('')
     await expect(page.getByText('需填写调整目标')).toBeVisible()
     await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
@@ -205,7 +217,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(page.getByText('需填写调整原因')).toBeVisible()
     await page.getByLabel(`调整原因 ${code}`).fill('合法调整原因')
     await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-    await adjustment.click()
+    await enable.uncheck()
     await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
   })
 
@@ -224,21 +236,23 @@ test.describe('Issue #50 assessment gap workflow', () => {
       .click()
     await page.route('**/api/assessments/*/submit', async (route) => {
       await route.fulfill({
-        status: 400,
+        status: 422,
         contentType: 'application/json',
         body: JSON.stringify({
           detail: {
-            code: 'assessment_validation_failed',
+            code: target.l3_code,
             l3_code: target.l3_code,
-            reason: 'requires_evidence',
-            message: `${target.l3_code} requires evidence`,
+            l3_node_id: target.l3_node_id,
+            field: 'member_priority',
+            reason: 'priority_required',
+            message: `${target.l3_code} requires member_priority`,
           },
         }),
       })
     })
     await page.getByRole('button', { name: '提交自评' }).click()
     await expect(
-      page.getByText(`${target.l3_code} requires evidence`),
+      page.getByText(`${target.l3_code} requires member_priority`),
     ).toBeVisible()
     await expect(page.locator(`#row-${target.id}`)).toBeFocused()
     await expect(
@@ -275,6 +289,32 @@ test.describe('Issue #50 assessment gap workflow', () => {
         await page.getByRole('button', { name: '确认填 1' }).click()
         expect((await responsePromise).status()).toBe(200)
       }
+    }
+    // positive-Gap items need an explicit plan decision before submit
+    const draft = await currentDraft(page)
+    const gapDetails = draft.details.filter(
+      (detail) =>
+        detail.standard_target_applicable !== false &&
+        (detail.gap_value ?? 0) > 0,
+    )
+    if (gapDetails.length) {
+      const patched = await page.request.patch(
+        `/api/assessments/${draft.id}/draft`,
+        {
+          data: {
+            expected_revision: draft.revision,
+            details: gapDetails.map((detail) => ({
+              l3_node_id: detail.l3_node_id,
+              l3_code: detail.l3_code,
+              member_priority: '低',
+              include_in_plan: false,
+            })),
+          },
+        },
+      )
+      expect(patched.ok()).toBeTruthy()
+      await page.reload()
+      await expect(page.getByLabel('评估摘要')).toBeVisible()
     }
     await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
     await page.getByRole('button', { name: '提交自评' }).click()
@@ -337,7 +377,13 @@ test.describe('Issue #50 assessment gap workflow', () => {
       {
         data: {
           expected_revision: before.revision,
-          details: [{ l3_code: first.l3_code, current_level: 1 }],
+          details: [
+            {
+              l3_node_id: first.l3_node_id,
+              l3_code: first.l3_code,
+              current_level: 1,
+            },
+          ],
         },
       },
     )
@@ -360,7 +406,13 @@ test.describe('Issue #50 assessment gap workflow', () => {
       page.request.patch(`/api/assessments/${before.id}/draft`, {
         data: {
           expected_revision: before.revision,
-          details: [{ l3_code: detail.l3_code, current_level: level }],
+          details: [
+            {
+              l3_node_id: detail.l3_node_id,
+              l3_code: detail.l3_code,
+              current_level: level,
+            },
+          ],
         },
       }),
     )
@@ -376,7 +428,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
     ).toBeGreaterThanOrEqual(1)
   })
 
-  test('a legal level increase to the target cancels an existing plan candidate', async ({
+  test('a legal level increase to the target auto-clears plan fields (auto_cleared)', async ({
     page,
   }) => {
     const before = await currentDraft(page)
@@ -393,9 +445,13 @@ test.describe('Issue #50 assessment gap workflow', () => {
           expected_revision: before.revision,
           details: [
             {
+              l3_node_id: candidate.l3_node_id,
               l3_code: candidate.l3_code,
               current_level: 1,
-              plan_candidate: true,
+              member_priority: '高',
+              include_in_plan: true,
+              plan_quarter: 'Q1',
+              plan_month: 2,
             },
           ],
         },
@@ -410,6 +466,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
           expected_revision: firstBody.revision,
           details: [
             {
+              l3_node_id: candidate.l3_node_id,
               l3_code: candidate.l3_code,
               current_level: candidate.target_level,
             },
@@ -419,18 +476,34 @@ test.describe('Issue #50 assessment gap workflow', () => {
     )
     expect(second.ok()).toBeTruthy()
     const secondBody = (await second.json()) as {
-      auto_cancelled_plan_candidates: string[]
+      auto_cleared: Array<{
+        l3_node_id: number
+        l3_code: string
+        fields: string[]
+      }>
       gap_summary: { total_gaps: number }
     }
-    expect(secondBody.auto_cancelled_plan_candidates).toContain(
-      candidate.l3_code,
+    const cleared = secondBody.auto_cleared.find(
+      (entry) => entry.l3_code === candidate.l3_code,
+    )
+    expect(cleared).toBeDefined()
+    expect(cleared!.fields).toEqual(
+      expect.arrayContaining([
+        'member_priority',
+        'include_in_plan',
+        'plan_quarter',
+        'plan_month',
+      ]),
     )
     expect(secondBody.gap_summary.total_gaps).toBeGreaterThanOrEqual(0)
     const after = await currentDraft(page)
-    expect(
-      after.details.find((item) => item.l3_code === candidate.l3_code)
-        ?.plan_candidate,
-    ).toBe(false)
+    const updated = after.details.find(
+      (item) => item.l3_code === candidate.l3_code,
+    )!
+    expect(updated.member_priority).toBeNull()
+    expect(updated.include_in_plan).toBeNull()
+    expect(updated.plan_quarter).toBeNull()
+    expect(updated.plan_month).toBeNull()
     const gaps = await page.request.get(`/api/gaps?assessment_id=${before.id}`)
     expect(gaps.ok()).toBeTruthy()
     expect(
@@ -442,7 +515,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
 })
 
 test.describe('Issue #50 historical inheritance and evidence gates', () => {
-  test('creates a cross-year snapshot and rejects unchanged evidence for 1→2 and 3→4', async ({
+  test('creates a cross-year snapshot and keeps inherited evidence readable and writable', async ({
     page,
     browser,
   }) => {
@@ -456,18 +529,24 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
       '/api/assessments/scope-preview?year=2025',
     )
     expect(previousPreview.ok()).toBeTruthy()
-    const previousToken = (
-      (await previousPreview.json()) as { scope_token: string }
-    ).scope_token
-    const previousCreated = await page.request.post('/api/assessments', {
-      data: {
-        year: 2025,
-        assessment_type: '年度',
-        scope_token: previousToken,
-      },
-    })
-    expect(previousCreated.ok()).toBeTruthy()
-    const previousId = ((await previousCreated.json()) as { id: number }).id
+    const previousPreviewBody = (await previousPreview.json()) as {
+      scope_token: string
+      open_draft_id: number | null
+    }
+    let previousId: number
+    if (previousPreviewBody.open_draft_id) {
+      previousId = previousPreviewBody.open_draft_id
+    } else {
+      const previousCreated = await page.request.post('/api/assessments', {
+        data: {
+          year: 2025,
+          assessment_type: '年度',
+          scope_token: previousPreviewBody.scope_token,
+        },
+      })
+      expect(previousCreated.ok()).toBeTruthy()
+      previousId = ((await previousCreated.json()) as { id: number }).id
+    }
     const previousResponse = await page.request.get(
       `/api/assessments/${previousId}`,
     )
@@ -485,7 +564,11 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
       ) ?? applicable.find((detail) => detail.l3_code !== low.l3_code)!
     const details = previous.details.map((detail) => {
       if (detail.standard_target_applicable === false) {
-        return { l3_code: detail.l3_code, current_level: null }
+        return {
+          l3_node_id: detail.l3_node_id,
+          l3_code: detail.l3_code,
+          current_level: null,
+        }
       }
       const current =
         detail.l3_code === low.l3_code
@@ -493,11 +576,18 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
           : detail.l3_code === high.l3_code
             ? 3
             : (detail.target_level ?? 1)
+      const hasGap =
+        detail.target_level != null && current < detail.target_level
       return {
+        l3_node_id: detail.l3_node_id,
         l3_code: detail.l3_code,
         current_level: current,
         evidence_note:
           detail.l3_code === low.l3_code ? null : `历史依据-${detail.l3_code}`,
+        // positive-Gap items need an explicit plan decision before submit
+        ...(hasGap
+          ? { member_priority: '中' as const, include_in_plan: false }
+          : {}),
       }
     })
     const saved = await page.request.put(
@@ -507,9 +597,10 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
       },
     )
     expect(saved.ok()).toBeTruthy()
+    const savedBody = (await saved.json()) as { revision: number }
     const submitted = await page.request.post(
       `/api/assessments/${previousId}/submit`,
-      { data: { expected_revision: 2 } },
+      { data: { expected_revision: savedBody.revision } },
     )
     expect(submitted.ok()).toBeTruthy()
 
@@ -575,27 +666,20 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     const lowSelect = page.getByLabel(`当前等级 ${low.l3_code}`)
     await expect(lowSelect).toBeVisible()
     await lowSelect.selectOption('2')
-    const lowRow = page.locator(`#row-${inheritedLow.id}`)
-    const evidenceRow = page.locator(`#row-${inheritedLow.id} + tr`)
-    await expect(lowRow.getByText('需更新依据')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
-    await lowRow.getByRole('button', { name: '填写' }).click()
-    await evidenceRow.locator('textarea').fill('   ')
-    await evidenceRow.getByRole('button', { name: '确认依据' }).click()
-    await expect(lowRow.getByText('需更新依据')).toBeVisible()
-    await lowRow.getByRole('button', { name: '填写' }).click()
-    await evidenceRow.locator('textarea').fill('本次新依据')
-    await evidenceRow.getByRole('button', { name: '确认依据' }).click()
-    await expect(lowRow.getByText('需更新依据')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
+    // evidence is no longer a submit gate — saving the updated level works
+    // without touching the inherited evidence
+    await page.getByRole('button', { name: '保存草稿' }).click()
+    await expect(page.getByText('草稿已保存')).toBeVisible()
 
+    const afterUi = await currentDraft(page, currentId)
     const lowUpdate = await page.request.patch(
       `/api/assessments/${currentId}/draft`,
       {
         data: {
-          expected_revision: current.revision,
+          expected_revision: afterUi.revision,
           details: [
             {
+              l3_node_id: inheritedLow.l3_node_id,
               l3_code: low.l3_code,
               current_level: 2,
               evidence_note: inheritedLow.evidence_note,
@@ -613,6 +697,7 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
           expected_revision: lowBody.revision,
           details: [
             {
+              l3_node_id: inheritedHigh.l3_node_id,
               l3_code: high.l3_code,
               current_level: 4,
               evidence_note: inheritedHigh.evidence_note,
@@ -629,7 +714,11 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
         data: { expected_revision: highBody.revision },
       },
     )
-    expect(rejected.status()).toBe(400)
-    expect(await rejected.text()).toContain('requires updated evidence')
+    expect(rejected.status()).toBe(422)
+    const rejectedBody = await rejected.text()
+    // unchanged inherited evidence is accepted; the submit is rejected only
+    // because positive-gap items still lack a member_priority decision
+    expect(rejectedBody).not.toContain('requires updated evidence')
+    expect(rejectedBody).toContain('priority_required')
   })
 })

@@ -20,6 +20,17 @@ from tests.standard_target_support import create_scoped_draft
 SESSION_COOKIE = "tcp_session"
 
 
+def _detail_l3_node_id(
+    connection: psycopg.Connection, assessment_id: int, l3_code: str
+) -> int | None:
+    row = connection.execute(
+        "SELECT l3_node_id FROM assessment_detail "
+        "WHERE assessment_id = %s AND l3_code = %s",
+        (assessment_id, l3_code),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS assessment_review")
@@ -207,19 +218,27 @@ def test_create_draft_save_details_submit_review(
     assert assessment["status"] == "草稿"
 
     # Save with a single real L3 code.
+    l3_code = "C01.01.01"
+    node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
                 {
-                    "l3_code": "C01.01.01",
+                    "l3_node_id": node_id,
+                    "l3_code": l3_code,
                     "current_level": 2,
                     "target_adjusted": True,
                     "adjusted_target_level": 4,
                     "target_adjustment_reason": "岗位项目要求",
                     "evidence_note": "测试中",
-                    "plan_candidate": True,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             "expected_revision": 1,
@@ -439,11 +458,19 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
+    # Set current_level low enough to create a positive gap (standard target is 3),
+    # but DON'T provide plan fields — submit must fail validation.
+    l3_code = "C01.01.01"
+    node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
     status, _, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_code": "C01.01.01", "current_level": 3}],
+            "details": [
+                {"l3_node_id": node_id, "l3_code": l3_code, "current_level": 0}
+            ],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -455,13 +482,15 @@ def test_submit_validation_returns_structured_l3_error(
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 400
-    assert body["detail"] == {
-        "code": "assessment_validation_failed",
-        "l3_code": "C01.01.01",
-        "reason": "requires_evidence",
-        "message": "assessment detail C01.01.01 requires evidence",
-    }
+    assert status == 422
+    detail = body["detail"]
+    assert detail["code"] == "assessment_validation_failed"
+    assert detail["l3_code"] == "C01.01.01"
+    assert "l3_node_id" in detail
+    assert isinstance(detail["l3_node_id"], int)
+    # With #61: evidence gate removed; validation now catches missing plan fields.
+    assert detail["reason"] == "priority_required"
+    assert "message" in detail
 
 
 def test_member_cannot_view_or_edit_other_draft(
@@ -547,7 +576,7 @@ def test_cannot_save_after_submit(assessment_schema: psycopg.Connection) -> None
         {"details": [], "expected_revision": 1},
         cookies=cookies,
     )
-    assert status == 400
+    assert status == 422
 
 
 def test_draft_target_repair_api_enforces_permissions_and_all_or_nothing(
