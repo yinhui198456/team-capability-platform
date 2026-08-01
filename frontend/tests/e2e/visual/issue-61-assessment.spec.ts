@@ -17,9 +17,12 @@ const VIEWPORTS = [
 
 const BACKEND = process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://localhost:18001'
 
+const VISUAL_YEAR = 2271
+
 async function ensureAssessmentDraft(page: Page): Promise<void> {
-  // Navigate to assessment page
-  await page.goto('/capability/assessment')
+  // Pin a fixed isolated year so the 7-column table content is deterministic
+  // regardless of other suites' leftover drafts in the shared database.
+  await page.goto(`/capability/assessment?year=${VISUAL_YEAR}`)
   await page.waitForLoadState('networkidle')
 
   // If already on the assessment form (no preview button), we're done

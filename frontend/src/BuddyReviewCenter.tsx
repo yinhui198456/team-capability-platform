@@ -262,15 +262,16 @@ export function BuddyReviewCenter() {
   }, [year])
 
   useEffect(() => {
-    // ponytail: clear immediately on switch so old item's data never bleeds through
+    // ponytail: clear immediately on switch so old item's data never bleeds through.
+    // message/error are NOT cleared here: a successful submit clears the
+    // selection, which would otherwise wipe the success message before the UI
+    // can show it.
     setWorkspace(null)
     setHistory([])
     setReviewFilter('全部')
     setSearch('')
     setConclusion('')
     setFeedback('')
-    setMessage('')
-    setError('')
 
     if (!selected) return
 
