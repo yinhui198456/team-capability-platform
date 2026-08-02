@@ -1,12 +1,19 @@
-"""Issue #62 5th review: the proposal-source != plan-first-source invariant
-must hold under real concurrency, not only in single-connection sequential
-tests.  Two independent connections at the default READ COMMITTED isolation,
-event/barrier-driven interleaving with bounded join/lock/statement timeouts
-(no arbitrary sleeps), asserting blocking order, per-side outcomes, the exact
-final plan/proposal state, and absence of deadlocks.
+"""Issue #62 6th review: the concurrency red tests must prove the
+proposal-source != plan-first-source invariant with trustworthy verdicts.
+
+Two independent connections at the default READ COMMITTED isolation,
+event/barrier-driven interleaving with bounded lock/statement timeouts (no
+arbitrary sleeps, no retries).  Outcomes are structured (status, sqlstate,
+message): the single expected failure mode of the illegal interleavings is a
+raised P0001 guard rejection — lock timeouts, deadlocks and unexpected
+errors FAIL the tests instead of being folded into a vague "not ok".  The
+legal concurrency control synchronises both workers on a threading.Barrier
+so the contention is real and provable, then asserts both sides succeeded
+with exact final state.
 """
 
 import threading
+from dataclasses import dataclass
 
 import psycopg
 
@@ -19,6 +26,66 @@ INSERT INTO annual_plan_change_proposal (
     target_annual_growth_plan_id, status, created_by, summary
 ) VALUES (%s, 2026, %s, %s, '待处理', %s, '{}')
 """
+
+_UPDATE_PLAN_SOURCE_SQL = """
+UPDATE annual_growth_plan SET source_assessment_id=%s,
+planning_source_type='assessment_approval' WHERE id=%s
+"""
+
+_P0001 = "P0001"
+
+_LOCK_TIMEOUT = "lock-timeout"
+_DEADLOCK = "deadlock"
+
+
+@dataclass(frozen=True)
+class StatementOutcome:
+    """Structured per-statement verdict.  The guard must reject an illegal
+    write with ``raised``/P0001; anything else is a test failure."""
+
+    status: str  # "ok" | "raised" | "lock-timeout" | "deadlock" | "error"
+    sqlstate: str | None = None
+    message: str = ""
+
+    def is_ok(self) -> bool:
+        return self.status == "ok"
+
+    def is_guard_rejection(self) -> bool:
+        """The expected DB-level rejection: a raised exception with the
+        guard's P0001 SQLSTATE.  Lock timeouts, deadlocks and unexpected
+        errors are never acceptable outcomes here."""
+        return self.status == "raised" and self.sqlstate == _P0001
+
+    def __str__(self) -> str:  # compact for assertion messages
+        if self.status == "ok":
+            return "ok"
+        return f"{self.status} (sqlstate={self.sqlstate}): {self.message[:200]}"
+
+
+def _execute_outcome(
+    connection: psycopg.Connection,
+    sql: str,
+    params: tuple,
+    commit: bool,
+) -> StatementOutcome:
+    """Run one statement in an explicit transaction; ``commit=True`` commits
+    it (self-contained side), ``commit=False`` leaves the transaction open
+    for the caller to interleave.  Structured verdict, no stringly folding."""
+    try:
+        if not commit:
+            connection.execute("BEGIN")
+        connection.execute(sql, params)
+        if commit:
+            connection.commit()
+        return StatementOutcome("ok")
+    except psycopg.errors.RaiseException as error:
+        return StatementOutcome("raised", error.sqlstate, str(error))
+    except psycopg.errors.LockNotAvailable as error:
+        return StatementOutcome(_LOCK_TIMEOUT, error.sqlstate, str(error))
+    except psycopg.errors.DeadlockDetected as error:
+        return StatementOutcome(_DEADLOCK, error.sqlstate, str(error))
+    except Exception as error:  # noqa: BLE001
+        return StatementOutcome("error", None, repr(error))
 
 
 class TestProposalSourceGuardConcurrency(ReviewTestBase):
@@ -47,56 +114,22 @@ class TestProposalSourceGuardConcurrency(ReviewTestBase):
 
     @staticmethod
     def _new_connection() -> psycopg.Connection:
-        connection = psycopg.connect(TEST_DATABASE_URL)
+        """autocommit connection: the SETs never open an implicit
+        transaction, so the explicit BEGIN in _execute_outcome is always the
+        first transaction statement — no 'transaction already in progress'
+        warnings, no hidden transaction state."""
+        connection = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         connection.execute("SET lock_timeout = '10s'")
         connection.execute("SET statement_timeout = '30s'")
         return connection
 
     @staticmethod
-    def _run(
-        connection: psycopg.Connection,
-        sql: str,
-        params: tuple,
-        result: dict[str, str],
-        key: str,
-    ) -> None:
+    def _close(connection: psycopg.Connection) -> None:
         try:
-            connection.execute(sql, params)
-            result[key] = "ok"
-        except psycopg.errors.RaiseException as error:
-            result[key] = f"raised:{error}"
-        except psycopg.errors.LockNotAvailable as error:
-            result[key] = f"lock-timeout:{error}"
-        except psycopg.errors.DeadlockDetected as error:
-            result[key] = f"deadlock:{error}"
-        except Exception as error:  # noqa: BLE001
-            result[key] = f"err:{error!r}"
-
-    @staticmethod
-    def _run_commit(
-        connection: psycopg.Connection,
-        sql: str,
-        params: tuple,
-        result: dict[str, str],
-        key: str,
-    ) -> None:
-        """Self-contained transaction: BEGIN → statement → COMMIT.  Used by
-        the legal-concurrency control where each side must land on its own
-        (no external interleaving of commits), so one side can never wait on
-        the other's externally-timed commit."""
-        try:
-            connection.execute("BEGIN")
-            connection.execute(sql, params)
-            connection.commit()
-            result[key] = "ok"
-        except psycopg.errors.RaiseException as error:
-            result[key] = f"raised:{error}"
-        except psycopg.errors.LockNotAvailable as error:
-            result[key] = f"lock-timeout:{error}"
-        except psycopg.errors.DeadlockDetected as error:
-            result[key] = f"deadlock:{error}"
-        except Exception as error:  # noqa: BLE001
-            result[key] = f"err:{error!r}"
+            connection.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        connection.close()
 
     def _final_state(
         self, connection: psycopg.Connection, plan_id: int
@@ -115,126 +148,130 @@ class TestProposalSourceGuardConcurrency(ReviewTestBase):
     def test_concurrent_proposal_insert_then_plan_backfill_cannot_form_equal_sources(
         self, review_schema: psycopg.Connection
     ) -> None:
-        """Tx-A inserts a proposal (source=A) while Tx-B concurrently
-        backfills the plan's first source with the same A.  Exactly one side
-        may win; the final pair may never be equal sources."""
+        """Tx-A inserts a proposal (source=A) and holds it; Tx-B concurrently
+        backfills the plan's first source with the same A.  Tx-B must block
+        while Tx-A is uncommitted, then be rejected with the guard's P0001 —
+        never a lock timeout, deadlock or unexpected error — and the final
+        state must be exactly one proposal (Tx-A's) with the plan source
+        still NULL."""
         member_id, a_id, _b_id, plan_id = self._prepare(review_schema)
         tx_a = self._new_connection()
         tx_b = self._new_connection()
         try:
-            tx_a.execute("BEGIN")
-            tx_a.execute(_INSERT_PROPOSAL_SQL, (member_id, a_id, plan_id, member_id))
-            # Tx-A holds its proposal uncommitted. Tx-B now tries the backfill.
-            result_b: dict[str, str] = {}
-            tx_b.execute("BEGIN")
+            # Tx-A lands its proposal first and holds it uncommitted.
+            outcome_a = _execute_outcome(
+                tx_a,
+                _INSERT_PROPOSAL_SQL,
+                (member_id, a_id, plan_id, member_id),
+                commit=False,
+            )
+            assert outcome_a.is_ok(), outcome_a
+            # Tx-B now tries the backfill; it must block on Tx-A.
+            outcomes: list[StatementOutcome | None] = [None]
             worker = threading.Thread(
-                target=self._run,
+                target=_run_threaded,
                 args=(
                     tx_b,
-                    "UPDATE annual_growth_plan SET source_assessment_id=%s, "
-                    "planning_source_type='assessment_approval' WHERE id=%s",
+                    _UPDATE_PLAN_SOURCE_SQL,
                     (a_id, plan_id),
-                    result_b,
-                    "update",
+                    False,
+                    outcomes,
+                    0,
                 ),
             )
             worker.start()
-            # the backfill must block on Tx-A's uncommitted proposal (shared
-            # plan-key serialisation); the unguarded baseline sails through
             worker.join(2.0)
             blocked = worker.is_alive()
             tx_a.commit()
             worker.join(15.0)
             assert not worker.is_alive(), "backfill did not finish"
-            tx_b_did_backfill = result_b.get("update") == "ok"
-            if tx_b_did_backfill:
-                tx_b.rollback()
-            plan_source, proposal_sources = self._final_state(review_schema, plan_id)
+            outcome_b = outcomes[0]
             assert blocked, (
                 "plan backfill must block while an uncommitted proposal with "
-                f"the same source exists (result={result_b})"
+                f"the same source exists, got {outcome_b}"
             )
-            assert not (tx_b_did_backfill and a_id in proposal_sources), (
-                "both sides committed: plan.source == proposal.source "
-                f"(backfill={result_b}, proposal_sources={proposal_sources})"
+            assert outcome_b.is_guard_rejection(), (
+                "plan backfill must be rejected by the guard with P0001 "
+                f"(exactly one legal outcome: Tx-A wins), got {outcome_b}"
             )
+            tx_b.rollback()
+            plan_source, proposal_sources = self._final_state(review_schema, plan_id)
             assert plan_source is None, f"plan source must stay NULL: {plan_source}"
-            assert proposal_sources == [a_id]
+            assert proposal_sources == [
+                a_id
+            ], f"exactly Tx-A's proposal expected, got {proposal_sources}"
         finally:
-            for connection in (tx_a, tx_b):
-                try:
-                    connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
-                connection.close()
+            self._close(tx_a)
+            self._close(tx_b)
 
     def test_concurrent_plan_backfill_then_proposal_insert_cannot_form_equal_sources(
         self, review_schema: psycopg.Connection
     ) -> None:
         """Reverse interleaving: Tx-B holds the plan-side source update while
-        Tx-A inserts a proposal with the same source.  Only one legal result —
-        the proposal side waits, then sees the committed source and is
-        rejected with zero partial writes."""
+        Tx-A inserts a proposal with the same source.  Tx-A must block until
+        Tx-B commits, then be rejected with the guard's P0001 — never a lock
+        timeout, deadlock or unexpected error — leaving zero proposal rows
+        and the plan source committed."""
         member_id, a_id, _b_id, plan_id = self._prepare(review_schema)
         tx_b = self._new_connection()
         tx_a = self._new_connection()
         try:
-            tx_b.execute("BEGIN")
-            tx_b.execute(
-                "UPDATE annual_growth_plan SET source_assessment_id=%s, "
-                "planning_source_type='assessment_approval' WHERE id=%s",
+            # Tx-B holds the plan-side backfill uncommitted.
+            outcome_b = _execute_outcome(
+                tx_b,
+                _UPDATE_PLAN_SOURCE_SQL,
                 (a_id, plan_id),
+                commit=False,
             )
-            result_a: dict[str, str] = {}
-            tx_a.execute("BEGIN")
+            assert outcome_b.is_ok(), outcome_b
+            # Tx-A now tries a proposal with the same source; it must block.
+            outcomes: list[StatementOutcome | None] = [None]
             worker = threading.Thread(
-                target=self._run,
+                target=_run_threaded,
                 args=(
                     tx_a,
                     _INSERT_PROPOSAL_SQL,
                     (member_id, a_id, plan_id, member_id),
-                    result_a,
-                    "insert",
+                    False,
+                    outcomes,
+                    0,
                 ),
             )
             worker.start()
-            # the proposal insert must wait for the plan-side backfill
             worker.join(2.0)
             blocked = worker.is_alive()
             tx_b.commit()
             worker.join(15.0)
             assert not worker.is_alive(), "proposal insert did not finish"
-            tx_a_inserted = result_a.get("insert") == "ok"
-            if tx_a_inserted:
-                tx_a.rollback()
-            plan_source, proposal_sources = self._final_state(review_schema, plan_id)
+            outcome_a = outcomes[0]
             assert blocked, (
-                "proposal insert must wait for the plan-side backfill "
-                f"(result={result_a})"
+                "proposal insert must block until the plan backfill commits, "
+                f"got {outcome_a}"
             )
-            assert not (
-                tx_a_inserted and plan_source is not None and int(plan_source) == a_id
-            ), (
-                "both sides committed: proposal.source == plan.source "
-                f"(insert={result_a}, plan_source={plan_source})"
+            assert outcome_a.is_guard_rejection(), (
+                "proposal insert must be rejected by the guard with P0001 "
+                f"(exactly one legal outcome: Tx-B wins), got {outcome_a}"
             )
+            tx_a.rollback()
+            plan_source, proposal_sources = self._final_state(review_schema, plan_id)
             assert int(plan_source) == a_id
             assert proposal_sources == [], (
                 f"zero partial writes expected, got {proposal_sources} "
-                f"(insert result={result_a})"
+                f"(insert outcome: {outcome_a})"
             )
         finally:
-            for connection in (tx_a, tx_b):
-                try:
-                    connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
-                connection.close()
+            self._close(tx_a)
+            self._close(tx_b)
 
-    def test_legal_concurrent_proposals_not_rejected(self, review_schema) -> None:
-        """Legal concurrency control: with plan.source=A fixed, two
-        subsequent-assessment proposals (B and C) inserted concurrently must
-        both succeed, with no spurious rejection and no deadlock."""
+    def test_legal_concurrent_proposals_not_rejected(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """Legal concurrency control with a provable starting point: with
+        plan.source=A fixed, proposals B and C are inserted concurrently —
+        both workers synchronise on a threading.Barrier before executing, so
+        the contention is real.  Both must land (ok/ok — no spurious
+        rejection, no lock timeout, no deadlock) and the final state must be
+        exactly the two proposals."""
         member_id, a_id, b_id, plan_id = self._prepare(review_schema)
         review_schema.execute(
             "UPDATE annual_growth_plan SET source_assessment_id=%s, "
@@ -246,46 +283,77 @@ class TestProposalSourceGuardConcurrency(ReviewTestBase):
         review_schema.commit()
         tx_b = self._new_connection()
         tx_c = self._new_connection()
-        result_b: dict[str, str] = {}
-        result_c: dict[str, str] = {}
+        barrier = threading.Barrier(2, timeout=10)
+        outcomes: list[StatementOutcome | None] = [None, None]
         try:
-            # each side is a self-contained BEGIN→INSERT→COMMIT transaction:
-            # whichever wins the plan row first lands, the other waits on the
-            # same row and then passes — both succeed, neither is rejected
-            worker_b = threading.Thread(
-                target=self._run_commit,
-                args=(
-                    tx_b,
-                    _INSERT_PROPOSAL_SQL,
-                    (member_id, b_id, plan_id, member_id),
-                    result_b,
-                    "insert",
+            workers = [
+                threading.Thread(
+                    target=_run_barriered,
+                    args=(
+                        barrier,
+                        tx_b,
+                        _INSERT_PROPOSAL_SQL,
+                        (member_id, b_id, plan_id, member_id),
+                        outcomes,
+                        0,
+                    ),
                 ),
-            )
-            worker_c = threading.Thread(
-                target=self._run_commit,
-                args=(
-                    tx_c,
-                    _INSERT_PROPOSAL_SQL,
-                    (member_id, c_id, plan_id, member_id),
-                    result_c,
-                    "insert",
+                threading.Thread(
+                    target=_run_barriered,
+                    args=(
+                        barrier,
+                        tx_c,
+                        _INSERT_PROPOSAL_SQL,
+                        (member_id, c_id, plan_id, member_id),
+                        outcomes,
+                        1,
+                    ),
                 ),
-            )
-            worker_b.start()
-            worker_c.start()
-            worker_b.join(15.0)
-            worker_c.join(15.0)
-            assert not worker_b.is_alive() and not worker_c.is_alive()
-            assert result_b.get("insert") == "ok", result_b
-            assert result_c.get("insert") == "ok", result_c
+            ]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(20.0)
+            assert all(
+                not worker.is_alive() for worker in workers
+            ), "workers must finish within the bounded window"
+            assert outcomes[0].is_ok(), f"proposal B must succeed, got {outcomes[0]}"
+            assert outcomes[1].is_ok(), f"proposal C must succeed, got {outcomes[1]}"
             plan_source, proposal_sources = self._final_state(review_schema, plan_id)
             assert int(plan_source) == a_id
-            assert sorted(proposal_sources) == sorted([b_id, c_id])
+            assert sorted(proposal_sources) == sorted(
+                [b_id, c_id]
+            ), f"exactly B and C expected, got {proposal_sources}"
         finally:
-            for connection in (tx_b, tx_c):
-                try:
-                    connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
-                connection.close()
+            self._close(tx_b)
+            self._close(tx_c)
+
+
+def _run_threaded(
+    connection: psycopg.Connection,
+    sql: str,
+    params: tuple,
+    commit: bool,
+    outcomes: list[StatementOutcome | None],
+    index: int,
+) -> None:
+    outcomes[index] = _execute_outcome(connection, sql, params, commit)
+
+
+def _run_barriered(
+    barrier: threading.Barrier,
+    connection: psycopg.Connection,
+    sql: str,
+    params: tuple,
+    outcomes: list[StatementOutcome | None],
+    index: int,
+) -> None:
+    """Wait for both workers to arrive, then execute a self-contained
+    transaction.  A broken barrier (timeout) is a test failure, never a
+    pass."""
+    try:
+        barrier.wait(timeout=10)
+    except threading.BrokenBarrierError as error:
+        outcomes[index] = StatementOutcome("error", None, f"barrier broken: {error}")
+        return
+    outcomes[index] = _execute_outcome(connection, sql, params, commit=True)
