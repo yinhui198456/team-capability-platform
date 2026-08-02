@@ -296,14 +296,18 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
             "l2_name",
             "l3_code",
             "l3_name",
+            "scope_type",
             "standard_job_level_snapshot",
             "assessment_revision",
+            "standard_target_level",
             "effective_target_level",
             "gap_value",
             "plan_quarter",
             "plan_month",
             "priority",
             "include_in_plan",
+            "member_current_level_snapshot",
+            "member_target_level_snapshot",
         ):
             expected = (
                 psycopg.errors.NotNullViolation
@@ -791,6 +795,7 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
         for column in (
             "scope_type",
             "current_level",
+            "standard_target_level",
             "effective_target_level",
             "gap_value",
             "member_priority",
@@ -828,7 +833,9 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
         other_assessment = self.submit(
             review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}]
         )
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(
+            (psycopg.errors.ForeignKeyViolation, psycopg.errors.RaiseException)
+        ):
             review_schema.execute(
                 "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
                 (other_assessment, plan_id),
@@ -838,7 +845,9 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
         other_year = self.submit(
             review_schema, member_id, 2027, [{"l3_code": _L3, "target_level": 3}]
         )
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(
+            (psycopg.errors.ForeignKeyViolation, psycopg.errors.RaiseException)
+        ):
             review_schema.execute(
                 "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
                 (other_year, plan_id),
@@ -862,7 +871,9 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
         other_year = self.submit(
             review_schema, member_id, 2027, [{"l3_code": _L3, "target_level": 3}]
         )
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(
+            (psycopg.errors.ForeignKeyViolation, psycopg.errors.RaiseException)
+        ):
             review_schema.execute(
                 "UPDATE plan_item SET source_assessment_id=%s WHERE id=%s",
                 (other_year, item_id),
@@ -878,7 +889,9 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
             "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
             (member2,),
         ).fetchone()
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(
+            (psycopg.errors.ForeignKeyViolation, psycopg.errors.RaiseException)
+        ):
             review_schema.execute(
                 "UPDATE plan_item SET annual_growth_plan_id=%s WHERE id=%s",
                 (int(other_plan[0]), item_id),
@@ -890,3 +903,215 @@ class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
             (item_id,),
         ).fetchone()
         assert (int(row[0]), int(row[1])) == (plan_id, assessment_id)
+
+
+# ── P1-A/B/C (3rd review): provenance can never be downgraded; proposal ─────
+# ── detail must match its parent proposal's source assessment; the standard ─
+# ── target is unconditionally frozen. ────────────────────────────────────────
+
+
+class TestThirdReviewIntegrity(TestSecondReviewIntegrity):
+    def test_plan_item_provenance_cannot_be_downgraded(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-A: a modern item must never clear its source type + source id in
+        one UPDATE to slip through the legacy NULL branch."""
+        _, _, _, item, _ = self._approved_item_full(review_schema)
+        item_id = int(item[0])
+        with pytest.raises(psycopg.errors.RaiseException):
+            review_schema.execute(
+                "UPDATE plan_item SET planning_source_type=NULL, "
+                "source_assessment_id=NULL WHERE id=%s",
+                (item_id,),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT planning_source_type, source_assessment_id "
+            "FROM plan_item WHERE id=%s",
+            (item_id,),
+        ).fetchone()
+        assert row[0] == "assessment_approval" and row[1] is not None
+
+    def test_plan_shell_provenance_cannot_be_cleared(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-A: a zero-item formal plan shell keeps its first-approval source;
+        clearing source type + source id together is rejected."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema,
+            member_id,
+            2026,
+            [{"l3_code": _L3, "current_level": 3, "target_level": 3}],
+        )
+        self.approve(review_schema, assessment_id, buddy_id)
+        plan = review_schema.execute(
+            "SELECT id, planning_source_type, source_assessment_id "
+            "FROM annual_growth_plan WHERE member_id=%s AND year=2026",
+            (member_id,),
+        ).fetchone()
+        assert plan is not None and plan[1] == "assessment_approval"
+        with pytest.raises(psycopg.errors.RaiseException):
+            review_schema.execute(
+                "UPDATE annual_growth_plan SET planning_source_type=NULL, "
+                "source_assessment_id=NULL WHERE id=%s",
+                (int(plan[0]),),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT planning_source_type, source_assessment_id "
+            "FROM annual_growth_plan WHERE id=%s",
+            (int(plan[0]),),
+        ).fetchone()
+        assert row[0] == "assessment_approval" and row[1] == assessment_id
+
+    def test_plan_source_identity_cannot_drift(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-A: the plan's source assessment identity is immutable even
+        between two assessments of the same member/year."""
+        _, _, assessment_id, _, plan = self._approved_item_full(review_schema)
+        plan_id = int(plan[0])
+        # a second assessment of the SAME member/year (version 2)
+        twin = review_schema.execute(
+            """
+            INSERT INTO assessment (
+                member_id, year, version, assessment_type, status
+            )
+            VALUES (%s, 2026, 2, '年度', '草稿') RETURNING id
+            """,
+            (int(plan[1]),),
+        ).fetchone()
+        review_schema.commit()
+        with pytest.raises(psycopg.errors.RaiseException):
+            review_schema.execute(
+                "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
+                (int(twin[0]), plan_id),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT source_assessment_id FROM annual_growth_plan WHERE id=%s",
+            (plan_id,),
+        ).fetchone()
+        assert int(row[0]) == assessment_id
+
+    def test_proposal_detail_assessment_must_match_parent_proposal_source(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-B: a detail can only hang under a proposal whose source
+        assessment is the detail's own assessment."""
+        f = self._proposal_fixture(review_schema)
+        # a second proposal for the SAME member/year (a third assessment
+        # version whose approval creates its own proposal)
+        third = self.submit(
+            review_schema,
+            f["member_id"],
+            2026,
+            [
+                {
+                    "l3_code": _L3,
+                    "current_level": 3,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+        )
+        self.approve(review_schema, third, f["buddy_id"])
+        other_proposal = review_schema.execute(
+            "SELECT id FROM annual_plan_change_proposal WHERE source_assessment_id=%s",
+            (third,),
+        ).fetchone()
+        assert other_proposal is not None
+        # a fresh detail of the FIRST assessment (proposal1's source) hung
+        # under proposal2 — the parent FK (proposal2, assessment1) must reject
+        # it because proposal2's source is the third assessment.
+        model_id = review_schema.execute(
+            "SELECT model_id FROM capability_standard_version WHERE id=%s",
+            (f["detail_version_id"],),
+        ).fetchone()[0]
+        fresh_node = self._add_l3_node(review_schema, int(model_id), "P1B")
+        fresh_id, _node, fresh_code = self._fresh_detail(
+            review_schema, f["detail_assessment_id"], fresh_node, "P1B"
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal_detail (
+                    proposal_id, source_assessment_detail_id, assessment_id,
+                    l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
+                    l3_name, capability_standard_version_id, planning_snapshot_id,
+                    assessment_revision, planning_source_type, scope_type,
+                    current_level, standard_target_level, adjusted_target_level,
+                    effective_target_level, gap_value, member_priority,
+                    include_in_plan, plan_quarter, plan_month,
+                    standard_job_level_snapshot, member_current_level_snapshot,
+                    member_target_level_snapshot
+                )
+                VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
+                        %s, %s, 3, 'assessment_approval', 'current_required',
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
+                """,
+                (
+                    int(other_proposal[0]),
+                    fresh_id,
+                    f["detail_assessment_id"],
+                    fresh_node,
+                    fresh_code,
+                    f["detail_version_id"],
+                    f["detail_snapshot_id"],
+                ),
+            )
+        review_schema.rollback()
+        # the original detail row is untouched
+        row = review_schema.execute(
+            "SELECT proposal_id, assessment_id FROM "
+            "annual_plan_change_proposal_detail WHERE id=%s",
+            (f["detail_id"],),
+        ).fetchone()
+        assert int(row[0]) == f["detail_proposal_id"]
+        assert int(row[1]) == f["detail_assessment_id"]
+
+    def test_plan_item_adjusted_branch_requires_standard_target(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-C: even with an adjusted target, the standard target must be
+        frozen — it can never be NULL."""
+        _, _, _, item, _ = self._approved_item_full(review_schema)
+        count = self._count_items(review_schema)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            self._copy_item_with_override(
+                review_schema,
+                int(item[0]),
+                {
+                    "standard_target_level": "NULL",
+                    "adjusted_target_level": "5",
+                    "effective_target_level": "5",
+                },
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+
+    def test_proposal_detail_adjusted_branch_requires_standard_target(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """P1-C: same rule for proposal details."""
+        f = self._proposal_fixture(review_schema)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            review_schema.execute(
+                "UPDATE annual_plan_change_proposal_detail "
+                "SET standard_target_level=NULL, adjusted_target_level=5, "
+                "effective_target_level=5 WHERE id=%s",
+                (f["detail_id"],),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT standard_target_level, adjusted_target_level, "
+            "effective_target_level FROM annual_plan_change_proposal_detail "
+            "WHERE id=%s",
+            (f["detail_id"],),
+        ).fetchone()
+        assert row[0] is not None

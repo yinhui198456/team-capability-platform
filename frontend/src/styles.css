@@ -776,6 +776,12 @@ select {
   grid-template-columns: 210px minmax(420px, 1.35fr) minmax(290px, 0.9fr);
 }
 
+/* Wide table content must scroll INSIDE its column instead of stretching the
+   grid (min-width: auto would push the page horizontally). */
+.buddy-review-layout > * {
+  min-width: 0;
+}
+
 .buddy-member-list {
   display: grid;
   gap: 8px;
@@ -1743,6 +1749,10 @@ select {
 .buddy-workspace .review-detail-groups {
   display: grid;
   gap: 14px;
+}
+
+.buddy-workspace .review-detail-groups section {
+  min-width: 0;
 }
 
 .buddy-workspace .review-detail-groups h4 {

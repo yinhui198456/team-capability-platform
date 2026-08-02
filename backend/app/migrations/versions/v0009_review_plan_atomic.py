@@ -335,6 +335,17 @@ def _extend_annual_growth_plan(connection: psycopg.Connection) -> None:
         "annual_growth_plan_source_type_check",
         "planning_source_type IS NULL OR planning_source_type IN ('assessment_approval')",
     )
+    # P1-A (3rd review): the provenance discriminator and the source identity
+    # travel as a pair.  A source id can never exist without the
+    # assessment_approval marker, so a modern row can never be downgraded to
+    # the legacy NULL branch while keeping (or clearing) its source.  Legacy
+    # rows (both NULL) stay untouched.
+    _add_check(
+        connection,
+        "annual_growth_plan",
+        "annual_growth_plan_source_pairing_check",
+        "source_assessment_id IS NULL OR planning_source_type = 'assessment_approval'",
+    )
     connection.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS uniq_plan_first_source_assessment
@@ -544,6 +555,7 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
         " AND member_target_level_snapshot IS NOT NULL"
         " AND assessment_revision IS NOT NULL"
         " AND target_level = effective_target_level"
+        " AND standard_target_level IS NOT NULL"
         " AND effective_target_level IS NOT NULL"
         " AND gap_value IS NOT NULL"
         " AND plan_quarter IS NOT NULL AND plan_month IS NOT NULL"
@@ -707,6 +719,8 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
             summary JSONB NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (source_assessment_id),
+            CONSTRAINT proposal_id_source_unique
+                UNIQUE (id, source_assessment_id),
             CONSTRAINT proposal_target_plan_member_year_fk
                 FOREIGN KEY (member_id, year, target_annual_growth_plan_id)
                 REFERENCES annual_growth_plan (member_id, year, id),
@@ -844,6 +858,7 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
         " AND standard_job_level_snapshot IS NOT NULL"
         " AND member_current_level_snapshot IS NOT NULL"
         " AND member_target_level_snapshot IS NOT NULL"
+        " AND standard_target_level IS NOT NULL"
         " AND assessment_revision IS NOT NULL"
         " AND capability_standard_version_id IS NOT NULL"
         " AND planning_snapshot_id IS NOT NULL"
@@ -873,6 +888,24 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
         "FOREIGN KEY (source_assessment_detail_id, assessment_id, l3_node_id) "
         "REFERENCES assessment_detail (id, assessment_id, l3_node_id)",
     )
+    # P1-B (3rd review): the detail's assessment must equal its parent
+    # proposal's source assessment — a detail can never hang under a proposal
+    # created from a different assessment.  The unique key on the parent
+    # exists inline on fresh databases and is created explicitly here for
+    # upgraded ones.
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_proposal_id_source
+        ON annual_plan_change_proposal (id, source_assessment_id)
+        """
+    )
+    _add_fk(
+        connection,
+        "annual_plan_change_proposal_detail",
+        "proposal_detail_parent_source_fk",
+        "FOREIGN KEY (proposal_id, assessment_id) "
+        "REFERENCES annual_plan_change_proposal (id, source_assessment_id)",
+    )
 
 
 def _create_review_idempotency_table(connection: psycopg.Connection) -> None:
@@ -898,6 +931,49 @@ def _create_review_idempotency_table(connection: psycopg.Connection) -> None:
     )
 
 
+def _enable_planning_provenance_immutability(connection: psycopg.Connection) -> None:
+    """P1-A (3rd review): once a plan or plan item carries assessment_approval
+    provenance, the discriminator and the source identity are immutable —
+    they can never be downgraded to the legacy NULL branch (even together)
+    and the source can never drift, including between two assessments of the
+    same member/year."""
+    connection.execute(
+        """
+        CREATE OR REPLACE FUNCTION guard_planning_provenance_immutable()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            IF TG_OP = 'UPDATE' THEN
+                IF OLD.planning_source_type IS NOT NULL
+                   AND NEW.planning_source_type IS DISTINCT FROM OLD.planning_source_type THEN
+                    RAISE EXCEPTION
+                        'planning provenance discriminator is immutable'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                IF OLD.source_assessment_id IS NOT NULL
+                   AND NEW.source_assessment_id IS DISTINCT FROM OLD.source_assessment_id THEN
+                    RAISE EXCEPTION
+                        'planning source identity is immutable'
+                        USING ERRCODE = 'P0001';
+                END IF;
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    for table in ("annual_growth_plan", "plan_item"):
+        connection.execute(
+            f"DROP TRIGGER IF EXISTS trg_planning_provenance_immutable ON {table}"
+        )
+        connection.execute(
+            f"""
+            CREATE TRIGGER trg_planning_provenance_immutable
+            BEFORE UPDATE ON {table}
+            FOR EACH ROW EXECUTE FUNCTION guard_planning_provenance_immutable()
+            """
+        )
+
+
 def upgrade(connection: psycopg.Connection) -> None:
     # Order matters: the legacy backfill inserts snapshots for
     # already-published/archived versions, so the immutability trigger may only
@@ -911,3 +987,4 @@ def upgrade(connection: psycopg.Connection) -> None:
     _extend_buddy_relationship(connection)
     _create_change_proposal_tables(connection)
     _create_review_idempotency_table(connection)
+    _enable_planning_provenance_immutability(connection)

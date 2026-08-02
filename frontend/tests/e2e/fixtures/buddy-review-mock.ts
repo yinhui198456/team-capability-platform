@@ -151,7 +151,8 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
                 standard_target_level: 3,
                 target_adjusted: true,
                 adjusted_target_level: 4,
-                target_adjustment_reason: '岗位项目要求',
+                target_adjustment_reason:
+                  '岗位项目要求：本年度负责数据平台迁移项目，需独立完成端到端数据管道设计与实施，涉及多团队协作与架构评审，对当前岗位为必备能力要求且需在年末前达成',
                 gap_value: 2,
                 evidence_note: '已参与数据管道搭建，完成基础文档。',
               },
@@ -190,7 +191,8 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
             standard_target_level: 3,
             target_adjusted: true,
             adjusted_target_level: 4,
-            target_adjustment_reason: '岗位项目要求',
+            target_adjustment_reason:
+              '岗位项目要求：本年度负责数据平台迁移项目，需独立完成端到端数据管道设计与实施，涉及多团队协作与架构评审，对当前岗位为必备能力要求且需在年末前达成',
             gap_value: 2,
             evidence_note: '已参与数据管道搭建，完成基础文档。',
             plan_candidate: false,
@@ -479,7 +481,8 @@ export async function mockBuddyReviewWorkspaceRoutes(
         standard_target_level: 3,
         target_adjusted: true,
         adjusted_target_level: 4,
-        target_adjustment_reason: '岗位项目要求',
+        target_adjustment_reason:
+          '岗位项目要求：本年度负责数据平台迁移项目，需独立完成端到端数据管道设计与实施，涉及多团队协作与架构评审，对当前岗位为必备能力要求且需在年末前达成',
         gap_value: 2,
         member_priority: '高',
         include_in_plan: true,

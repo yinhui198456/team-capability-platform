@@ -3088,6 +3088,27 @@ def validate_assessment_canonical(
             l3_node_id=int(node_id),
             l3_code=str(code),
         )
+    # P1-C (3rd review): the standard target is unconditionally frozen on
+    # every included row — the DB CHECK is the last line; here the approval
+    # path returns a structured 422 instead of a CheckViolation 500.
+    missing_standard_target = connection.execute(
+        """
+        SELECT l3_node_id, l3_code
+        FROM assessment_detail
+        WHERE assessment_id = %s AND include_in_plan = TRUE
+          AND standard_target_level IS NULL
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    for node_id, code in missing_standard_target:
+        raise ReviewError(
+            "planning_snapshot_incomplete",
+            "included detail requires a frozen standard target level",
+            status_code=422,
+            l3_node_id=int(node_id),
+            l3_code=str(code),
+        )
 
 
 def submit_assessment_review(

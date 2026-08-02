@@ -818,7 +818,10 @@ export function BuddyReviewCenter() {
                           {l1 !== '未映射' ? `${l1} / ` : ''}
                           {l2 !== '未映射' ? l2 : '未映射历史项'}
                         </h4>
-                        <table className="analytics-table review-detail-table">
+                        <table
+                          className="analytics-table review-detail-table"
+                          data-testid="buddy-detail-table-scroll"
+                        >
                           <thead>
                             <tr>
                               <th>能力项</th>

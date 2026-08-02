@@ -75,55 +75,49 @@ for (const viewport of VIEWPORTS) {
       await expect(workspace).toContainText('个人调整 1')
       await expect(workspace).toContainText('首次认可将原子生成正式年度计划')
       // personal adjustment shown only when it happened
-      await expect(workspace).toContainText('3 → 4（岗位项目要求）')
+      await expect(workspace).toContainText('3 → 4（岗位项目要求：本年度负责')
     })
 
-    test('layout integrity: no page overflow, local table scroll, submit unobstructed', async ({
+    test('layout integrity: real detail table scroll container, submit unobstructed', async ({
       page,
     }) => {
-      // P2-2 (2nd review): identify the real local scroll containers, scroll
-      // the table to its maximum scrollLeft, and prove the page itself never
-      // overflows horizontally while the submit action stays reachable and is
-      // not covered by the table or any sticky/overlay element.
-      const scrollers = await page.evaluate(() => {
-        const out: Array<{
-          cls: string
-          clientWidth: number
-          scrollWidth: number
-        }> = []
-        for (const el of document.querySelectorAll('*')) {
-          const node = el as HTMLElement
-          if (node.scrollWidth > node.clientWidth + 1) {
-            out.push({
-              cls: (node.className ?? '').toString().slice(0, 60),
-              clientWidth: node.clientWidth,
-              scrollWidth: node.scrollWidth,
-            })
-          }
-        }
-        return out
+      // P2 (3rd review): the Buddy detail table is the real local scroll
+      // container — a stable locator, never a scan of all DOM elements.
+      // every group renders its own scrollable table; assert on the first
+      const table = page.getByTestId('buddy-detail-table-scroll').first()
+      await expect(table).toBeVisible()
+      const dims = await table.evaluate((el) => ({
+        clientWidth: el.clientWidth,
+        scrollWidth: el.scrollWidth,
+        scrollLeft: el.scrollLeft,
+        ws: document.querySelector('.buddy-workspace')?.clientWidth ?? -1,
+        groups:
+          document.querySelector('.review-detail-groups')?.clientWidth ?? -1,
+      }))
+
+      // the table is genuinely wider than its box: local horizontal scroll
+      expect(dims.scrollWidth).toBeGreaterThan(dims.clientWidth)
+      // scroll to the maximum and verify the actual scrollLeft reached it
+      await table.evaluate((el) => {
+        el.scrollLeft = el.scrollWidth
       })
-      // Any horizontal overflow lives inside local scroll containers only.
-      for (const scroller of scrollers) {
-        expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth)
-      }
-      // Scroll every local container to its maximum scrollLeft.
-      await page.evaluate(() => {
-        for (const el of document.querySelectorAll('*')) {
-          const node = el as HTMLElement
-          if (node.scrollWidth > node.clientWidth + 1) {
-            node.scrollLeft = node.scrollWidth
-          }
-        }
-      })
-      // The page itself must not overflow even at max local scroll.
-      const dims = await page.evaluate(() => ({
+      const after = await table.evaluate((el) => ({
+        scrollLeft: el.scrollLeft,
+        maxScrollLeft: el.scrollWidth - el.clientWidth,
+      }))
+      expect(
+        Math.abs(after.scrollLeft - after.maxScrollLeft),
+      ).toBeLessThanOrEqual(2)
+      // the page itself never overflows horizontally, even at max local scroll
+      const pageDims = await page.evaluate(() => ({
         docScrollWidth: document.documentElement.scrollWidth,
         bodyScrollWidth: document.body.scrollWidth,
         innerWidth: window.innerWidth,
       }))
-      expect(dims.docScrollWidth).toBeLessThanOrEqual(dims.innerWidth)
-      expect(dims.bodyScrollWidth).toBeLessThanOrEqual(dims.innerWidth)
+      expect(pageDims.docScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
+      expect(pageDims.bodyScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
+      // the submit action stays reachable and is not covered by the table or
+      // any sticky/overlay element
       const submit = page.getByRole('button', { name: '提交复核反馈' })
       await expect(submit).toBeVisible()
       await submit.scrollIntoViewIfNeeded()
@@ -132,8 +126,6 @@ for (const viewport of VIEWPORTS) {
       expect(box).not.toBeNull()
       expect(box!.width).toBeGreaterThan(0)
       expect(box!.height).toBeGreaterThan(0)
-      // The element at the button's center must be the button (or a child of
-      // it) — no table cell, sticky header or overlay covers the action area.
       const coveredBy = await page.evaluate(
         ([x, y]) => {
           const el = document.elementFromPoint(x, y)
@@ -148,7 +140,7 @@ for (const viewport of VIEWPORTS) {
         [box!.x + box!.width / 2, box!.y + box!.height / 2],
       )
       expect(coveredBy).toContain('提交复核反馈')
-      // The feedback field is part of the submit area and is not clipped.
+      // the feedback field is part of the submit area and is not clipped
       await expect(page.getByLabel('反馈').first()).toBeVisible()
     })
 
