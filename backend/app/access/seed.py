@@ -128,7 +128,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
         get_capability_profile,
         submit_evidence,
         submit_evidence_review,
-        update_learning_task,
+        transition_learning_task,
     )
 
     member_id = users["member"]
@@ -230,6 +230,10 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             """,
             (member_id, year),
         )
+        # v0010: logs require a running task; start it first.
+        transition_learning_task(
+            connection, member_id, task_id, "进行中", None, None
+        )
         create_progress_log(
             connection,
             member_id,
@@ -246,25 +250,13 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             "https://example.invalid/tcp-demo-evidence",
         )
         submit_evidence(connection, member_id, int(evidence["id"]))
-        evidence_review_id = connection.execute(
-            "SELECT id FROM evidence_review WHERE evidence_id = %s", (evidence["id"],)
-        ).fetchone()[0]
         submit_evidence_review(
             connection,
-            evidence_review_id,
+            int(evidence["id"]),
             buddy_id,
             "通过",
             "演示 Evidence 通过",
         )
         # 保持任务为进行中，使 UI-01 Member Dashboard 的“当前学习任务”表格有示例数据。
-        update_learning_task(
-            connection,
-            member_id,
-            task_id,
-            {"status": "进行中"},
-        )
-        connection.execute(
-            "UPDATE learning_task SET actual_hours = %s WHERE id = %s",
-            (4, task_id),
-        )
+        # actual_hours 由有效日志聚合（4h），不直接写。
         get_capability_profile(connection, member_id, ["Member"], member_id, year)

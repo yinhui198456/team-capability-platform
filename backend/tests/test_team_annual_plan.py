@@ -25,6 +25,7 @@ def _reset_team_annual_plan_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"

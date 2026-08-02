@@ -21,6 +21,7 @@ from .v0008_plan_null_constraint import (
     upgrade as upgrade_plan_null_constraint,
 )
 from .v0009_review_plan_atomic import upgrade as upgrade_review_plan_atomic
+from .v0010_learning_execution import upgrade as upgrade_learning_execution
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -35,6 +36,7 @@ MIGRATIONS = [
     ("0007_assessment_plan_selection", upgrade_assessment_plan_selection),
     ("0008_plan_null_constraint", upgrade_plan_null_constraint),
     ("0009_review_plan_atomic", upgrade_review_plan_atomic),
+    ("0010_learning_execution", upgrade_learning_execution),
 ]
 
 __all__ = ["MIGRATIONS"]

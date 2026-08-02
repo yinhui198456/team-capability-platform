@@ -70,23 +70,24 @@ def test_member_dashboard_aggregates_only_current_member_data(
         "current_month_planned_hours_max": 0,
         "current_month_planned_hours_has_values": False,
         "current_month_planned_hours_has_unparsed": False,
-        "completed_task_count": 1,
+        "completed_task_count": 0,
         "pending_evidence_count": 0,
     }
     assert body["plan_progress"] == {
         "total": 1,
         "未开始": 0,
-        "进行中": 0,
-        "待 Evidence Review": 0,
-        "已完成": 1,
+        "进行中": 1,
+        "已完成": 0,
         "延期": 0,
+        "暂停": 0,
+        "取消": 0,
     }
     assert body["domain_radar"][0] == {"domain_code": "P01", "score": 2}
     assert len(body["gaps"]) == 1
     assert body["gaps"][0]["l3_code"] == "P01-L2A-L3A"
     assert body["gaps"][0]["l2_code"] == "P01-L2A"
     assert body["gaps"][0]["l3_name"] == "Leaf"
-    assert body["current_tasks"] == []
+    assert len(body["current_tasks"]) == 1
     assert body["assessment"] is not None
     assert body["assessment"]["status"] == "已归档"
     assert body["assessment"]["submitted_at"] is not None

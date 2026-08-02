@@ -42,6 +42,7 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -435,6 +436,14 @@ def _build_two_member_team(
         """,
         (5, "2026-05-31", p02_item_a["id"]),
     )
+    # v0010: logs require a running task — start, log, then close.
+    connection.execute(
+        "UPDATE learning_task SET status = '进行中' WHERE id = %s",
+        (p01_task_a[0],),
+    )
+    create_progress_log(
+        connection, member_a_id, int(p01_task_a[0]), "2026-03-10", 5, "日志"
+    )
     connection.execute(
         """
         UPDATE learning_task
@@ -450,9 +459,6 @@ def _build_two_member_team(
         WHERE id = %s
         """,
         (p01_item_a["id"],),
-    )
-    create_progress_log(
-        connection, member_a_id, int(p01_task_a[0]), "2026-03-10", 5, "日志"
     )
     connection.execute(
         """

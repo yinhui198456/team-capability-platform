@@ -23,6 +23,7 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -47,6 +48,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -61,6 +63,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -457,17 +460,13 @@ def test_update_learning_task_success(
     status, updated, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {
-            "status": "进行中",
-            "actual_start_date": "2026-07-01",
-            "next_action": "继续学习",
-        },
+        {"completion_quality": "达到预期", "next_action": "继续学习"},
         cookies=cookies,
     )
     assert status == 200
-    assert updated["status"] == "进行中"
-    assert updated["actual_start_date"] == "2026-07-01"
+    assert updated["completion_quality"] == "达到预期"
     assert updated["next_action"] == "继续学习"
+    assert updated["status"] == "未开始"  # status untouched by PATCH
 
 
 def test_update_learning_task_forbidden_for_other_member(
@@ -489,7 +488,7 @@ def test_update_learning_task_forbidden_for_other_member(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "进行中"},
+        {"next_action": "继续学习"},
         cookies=other_cookies,
     )
     assert status == 403
@@ -506,23 +505,25 @@ def test_update_learning_task_invalid_status_or_hours(
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
 
+    # Status / machine-owned fields are locked on the PATCH endpoint.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "无效状态"},
+        {"status": "进行中"},
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "invalid status"}
+    assert body["detail"]["code"] == "source_field_locked"
 
+    # Invalid completion_quality dictionary value rejected.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "待 Evidence Review"},
+        {"completion_quality": "随便写"},
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "task status is managed by Evidence Review"}
+    assert body["detail"]["field"] == "completion_quality"
 
 
 def test_learning_task_endpoints_require_member_role(

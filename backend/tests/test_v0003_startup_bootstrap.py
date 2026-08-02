@@ -50,6 +50,7 @@ _V0001_V0009 = (
     "0007_assessment_plan_selection",
     "0008_plan_null_constraint",
     "0009_review_plan_atomic",
+    "0010_learning_execution",
 )
 
 

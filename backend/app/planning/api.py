@@ -6,11 +6,11 @@ from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
     LegacyPlanningWriteDisabled,
+    PlanningDomainError,
     archive_team_annual_plan,
     create_evidence_draft,
     create_or_publish_team_annual_plan,
     create_progress_log,
-    delete_progress_log,
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
@@ -20,6 +20,7 @@ from .repository import (
     get_monthly_hours,
     get_team_analytics,
     get_team_annual_plan_by_year,
+    invalidate_progress_log,
     list_change_proposals,
     list_eligible_gaps,
     list_evidence_reviews_for_buddy_task,
@@ -31,15 +32,45 @@ from .repository import (
     list_plan_items,
     list_progress_logs,
     list_selectable_members_for_profile,
+    list_task_transition_history,
     submit_evidence,
     submit_evidence_review,
+    transition_learning_task,
     update_evidence_draft,
     update_learning_task,
     update_plan_item,
-    update_progress_log,
     update_team_annual_plan,
     validate_team_analytics_domain_filter,
 )
+
+_CONFLICT_CODES = {
+    "task_revision_conflict",
+    "plan_revision_conflict",
+    "transition_idempotency_conflict",
+    "log_idempotency_conflict",
+    "review_idempotency_conflict",
+    "review_already_submitted",
+}
+
+
+def _domain_error(exc: PlanningDomainError) -> HTTPException:
+    """Structured error envelope: code/entity_type/entity_id/field/reason."""
+    return HTTPException(
+        status_code=(
+            status.HTTP_409_CONFLICT
+            if exc.code in _CONFLICT_CODES
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        ),
+        detail={
+            "code": exc.code,
+            "entity_type": exc.entity_type,
+            "entity_id": exc.entity_id,
+            "field": exc.field,
+            "reason": exc.code,
+            "message": str(exc),
+        },
+    )
+
 
 planning_router = APIRouter(prefix="/api/planning")
 
@@ -234,12 +265,21 @@ def put_plan_item(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_plan_item(connection, int(user["id"]), plan_item_id, body)
+        expected = body.get("expected_revision")
+        return update_plan_item(
+            connection,
+            int(user["id"]),
+            plan_item_id,
+            body,
+            expected_revision=int(expected) if expected is not None else None,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -286,15 +326,86 @@ def put_learning_task(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_learning_task(connection, int(user["id"]), task_id, body)
+        expected = body.get("expected_revision")
+        return update_learning_task(
+            connection,
+            int(user["id"]),
+            task_id,
+            body,
+            expected_revision=int(expected) if expected is not None else None,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.post("/learning-tasks/{task_id}/transitions")
+def post_task_transition(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        to_status = str(body["to_status"])
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_task_transition",
+                "entity_type": "learning_task",
+                "entity_id": task_id,
+                "field": "to_status",
+                "reason": "invalid_task_transition",
+                "message": "to_status is required",
+            },
+        ) from exc
+    expected = body.get("expected_revision")
+    try:
+        return transition_learning_task(
+            connection,
+            int(user["id"]),
+            task_id,
+            to_status,
+            body.get("reason"),
+            expected_revision=int(expected) if expected is not None else None,
+            idempotency_key=body.get("idempotency_key"),
+            revised_due_date=body.get("revised_due_date"),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/learning-tasks/{task_id}/transition-history")
+def get_task_transition_history(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    try:
+        return list_task_transition_history(connection, int(user["id"]), task_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
 
@@ -322,12 +433,16 @@ def post_progress_log(
             record_date,
             body.get("actual_hours"),
             body.get("note"),
+            idempotency_key=body.get("idempotency_key"),
+            correction_of_log_id=body.get("correction_of_log_id"),
         )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -357,16 +472,22 @@ def get_monthly_hours_summary(
     return get_monthly_hours(connection, int(user["id"]), year)
 
 
-@planning_router.put("/progress-logs/{log_id}")
-def put_progress_log(
+@planning_router.post("/progress-logs/{log_id}/invalidate")
+def post_invalidate_progress_log(
     user: CurrentUser,
     connection: Connection,
     log_id: int,
     body: dict[str, object],
 ) -> dict[str, object]:
+    """Append-only correction: void the log (never delete) and re-aggregate."""
     _require_member(user)
     try:
-        return update_progress_log(connection, int(user["id"]), log_id, body)
+        return invalidate_progress_log(
+            connection,
+            int(user["id"]),
+            log_id,
+            idempotency_key=body.get("idempotency_key"),
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -377,31 +498,8 @@ def put_progress_log(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
-
-@planning_router.delete("/progress-logs/{log_id}")
-def remove_progress_log(
-    user: CurrentUser, connection: Connection, log_id: int
-) -> Response:
-    _require_member(user)
-    try:
-        delete_progress_log(connection, int(user["id"]), log_id)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @planning_router.post("/learning-tasks/{task_id}/evidences")
@@ -412,17 +510,29 @@ def post_evidence(
     body: dict[str, object],
 ) -> dict[str, object]:
     _require_member(user)
-    content = body.get("content")
-    evidence_link = body.get("evidence_link")
     try:
         return create_evidence_draft(
-            connection, int(user["id"]), task_id, content, evidence_link
+            connection,
+            int(user["id"]),
+            task_id,
+            body.get("content"),
+            body.get("evidence_link"),
+            description=body.get("description"),
+            evidence_type=body.get("evidence_type"),
+            url=body.get("url"),
+            file_reference=body.get("file_reference"),
+            file_name=body.get("file_name"),
+            mime_type=body.get("mime_type"),
+            file_size=body.get("file_size"),
+            supersedes_evidence_id=body.get("supersedes_evidence_id"),
         )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -445,6 +555,8 @@ def put_evidence(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -464,6 +576,8 @@ def post_submit_evidence(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -515,51 +629,50 @@ def get_evidence_review_summary(
     return get_evidence_review_summary_for_buddy(connection, int(user["id"]), year)
 
 
-@planning_router.post("/evidence-reviews/{review_id}")
+@planning_router.post("/evidences/{evidence_id}/review")
 def post_evidence_review(
     user: CurrentUser,
     connection: Connection,
-    review_id: int,
+    evidence_id: int,
     body: dict[str, object],
-) -> dict[str, bool]:
+) -> dict[str, object]:
     _require_buddy(user)
     try:
         conclusion = str(body["conclusion"])
     except (KeyError, TypeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="conclusion is required",
+            detail={
+                "code": "invalid_review",
+                "entity_type": "evidence_review",
+                "entity_id": evidence_id,
+                "field": "conclusion",
+                "reason": "invalid_review",
+                "message": "conclusion is required",
+            },
         ) from exc
     feedback = body.get("feedback")
     try:
-        submit_evidence_review(
-            connection, review_id, int(user["id"]), conclusion, feedback
+        return submit_evidence_review(
+            connection,
+            evidence_id,
+            int(user["id"]),
+            conclusion,
+            feedback,
+            idempotency_key=body.get("idempotency_key"),
         )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
-        msg = str(exc)
-        if msg == "review not found":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=msg,
-            ) from exc
-        if msg in (
-            "review is not assigned to this buddy",
-            "buddy is not assigned to member",
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=msg,
-            ) from exc
-        if msg == "review is not pending":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=msg,
-            ) from exc
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=msg,
+            detail=str(exc),
         ) from exc
-    return {"ok": True}
 
 
 @planning_router.get("/learning-tasks/{task_id}/evidence-reviews")

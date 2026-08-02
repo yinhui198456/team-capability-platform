@@ -663,6 +663,7 @@ def test_full_startup_order_boots_v0008_database(
         "0007_assessment_plan_selection",
         "0008_plan_null_constraint",
         "0009_review_plan_atomic",
+        "0010_learning_execution",
     ]
     # Legacy data preserved through the full startup path.
     for table, expected in counts_before.items():
@@ -690,7 +691,7 @@ def test_full_startup_order_boots_v0008_database(
     run_migrations(connection)
     connection.commit()
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 9
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 10
     )
 
 

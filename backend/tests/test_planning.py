@@ -22,6 +22,7 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -45,6 +46,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -58,6 +60,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -483,21 +486,36 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
         {
             "plan_start_date": "2026-04-01",
             "plan_end_date": "2026-05-31",
-            "status": "暂停",
         },
         cookies=cookies,
     )
     assert status == 200
     assert item["plan_start_date"] == "2026-04-01"
     assert item["plan_end_date"] == "2026-05-31"
-    assert item["status"] == "暂停"
 
+    # v0010: task status is machine-managed via the transition endpoint.
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    assert (
-        next(task for task in tasks if task["plan_item_id"] == item_id)["status"]
-        == "暂停"
+    task_id = next(
+        task for task in tasks if task["plan_item_id"] == item_id
+    )["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=cookies,
     )
+    assert status == 200
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "暂停", "reason": "等待资源"},
+        cookies=cookies,
+    )
+    assert status == 200
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    assert next(task for task in tasks if task["id"] == task_id)["status"] == "暂停"
 
 
 def test_plan_items_list_and_annual_plan_are_member_only(

@@ -25,6 +25,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -51,6 +52,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -67,6 +69,7 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -332,7 +335,7 @@ def _approve_assessment(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
     )
     assert status == 200
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
@@ -370,6 +373,13 @@ def _seed_submitted_evidence(
     )
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=member_cookies,
+    )
+    assert status == 200
 
     status, evidence, _ = _request(
         "POST",
@@ -403,7 +413,7 @@ def test_buddy_pending_queue_includes_assigned_member(
     )
     assert status == 200
     assert len(pending) == 1
-    assert pending[0]["evidence_id"] == evidence_id
+    assert pending[0]["id"] == evidence_id  # v0010: queue yields evidence rows
     assert pending[0]["member_id"] is not None
     assert pending[0]["username"] is not None
     assert pending[0]["l3_code"] == "P01-L2A-L3A"
@@ -438,28 +448,29 @@ def test_submit_review_approved_archives_evidence(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
 
     status, body, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "符合预期"},
         cookies=buddy_cookies,
     )
     assert status == 200
-    assert body == {"ok": True}
+    assert body["conclusion"] == "通过"
 
     status, evidence, _ = _request(
         "GET", f"/api/planning/evidences/{evidence_id}", cookies=member_cookies
     )
     assert status == 200
-    assert evidence["status"] == "已归档"
+    assert evidence["status"] == "通过"
 
+    # v0010: approval never auto-completes the task — the transition gate does.
     status, task, _ = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}", cookies=member_cookies
     )
     assert status == 200
-    assert task["status"] == "已完成"
+    assert task["status"] == "进行中"
 
     status, history, _ = _request(
         "GET",
@@ -492,11 +503,11 @@ def test_submit_review_rejected_sets_evidence_status_and_reopens_task(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
 
     status, _, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "需补充", "feedback": "请补充说明"},
         cookies=buddy_cookies,
     )
@@ -515,7 +526,7 @@ def test_submit_review_rejected_sets_evidence_status_and_reopens_task(
     assert task["status"] == "进行中"
 
 
-def test_submit_review_dismissed_sets_evidence_status(
+def test_submit_review_rejects_unknown_conclusion(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
     member_cookies, buddy_cookies, _, evidence_id = _seed_submitted_evidence(
@@ -525,21 +536,23 @@ def test_submit_review_dismissed_sets_evidence_status(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
 
-    status, _, _ = _request(
+    status, body, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "驳回", "feedback": "不符合要求"},
         cookies=buddy_cookies,
     )
-    assert status == 200
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_review"
 
+    # Evidence untouched — zero partial write.
     status, evidence, _ = _request(
         "GET", f"/api/planning/evidences/{evidence_id}", cookies=member_cookies
     )
     assert status == 200
-    assert evidence["status"] == "驳回"
+    assert evidence["status"] == "待 Review"
 
 
 def test_non_assigned_buddy_cannot_submit_review(
@@ -555,12 +568,12 @@ def test_non_assigned_buddy_cannot_submit_review(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
 
     other_buddy_cookies = _login(evidence_review_schema, "other_buddy")
     status, body, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "越权"},
         cookies=other_buddy_cookies,
     )
@@ -584,11 +597,11 @@ def test_duplicate_submit_review_returns_conflict(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
 
     status, _, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "符合预期"},
         cookies=buddy_cookies,
     )
@@ -596,7 +609,7 @@ def test_duplicate_submit_review_returns_conflict(
 
     status, body, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "重复提交"},
         cookies=buddy_cookies,
     )
@@ -617,7 +630,7 @@ def test_evidence_review_endpoints_require_buddy_role(
 
     status, _, _ = _request(
         "POST",
-        "/api/planning/evidence-reviews/1",
+        "/api/planning/evidences/1/review",
         {"conclusion": "通过", "feedback": "x"},
         cookies=cookies,
     )
@@ -634,10 +647,10 @@ def test_member_can_view_own_task_review_history(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
     _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "符合预期"},
         cookies=buddy_cookies,
     )
@@ -697,10 +710,10 @@ def test_evidence_review_summary_counts_pending_and_completed(
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
     )
-    review_id = pending[0]["id"]
+    review_id = pending[0]["id"]  # evidence id (v0010 queue)
     status, _, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "符合预期"},
         cookies=buddy_cookies,
     )

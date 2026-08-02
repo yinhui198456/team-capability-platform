@@ -25,6 +25,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -51,6 +52,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -67,6 +69,7 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -368,6 +371,13 @@ def _seed_learning_task(
     )
     assert status == 200
     task = next(task for task in tasks if task["plan_item_id"] == item_id)
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{int(task['id'])}/transitions",
+        {"to_status": "进行中"},
+        cookies=member_cookies,
+    )
+    assert status == 200
     return member_cookies, task
 
 
@@ -439,33 +449,23 @@ def test_submit_evidence_creates_review(evidence_schema: psycopg.Connection) -> 
     assert status == 200
     assert submitted["status"] == "待 Review"
     assert submitted["submitted_at"] is not None
+    assert submitted["submitted_by"] is not None
 
+    # v0010: submission never touches the task state machine.
     status, task_after_submit, _ = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
     )
     assert status == 200
-    assert task_after_submit["status"] == "待 Evidence Review"
+    assert task_after_submit["status"] == "进行中"
 
-    status, reviews, _ = _request(
-        "GET",
-        f"/api/planning/evidences/{evidence_id}",
-        cookies=cookies,
-    )
-    assert status == 200
-
+    # No evidence_review row is pre-created; reviews are written by the buddy.
     row = evidence_schema.execute(
         """
-        SELECT id, evidence_id, buddy_id, status, conclusion, feedback
-        FROM evidence_review
-        WHERE evidence_id = %s
+        SELECT id FROM evidence_review WHERE evidence_id = %s
         """,
         (evidence_id,),
     ).fetchone()
-    assert row is not None
-    assert row[2] is not None
-    assert row[3] == "待 Review"
-    assert row[4] is None
-    assert row[5] is None
+    assert row is None
 
 
 def test_update_non_draft_evidence_returns_422(
@@ -498,7 +498,8 @@ def test_update_non_draft_evidence_returns_422(
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "only draft evidence can be updated"}
+    assert body["detail"]["code"] == "invalid_evidence"
+    assert body["detail"]["field"] == "status" 
 
 
 def test_cannot_create_two_drafts_for_same_task(
@@ -521,8 +522,9 @@ def test_cannot_create_two_drafts_for_same_task(
         {"content": "第二版草稿", "evidence_link": "http://example.com/v2"},
         cookies=cookies,
     )
-    assert status == 409
-    assert body == {"detail": "draft evidence already exists for this task"}
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_evidence"
+    assert body["detail"]["field"] == "status" 
 
 
 def test_can_create_new_version_after_submit(
@@ -687,6 +689,13 @@ def test_submit_evidence_without_buddy_returns_422(
     )
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=member_cookies,
+    )
+    assert status == 200
 
     status, evidence, _ = _request(
         "POST",
@@ -697,11 +706,22 @@ def test_submit_evidence_without_buddy_returns_422(
     assert status == 200
     evidence_id = int(evidence["id"])
 
-    status, body, _ = _request(
+    # v0010: submission does not require a live buddy (the queue filters by
+    # the current relationship); the review itself re-reads the relationship.
+    status, submitted, _ = _request(
         "POST",
         f"/api/planning/evidences/{evidence_id}/submit",
         {},
         cookies=member_cookies,
     )
-    assert status == 422
-    assert body == {"detail": "no primary buddy assigned"}
+    assert status == 200
+    assert submitted["status"] == "待 Review"
+
+    buddy_cookies = _login(evidence_schema, "buddy_no_buddy")
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/review",
+        {"conclusion": "通过"},
+        cookies=buddy_cookies,
+    )
+    assert status == 403  # relationship expired — buddy cannot review

@@ -1,12 +1,11 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import psycopg
 
 from ..access.repository import (
     get_assigned_members,
-    get_primary_buddy,
     is_member_assigned_to_buddy,
 )
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
@@ -85,22 +84,63 @@ def _attach_l3_contexts(
 _ALLOWED_TASK_STATUSES = {
     "未开始",
     "进行中",
-    "待 Evidence Review",
     "已完成",
     "延期",
     "暂停",
     "取消",
 }
 
-_MEMBER_MANAGED_TASK_STATUSES = {
-    "未开始",
-    "进行中",
-    "延期",
-    "暂停",
-    "取消",
+# Service-enforced task state machine (v0010).  Terminal states are closed.
+_TASK_TRANSITIONS: dict[str, set[str]] = {
+    "未开始": {"进行中", "取消"},
+    "进行中": {"暂停", "延期", "已完成", "取消"},
+    "暂停": {"进行中", "取消"},
+    "延期": {"进行中", "暂停", "已完成", "取消"},
+    "已完成": set(),
+    "取消": set(),
 }
 
-_MEMBER_MANAGED_PLAN_ITEM_STATUSES = {"进行中", "暂停", "取消"}
+# Reasons required when ENTERING these states.
+_STATUS_REASON_FIELDS = {
+    "延期": "delay_reason",
+    "暂停": "pause_reason",
+    "取消": "cancel_reason",
+}
+
+_COMPLETION_QUALITY_VALUES = ("达到预期", "部分达到", "超出预期")
+
+_MAX_NEXT_ACTION_LENGTH = 200
+
+_MAX_LOG_HOURS_PER_ENTRY = 24
+
+
+class PlanningDomainError(ValueError):
+    """Structured domain error carried to the API layer for mapping.
+
+    Attributes mirror the contract error envelope:
+    code / entity_type / entity_id / field / reason / message.
+    """
+
+    code = "planning_domain_error"
+    entity_type = "planning"
+    field: str | None = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        entity_type: str | None = None,
+        entity_id: object = None,
+        field: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        if code is not None:
+            self.code = code
+        if entity_type is not None:
+            self.entity_type = entity_type
+        self.entity_id = entity_id
+        self.field = field
 
 
 class LegacyPlanningWriteDisabled(ValueError):
@@ -112,20 +152,82 @@ class LegacyPlanningWriteDisabled(ValueError):
     code = "legacy_planning_write_disabled"
 
 
+class InvalidTaskTransition(PlanningDomainError):
+    code = "invalid_task_transition"
+    entity_type = "learning_task"
+
+
+class InvalidStatusReason(PlanningDomainError):
+    code = "invalid_status_reason"
+    entity_type = "learning_task"
+
+
+class TaskRevisionConflict(PlanningDomainError):
+    code = "task_revision_conflict"
+    entity_type = "learning_task"
+
+
+class TransitionIdempotencyConflict(PlanningDomainError):
+    code = "transition_idempotency_conflict"
+    entity_type = "learning_task"
+
+
+class CompletionGateError(PlanningDomainError):
+    code = "completion_gate_failed"
+    entity_type = "learning_task"
+
+
+class PlanItemDateError(PlanningDomainError):
+    code = "invalid_date_range"
+    entity_type = "plan_item"
+
+
+class PlanItemRevisionConflict(PlanningDomainError):
+    code = "plan_revision_conflict"
+    entity_type = "plan_item"
+
+
+class SourceFieldLocked(PlanningDomainError):
+    code = "source_field_locked"
+
+
+class LogValidationError(PlanningDomainError):
+    code = "invalid_hours"
+    entity_type = "learning_progress_log"
+
+
+class LogIdempotencyConflict(PlanningDomainError):
+    code = "log_idempotency_conflict"
+    entity_type = "learning_progress_log"
+
+
+class EvidenceValidationError(PlanningDomainError):
+    code = "invalid_evidence"
+    entity_type = "evidence"
+
+
+class EvidenceReviewConflict(PlanningDomainError):
+    code = "review_idempotency_conflict"
+    entity_type = "evidence_review"
+
+
+class ReviewValidationError(PlanningDomainError):
+    code = "invalid_review"
+    entity_type = "evidence_review"
+
+
+# Member-editable task fields; status/dates/hours are machine-managed.
 _UPDATABLE_TASK_FIELDS = {
-    "status",
-    "actual_start_date",
-    "actual_end_date",
     "completion_quality",
     "review_conclusion",
     "next_action",
 }
 
+# Plan-item fields remain Member-editable under date constraints; the source
+# snapshot (incl. quarter/month) and status are read-only for members.
 _UPDATABLE_PLAN_ITEM_FIELDS = {
     "plan_start_date",
     "plan_end_date",
-    "target_month",
-    "status",
 }
 
 
@@ -404,6 +506,18 @@ def list_plan_items(
     return [_plan_item_row(row) for row in rows]
 
 
+_TASK_COLUMNS = (
+    "id, plan_item_id, l3_code, status, actual_start_date, actual_end_date, "
+    "actual_hours, completion_quality, review_conclusion, next_action, "
+    "revision, actual_started_at, actual_completed_at, delay_reason, "
+    "pause_reason, cancel_reason, revised_due_date"
+)
+
+
+def _prefixed(columns: str, alias: str) -> str:
+    return ", ".join(f"{alias}.{column}" for column in columns.split(", "))
+
+
 def _learning_task_row(row: tuple[Any, ...]) -> dict[str, object]:
     return {
         "id": row[0],
@@ -416,6 +530,13 @@ def _learning_task_row(row: tuple[Any, ...]) -> dict[str, object]:
         "completion_quality": row[7],
         "review_conclusion": row[8],
         "next_action": row[9],
+        "revision": row[10],
+        "actual_started_at": row[11],
+        "actual_completed_at": row[12],
+        "delay_reason": row[13],
+        "pause_reason": row[14],
+        "cancel_reason": row[15],
+        "revised_due_date": row[16],
     }
 
 
@@ -432,12 +553,10 @@ def _insert_learning_task(
     connection: psycopg.Connection, plan_item_id: int, l3_code: str
 ) -> dict[str, object]:
     inserted = connection.execute(
-        """
+        f"""
         INSERT INTO learning_task (plan_item_id, l3_code, status)
         VALUES (%s, %s, '未开始')
-        RETURNING id, plan_item_id, l3_code, status,
-                  actual_start_date, actual_end_date, actual_hours,
-                  completion_quality, review_conclusion, next_action
+        RETURNING {_TASK_COLUMNS}
         """,
         (plan_item_id, l3_code),
     ).fetchone()
@@ -445,15 +564,97 @@ def _insert_learning_task(
     return _learning_task_row(inserted)
 
 
+def _insert_learning_task(
+    connection: psycopg.Connection, plan_item_id: int, l3_code: str
+) -> dict[str, object]:
+    inserted = connection.execute(
+        f"""
+        INSERT INTO learning_task (plan_item_id, l3_code, status)
+        VALUES (%s, %s, '未开始')
+        RETURNING {_TASK_COLUMNS}
+        """,
+        (plan_item_id, l3_code),
+    ).fetchone()
+    assert inserted is not None
+    return _learning_task_row(inserted)
+
+
+def _month_end(year: int, month: int) -> date:
+    # month=12 rolls into January of the next year; minus one day is the end
+    # of the target month.
+    return date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)
+
+
+def _validate_plan_item_dates(
+    connection: psycopg.Connection,
+    plan_item_id: int,
+    updates: dict[str, object],
+) -> None:
+    """Apply the unique plan-date rules from the #63 contract.
+
+    - start <= due;
+    - neither date leaves the source quarter;
+    - due must fall inside the source plan month;
+    - start may be anywhere in the same quarter, no later than due.
+    """
+    row = connection.execute(
+        """
+        SELECT pi.plan_start_date, pi.plan_end_date, pi.plan_quarter,
+               pi.plan_month, pi.target_month, agp.year
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE pi.id = %s
+        """,
+        (plan_item_id,),
+    ).fetchone()
+    if row is None:
+        raise PermissionError("plan item not found")
+
+    def _as_date(value: object) -> date | None:
+        if value is None:
+            return None
+        return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+    start = _as_date(updates.get("plan_start_date", row[0]))
+    due = _as_date(updates.get("plan_end_date", row[1]))
+    month = row[3] if row[3] is not None else row[4]
+    year = int(row[5])
+
+    if start is not None and due is not None and start > due:
+        raise PlanItemDateError(
+            "plan_start_date must not be later than plan_end_date",
+            entity_id=plan_item_id,
+            field="plan_start_date",
+        )
+    if due is not None and month is not None:
+        first, last = date(year, month, 1), _month_end(year, month)
+        if not first <= due <= last:
+            raise PlanItemDateError(
+                "plan_end_date must fall inside the source plan month",
+                entity_id=plan_item_id,
+                field="plan_end_date",
+            )
+    if start is not None and month is not None:
+        q_start = (month - 1) // 3 * 3 + 1
+        q_first, q_last = date(year, q_start, 1), _month_end(year, q_start + 2)
+        if not q_first <= start <= q_last:
+            raise PlanItemDateError(
+                "plan_start_date must stay inside the source quarter",
+                entity_id=plan_item_id,
+                field="plan_start_date",
+            )
+
+
 def update_plan_item(
     connection: psycopg.Connection,
     member_id: int,
     plan_item_id: int,
     fields: dict[str, object],
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
     owned = connection.execute(
         """
-        SELECT pi.id, pi.planning_source_type
+        SELECT pi.id, pi.revision
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE pi.id = %s AND agp.member_id = %s
@@ -462,51 +663,77 @@ def update_plan_item(
     ).fetchone()
     if owned is None:
         raise PermissionError("plan item does not belong to member")
-    if owned[1] == "assessment_approval" and "target_month" in fields:
-        # Legacy target_month is a legacy-column write; new source items keep
-        # plan_quarter/plan_month frozen from the approved assessment.
-        raise ValueError("target_month is frozen for assessment-approved items")
 
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _UPDATABLE_PLAN_ITEM_FIELDS:
-            raise ValueError(f"field '{key}' is not updatable")
+            raise SourceFieldLocked(
+                f"field '{key}' is not updatable",
+                entity_type="plan_item",
+                entity_id=plan_item_id,
+                field=key,
+            )
         updates[key] = value
-
-    if "status" in updates:
-        if updates["status"] not in _MEMBER_MANAGED_PLAN_ITEM_STATUSES:
-            raise ValueError("plan item status is not member-manageable")
-    if "target_month" in updates and updates["target_month"] is not None:
-        try:
-            target_month = int(updates["target_month"])  # type: ignore[arg-type]
-        except (TypeError, ValueError) as exc:
-            raise ValueError("target_month must be between 1 and 12") from exc
-        if not 1 <= target_month <= 12:
-            raise ValueError("target_month must be between 1 and 12")
-        updates["target_month"] = target_month
 
     for key in ("plan_start_date", "plan_end_date"):
         value = updates.get(key)
         if value is not None and not isinstance(value, str):
-            raise ValueError(f"{key} must be an ISO date")
+            raise PlanItemDateError(
+                f"{key} must be an ISO date",
+                entity_id=plan_item_id,
+                field=key,
+            )
         if isinstance(value, str):
             try:
                 date.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(f"{key} must be an ISO date") from exc
+                raise PlanItemDateError(
+                    f"{key} must be an ISO date",
+                    entity_id=plan_item_id,
+                    field=key,
+                ) from exc
 
     if not updates:
         rows = list_plan_items(connection, member_id)
         return next(item for item in rows if item["id"] == plan_item_id)
 
-    columns = list(updates.keys())
-    set_clause = ", ".join(f"{column} = %s" for column in columns)
-    values = [updates[column] for column in columns] + [plan_item_id]
     with connection.transaction():
+        locked = connection.execute(
+            "SELECT revision FROM plan_item WHERE id = %s FOR UPDATE",
+            (plan_item_id,),
+        ).fetchone()
+        assert locked is not None
+        if expected_revision is not None and int(locked[0]) != expected_revision:
+            raise PlanItemRevisionConflict(
+                "plan item revision conflict",
+                entity_id=plan_item_id,
+                field="revision",
+            )
+        # Dates frozen once the task reached a terminal state.
+        terminal = connection.execute(
+            """
+            SELECT 1 FROM learning_task
+            WHERE plan_item_id = %s AND status IN ('已完成', '取消')
+            """,
+            (plan_item_id,),
+        ).fetchone()
+        if terminal is not None and (
+            "plan_start_date" in updates or "plan_end_date" in updates
+        ):
+            raise PlanItemDateError(
+                "plan dates are frozen after task completion or cancellation",
+                entity_id=plan_item_id,
+                field="plan_start_date",
+            )
+        _validate_plan_item_dates(connection, plan_item_id, updates)
+
+        columns = list(updates.keys())
+        set_clause = ", ".join(f"{column} = %s" for column in columns)
+        values = [updates[column] for column in columns] + [plan_item_id]
         updated = connection.execute(
             f"""
             UPDATE plan_item
-            SET {set_clause}
+            SET {set_clause}, revision = revision + 1
             WHERE id = %s
             RETURNING id, annual_growth_plan_id, growth_goal_id, l3_code,
                       current_level, target_level, priority, learning_material,
@@ -516,11 +743,6 @@ def update_plan_item(
             values,
         ).fetchone()
         assert updated is not None
-        if "status" in updates:
-            connection.execute(
-                "UPDATE learning_task SET status = %s WHERE plan_item_id = %s",
-                (updates["status"], plan_item_id),
-            )
     return _attach_l3_contexts(connection, [_plan_item_row(updated)])[0]
 
 
@@ -528,10 +750,8 @@ def list_learning_tasks(
     connection: psycopg.Connection, member_id: int
 ) -> list[dict[str, object]]:
     rows = connection.execute(
-        """
-        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
-               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
-               lt.completion_quality, lt.review_conclusion, lt.next_action,
+        f"""
+        SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
                pi.expected_output, pi.estimated_hours, pi.target_month
@@ -547,15 +767,15 @@ def list_learning_tasks(
         connection,
         [
             {
-                **_learning_task_row(row[:10]),
-                "plan_item_current_level": row[10],
-                "plan_item_target_level": row[11],
-                "plan_item_priority": row[12],
-                "plan_item_learning_material": row[13],
-                "plan_item_learning_task_content": row[14],
-                "plan_item_expected_output": row[15],
-                "plan_item_estimated_hours": row[16],
-                "plan_item_target_month": row[17],
+                **_learning_task_row(row[:17]),
+                "plan_item_current_level": row[17],
+                "plan_item_target_level": row[18],
+                "plan_item_priority": row[19],
+                "plan_item_learning_material": row[20],
+                "plan_item_learning_task_content": row[21],
+                "plan_item_expected_output": row[22],
+                "plan_item_estimated_hours": row[23],
+                "plan_item_target_month": row[24],
             }
             for row in rows
         ],
@@ -572,10 +792,8 @@ def get_learning_task(
     connection: psycopg.Connection, member_id: int, task_id: int
 ) -> dict[str, object] | None:
     row = connection.execute(
-        """
-        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
-               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
-               lt.completion_quality, lt.review_conclusion, lt.next_action,
+        f"""
+        SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
                pi.expected_output, pi.estimated_hours, pi.target_month
@@ -592,15 +810,15 @@ def get_learning_task(
         connection,
         [
             {
-                **_learning_task_row(row[:10]),
-                "plan_item_current_level": row[10],
-                "plan_item_target_level": row[11],
-                "plan_item_priority": row[12],
-                "plan_item_learning_material": row[13],
-                "plan_item_learning_task_content": row[14],
-                "plan_item_expected_output": row[15],
-                "plan_item_estimated_hours": row[16],
-                "plan_item_target_month": row[17],
+                **_learning_task_row(row[:17]),
+                "plan_item_current_level": row[17],
+                "plan_item_target_level": row[18],
+                "plan_item_priority": row[19],
+                "plan_item_learning_material": row[20],
+                "plan_item_learning_task_content": row[21],
+                "plan_item_expected_output": row[22],
+                "plan_item_estimated_hours": row[23],
+                "plan_item_target_month": row[24],
             }
         ],
     )[0]
@@ -611,82 +829,340 @@ def get_learning_task(
     return task
 
 
+def _task_row(connection: psycopg.Connection, task_id: int) -> dict[str, object]:
+    row = connection.execute(
+        f"SELECT {_TASK_COLUMNS} FROM learning_task WHERE id = %s",
+        (task_id,),
+    ).fetchone()
+    assert row is not None
+    return _learning_task_row(row)
+
+
 def update_learning_task(
     connection: psycopg.Connection,
     member_id: int,
     task_id: int,
     fields: dict[str, object],
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
-    owned = connection.execute(
-        """
-        SELECT lt.id
-        FROM learning_task lt
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE lt.id = %s AND agp.member_id = %s
-        """,
-        (task_id, member_id),
-    ).fetchone()
-    if owned is None:
-        raise PermissionError("learning task does not belong to member")
-
+    """Member-editable task fields only; status/dates/hours are machine-owned."""
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _UPDATABLE_TASK_FIELDS:
-            raise ValueError(f"field '{key}' is not updatable")
+            raise SourceFieldLocked(
+                f"field '{key}' is not updatable",
+                entity_type="learning_task",
+                entity_id=task_id,
+                field=key,
+            )
         updates[key] = value
 
-    if "status" in updates:
-        if updates["status"] not in _ALLOWED_TASK_STATUSES:
-            raise ValueError("invalid status")
-        if updates["status"] not in _MEMBER_MANAGED_TASK_STATUSES:
-            raise ValueError("task status is managed by Evidence Review")
+    if "completion_quality" in updates:
+        quality = updates["completion_quality"]
+        if quality is not None and quality not in _COMPLETION_QUALITY_VALUES:
+            raise CompletionGateError(
+                "invalid completion_quality",
+                entity_id=task_id,
+                field="completion_quality",
+            )
+    for key in ("review_conclusion", "next_action"):
+        value = updates.get(key)
+        if value is not None and not isinstance(value, str):
+            raise CompletionGateError(
+                f"{key} must be text", entity_id=task_id, field=key
+            )
+        if (
+            key == "next_action"
+            and isinstance(value, str)
+            and len(value) > _MAX_NEXT_ACTION_LENGTH
+        ):
+            raise CompletionGateError(
+                "next_action must be at most 200 characters",
+                entity_id=task_id,
+                field="next_action",
+            )
 
     if not updates:
-        row = connection.execute(
-            """
-            SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
-                   lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
-                   lt.completion_quality, lt.review_conclusion, lt.next_action
-            FROM learning_task lt
-            WHERE lt.id = %s
-            """,
-            (task_id,),
-        ).fetchone()
-        assert row is not None
-        return _learning_task_row(row)
-
-    columns = list(updates.keys())
-    set_clause = ", ".join(f"{col} = %s" for col in columns)
-    values = [updates[col] for col in columns]
-    values.append(task_id)
+        return _task_row(connection, task_id)
 
     with connection.transaction():
-        updated = connection.execute(
-            f"""
-            UPDATE learning_task
-            SET {set_clause}
-            WHERE id = %s
-            RETURNING id, plan_item_id, l3_code, status,
-                      actual_start_date, actual_end_date, actual_hours,
-                      completion_quality, review_conclusion, next_action
+        locked = connection.execute(
+            """
+            SELECT lt.id
+            FROM learning_task lt
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE lt.id = %s AND agp.member_id = %s
+            FOR UPDATE OF lt
             """,
-            values,
+            (task_id, member_id),
         ).fetchone()
-        if "status" in updates:
-            connection.execute(
-                """
-                UPDATE plan_item
-                SET status = %s
-                WHERE id = (SELECT plan_item_id FROM learning_task WHERE id = %s)
-                """,
-                (updates["status"], task_id),
+        if locked is None:
+            raise PermissionError("learning task does not belong to member")
+        revision_row = connection.execute(
+            "SELECT revision FROM learning_task WHERE id = %s", (task_id,)
+        ).fetchone()
+        assert revision_row is not None
+        if expected_revision is not None and int(revision_row[0]) != expected_revision:
+            raise TaskRevisionConflict(
+                "learning task revision conflict",
+                entity_id=task_id,
+                field="revision",
             )
-    assert updated is not None
-    return _learning_task_row(updated)
+        columns = list(updates.keys())
+        set_clause = ", ".join(f"{column} = %s" for column in columns)
+        values = [updates[column] for column in columns]
+        values.append(task_id)
+        connection.execute(
+            f"UPDATE learning_task SET {set_clause}, revision = revision + 1 "
+            f"WHERE id = %s",
+            values,
+        )
+    return _task_row(connection, task_id)
 
 
-_PROGRESS_LOG_UPDATABLE_FIELDS = {"record_date", "actual_hours", "note"}
+def _transition_fingerprint(*payload: object) -> str:
+    import hashlib
+
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _check_completion_gate(
+    connection: psycopg.Connection, task_id: int
+) -> None:
+    row = connection.execute(
+        """
+        SELECT lt.completion_quality, lt.review_conclusion, lt.next_action,
+               lt.actual_hours,
+               EXISTS (
+                   SELECT 1 FROM evidence e
+                   WHERE e.learning_task_id = lt.id AND e.status = '通过'
+               )
+        FROM learning_task lt
+        WHERE lt.id = %s
+        """,
+        (task_id,),
+    ).fetchone()
+    assert row is not None
+    quality, review_conclusion, next_action, actual_hours, evidence_ok = row
+    if not evidence_ok:
+        raise CompletionGateError(
+            "task requires at least one approved evidence",
+            entity_id=task_id,
+            field="evidence",
+        )
+    if not review_conclusion or not str(review_conclusion).strip():
+        raise CompletionGateError(
+            "task requires a non-empty retrospective conclusion",
+            entity_id=task_id,
+            field="review_conclusion",
+        )
+    if not actual_hours or int(actual_hours) <= 0:
+        raise CompletionGateError(
+            "task requires aggregated actual_hours > 0 from valid logs",
+            entity_id=task_id,
+            field="actual_hours",
+        )
+    if quality not in _COMPLETION_QUALITY_VALUES:
+        raise CompletionGateError(
+            "invalid completion_quality",
+            entity_id=task_id,
+            field="completion_quality",
+        )
+    if not next_action or not str(next_action).strip():
+        raise CompletionGateError(
+            "task requires a non-empty next action",
+            entity_id=task_id,
+            field="next_action",
+        )
+    if len(str(next_action)) > _MAX_NEXT_ACTION_LENGTH:
+        raise CompletionGateError(
+            "next_action must be at most 200 characters",
+            entity_id=task_id,
+            field="next_action",
+        )
+
+
+def transition_learning_task(
+    connection: psycopg.Connection,
+    member_id: int,
+    task_id: int,
+    to_status: str,
+    reason: object,
+    expected_revision: int | None,
+    idempotency_key: str | None = None,
+    revised_due_date: object = None,
+) -> dict[str, object]:
+    """Service-enforced task state machine (v0010).  Zero partial writes."""
+    if to_status not in _ALLOWED_TASK_STATUSES:
+        raise InvalidTaskTransition(
+            f"invalid status '{to_status}'", entity_id=task_id, field="status"
+        )
+    if to_status == "延期" and revised_due_date is not None:
+        if not isinstance(revised_due_date, str):
+            raise InvalidStatusReason(
+                "revised_due_date must be an ISO date",
+                entity_id=task_id,
+                field="revised_due_date",
+            )
+        try:
+            date.fromisoformat(revised_due_date)
+        except ValueError as exc:
+            raise InvalidStatusReason(
+                "revised_due_date must be an ISO date",
+                entity_id=task_id,
+                field="revised_due_date",
+            ) from exc
+
+    fingerprint = _transition_fingerprint(to_status, reason)
+    with connection.transaction():
+        owned = connection.execute(
+            """
+            SELECT lt.id
+            FROM learning_task lt
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE lt.id = %s AND agp.member_id = %s
+            FOR UPDATE OF lt
+            """,
+            (task_id, member_id),
+        ).fetchone()
+        if owned is None:
+            raise PermissionError("learning task does not belong to member")
+        task_row = connection.execute(
+            f"SELECT {_TASK_COLUMNS} FROM learning_task WHERE id = %s",
+            (task_id,),
+        ).fetchone()
+        assert task_row is not None
+        current = _learning_task_row(task_row)
+
+        # Idempotent replay: same request key + same payload returns the
+        # current task state; same key + different payload conflicts.
+        if idempotency_key is not None:
+            existing = connection.execute(
+                """
+                SELECT fingerprint FROM task_transition_history
+                WHERE learning_task_id = %s AND request_key = %s
+                """,
+                (task_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] == fingerprint:
+                    return current
+                raise TransitionIdempotencyConflict(
+                    "idempotency key reused with a different payload",
+                    entity_id=task_id,
+                    field="idempotency_key",
+                )
+
+        from_status = str(current["status"])
+        if (
+            expected_revision is not None
+            and int(current["revision"]) != expected_revision
+        ):
+            raise TaskRevisionConflict(
+                "learning task revision conflict",
+                entity_id=task_id,
+                field="revision",
+            )
+        if to_status not in _TASK_TRANSITIONS.get(from_status, set()):
+            raise InvalidTaskTransition(
+                f"transition from '{from_status}' to '{to_status}' is not allowed",
+                entity_id=task_id,
+                field="status",
+            )
+        reason_field = _STATUS_REASON_FIELDS.get(to_status)
+        if reason_field is not None:
+            if not isinstance(reason, str) or not reason.strip():
+                raise InvalidStatusReason(
+                    f"{reason_field} is required",
+                    entity_id=task_id,
+                    field=reason_field,
+                )
+
+        side_effects: dict[str, object] = {}
+        if reason_field is not None:
+            side_effects[reason_field] = reason
+        if to_status == "进行中" and current["actual_started_at"] is None:
+            side_effects["actual_started_at"] = _now(connection)
+        if to_status == "已完成":
+            _check_completion_gate(connection, task_id)
+            side_effects["actual_completed_at"] = _now(connection)
+        if to_status == "延期" and revised_due_date is not None:
+            side_effects["revised_due_date"] = revised_due_date
+        side_effects["status"] = to_status
+
+        columns = list(side_effects.keys())
+        set_clause = ", ".join(f"{column} = %s" for column in columns)
+        values = [side_effects[column] for column in columns]
+        values.append(task_id)
+        connection.execute(
+            f"UPDATE learning_task SET {set_clause}, revision = revision + 1 "
+            f"WHERE id = %s",
+            values,
+        )
+        connection.execute(
+            """
+            INSERT INTO task_transition_history (
+                learning_task_id, from_status, to_status, reason, actor_id,
+                occurred_at, request_key, fingerprint
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s)
+            """,
+            (
+                task_id,
+                from_status,
+                to_status,
+                reason,
+                member_id,
+                idempotency_key,
+                fingerprint,
+            ),
+        )
+        connection.execute(
+            "UPDATE plan_item SET status = %s "
+            "WHERE id = (SELECT plan_item_id FROM learning_task WHERE id = %s)",
+            (to_status, task_id),
+        )
+    return _task_row(connection, task_id)
+
+
+def list_task_transition_history(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> list[dict[str, object]]:
+    """Append-only transition audit, Member (owner) scoped."""
+    _assert_task_ownership(connection, member_id, task_id)
+    rows = connection.execute(
+        """
+        SELECT id, learning_task_id, from_status, to_status, reason, actor_id,
+               occurred_at, request_key
+        FROM task_transition_history
+        WHERE learning_task_id = %s
+        ORDER BY id
+        """,
+        (task_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "learning_task_id": row[1],
+            "from_status": row[2],
+            "to_status": row[3],
+            "reason": row[4],
+            "actor_id": row[5],
+            "occurred_at": row[6],
+            "request_key": row[7],
+        }
+        for row in rows
+    ]
+
+
+_LOG_COLUMNS = (
+    "id, task_id, record_date, actual_hours, note, recorder_id, created_at, "
+    "invalidated_at, invalidated_by, correction_of_log_id, idempotency_key"
+)
 
 
 def _progress_log_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -697,6 +1173,11 @@ def _progress_log_row(row: tuple[Any, ...]) -> dict[str, object]:
         "actual_hours": row[3],
         "note": row[4],
         "recorder_id": row[5],
+        "created_at": row[6],
+        "invalidated_at": row[7],
+        "invalidated_by": row[8],
+        "correction_of_log_id": row[9],
+        "idempotency_key": row[10],
     }
 
 
@@ -721,10 +1202,58 @@ def _validate_actual_hours(value: object) -> int:
     try:
         hours = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
-        raise ValueError("actual_hours must be a non-negative integer") from exc
-    if hours < 0:
-        raise ValueError("actual_hours must be a non-negative integer")
+        raise LogValidationError(
+            "actual_hours must be an integer between 1 and 24", field="actual_hours"
+        ) from exc
+    if not 1 <= hours <= _MAX_LOG_HOURS_PER_ENTRY:
+        raise LogValidationError(
+            "actual_hours must be an integer between 1 and 24", field="actual_hours"
+        )
     return hours
+
+
+def _aggregate_task_actual_hours(
+    connection: psycopg.Connection, task_id: int
+) -> int:
+    row = connection.execute(
+        """
+        SELECT COALESCE(SUM(actual_hours), 0)
+        FROM learning_progress_log
+        WHERE task_id = %s AND invalidated_at IS NULL
+        """,
+        (task_id,),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _refresh_task_actual_hours(
+    connection: psycopg.Connection, task_id: int
+) -> None:
+    connection.execute(
+        "UPDATE learning_task SET actual_hours = %s WHERE id = %s",
+        (_aggregate_task_actual_hours(connection, task_id), task_id),
+    )
+
+
+def _lock_task_for_execution(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> tuple[str, int]:
+    """FOR UPDATE on the task row; returns (status, revision)."""
+    row = connection.execute(
+        """
+        SELECT lt.status, lt.revision
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s AND agp.member_id = %s
+        FOR UPDATE OF lt
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if row is None:
+        raise PermissionError("learning task does not belong to member")
+    return str(row[0]), int(row[1])
 
 
 def create_progress_log(
@@ -734,21 +1263,112 @@ def create_progress_log(
     record_date: str,
     actual_hours: object,
     note: object,
+    idempotency_key: str | None = None,
+    correction_of_log_id: object = None,
 ) -> dict[str, object]:
-    _assert_task_ownership(connection, member_id, task_id)
+    """Append-only log entry; actual_hours re-aggregates in the same
+    transaction.  Same idempotency key + same payload replays the original
+    log; a reused key with a different payload is a 409.  Corrections arrive
+    as a new log referencing the voided one via correction_of_log_id."""
+    try:
+        parsed_date = date.fromisoformat(str(record_date))
+    except (TypeError, ValueError) as exc:
+        raise LogValidationError(
+            "record_date must be an ISO date", field="record_date"
+        ) from exc
+    if parsed_date > date.today():
+        raise LogValidationError(
+            "record_date must not be in the future", field="record_date"
+        )
     hours = _validate_actual_hours(actual_hours)
 
-    row = connection.execute(
-        """
-        INSERT INTO learning_progress_log (
-            task_id, record_date, actual_hours, note, recorder_id
-        )
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING id, task_id, record_date, actual_hours, note, recorder_id
-        """,
-        (task_id, record_date, hours, note, member_id),
-    ).fetchone()
-    assert row is not None
+    correction_id: int | None = None
+    if correction_of_log_id is not None:
+        try:
+            correction_id = int(correction_of_log_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise LogValidationError(
+                "correction_of_log_id must be an integer",
+                field="correction_of_log_id",
+            ) from exc
+
+    with connection.transaction():
+        status, _ = _lock_task_for_execution(connection, member_id, task_id)
+        if status not in ("进行中", "延期"):
+            raise PlanningDomainError(
+                f"logs require task status 进行中/延期, got '{status}'",
+                code="invalid_task_state_for_log",
+                entity_type="learning_task",
+                entity_id=task_id,
+                field="status",
+            )
+        if correction_id is not None:
+            voided = connection.execute(
+                """
+                SELECT lpl.task_id, lpl.invalidated_at
+                FROM learning_progress_log lpl
+                JOIN learning_task lt ON lt.id = lpl.task_id
+                JOIN plan_item pi ON pi.id = lt.plan_item_id
+                JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+                WHERE lpl.id = %s AND agp.member_id = %s
+                """,
+                (correction_id, member_id),
+            ).fetchone()
+            if voided is None or voided[1] is None:
+                raise LogValidationError(
+                    "correction_of_log_id must reference a voided log of this task",
+                    field="correction_of_log_id",
+                )
+            if int(voided[0]) != task_id:
+                raise LogValidationError(
+                    "correction_of_log_id must belong to the same task",
+                    field="correction_of_log_id",
+                )
+        if idempotency_key is not None:
+            existing = connection.execute(
+                "SELECT id FROM learning_progress_log WHERE idempotency_key = %s",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                row = connection.execute(
+                    f"SELECT {_LOG_COLUMNS} FROM learning_progress_log WHERE id = %s",
+                    (existing[0],),
+                ).fetchone()
+                assert row is not None
+                original = _progress_log_row(row)
+                if (
+                    str(original["record_date"]) == str(parsed_date)
+                    and int(original["actual_hours"]) == hours
+                    and original["note"] == note
+                ):
+                    return original
+                raise LogIdempotencyConflict(
+                    "idempotency key reused with a different payload",
+                    entity_id=existing[0],
+                    field="idempotency_key",
+                )
+
+        row = connection.execute(
+            f"""
+            INSERT INTO learning_progress_log (
+                task_id, record_date, actual_hours, note, recorder_id,
+                idempotency_key, correction_of_log_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING {_LOG_COLUMNS}
+            """,
+            (
+                task_id,
+                str(parsed_date),
+                hours,
+                note,
+                member_id,
+                idempotency_key,
+                correction_id,
+            ),
+        ).fetchone()
+        assert row is not None
+        _refresh_task_actual_hours(connection, task_id)
     return _progress_log_row(row)
 
 
@@ -757,11 +1377,11 @@ def list_progress_logs(
 ) -> list[dict[str, object]]:
     _assert_task_ownership(connection, member_id, task_id)
     rows = connection.execute(
-        """
-        SELECT id, task_id, record_date, actual_hours, note, recorder_id
+        f"""
+        SELECT {_LOG_COLUMNS}
         FROM learning_progress_log
         WHERE task_id = %s
-        ORDER BY record_date DESC
+        ORDER BY record_date DESC, id DESC
         """,
         (task_id,),
     ).fetchall()
@@ -772,9 +1392,8 @@ def _get_progress_log_for_member(
     connection: psycopg.Connection, member_id: int, log_id: int
 ) -> tuple[dict[str, object], int] | None:
     row = connection.execute(
-        """
-        SELECT lpl.id, lpl.task_id, lpl.record_date, lpl.actual_hours,
-               lpl.note, lpl.recorder_id, agp.member_id
+        f"""
+        SELECT {_prefixed(_LOG_COLUMNS, "lpl")}, agp.member_id
         FROM learning_progress_log lpl
         JOIN learning_task lt ON lt.id = lpl.task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -785,64 +1404,61 @@ def _get_progress_log_for_member(
     ).fetchone()
     if row is None:
         return None
-    log = _progress_log_row(row[:6])
-    task_owner_id = int(row[6])
+    log = _progress_log_row(row[:11])
+    task_owner_id = int(row[11])
     return log, task_owner_id
 
 
-def update_progress_log(
+def invalidate_progress_log(
     connection: psycopg.Connection,
     member_id: int,
     log_id: int,
-    fields: dict[str, object],
+    idempotency_key: str | None = None,
 ) -> dict[str, object]:
-    result = _get_progress_log_for_member(connection, member_id, log_id)
-    if result is None:
-        raise KeyError("progress log not found")
-    log, task_owner_id = result
-    if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
-        raise PermissionError("progress log does not belong to member")
-
-    updates: dict[str, object] = {}
-    for key, value in fields.items():
-        if key not in _PROGRESS_LOG_UPDATABLE_FIELDS:
-            raise ValueError(f"field '{key}' is not updatable")
-        updates[key] = value
-
-    if "actual_hours" in updates:
-        updates["actual_hours"] = _validate_actual_hours(updates["actual_hours"])
-
-    if not updates:
-        return log
-
-    columns = list(updates.keys())
-    set_clause = ", ".join(f"{col} = %s" for col in columns)
-    values = [updates[col] for col in columns]
-    values.append(log_id)
-
-    updated = connection.execute(
-        f"""
-        UPDATE learning_progress_log
-        SET {set_clause}
-        WHERE id = %s
-        RETURNING id, task_id, record_date, actual_hours, note, recorder_id
-        """,
-        values,
+    """Append-only correction: the log is voided (never deleted) and
+    actual_hours re-aggregates in the same transaction."""
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT lpl.id, lpl.recorder_id, lpl.invalidated_at, agp.member_id,
+                   lpl.task_id
+            FROM learning_progress_log lpl
+            JOIN learning_task lt ON lt.id = lpl.task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE lpl.id = %s
+            FOR UPDATE OF lpl
+            """,
+            (log_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError("progress log not found")
+        log_id, recorder_id, invalidated_at, task_owner_id, task_id = row
+        if int(recorder_id) != member_id or int(task_owner_id) != member_id:
+            raise PermissionError("progress log does not belong to member")
+        if idempotency_key is not None and invalidated_at is not None:
+            # Idempotent replay of an already-voided log.
+            updated = connection.execute(
+                f"SELECT {_LOG_COLUMNS} FROM learning_progress_log WHERE id = %s",
+                (log_id,),
+            ).fetchone()
+            assert updated is not None
+            return _progress_log_row(updated)
+        connection.execute(
+            """
+            UPDATE learning_progress_log
+            SET invalidated_at = NOW(), invalidated_by = %s
+            WHERE id = %s
+            """,
+            (member_id, log_id),
+        )
+        _refresh_task_actual_hours(connection, int(task_id))
+    row = connection.execute(
+        f"SELECT {_LOG_COLUMNS} FROM learning_progress_log WHERE id = %s",
+        (log_id,),
     ).fetchone()
-    assert updated is not None
-    return _progress_log_row(updated)
-
-
-def delete_progress_log(
-    connection: psycopg.Connection, member_id: int, log_id: int
-) -> None:
-    result = _get_progress_log_for_member(connection, member_id, log_id)
-    if result is None:
-        raise KeyError("progress log not found")
-    log, task_owner_id = result
-    if int(log["recorder_id"]) != member_id or task_owner_id != member_id:
-        raise PermissionError("progress log does not belong to member")
-    connection.execute("DELETE FROM learning_progress_log WHERE id = %s", (log_id,))
+    assert row is not None
+    return _progress_log_row(row)
 
 
 def get_monthly_hours(
@@ -1031,18 +1647,6 @@ def get_member_dashboard(
         (member_id, year),
     ).fetchall()
     progress = {str(row[0]): int(row[1]) for row in progress_rows}
-    waiting_review_row = connection.execute(
-        """
-        SELECT COUNT(*)
-        FROM learning_task lt
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE agp.member_id = %s
-          AND agp.year = %s
-          AND lt.status = '待 Evidence Review'
-        """,
-        (member_id, year),
-    ).fetchone()
     current_tasks = [
         task
         for task in list_learning_tasks(connection, member_id)
@@ -1121,11 +1725,10 @@ def get_member_dashboard(
             "total": sum(progress.values()),
             "未开始": progress.get("未开始", 0),
             "进行中": progress.get("进行中", 0),
-            "待 Evidence Review": (
-                int(waiting_review_row[0]) if waiting_review_row else 0
-            ),
             "已完成": progress.get("已完成", 0),
             "延期": progress.get("延期", 0),
+            "暂停": progress.get("暂停", 0),
+            "取消": progress.get("取消", 0),
         },
         "domain_radar": [
             {"domain_code": code, "score": scores.get(code, 0)}
@@ -1136,7 +1739,17 @@ def get_member_dashboard(
     }
 
 
-_EVIDENCE_UPDATABLE_FIELDS = {"content", "evidence_link"}
+_EVIDENCE_UPDATABLE_FIELDS = {
+    "content",
+    "evidence_link",
+    "description",
+    "evidence_type",
+    "url",
+    "file_reference",
+    "file_name",
+    "mime_type",
+    "file_size",
+}
 
 _ALLOWED_EVIDENCE_STATUSES = {
     "草稿",
@@ -1146,6 +1759,13 @@ _ALLOWED_EVIDENCE_STATUSES = {
     "驳回",
     "已归档",
 }
+
+_EVIDENCE_COLUMNS = (
+    "id, learning_task_id, l3_code, version_number, content, evidence_link, "
+    "status, submitted_at, created_at, submitted_by, description, "
+    "evidence_type, url, file_reference, file_name, mime_type, file_size, "
+    "supersedes_evidence_id, revision"
+)
 
 
 def _evidence_row(row: tuple[Any, ...]) -> dict[str, object]:
@@ -1159,6 +1779,16 @@ def _evidence_row(row: tuple[Any, ...]) -> dict[str, object]:
         "status": row[6],
         "submitted_at": row[7],
         "created_at": row[8],
+        "submitted_by": row[9],
+        "description": row[10],
+        "evidence_type": row[11],
+        "url": row[12],
+        "file_reference": row[13],
+        "file_name": row[14],
+        "mime_type": row[15],
+        "file_size": row[16],
+        "supersedes_evidence_id": row[17],
+        "revision": row[18],
     }
 
 
@@ -1166,9 +1796,8 @@ def _assert_evidence_ownership(
     connection: psycopg.Connection, member_id: int, evidence_id: int
 ) -> dict[str, object]:
     row = connection.execute(
-        """
-        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
-               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        f"""
+        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -1182,12 +1811,45 @@ def _assert_evidence_ownership(
     return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
+def _validate_evidence_metadata(fields: dict[str, object]) -> None:
+    evidence_type = fields.get("evidence_type")
+    if evidence_type is not None and evidence_type not in ("link", "file"):
+        raise EvidenceValidationError(
+            "evidence_type must be 'link' or 'file'", field="evidence_type"
+        )
+    if evidence_type == "link" and not fields.get("url"):
+        raise EvidenceValidationError(
+            "evidence_type 'link' requires url", field="url"
+        )
+    if evidence_type == "file" and not fields.get("file_reference"):
+        raise EvidenceValidationError(
+            "evidence_type 'file' requires file_reference", field="file_reference"
+        )
+    file_size = fields.get("file_size")
+    if file_size is not None:
+        try:
+            if int(file_size) <= 0:
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise EvidenceValidationError(
+                "file_size must be a positive integer", field="file_size"
+            ) from exc
+
+
 def create_evidence_draft(
     connection: psycopg.Connection,
     member_id: int,
     learning_task_id: int,
     content: object,
     evidence_link: object,
+    description: object = None,
+    evidence_type: object = None,
+    url: object = None,
+    file_reference: object = None,
+    file_name: object = None,
+    mime_type: object = None,
+    file_size: object = None,
+    supersedes_evidence_id: object = None,
 ) -> dict[str, object]:
     _assert_task_ownership(connection, member_id, learning_task_id)
 
@@ -1198,41 +1860,110 @@ def create_evidence_draft(
     assert task is not None
     l3_code = task[0]
 
-    draft = connection.execute(
-        """
-        SELECT 1 FROM evidence
-        WHERE learning_task_id = %s AND status = '草稿'
-        LIMIT 1
-        """,
-        (learning_task_id,),
-    ).fetchone()
-    if draft is not None:
-        raise ValueError("draft evidence already exists for this task")
+    with connection.transaction():
+        draft = connection.execute(
+            """
+            SELECT 1 FROM evidence
+            WHERE learning_task_id = %s AND status = '草稿'
+            LIMIT 1
+            """,
+            (learning_task_id,),
+        ).fetchone()
+        if draft is not None:
+            raise EvidenceValidationError(
+                "draft evidence already exists for this task",
+                entity_id=learning_task_id,
+                field="status",
+            )
 
-    max_version = connection.execute(
-        """
-        SELECT COALESCE(MAX(version_number), 0)
-        FROM evidence
-        WHERE learning_task_id = %s
-        """,
-        (learning_task_id,),
-    ).fetchone()
-    assert max_version is not None
-    version_number = int(max_version[0]) + 1
+        supersedes: object = None
+        if supersedes_evidence_id is not None:
+            try:
+                supersedes = int(supersedes_evidence_id)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as exc:
+                raise EvidenceValidationError(
+                    "supersedes_evidence_id must be an integer",
+                    field="supersedes_evidence_id",
+                ) from exc
+            superseded = connection.execute(
+                """
+                SELECT status, learning_task_id FROM evidence WHERE id = %s
+                """,
+                (supersedes,),
+            ).fetchone()
+            if superseded is None or int(superseded[1]) != learning_task_id:
+                raise EvidenceValidationError(
+                    "superseded evidence must belong to the same task",
+                    field="supersedes_evidence_id",
+                )
+            if superseded[0] == "通过":
+                raise EvidenceValidationError(
+                    "approved evidence is terminal and cannot be superseded",
+                    field="supersedes_evidence_id",
+                )
+            if superseded[0] != "需补充":
+                raise EvidenceValidationError(
+                    "a new version may only supersede evidence marked 需补充",
+                    field="supersedes_evidence_id",
+                )
 
-    row = connection.execute(
-        """
-        INSERT INTO evidence (
-            learning_task_id, l3_code, version_number, content,
-            evidence_link, status
+        metadata: dict[str, object] = {
+            key: value
+            for key, value in {
+                "description": description,
+                "evidence_type": evidence_type,
+                "url": url,
+                "file_reference": file_reference,
+                "file_name": file_name,
+                "mime_type": mime_type,
+                "file_size": file_size,
+            }.items()
+            if value is not None
+        }
+        _validate_evidence_metadata(metadata)
+
+        max_version = connection.execute(
+            """
+            SELECT COALESCE(MAX(version_number), 0)
+            FROM evidence
+            WHERE learning_task_id = %s
+            """,
+            (learning_task_id,),
+        ).fetchone()
+        assert max_version is not None
+        version_number = int(max_version[0]) + 1
+
+        columns = ", ".join(
+            [
+                "learning_task_id", "l3_code", "version_number",
+                "content", "evidence_link", "status",
+            ]
+            + list(metadata.keys())
         )
-        VALUES (%s, %s, %s, %s, %s, '草稿')
-        RETURNING id, learning_task_id, l3_code, version_number,
-                  content, evidence_link, status, submitted_at, created_at
-        """,
-        (learning_task_id, l3_code, version_number, content, evidence_link),
-    ).fetchone()
-    assert row is not None
+        placeholders = ", ".join(["%s"] * (6 + len(metadata)))
+        values: list[object] = [
+            learning_task_id,
+            l3_code,
+            version_number,
+            content,
+            evidence_link,
+            "草稿",
+        ]
+        values.extend(metadata[key] for key in metadata)
+        if supersedes is not None:
+            columns += ", supersedes_evidence_id"
+            placeholders += ", %s"
+            values.append(supersedes)
+
+        row = connection.execute(
+            f"""
+            INSERT INTO evidence ({columns})
+            VALUES ({placeholders})
+            RETURNING {_EVIDENCE_COLUMNS}
+            """,
+            values,
+        ).fetchone()
+        assert row is not None
     return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
@@ -1244,13 +1975,22 @@ def update_evidence_draft(
 ) -> dict[str, object]:
     evidence = _assert_evidence_ownership(connection, member_id, evidence_id)
     if evidence["status"] != "草稿":
-        raise ValueError("only draft evidence can be updated")
+        raise EvidenceValidationError(
+            "only draft evidence can be updated",
+            entity_id=evidence_id,
+            field="status",
+        )
 
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _EVIDENCE_UPDATABLE_FIELDS:
-            raise ValueError(f"field '{key}' is not updatable")
+            raise EvidenceValidationError(
+                f"field '{key}' is not updatable",
+                entity_id=evidence_id,
+                field=key,
+            )
         updates[key] = value
+    _validate_evidence_metadata(updates)
 
     if not updates:
         return evidence
@@ -1263,10 +2003,9 @@ def update_evidence_draft(
     row = connection.execute(
         f"""
         UPDATE evidence
-        SET {set_clause}
+        SET {set_clause}, revision = revision + 1
         WHERE id = %s
-        RETURNING id, learning_task_id, l3_code, version_number,
-                  content, evidence_link, status, submitted_at, created_at
+        RETURNING {_EVIDENCE_COLUMNS}
         """,
         values,
     ).fetchone()
@@ -1277,55 +2016,51 @@ def update_evidence_draft(
 def submit_evidence(
     connection: psycopg.Connection, member_id: int, evidence_id: int
 ) -> dict[str, object]:
-    evidence = _assert_evidence_ownership(connection, member_id, evidence_id)
-    if evidence["status"] != "草稿":
-        raise ValueError("only draft evidence can be submitted")
-
-    buddy = get_primary_buddy(connection, member_id)
-    if buddy is None:
-        raise ValueError("no primary buddy assigned")
-
+    """Submit a draft for buddy review.  The task status is untouched — the
+    review state lives on the evidence, never on the task (v0010)."""
     with connection.transaction():
         row = connection.execute(
-            """
-            UPDATE evidence
-            SET status = '待 Review', submitted_at = NOW()
-            WHERE id = %s
-            RETURNING id, learning_task_id, l3_code, version_number,
-                      content, evidence_link, status, submitted_at, created_at
+            f"""
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE e.id = %s AND agp.member_id = %s
+            FOR UPDATE OF e
             """,
-            (evidence_id,),
+            (evidence_id, member_id),
         ).fetchone()
-        assert row is not None
-        submitted = _evidence_row(row)
-
-        connection.execute(
-            """
-            INSERT INTO evidence_review (evidence_id, buddy_id, status)
-            VALUES (%s, %s, '待 Review')
-            """,
-            (evidence_id, int(buddy["id"])),
-        )
-        connection.execute(
-            """
-            UPDATE learning_task
-            SET status = '待 Evidence Review'
-            WHERE id = %s
-            """,
-            (int(submitted["learning_task_id"]),),
-        )
-        connection.execute(
-            """
-            UPDATE plan_item
-            SET status = '进行中'
-            WHERE id = (
-                SELECT plan_item_id FROM learning_task WHERE id = %s
+        if row is None:
+            raise PermissionError("evidence does not belong to member")
+        evidence = _evidence_row(row[:19])
+        task_status = str(row[19])
+        if evidence["status"] != "草稿":
+            raise EvidenceValidationError(
+                "only draft evidence can be submitted",
+                entity_id=evidence_id,
+                field="status",
             )
+        if task_status not in ("进行中", "延期"):
+            raise PlanningDomainError(
+                "evidence submission requires task status 进行中/延期",
+                code="invalid_task_state_for_evidence",
+                entity_type="learning_task",
+                entity_id=int(evidence["learning_task_id"]),
+                field="status",
+            )
+        submitted = connection.execute(
+            f"""
+            UPDATE evidence
+            SET status = '待 Review', submitted_at = NOW(), submitted_by = %s,
+                revision = revision + 1
+            WHERE id = %s
+            RETURNING {_EVIDENCE_COLUMNS}
             """,
-            (int(submitted["learning_task_id"]),),
-        )
-
-    return _attach_l3_contexts(connection, [submitted])[0]
+            (member_id, evidence_id),
+        ).fetchone()
+        assert submitted is not None
+    return _attach_l3_contexts(connection, [_evidence_row(submitted)])[0]
 
 
 def list_evidences(
@@ -1333,9 +2068,8 @@ def list_evidences(
 ) -> list[dict[str, object]]:
     _assert_task_ownership(connection, member_id, learning_task_id)
     rows = connection.execute(
-        """
-        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
-               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        f"""
+        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}
         FROM evidence e
         WHERE e.learning_task_id = %s
         ORDER BY e.version_number DESC
@@ -1349,9 +2083,8 @@ def get_evidence(
     connection: psycopg.Connection, member_id: int, evidence_id: int
 ) -> dict[str, object] | None:
     row = connection.execute(
-        """
-        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
-               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at
+        f"""
+        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -1381,37 +2114,33 @@ def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
 def list_pending_evidence_reviews_for_buddy(
     connection: psycopg.Connection, buddy_id: int
 ) -> list[dict[str, object]]:
+    """The buddy's pending evidence queue — evidence rows awaiting review for
+    members the buddy is currently (and effectively) assigned to."""
     rows = connection.execute(
-        """
-        SELECT er.id, er.evidence_id, e.submitted_at,
-               agp.member_id, u.username, e.learning_task_id,
-               e.l3_code, e.version_number, e.content, e.evidence_link
-        FROM evidence_review er
-        JOIN evidence e ON e.id = er.evidence_id
+        f"""
+        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
+               agp.member_id, u.username
+        FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         JOIN tcp_user u ON u.id = agp.member_id
-        WHERE er.buddy_id = %s AND er.status = '待 Review'
+        JOIN buddy_relationship br
+          ON br.member_id = agp.member_id
+         AND br.buddy_id = %s
+         AND br.is_primary = TRUE
+         AND br.effective_to IS NULL
+        WHERE e.status = '待 Review'
         ORDER BY e.submitted_at ASC NULLS LAST
         """,
         (buddy_id,),
     ).fetchall()
-    items = [
-        {
-            "id": row[0],
-            "evidence_id": row[1],
-            "submitted_at": row[2],
-            "member_id": row[3],
-            "username": row[4],
-            "learning_task_id": row[5],
-            "l3_code": row[6],
-            "version_number": row[7],
-            "content": row[8],
-            "evidence_link": row[9],
-        }
-        for row in rows
-    ]
+    items = []
+    for row in rows:
+        evidence = _evidence_row(row[:19])
+        evidence["member_id"] = row[19]
+        evidence["username"] = row[20]
+        items.append(evidence)
     return _attach_l3_contexts(connection, items)
 
 
@@ -1465,71 +2194,111 @@ def get_evidence_review_for_buddy(
 
 def submit_evidence_review(
     connection: psycopg.Connection,
-    review_id: int,
+    evidence_id: int,
     buddy_id: int,
     conclusion: str,
     feedback: object,
+    idempotency_key: str | None = None,
 ) -> dict[str, object]:
-    if conclusion not in ("通过", "需补充", "驳回"):
-        raise ValueError("invalid conclusion")
+    """Append-only evidence review (v0010).
+
+    One immutable review row per evidence version (UNIQUE(evidence_id));
+    the evidence status updates in the same transaction.  The task state is
+    NOT touched — completion goes through the task transition gate.
+    """
+    if conclusion not in ("通过", "需补充"):
+        raise ReviewValidationError(
+            "conclusion must be 通过 or 需补充",
+            entity_id=evidence_id,
+            field="conclusion",
+        )
+    if conclusion == "需补充" and (
+        not isinstance(feedback, str) or not feedback.strip()
+    ):
+        raise ReviewValidationError(
+            "需补充 requires non-empty feedback",
+            entity_id=evidence_id,
+            field="feedback",
+        )
 
     with connection.transaction():
         row = connection.execute(
             """
-            SELECT er.evidence_id, er.buddy_id, er.status, agp.member_id,
-                   e.learning_task_id
-            FROM evidence_review er
-            JOIN evidence e ON e.id = er.evidence_id
+            SELECT e.status, agp.member_id, e.learning_task_id
+            FROM evidence e
             JOIN learning_task lt ON lt.id = e.learning_task_id
             JOIN plan_item pi ON pi.id = lt.plan_item_id
             JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-            WHERE er.id = %s
+            WHERE e.id = %s
+            FOR UPDATE OF e
             """,
-            (review_id,),
+            (evidence_id,),
         ).fetchone()
         if row is None:
-            raise ValueError("review not found")
-        evidence_id, review_buddy_id, review_status, member_id, task_id = row
-        if int(review_buddy_id) != buddy_id:
-            raise ValueError("review is not assigned to this buddy")
-        if review_status != "待 Review":
-            raise ValueError("review is not pending")
+            raise ReviewValidationError(
+                "evidence not found", entity_id=evidence_id, field="evidence"
+            )
+        evidence_status, member_id, task_id = row
+
+        # Idempotent replay checked before any state validation.
+        if idempotency_key is not None:
+            existing = connection.execute(
+                """
+                SELECT er.id
+                FROM evidence_review er
+                WHERE er.evidence_id = %s
+                  AND er.idempotency_key = %s
+                """,
+                (evidence_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                row2 = connection.execute(
+                    """
+                    SELECT id, evidence_id, buddy_id, status, conclusion,
+                           feedback, reviewed_at, created_at
+                    FROM evidence_review WHERE id = %s
+                    """,
+                    (existing[0],),
+                ).fetchone()
+                assert row2 is not None
+                return _evidence_review_row(row2)
+
+        if evidence_status != "待 Review":
+            raise PlanningDomainError(
+                "evidence is not pending review",
+                code="review_already_submitted",
+                entity_type="evidence_review",
+                entity_id=evidence_id,
+                field="status",
+            )
+        # Re-read the CURRENT effective buddy relationship inside the lock.
         if not is_member_assigned_to_buddy(connection, int(member_id), buddy_id):
-            raise ValueError("buddy is not assigned to member")
+            raise PermissionError("buddy is not assigned to member")
 
         reviewed_at = _now(connection)
-        updated = connection.execute(
+        inserted = connection.execute(
             """
-            UPDATE evidence_review
-            SET status = %s, conclusion = %s, feedback = %s, reviewed_at = %s
-            WHERE id = %s
+            INSERT INTO evidence_review (
+                evidence_id, buddy_id, status, conclusion, feedback,
+                reviewed_at, idempotency_key
+            )
+            VALUES (%s, %s, '已闭环', %s, %s, %s, %s)
             RETURNING id, evidence_id, buddy_id, status, conclusion,
                       feedback, reviewed_at, created_at
             """,
-            (conclusion, conclusion, feedback, reviewed_at, review_id),
+            (evidence_id, buddy_id, conclusion, feedback, reviewed_at, idempotency_key),
         ).fetchone()
-        assert updated is not None
-
-        evidence_status = "已归档" if conclusion == "通过" else conclusion
-        connection.execute(
-            "UPDATE evidence SET status = %s WHERE id = %s",
-            (evidence_status, evidence_id),
-        )
-        task_status = "已完成" if conclusion == "通过" else "进行中"
-        connection.execute(
-            "UPDATE learning_task SET status = %s WHERE id = %s",
-            (task_status, task_id),
-        )
+        assert inserted is not None
         connection.execute(
             """
-            UPDATE plan_item
-            SET status = %s
-            WHERE id = (SELECT plan_item_id FROM learning_task WHERE id = %s)
+            UPDATE evidence
+            SET status = %s, revision = revision + 1
+            WHERE id = %s
             """,
-            (task_status, task_id),
+            (conclusion, evidence_id),
         )
 
-    return _evidence_review_row(updated)
+    return _evidence_review_row(inserted)
 
 
 def get_evidence_review_summary_for_buddy(
@@ -1537,29 +2306,43 @@ def get_evidence_review_summary_for_buddy(
     buddy_id: int,
     year: int,
 ) -> dict[str, int]:
-    """Return pending and completed evidence review counts for a Buddy in a year."""
-    row = connection.execute(
+    """Return pending and completed evidence review counts for a Buddy in a year.
+
+    Pending counts come from evidence awaiting review for assigned members;
+    completed counts come from the immutable review history.
+    """
+    pending = connection.execute(
         """
-        SELECT
-            COUNT(*) FILTER (WHERE er.status = '待 Review') AS pending_count,
-            COUNT(*) FILTER (
-                WHERE er.status != '待 Review'
-                  AND EXTRACT(YEAR FROM er.reviewed_at)::INT = %s
-            ) AS completed_count
+        SELECT COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        JOIN buddy_relationship br
+          ON br.member_id = agp.member_id
+         AND br.buddy_id = %s
+         AND br.is_primary = TRUE
+         AND br.effective_to IS NULL
+        WHERE e.status = '待 Review' AND agp.year = %s
+        """,
+        (buddy_id, year),
+    ).fetchone()
+    completed = connection.execute(
+        """
+        SELECT COUNT(*)
         FROM evidence_review er
         JOIN evidence e ON e.id = er.evidence_id
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE er.buddy_id = %s AND agp.year = %s
+        WHERE er.buddy_id = %s
+          AND EXTRACT(YEAR FROM er.reviewed_at)::INT = %s
         """,
-        (year, buddy_id, year),
+        (buddy_id, year),
     ).fetchone()
-    if row is None:
-        return {"pending_count": 0, "completed_count": 0}
     return {
-        "pending_count": int(row[0] or 0),
-        "completed_count": int(row[1] or 0),
+        "pending_count": int(pending[0] or 0) if pending else 0,
+        "completed_count": int(completed[0] or 0) if completed else 0,
     }
 
 
@@ -1705,10 +2488,8 @@ def _learning_task_with_logs_and_evidences(
     connection: psycopg.Connection, plan_item_id: int
 ) -> dict[str, object] | None:
     row = connection.execute(
-        """
-        SELECT lt.id, lt.plan_item_id, lt.l3_code, lt.status,
-               lt.actual_start_date, lt.actual_end_date, lt.actual_hours,
-               lt.completion_quality, lt.review_conclusion, lt.next_action
+        f"""
+        SELECT {_prefixed(_TASK_COLUMNS, "lt")}
         FROM learning_task lt
         WHERE lt.plan_item_id = %s
         """,
@@ -1718,8 +2499,8 @@ def _learning_task_with_logs_and_evidences(
         return None
     task_id = row[0]
     logs = connection.execute(
-        """
-        SELECT id, task_id, record_date, actual_hours, note, recorder_id
+        f"""
+        SELECT {_LOG_COLUMNS}
         FROM learning_progress_log
         WHERE task_id = %s
         ORDER BY record_date DESC
@@ -1727,9 +2508,8 @@ def _learning_task_with_logs_and_evidences(
         (task_id,),
     ).fetchall()
     evidences = connection.execute(
-        """
-        SELECT e.id, e.learning_task_id, e.l3_code, e.version_number,
-               e.content, e.evidence_link, e.status, e.submitted_at, e.created_at,
+        f"""
+        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
                er.id, er.status, er.conclusion, er.feedback, er.reviewed_at
         FROM evidence e
         LEFT JOIN evidence_review er ON er.evidence_id = e.id
@@ -1743,16 +2523,16 @@ def _learning_task_with_logs_and_evidences(
         "progress_logs": [_progress_log_row(log) for log in logs],
         "evidences": [
             {
-                **_evidence_row(evidence[:9]),
+                **_evidence_row(evidence[:19]),
                 "review": (
                     {
-                        "id": evidence[9],
-                        "status": evidence[10],
-                        "conclusion": evidence[11],
-                        "feedback": evidence[12],
-                        "reviewed_at": evidence[13],
+                        "id": evidence[19],
+                        "status": evidence[20],
+                        "conclusion": evidence[21],
+                        "feedback": evidence[22],
+                        "reviewed_at": evidence[23],
                     }
-                    if evidence[9] is not None
+                    if evidence[19] is not None
                     else None
                 ),
             }

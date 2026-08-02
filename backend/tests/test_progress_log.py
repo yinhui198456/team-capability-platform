@@ -23,6 +23,7 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -47,6 +48,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -61,6 +63,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -380,6 +383,16 @@ def _seed_plan_with_tasks(
         item["id"] for item in plan["items"]
     }
 
+    # Logs require a running task (v0010): start both tasks.
+    for task in tasks:
+        status, _, _ = _request(
+            "POST",
+            f"/api/planning/learning-tasks/{int(task['id'])}/transitions",
+            {"to_status": "进行中"},
+            cookies=member_cookies,
+        )
+        assert status == 200
+
     return member_cookies, tasks
 
 
@@ -427,23 +440,31 @@ def test_update_and_delete_progress_log_success(
     assert status == 200
     log_id = int(log["id"])
 
-    status, updated, _ = _request(
-        "PUT",
-        f"/api/planning/progress-logs/{log_id}",
-        {"record_date": "2026-07-11", "actual_hours": 4, "note": "修订"},
+    # v0010: logs are append-only.  Corrections void the old entry and add a
+    # new one; physical update/delete endpoints are gone.
+    status, invalidated, _ = _request(
+        "POST",
+        f"/api/planning/progress-logs/{log_id}/invalidate",
+        {},
         cookies=cookies,
     )
     assert status == 200
-    assert updated["record_date"] == "2026-07-11"
-    assert updated["actual_hours"] == 4
-    assert updated["note"] == "修订"
+    assert invalidated["invalidated_at"] is not None
 
-    status, _, _ = _request(
-        "DELETE",
-        f"/api/planning/progress-logs/{log_id}",
+    status, corrected, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/progress-logs",
+        {
+            "record_date": "2026-07-11",
+            "actual_hours": 4,
+            "note": "修订",
+            "correction_of_log_id": log_id,
+        },
         cookies=cookies,
     )
-    assert status == 204
+    assert status == 200
+    assert corrected["actual_hours"] == 4
+    assert corrected["correction_of_log_id"] == log_id
 
     status, logs, _ = _request(
         "GET",
@@ -451,7 +472,22 @@ def test_update_and_delete_progress_log_success(
         cookies=cookies,
     )
     assert status == 200
-    assert logs == []
+    assert len(logs) == 2  # voided + corrected — nothing is deleted
+
+    # The old mutation endpoints no longer exist.
+    status, _, _ = _request(
+        "PUT",
+        f"/api/planning/progress-logs/{log_id}",
+        {"actual_hours": 4},
+        cookies=cookies,
+    )
+    assert status == 404
+    status, _, _ = _request(
+        "DELETE",
+        f"/api/planning/progress-logs/{log_id}",
+        cookies=cookies,
+    )
+    assert status == 404
 
 
 def test_progress_log_for_other_member_task_returns_403(
@@ -502,8 +538,9 @@ def test_delete_other_member_progress_log_returns_403(
     other_cookies = _login(progress_log_schema, "other_member_progress")
 
     status, body, _ = _request(
-        "DELETE",
-        f"/api/planning/progress-logs/{log_id}",
+        "POST",
+        f"/api/planning/progress-logs/{log_id}/invalidate",
+        {},
         cookies=other_cookies,
     )
     assert status == 403
@@ -516,32 +553,16 @@ def test_update_progress_log_invalid_or_negative_hours_returns_422(
     cookies, tasks = _seed_plan_with_tasks(progress_log_schema)
     task_id = int(tasks[0]["id"])
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/planning/learning-tasks/{task_id}/progress-logs",
-        {"record_date": "2026-07-10", "actual_hours": -1},
-        cookies=cookies,
-    )
-    assert status == 422
-    assert body == {"detail": "actual_hours must be a non-negative integer"}
-
-    status, log, _ = _request(
-        "POST",
-        f"/api/planning/learning-tasks/{task_id}/progress-logs",
-        {"record_date": "2026-07-10", "actual_hours": 2},
-        cookies=cookies,
-    )
-    assert status == 200
-    log_id = int(log["id"])
-
-    status, body, _ = _request(
-        "PUT",
-        f"/api/planning/progress-logs/{log_id}",
-        {"actual_hours": "not-a-number"},
-        cookies=cookies,
-    )
-    assert status == 422
-    assert body == {"detail": "actual_hours must be a non-negative integer"}
+    for bad_hours in (-1, 0, 25, "not-a-number"):
+        status, body, _ = _request(
+            "POST",
+            f"/api/planning/learning-tasks/{task_id}/progress-logs",
+            {"record_date": "2026-07-10", "actual_hours": bad_hours},
+            cookies=cookies,
+        )
+        assert status == 422
+        assert body["detail"]["code"] == "invalid_hours"
+        assert body["detail"]["field"] == "actual_hours"
 
 
 def test_get_monthly_hours_aggregates_across_tasks_and_months(
@@ -602,16 +623,9 @@ def test_progress_log_endpoints_require_member_role(
     assert status == 403
 
     status, _, _ = _request(
-        "PUT",
-        "/api/planning/progress-logs/1",
-        {"actual_hours": 1},
-        cookies=cookies,
-    )
-    assert status == 403
-
-    status, _, _ = _request(
-        "DELETE",
-        "/api/planning/progress-logs/1",
+        "POST",
+        "/api/planning/progress-logs/1/invalidate",
+        {},
         cookies=cookies,
     )
     assert status == 403

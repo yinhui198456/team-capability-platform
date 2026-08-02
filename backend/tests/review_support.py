@@ -38,6 +38,7 @@ _ALL_TABLES = (
     "plan_item",
     "growth_goal",
     "annual_growth_plan",
+    "task_transition_history",
     "learning_task",
     "evidence",
     "evidence_review",

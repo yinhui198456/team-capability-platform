@@ -27,6 +27,7 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS capability_profile")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute(
             "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
@@ -50,6 +51,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -64,6 +66,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS capability_profile")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -360,6 +363,13 @@ def _build_full_profile(
     )
     assert status == 200
     task_id = next(task["id"] for task in tasks if task["plan_item_id"] == plan_item_id)
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=member_cookies,
+    )
+    assert status == 200
 
     status, _, _ = _request(
         "POST",
@@ -395,7 +405,7 @@ def _build_full_profile(
     review_id = pending[0]["id"]
     status, _, _ = _request(
         "POST",
-        f"/api/planning/evidence-reviews/{review_id}",
+        f"/api/planning/evidences/{review_id}/review",
         {"conclusion": "通过", "feedback": "符合要求"},
         cookies=buddy_cookies,
     )
@@ -442,7 +452,7 @@ def test_member_views_own_profile_with_aggregation(
 
     assert len(task["evidences"]) == 1
     evidence = task["evidences"][0]
-    assert evidence["status"] == "已归档"
+    assert evidence["status"] == "通过"
     assert evidence["l2_code"] == "P01-L2A"
     assert evidence["review"] is not None
     assert evidence["review"]["conclusion"] == "通过"
@@ -450,7 +460,7 @@ def test_member_views_own_profile_with_aggregation(
     stats = body["statistics"]
     assert stats["total_learning_hours"] == 5
     assert stats["total_planned_hours"] == 10
-    assert stats["evidence_count_by_status"]["已归档"] == 1
+    assert stats["evidence_count_by_status"]["通过"] == 1
 
 
 def test_buddy_views_assigned_member_profile(
@@ -610,6 +620,17 @@ def test_cross_year_hours_filtered_by_record_date(
     )
     assert status == 200
     task_id = tasks[0]["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=member_cookies,
+    )
+    if status != 200:
+        current = _request(
+            "GET", "/api/planning/learning-tasks", cookies=member_cookies
+        )[1]
+        assert next(t for t in current if t["id"] == task_id)["status"] == "进行中"
 
     status, _, _ = _request(
         "POST",
