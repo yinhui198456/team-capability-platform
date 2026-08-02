@@ -46,6 +46,7 @@ from .repository import (
 _CONFLICT_CODES = {
     "task_revision_conflict",
     "plan_revision_conflict",
+    "evidence_revision_conflict",
     "transition_idempotency_conflict",
     "log_idempotency_conflict",
     "review_idempotency_conflict",
@@ -549,7 +550,15 @@ def put_evidence(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_evidence_draft(connection, int(user["id"]), evidence_id, body)
+        expected = body.get("expected_revision")
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return update_evidence_draft(
+            connection,
+            int(user["id"]),
+            evidence_id,
+            fields,
+            expected_revision=int(expected) if expected is not None else None,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

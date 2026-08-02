@@ -8,7 +8,7 @@ Additive, forward-only. Adds:
   revised_due_date; the status dictionary tightens to the six final states
   (legacy ``待 Evidence Review`` rows backfilled to ``进行中``);
   ``completion_quality`` gains the final dictionary CHECK — legacy free-text
-  values are nulled (no production rows exist for that never-shipped field);
+  values are preserved losslessly in ``completion_quality_legacy``;
 - ``task_transition_history`` — append-only audit of every task transition
   (from_status, to_status, reason, actor, occurred_at, request idempotency);
 - ``learning_progress_log`` append-only semantics: created_at,
@@ -141,9 +141,18 @@ def _extend_learning_task(connection: psycopg.Connection) -> None:
         f"status IN ({allowed})",
     )
 
-    # Final completion_quality dictionary.  Legacy free-text values (the field
-    # was never validated and has no shipped writes) are nulled so the CHECK
-    # can be enforced going forward.
+    # Final completion_quality dictionary.  Legacy free-text values are moved
+    # to the additive completion_quality_legacy column — losslessly readable,
+    # never rewritten — while new writes stay constrained to the dictionary.
+    _add_column(connection, "learning_task", "completion_quality_legacy", "TEXT")
+    connection.execute(
+        """
+        UPDATE learning_task
+        SET completion_quality_legacy = completion_quality
+        WHERE completion_quality IS NOT NULL
+          AND completion_quality NOT IN ('达到预期', '部分达到', '超出预期')
+        """
+    )
     connection.execute(
         """
         UPDATE learning_task
@@ -174,10 +183,15 @@ def _extend_progress_log(connection: psycopg.Connection) -> None:
     ):
         _add_column(connection, "learning_progress_log", column, definition)
 
+    # Idempotency keys are scoped per task: a key on one task must never
+    # replay (or collide with) a log of another task/member.  The v0010-era
+    # global index is replaced by a (task_id, idempotency_key) partial unique
+    # index; the DROP is idempotent for re-runs.
+    connection.execute("DROP INDEX IF EXISTS uniq_progress_log_idempotency_key")
     connection.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS uniq_progress_log_idempotency_key
-        ON learning_progress_log(idempotency_key)
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_progress_log_task_idempotency_key
+        ON learning_progress_log(task_id, idempotency_key)
         WHERE idempotency_key IS NOT NULL
         """
     )
@@ -250,7 +264,9 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
 def _backfill_plan_item_dates(connection: psycopg.Connection) -> None:
     # Pre-#63 items carry target_month only; #62 items carry plan_month.
     # Fill missing plan dates from the plan month (first/last day), sourced
-    # from plan_month first, legacy target_month second.
+    # from plan_month first, legacy target_month second.  The month end is
+    # cross-year safe: month=12 rolls into January of the next year before
+    # subtracting one day (MAKE_DATE(year, 13, 1) itself overflows).
     connection.execute(
         """
         UPDATE plan_item pi
@@ -261,7 +277,9 @@ def _backfill_plan_item_dates(connection: psycopg.Connection) -> None:
             plan_end_date = COALESCE(
                 pi.plan_end_date,
                 (MAKE_DATE(
-                     agp.year, COALESCE(pi.plan_month, pi.target_month) + 1, 1
+                     agp.year + (COALESCE(pi.plan_month, pi.target_month) / 12),
+                     COALESCE(pi.plan_month, pi.target_month) % 12 + 1,
+                     1
                  ) - INTERVAL '1 day')::date
             )
         FROM annual_growth_plan agp

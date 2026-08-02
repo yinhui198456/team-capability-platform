@@ -206,6 +206,11 @@ class EvidenceValidationError(PlanningDomainError):
     entity_type = "evidence"
 
 
+class EvidenceRevisionConflict(PlanningDomainError):
+    code = "evidence_revision_conflict"
+    entity_type = "evidence"
+
+
 class EvidenceReviewConflict(PlanningDomainError):
     code = "review_idempotency_conflict"
     entity_type = "evidence_review"
@@ -1319,9 +1324,13 @@ def create_progress_log(
                     field="correction_of_log_id",
                 )
         if idempotency_key is not None:
+            # Idempotency is scoped to (task, key): a key must never replay or
+            # collide with a log of another task or member, and the full
+            # payload (record_date/hours/note/recorder/correction) must match.
             existing = connection.execute(
-                "SELECT id FROM learning_progress_log WHERE idempotency_key = %s",
-                (idempotency_key,),
+                "SELECT id FROM learning_progress_log "
+                "WHERE idempotency_key = %s AND task_id = %s",
+                (idempotency_key, task_id),
             ).fetchone()
             if existing is not None:
                 row = connection.execute(
@@ -1334,6 +1343,8 @@ def create_progress_log(
                     str(original["record_date"]) == str(parsed_date)
                     and int(original["actual_hours"]) == hours
                     and original["note"] == note
+                    and int(original["recorder_id"]) == member_id
+                    and original["correction_of_log_id"] == correction_id
                 ):
                     return original
                 raise LogIdempotencyConflict(
@@ -1968,15 +1979,11 @@ def update_evidence_draft(
     member_id: int,
     evidence_id: int,
     fields: dict[str, object],
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
-    evidence = _assert_evidence_ownership(connection, member_id, evidence_id)
-    if evidence["status"] != "草稿":
-        raise EvidenceValidationError(
-            "only draft evidence can be updated",
-            entity_id=evidence_id,
-            field="status",
-        )
-
+    """CAS update: the evidence row is locked inside the transaction, status
+    and revision are re-read, and the write only lands when
+    expected_revision matches — concurrent PUTs cannot last-write-wins."""
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _EVIDENCE_UPDATABLE_FIELDS:
@@ -1988,22 +1995,53 @@ def update_evidence_draft(
         updates[key] = value
     _validate_evidence_metadata(updates)
 
-    if not updates:
-        return evidence
+    with connection.transaction():
+        row = connection.execute(
+            f"""
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE e.id = %s AND agp.member_id = %s
+            FOR UPDATE OF e
+            """,
+            (evidence_id, member_id),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("evidence does not belong to member")
+        evidence = _evidence_row(row)
+        if evidence["status"] != "草稿":
+            raise EvidenceValidationError(
+                "only draft evidence can be updated",
+                entity_id=evidence_id,
+                field="status",
+            )
+        if (
+            expected_revision is not None
+            and int(evidence["revision"]) != expected_revision
+        ):
+            raise EvidenceRevisionConflict(
+                "evidence revision conflict",
+                entity_id=evidence_id,
+                field="revision",
+            )
 
-    columns = list(updates.keys())
-    set_clause = ", ".join(f"{col} = %s" for col in columns)
-    values = [updates[col] for col in columns]
-    values.append(evidence_id)
+        if not updates:
+            return _attach_l3_contexts(connection, [evidence])[0]
 
+        columns = list(updates.keys())
+        set_clause = ", ".join(f"{col} = %s" for col in columns)
+        values = [updates[col] for col in columns]
+        values.append(evidence_id)
+        connection.execute(
+            f"UPDATE evidence SET {set_clause}, revision = revision + 1 "
+            f"WHERE id = %s",
+            values,
+        )
     row = connection.execute(
-        f"""
-        UPDATE evidence
-        SET {set_clause}, revision = revision + 1
-        WHERE id = %s
-        RETURNING {_EVIDENCE_COLUMNS}
-        """,
-        values,
+        f"SELECT {_EVIDENCE_COLUMNS} FROM evidence WHERE id = %s",
+        (evidence_id,),
     ).fetchone()
     assert row is not None
     return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
@@ -2218,6 +2256,30 @@ def submit_evidence_review(
         )
 
     with connection.transaction():
+        # Lock order (fixed): member buddy-relationship advisory lock FIRST,
+        # then the evidence row — the same order create_buddy_relationship
+        # uses, so a relationship switch and a review can never interleave.
+        member_row = connection.execute(
+            """
+            SELECT agp.member_id
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE e.id = %s
+            """,
+            (evidence_id,),
+        ).fetchone()
+        if member_row is None:
+            raise ReviewValidationError(
+                "evidence not found", entity_id=evidence_id, field="evidence"
+            )
+        member_id = int(member_row[0])
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"tcp_buddy_relationship:{member_id}",),
+        )
+        # Re-read under the lock; the relationship may have changed.
         row = connection.execute(
             """
             SELECT e.status, agp.member_id, e.learning_task_id
@@ -2230,10 +2292,7 @@ def submit_evidence_review(
             """,
             (evidence_id,),
         ).fetchone()
-        if row is None:
-            raise ReviewValidationError(
-                "evidence not found", entity_id=evidence_id, field="evidence"
-            )
+        assert row is not None
         evidence_status, member_id, task_id = row
 
         # Idempotent replay checked before any state validation.

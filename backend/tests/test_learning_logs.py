@@ -168,3 +168,98 @@ def test_concurrent_appends_do_not_lose_logs(seeded: dict[str, object]) -> None:
     assert len(logs) == 2
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=mc)
     assert next(t for t in tasks if t["id"] == task_id)["actual_hours"] == 5
+
+
+def test_idempotency_key_is_scoped_per_task(seeded: dict[str, object]) -> None:
+    """P2: the same key on two tasks of the same member must not collide or
+    replay each other's logs."""
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    tasks = _request("GET", "/api/planning/learning-tasks", cookies=mc)[1]
+    other_task_id = int(next(t for t in tasks if t["id"] != task_id)["id"])
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{other_task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=mc,
+    )
+    assert status == 200
+
+    status, first = _add_log(mc, task_id, 3, idempotency_key="shared-key")
+    assert status == 200
+    # The same key on the other task creates its own log.
+    status, second = _add_log(mc, other_task_id, 4, idempotency_key="shared-key")
+    assert status == 200
+    assert second["id"] != first["id"]
+    assert second["task_id"] == other_task_id
+    # Replays stay scoped.
+    status, replay = _add_log(mc, task_id, 3, idempotency_key="shared-key")
+    assert status == 200
+    assert replay["id"] == first["id"]
+    status, replay2 = _add_log(mc, other_task_id, 4, idempotency_key="shared-key")
+    assert status == 200
+    assert replay2["id"] == second["id"]
+    # Counts are exact per task.
+    status, logs, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}/progress-logs", cookies=mc
+    )
+    assert len(logs) == 1
+    status, tasks2, _ = _request("GET", "/api/planning/learning-tasks", cookies=mc)
+    assert next(t for t in tasks2 if t["id"] == task_id)["actual_hours"] == 3
+    assert next(t for t in tasks2 if t["id"] == other_task_id)["actual_hours"] == 4
+
+
+def test_idempotency_key_does_not_leak_across_members(
+    seeded: dict[str, object],
+) -> None:
+    """P2: another member using the same key must never read or replay the
+    first member's log — and may create their own."""
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    connection = seeded["connection"]
+    from tests.test_learning_task import _create_test_user, _login
+
+    other_id = _create_test_user(connection, "other_log_member", ["Member"])
+    connection.execute(
+        "UPDATE tcp_user SET target_level='P4', current_level='P4' WHERE id=%s",
+        (other_id,),
+    )
+    connection.commit()
+    other_cookies = _login(connection, "other_log_member")
+
+    status, first = _add_log(mc, task_id, 5, idempotency_key="member-key")
+    assert status == 200
+
+    # The other member has no task; a fresh task via a second plan is not
+    # needed — ownership of task_id blocks them entirely.
+    status, body = _add_log(other_cookies, task_id, 5, idempotency_key="member-key")
+    assert status == 403
+
+
+def test_idempotency_payload_includes_correction(
+    seeded: dict[str, object],
+) -> None:
+    """P2: same key + same date/hours/note but a different correction target
+    is a different payload → 409."""
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    _add_log(mc, task_id, 2, idempotency_key="corr-key")
+    status, logs, _ = _request(
+        "GET", f"/api/planning/learning-tasks/{task_id}/progress-logs", cookies=mc
+    )
+    original_id = logs[0]["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/progress-logs/{original_id}/invalidate",
+        {},
+        cookies=mc,
+    )
+    assert status == 200
+
+    # Same key, same date/hours/note, but with a correction reference: 409.
+    status, body = _add_log(
+        mc,
+        task_id,
+        2,
+        idempotency_key="corr-key",
+        correction_of_log_id=original_id,
+    )
+    assert status == 409
+    assert body["detail"]["code"] == "log_idempotency_conflict"

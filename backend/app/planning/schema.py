@@ -172,6 +172,7 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             completion_quality TEXT
                 CHECK (completion_quality IS NULL
                        OR completion_quality IN ('达到预期', '部分达到', '超出预期')),
+            completion_quality_legacy TEXT,
             review_conclusion TEXT,
             next_action TEXT,
             revision INT NOT NULL DEFAULT 0,
@@ -233,8 +234,8 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
                 WHERE table_name = 'learning_progress_log'
                   AND column_name = 'idempotency_key'
             ) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uniq_progress_log_idempotency_key
-                ON learning_progress_log(idempotency_key)
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_progress_log_task_idempotency_key
+                ON learning_progress_log(task_id, idempotency_key)
                 WHERE idempotency_key IS NOT NULL;
             END IF;
         END $$

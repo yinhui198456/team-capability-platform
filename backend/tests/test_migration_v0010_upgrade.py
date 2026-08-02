@@ -116,6 +116,50 @@ def _seed_v0010_legacy_data(
     task2_id = int(task2[0])
     data["item2_id"] = item2_id
     data["task2_id"] = task2_id
+
+    # A December item/task: the month-end backfill must survive month=12.
+    gap3 = connection.execute(
+        """
+        INSERT INTO gap (assessment_id, l3_code, current_level, target_level,
+                         gap_value, priority, plan_candidate)
+        VALUES (%s, 'P01-L1-L2-L5', 1, 3, 2, '中', TRUE)
+        RETURNING id
+        """,
+        (assessment_id,),
+    ).fetchone()
+    goal3 = connection.execute(
+        """
+        INSERT INTO growth_goal (gap_id, annual_growth_plan_id, l3_code, year,
+                                 target_level, priority)
+        VALUES (%s, %s, 'P01-L1-L2-L5', 2024, 3, '中')
+        RETURNING id
+        """,
+        (int(gap3[0]), plan_id),
+    ).fetchone()
+    item3 = connection.execute(
+        """
+        INSERT INTO plan_item (annual_growth_plan_id, growth_goal_id, l3_code,
+                               current_level, target_level, priority,
+                               target_month)
+        VALUES (%s, %s, 'P01-L1-L2-L5', 1, 3, '中', 12)
+        RETURNING id
+        """,
+        (plan_id, int(goal3[0])),
+    ).fetchone()
+    item3_id = int(item3[0])
+    task3 = connection.execute(
+        """
+        INSERT INTO learning_task (plan_item_id, l3_code, status,
+                                   completion_quality, review_conclusion,
+                                   next_action)
+        VALUES (%s, 'P01-L1-L2-L5', '未开始', '十二月历史质量',
+                '旧复盘二', '旧下步二')
+        RETURNING id
+        """,
+        (item3_id,),
+    ).fetchone()
+    data["item3_id"] = int(item3[0])
+    data["task3_id"] = int(task3[0])
     connection.execute(
         """
         INSERT INTO learning_progress_log (task_id, record_date, actual_hours,
@@ -182,9 +226,16 @@ def test_v0010_upgrades_real_v0009_database(
         (task2_id,),
     ).fetchone()
     assert task[0] == "进行中"  # legacy 待 Evidence Review backfilled
-    assert task[1] is None  # legacy free-text quality nulled
+    assert task[1] is None  # legacy free-text quality moved to legacy column
     assert task[2] == 0  # revision default
     assert task[3:] == (None, None, None, None, None, None)
+
+    # Legacy free-text quality is preserved losslessly in the legacy column.
+    legacy_quality = connection.execute(
+        "SELECT completion_quality_legacy FROM learning_task WHERE id = %s",
+        (task2_id,),
+    ).fetchone()[0]
+    assert legacy_quality == "自由文本旧值"
 
     # Legacy completed task stays untouched.
     completed = connection.execute(
@@ -272,6 +323,44 @@ def test_v0010_constraints_are_enforced(
         "plan_end_date='2024-05-01' WHERE id=%s",
         (data["item2_id"],),
     )
+
+
+def test_v0010_december_dates_and_legacy_quality_are_preserved(
+    pre_v0010_db: psycopg.Connection,
+) -> None:
+    """P1: month=12 must backfill 12-01/12-31 (cross-year-safe month end) and
+    legacy free-text completion_quality must stay readable losslessly."""
+    connection = pre_v0010_db
+    data = connection.legacy_data
+    _run_runner(connection)
+
+    dates = connection.execute(
+        "SELECT plan_start_date, plan_end_date FROM plan_item WHERE id=%s",
+        (data["item3_id"],),
+    ).fetchone()
+    assert str(dates[0]) == "2024-12-01"
+    assert str(dates[1]) == "2024-12-31"
+
+    task3 = connection.execute(
+        """
+        SELECT completion_quality, completion_quality_legacy
+        FROM learning_task WHERE id = %s
+        """,
+        (data["task3_id"],),
+    ).fetchone()
+    assert task3[0] is None
+    assert task3[1] == "十二月历史质量"
+
+    # Re-run stays idempotent with the legacy column in place.
+    _run_runner(connection)
+    task3_again = connection.execute(
+        """
+        SELECT completion_quality, completion_quality_legacy
+        FROM learning_task WHERE id = %s
+        """,
+        (data["task3_id"],),
+    ).fetchone()
+    assert task3_again[1] == "十二月历史质量"
 
 
 def test_v0010_rerun_is_idempotent(
