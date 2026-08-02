@@ -75,9 +75,7 @@ def _add_log(
     return status, payload
 
 
-def _create_and_submit_evidence(
-    cookies: dict[str, str], task_id: int
-) -> int:
+def _create_and_submit_evidence(cookies: dict[str, str], task_id: int) -> int:
     status, evidence, _ = _request(
         "POST",
         f"/api/planning/learning-tasks/{task_id}/evidences",
@@ -96,9 +94,7 @@ def _create_and_submit_evidence(
     return evidence_id
 
 
-def _approve_evidence(
-    buddy_cookies: dict[str, str], evidence_id: int
-) -> None:
+def _approve_evidence(buddy_cookies: dict[str, str], evidence_id: int) -> None:
     status, _, _ = _request(
         "POST",
         f"/api/planning/evidences/{evidence_id}/review",
@@ -204,15 +200,16 @@ def test_reason_required_for_delay_pause_cancel(seeded: dict[str, object]) -> No
     status, _ = _transition(mc, task_id, "进行中")
     assert status == 200
     for to_status, reason_field in (
-        ("暂停", "pause_reason"), ("取消", "cancel_reason")
+        ("暂停", "pause_reason"),
+        ("取消", "cancel_reason"),
     ):
         status, body = _transition(mc, task_id, to_status)
         assert status == 422
         assert body["detail"]["code"] == "invalid_status_reason"
         assert body["detail"]["field"] == reason_field
-        assert next(
-            t for t in _get_tasks(mc) if t["id"] == task_id
-        )["status"] == "进行中"
+        assert (
+            next(t for t in _get_tasks(mc) if t["id"] == task_id)["status"] == "进行中"
+        )
     status, body = _transition(mc, task_id, "延期")
     assert status == 422
     assert body["detail"]["field"] == "delay_reason"
@@ -317,9 +314,7 @@ def test_completion_gate_requires_positive_aggregated_hours(
     log_id = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}/progress-logs", cookies=mc
     )[1][0]["id"]
-    _request(
-        "POST", f"/api/planning/progress-logs/{log_id}/invalidate", {}, cookies=mc
-    )
+    _request("POST", f"/api/planning/progress-logs/{log_id}/invalidate", {}, cookies=mc)
     status, body = _transition(mc, task_id, "已完成")
     assert status == 422
     assert body["detail"]["field"] == "actual_hours"
@@ -328,9 +323,7 @@ def test_completion_gate_requires_positive_aggregated_hours(
 def test_revision_conflict_returns_409(seeded: dict[str, object]) -> None:
     mc = seeded["member_cookies"]
     task_id = int(seeded["task_id"])
-    status, body = _transition(
-        mc, task_id, "进行中", expected_revision=99
-    )
+    status, body = _transition(mc, task_id, "进行中", expected_revision=99)
     assert status == 409
     assert body["detail"]["code"] == "task_revision_conflict"
     assert next(t for t in _get_tasks(mc) if t["id"] == task_id)["status"] == "未开始"

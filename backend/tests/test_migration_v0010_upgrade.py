@@ -57,9 +57,7 @@ def pre_v0010_db(connection: psycopg.Connection) -> Iterator[psycopg.Connection]
     _run_until_v0009(connection)  # v0009 only — v0010 must not exist yet
     assert V0010_VERSION not in [
         r[0]
-        for r in connection.execute(
-            "SELECT version FROM schema_migration"
-        ).fetchall()
+        for r in connection.execute("SELECT version FROM schema_migration").fetchall()
     ]
     _seed_v0010_legacy_data(connection, data)
     connection.commit()
@@ -232,9 +230,10 @@ def test_v0010_upgrades_real_v0009_database(
     assert str(dates[1]) == "2024-05-31"
 
     # Transition history exists and is empty for legacy data.
-    assert connection.execute(
-        "SELECT COUNT(*) FROM task_transition_history"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM task_transition_history").fetchone()[0]
+        == 0
+    )
 
 
 def test_v0010_constraints_are_enforced(

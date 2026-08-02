@@ -38,9 +38,7 @@ def seeded(learning_task_schema: psycopg.Connection) -> dict[str, object]:
     }
 
 
-def _create_evidence(
-    mc: dict[str, str], task_id: int, **extra: Any
-) -> tuple[int, Any]:
+def _create_evidence(mc: dict[str, str], task_id: int, **extra: Any) -> tuple[int, Any]:
     body: dict[str, object] = {
         "content": "成果",
         "evidence_link": "http://example.com/out",
@@ -105,9 +103,7 @@ def test_approved_evidence_is_terminal(seeded: dict[str, object]) -> None:
     )
     assert status == 200
     # Superseding an approved version is rejected.
-    status, body = _create_evidence(
-        mc, task_id, supersedes_evidence_id=ev_id
-    )
+    status, body = _create_evidence(mc, task_id, supersedes_evidence_id=ev_id)
     assert status == 422
     assert body["detail"]["field"] == "supersedes_evidence_id"
 
@@ -123,8 +119,7 @@ def test_submit_does_not_change_task_status(seeded: dict[str, object]) -> None:
     assert next(t for t in tasks if t["id"] == task_id)["status"] == "进行中"
     # Task status list no longer contains the removed 待 Evidence Review state.
     assert all(
-        t["status"]
-        in ("未开始", "进行中", "已完成", "延期", "暂停", "取消")
+        t["status"] in ("未开始", "进行中", "已完成", "延期", "暂停", "取消")
         for t in tasks
     )
 

@@ -233,9 +233,7 @@ def _extend_evidence(connection: psycopg.Connection) -> None:
 
 
 def _extend_evidence_review(connection: psycopg.Connection) -> None:
-    _add_column(
-        connection, "evidence_review", "idempotency_key", "TEXT"
-    )
+    _add_column(connection, "evidence_review", "idempotency_key", "TEXT")
     connection.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS uniq_evidence_review_idempotency_key

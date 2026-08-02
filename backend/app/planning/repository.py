@@ -929,9 +929,7 @@ def _transition_fingerprint(*payload: object) -> str:
     ).hexdigest()
 
 
-def _check_completion_gate(
-    connection: psycopg.Connection, task_id: int
-) -> None:
+def _check_completion_gate(connection: psycopg.Connection, task_id: int) -> None:
     row = connection.execute(
         """
         SELECT lt.completion_quality, lt.review_conclusion, lt.next_action,
@@ -1212,9 +1210,7 @@ def _validate_actual_hours(value: object) -> int:
     return hours
 
 
-def _aggregate_task_actual_hours(
-    connection: psycopg.Connection, task_id: int
-) -> int:
+def _aggregate_task_actual_hours(connection: psycopg.Connection, task_id: int) -> int:
     row = connection.execute(
         """
         SELECT COALESCE(SUM(actual_hours), 0)
@@ -1227,9 +1223,7 @@ def _aggregate_task_actual_hours(
     return int(row[0])
 
 
-def _refresh_task_actual_hours(
-    connection: psycopg.Connection, task_id: int
-) -> None:
+def _refresh_task_actual_hours(connection: psycopg.Connection, task_id: int) -> None:
     connection.execute(
         "UPDATE learning_task SET actual_hours = %s WHERE id = %s",
         (_aggregate_task_actual_hours(connection, task_id), task_id),
@@ -1818,9 +1812,7 @@ def _validate_evidence_metadata(fields: dict[str, object]) -> None:
             "evidence_type must be 'link' or 'file'", field="evidence_type"
         )
     if evidence_type == "link" and not fields.get("url"):
-        raise EvidenceValidationError(
-            "evidence_type 'link' requires url", field="url"
-        )
+        raise EvidenceValidationError("evidence_type 'link' requires url", field="url")
     if evidence_type == "file" and not fields.get("file_reference"):
         raise EvidenceValidationError(
             "evidence_type 'file' requires file_reference", field="file_reference"
@@ -1935,8 +1927,12 @@ def create_evidence_draft(
 
         columns = ", ".join(
             [
-                "learning_task_id", "l3_code", "version_number",
-                "content", "evidence_link", "status",
+                "learning_task_id",
+                "l3_code",
+                "version_number",
+                "content",
+                "evidence_link",
+                "status",
             ]
             + list(metadata.keys())
         )

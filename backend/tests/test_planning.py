@@ -496,9 +496,7 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
     # v0010: task status is machine-managed via the transition endpoint.
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    task_id = next(
-        task for task in tasks if task["plan_item_id"] == item_id
-    )["id"]
+    task_id = next(task for task in tasks if task["plan_item_id"] == item_id)["id"]
     status, _, _ = _request(
         "POST",
         f"/api/planning/learning-tasks/{task_id}/transitions",

@@ -231,9 +231,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             (member_id, year),
         )
         # v0010: logs require a running task; start it first.
-        transition_learning_task(
-            connection, member_id, task_id, "进行中", None, None
-        )
+        transition_learning_task(connection, member_id, task_id, "进行中", None, None)
         create_progress_log(
             connection,
             member_id,

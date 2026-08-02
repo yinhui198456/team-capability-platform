@@ -499,7 +499,7 @@ def test_update_non_draft_evidence_returns_422(
     )
     assert status == 422
     assert body["detail"]["code"] == "invalid_evidence"
-    assert body["detail"]["field"] == "status" 
+    assert body["detail"]["field"] == "status"
 
 
 def test_cannot_create_two_drafts_for_same_task(
@@ -524,7 +524,7 @@ def test_cannot_create_two_drafts_for_same_task(
     )
     assert status == 422
     assert body["detail"]["code"] == "invalid_evidence"
-    assert body["detail"]["field"] == "status" 
+    assert body["detail"]["field"] == "status"
 
 
 def test_can_create_new_version_after_submit(
