@@ -135,26 +135,56 @@ def _enable_planning_snapshot_immutability(connection: psycopg.Connection) -> No
         CREATE OR REPLACE FUNCTION guard_planning_snapshot_immutable()
         RETURNS TRIGGER AS $$
         DECLARE
-            v_version_id BIGINT;
             v_status TEXT;
         BEGIN
             IF TG_OP = 'INSERT' THEN
-                v_version_id := NEW.capability_standard_version_id;
+                -- Only the NEW version's status matters: appending a snapshot
+                -- to a published/archived version is always rejected.
+                SELECT status INTO v_status
+                FROM capability_standard_version
+                WHERE id = NEW.capability_standard_version_id;
+                IF v_status IN ('已发布', '已归档') THEN
+                    RAISE EXCEPTION
+                        'planning snapshot is immutable for published/archived versions'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                RETURN NEW;
+            ELSIF TG_OP = 'UPDATE' THEN
+                -- Identity fields (version, node) never drift: a snapshot row
+                -- belongs to exactly one (version, node) forever, so it can
+                -- never be UPDATE-moved into a published/archived version or
+                -- onto another node.
+                IF NEW.capability_standard_version_id IS DISTINCT FROM OLD.capability_standard_version_id
+                   OR NEW.l3_node_id IS DISTINCT FROM OLD.l3_node_id THEN
+                    RAISE EXCEPTION
+                        'planning snapshot identity fields are immutable'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                -- Content is frozen whenever either the old or the new version
+                -- is published/archived (the version status itself cannot
+                -- change here because the identity check above forbids it).
+                SELECT status INTO v_status
+                FROM capability_standard_version
+                WHERE id = OLD.capability_standard_version_id;
+                IF v_status IN ('已发布', '已归档') THEN
+                    RAISE EXCEPTION
+                        'planning snapshot is immutable for published/archived versions'
+                        USING ERRCODE = 'P0001';
+                END IF;
+                RETURN NEW;
             ELSE
-                v_version_id := OLD.capability_standard_version_id;
-            END IF;
-            SELECT status INTO v_status
-            FROM capability_standard_version
-            WHERE id = v_version_id;
-            IF v_status IN ('已发布', '已归档') THEN
-                RAISE EXCEPTION
-                    'planning snapshot is immutable for published/archived versions'
-                    USING ERRCODE = 'P0001';
-            END IF;
-            IF TG_OP = 'DELETE' THEN
+                -- DELETE: the snapshot is frozen once its version is
+                -- published/archived.
+                SELECT status INTO v_status
+                FROM capability_standard_version
+                WHERE id = OLD.capability_standard_version_id;
+                IF v_status IN ('已发布', '已归档') THEN
+                    RAISE EXCEPTION
+                        'planning snapshot is immutable for published/archived versions'
+                        USING ERRCODE = 'P0001';
+                END IF;
                 RETURN OLD;
             END IF;
-            RETURN NEW;
         END;
         $$ LANGUAGE plpgsql
         """
@@ -327,6 +357,26 @@ def _extend_annual_growth_plan(connection: psycopg.Connection) -> None:
         ON assessment (member_id, year, id)
         """
     )
+    # P1-3 (2nd review): the plan's source assessment must belong to the same
+    # member/year as the plan itself — the DB, not just the repository, is the
+    # last line.  MATCH SIMPLE lets legacy plans (NULL source) pass untouched.
+    _add_fk(
+        connection,
+        "annual_growth_plan",
+        "plan_source_assessment_member_year_fk",
+        "FOREIGN KEY (member_id, year, source_assessment_id) "
+        "REFERENCES assessment (member_id, year, id)",
+    )
+    # P1-3: plan items are bound to (plan, source assessment) so a plan item
+    # can never point at a different assessment than its plan (and therefore
+    # never at another member's/year's assessment).  NULL sources (legacy)
+    # are exempt via MATCH SIMPLE.
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_annual_growth_plan_id_source
+        ON annual_growth_plan (id, source_assessment_id)
+        """
+    )
 
 
 def _extend_plan_item(connection: psycopg.Connection) -> None:
@@ -404,6 +454,11 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
             "FOREIGN KEY (planning_snapshot_id, capability_standard_version_id, l3_node_id) "
             "REFERENCES capability_standard_planning_snapshot(id, capability_standard_version_id, l3_node_id)",
         ),
+        (
+            "plan_item_plan_source_fk",
+            "FOREIGN KEY (annual_growth_plan_id, source_assessment_id) "
+            "REFERENCES annual_growth_plan (id, source_assessment_id)",
+        ),
     ):
         _add_fk(connection, "plan_item", constraint, definition)
     for constraint, expression in (
@@ -458,9 +513,11 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
         ),
     ):
         _add_check(connection, "plan_item", constraint, expression)
-    # The completeness contract was tightened (P1-4): drop any earlier
-    # definition of the guard so upgraded databases get the strong version,
-    # then add it.
+    # The completeness contract was tightened (P1-4/P1-2 2nd review): drop any
+    # earlier definition of the guard so upgraded databases get the strong
+    # version, then add it.  The 2nd-review contract adds scope_type, the
+    # member level snapshots and the effective-target consistency rule
+    # (effective is the adjusted target when adjusted, else the standard).
     connection.execute(
         "ALTER TABLE plan_item "
         "DROP CONSTRAINT IF EXISTS plan_item_approval_completeness"
@@ -472,7 +529,7 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
         "planning_source_type IS DISTINCT FROM 'assessment_approval'"
         " OR ("
         "include_in_plan IS TRUE"
-        " AND priority IN ('高', '中', '低')"
+        " AND priority IS NOT NULL AND priority IN ('高', '中', '低')"
         " AND source_assessment_id IS NOT NULL"
         " AND source_assessment_detail_id IS NOT NULL"
         " AND capability_standard_version_id IS NOT NULL"
@@ -481,11 +538,22 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
         " AND l1_code IS NOT NULL AND l1_name IS NOT NULL"
         " AND l2_code IS NOT NULL AND l2_name IS NOT NULL"
         " AND l3_code IS NOT NULL AND l3_name IS NOT NULL"
+        " AND scope_type IS NOT NULL"
         " AND standard_job_level_snapshot IS NOT NULL"
+        " AND member_current_level_snapshot IS NOT NULL"
+        " AND member_target_level_snapshot IS NOT NULL"
         " AND assessment_revision IS NOT NULL"
+        " AND target_level = effective_target_level"
         " AND effective_target_level IS NOT NULL"
         " AND gap_value IS NOT NULL"
         " AND plan_quarter IS NOT NULL AND plan_month IS NOT NULL"
+        " AND ("
+        "   (adjusted_target_level IS NOT NULL"
+        "    AND effective_target_level = adjusted_target_level)"
+        "   OR"
+        "   (adjusted_target_level IS NULL"
+        "    AND effective_target_level = standard_target_level)"
+        " )"
         ")",
     )
     connection.execute(
@@ -756,6 +824,39 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
             END IF;
         END $$
         """
+    )
+    # P1-2 (2nd review): every assessment_approval proposal detail is a frozen
+    # slice of the approved plan selection — scope, member level snapshots,
+    # current/effective target, gap, priority, timing and the effective-target
+    # consistency rule are all required at the DB level.
+    _add_check(
+        connection,
+        "annual_plan_change_proposal_detail",
+        "proposal_detail_approval_completeness",
+        "include_in_plan IS TRUE"
+        " AND member_priority IS NOT NULL"
+        " AND member_priority IN ('高', '中', '低')"
+        " AND scope_type IS NOT NULL"
+        " AND current_level IS NOT NULL"
+        " AND effective_target_level IS NOT NULL"
+        " AND gap_value IS NOT NULL"
+        " AND plan_quarter IS NOT NULL AND plan_month IS NOT NULL"
+        " AND standard_job_level_snapshot IS NOT NULL"
+        " AND member_current_level_snapshot IS NOT NULL"
+        " AND member_target_level_snapshot IS NOT NULL"
+        " AND assessment_revision IS NOT NULL"
+        " AND capability_standard_version_id IS NOT NULL"
+        " AND planning_snapshot_id IS NOT NULL"
+        " AND l1_code IS NOT NULL AND l1_name IS NOT NULL"
+        " AND l2_code IS NOT NULL AND l2_name IS NOT NULL"
+        " AND l3_code IS NOT NULL AND l3_name IS NOT NULL"
+        " AND ("
+        "   (adjusted_target_level IS NOT NULL"
+        "    AND effective_target_level = adjusted_target_level)"
+        "   OR"
+        "   (adjusted_target_level IS NULL"
+        "    AND effective_target_level = standard_target_level)"
+        " )",
     )
     _add_fk(
         connection,

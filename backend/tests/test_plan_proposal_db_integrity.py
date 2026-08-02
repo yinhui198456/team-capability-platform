@@ -48,6 +48,9 @@ _PLAN_ITEM_TYPES = {
     "plan_month": "int",
     "target_month": "int",
     "include_in_plan": "boolean",
+    "scope_type": "text",
+    "member_current_level_snapshot": "text",
+    "member_target_level_snapshot": "text",
 }
 
 
@@ -97,12 +100,13 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
         if "l3_code" not in overrides:
             overrides["l3_code"] = "'ZZZ-COPYPK'"
         if "source_assessment_detail_id" not in overrides:
-            # Give the copy its own assessment + detail on the item's own node:
-            # the (detail, assessment, node) triple stays valid while the
-            # business uniques (per-assessment node, per-plan l3_code, per
-            # source detail) are all dodged.  A test that overrides
-            # source_assessment_id (wrong-assessment case) keeps that override
-            # and only the detail is replaced.
+            # Give the copy its own plan + assessment + detail on the item's
+            # own node: the (detail, assessment, node) triple, the (snapshot,
+            # version, node) triple AND the P1-3 (plan, source assessment)
+            # binding all stay valid while the business uniques (per-assessment
+            # node, per-plan l3_code, per source detail) are dodged.  A test
+            # that overrides source_assessment_id (wrong-assessment case) keeps
+            # that override, which then violates the plan-source FK instead.
             item = review_schema.execute(
                 "SELECT source_assessment_id, l3_node_id FROM plan_item WHERE id=%s",
                 (item_id,),
@@ -122,7 +126,20 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                 """,
                 (int(member_id), 2099 + _fresh_counter),
             ).fetchone()
-            review_schema.commit()
+            fresh_plan = review_schema.execute(
+                """
+                INSERT INTO annual_growth_plan (
+                    member_id, year, status, source_assessment_id,
+                    planning_source_type
+                )
+                VALUES (%s, %s, '制定中', %s, 'assessment_approval') RETURNING id
+                """,
+                (
+                    int(member_id),
+                    2099 + _fresh_counter,
+                    int(fresh_assessment[0]),
+                ),
+            ).fetchone()
             fresh_detail = review_schema.execute(
                 """
                 INSERT INTO assessment_detail (assessment_id, l3_code, l3_node_id)
@@ -131,6 +148,8 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                 (int(fresh_assessment[0]), int(item[1])),
             ).fetchone()
             review_schema.commit()
+            if "annual_growth_plan_id" not in overrides:
+                overrides["annual_growth_plan_id"] = str(int(fresh_plan[0]))
             if "source_assessment_id" not in overrides:
                 overrides["source_assessment_id"] = str(int(fresh_assessment[0]))
             overrides["source_assessment_detail_id"] = str(int(fresh_detail[0]))
@@ -372,17 +391,25 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
         self, review_schema: psycopg.Connection
     ) -> None:
         f = self._proposal_fixture(review_schema)
-        with pytest.raises(psycopg.errors.NotNullViolation):
+        with pytest.raises(
+            (psycopg.errors.NotNullViolation, psycopg.errors.CheckViolation)
+        ):
             review_schema.execute(
                 """
                 INSERT INTO annual_plan_change_proposal_detail (
                     proposal_id, source_assessment_detail_id, assessment_id,
                     l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
                     l3_name, capability_standard_version_id, planning_snapshot_id,
-                    assessment_revision, planning_source_type
+                    assessment_revision, planning_source_type, scope_type,
+                    current_level, standard_target_level, adjusted_target_level,
+                    effective_target_level, gap_value, member_priority,
+                    include_in_plan, plan_quarter, plan_month,
+                    standard_job_level_snapshot, member_current_level_snapshot,
+                    member_target_level_snapshot
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', 'L3', 'n',
-                        %s, NULL, 3, 'assessment_approval')
+                        %s, NULL, 3, 'assessment_approval', 'current_required',
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -418,10 +445,16 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     proposal_id, source_assessment_detail_id, assessment_id,
                     l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
                     l3_name, capability_standard_version_id, planning_snapshot_id,
-                    assessment_revision, planning_source_type
+                    assessment_revision, planning_source_type, scope_type,
+                    current_level, standard_target_level, adjusted_target_level,
+                    effective_target_level, gap_value, member_priority,
+                    include_in_plan, plan_quarter, plan_month,
+                    standard_job_level_snapshot, member_current_level_snapshot,
+                    member_target_level_snapshot
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
-                        %s, %s, 3, 'assessment_approval')
+                        %s, %s, 3, 'assessment_approval', 'current_required',
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -461,10 +494,16 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     proposal_id, source_assessment_detail_id, assessment_id,
                     l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
                     l3_name, capability_standard_version_id, planning_snapshot_id,
-                    assessment_revision, planning_source_type
+                    assessment_revision, planning_source_type, scope_type,
+                    current_level, standard_target_level, adjusted_target_level,
+                    effective_target_level, gap_value, member_priority,
+                    include_in_plan, plan_quarter, plan_month,
+                    standard_job_level_snapshot, member_current_level_snapshot,
+                    member_target_level_snapshot
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
-                        %s, %s, 3, 'assessment_approval')
+                        %s, %s, 3, 'assessment_approval', 'current_required',
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -684,3 +723,170 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
             "SELECT id FROM tcp_user ORDER BY id LIMIT 1"
         ).fetchone()
         return int(row[0])
+
+
+# ── P1-2 (2nd review): completeness CHECK must cover scope/member snapshots ─
+# ── and target consistency; P1-3: plan/plan_item source member-year must be ─
+# ── enforced at the DB level. ────────────────────────────────────────────────
+
+
+class TestSecondReviewIntegrity(TestPlanProposalDbIntegrity):
+    def _approved_item_full(self, review_schema: psycopg.Connection) -> tuple:
+        member_id, buddy_id, assessment_id, item = self._approved_item(review_schema)
+        plan = review_schema.execute(
+            "SELECT id, member_id, year, source_assessment_id "
+            "FROM annual_growth_plan LIMIT 1"
+        ).fetchone()
+        assert plan is not None
+        return member_id, buddy_id, assessment_id, item, plan
+
+    def test_plan_item_completeness_rejects_scope_and_member_snapshots(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        _, _, _, item, _ = self._approved_item_full(review_schema)
+        count = self._count_items(review_schema)
+        for column in (
+            "scope_type",
+            "member_current_level_snapshot",
+            "member_target_level_snapshot",
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                self._copy_item_with_override(
+                    review_schema, int(item[0]), {column: "NULL"}
+                )
+            review_schema.rollback()
+            assert self._count_items(review_schema) == count, column
+
+    def test_plan_item_effective_target_must_equal_adjusted_or_standard(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """The effective target is the adjusted target when adjusted, otherwise
+        the standard target — the DB must reject inconsistent combinations."""
+        _, _, _, item, _ = self._approved_item_full(review_schema)
+        count = self._count_items(review_schema)
+        # adjusted present but effective differs
+        with pytest.raises(psycopg.errors.CheckViolation):
+            self._copy_item_with_override(
+                review_schema,
+                int(item[0]),
+                {"adjusted_target_level": "5", "effective_target_level": "2"},
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+        # no adjusted → effective must equal the standard target
+        with pytest.raises(psycopg.errors.CheckViolation):
+            self._copy_item_with_override(
+                review_schema,
+                int(item[0]),
+                {"adjusted_target_level": "NULL", "effective_target_level": "5"},
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+
+    def test_proposal_detail_completeness_rejects_partial_source(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        detail_id = f["detail_id"]
+        for column in (
+            "scope_type",
+            "current_level",
+            "effective_target_level",
+            "gap_value",
+            "member_priority",
+            "include_in_plan",
+            "plan_quarter",
+            "plan_month",
+            "standard_job_level_snapshot",
+            "member_current_level_snapshot",
+            "member_target_level_snapshot",
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                review_schema.execute(
+                    f"UPDATE annual_plan_change_proposal_detail "
+                    f"SET {column} = NULL WHERE id = %s",
+                    (detail_id,),
+                )
+            review_schema.rollback()
+        # zero partial writes: the row is untouched
+        row = review_schema.execute(
+            "SELECT scope_type, current_level, include_in_plan FROM "
+            "annual_plan_change_proposal_detail WHERE id=%s",
+            (detail_id,),
+        ).fetchone()
+        assert row[0] == "current_required" and row[2] is True
+
+    def test_plan_source_assessment_cannot_be_cross_member_or_cross_year(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id, assessment_id, item, plan = self._approved_item_full(
+            review_schema
+        )
+        plan_id = int(plan[0])
+        # cross-member: member2's assessment
+        member2, buddy2 = self.setup_second_member(review_schema)
+        other_assessment = self.submit(
+            review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}]
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
+                (other_assessment, plan_id),
+            )
+        review_schema.rollback()
+        # cross-year: the same member's assessment for another year
+        other_year = self.submit(
+            review_schema, member_id, 2027, [{"l3_code": _L3, "target_level": 3}]
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
+                (other_year, plan_id),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT source_assessment_id FROM annual_growth_plan WHERE id=%s",
+            (plan_id,),
+        ).fetchone()
+        assert int(row[0]) == assessment_id
+
+    def test_plan_item_source_must_match_plan_source(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id, assessment_id, item, plan = self._approved_item_full(
+            review_schema
+        )
+        plan_id = int(plan[0])
+        item_id = int(item[0])
+        # a different assessment of the same member (different year)
+        other_year = self.submit(
+            review_schema, member_id, 2027, [{"l3_code": _L3, "target_level": 3}]
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                "UPDATE plan_item SET source_assessment_id=%s WHERE id=%s",
+                (other_year, item_id),
+            )
+        review_schema.rollback()
+        # moving the item to another member's plan
+        member2, buddy2 = self.setup_second_member(review_schema)
+        other_assessment = self.submit(
+            review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}]
+        )
+        self.approve(review_schema, other_assessment, buddy2)
+        other_plan = review_schema.execute(
+            "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
+            (member2,),
+        ).fetchone()
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                "UPDATE plan_item SET annual_growth_plan_id=%s WHERE id=%s",
+                (int(other_plan[0]), item_id),
+            )
+        review_schema.rollback()
+        row = review_schema.execute(
+            "SELECT annual_growth_plan_id, source_assessment_id "
+            "FROM plan_item WHERE id=%s",
+            (item_id,),
+        ).fetchone()
+        assert (int(row[0]), int(row[1])) == (plan_id, assessment_id)

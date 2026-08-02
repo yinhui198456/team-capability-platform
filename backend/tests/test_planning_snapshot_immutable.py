@@ -641,3 +641,176 @@ def test_publish_preview_is_read_only(
         ).fetchone()[0]
     )
     assert count2_after == count_complete
+
+
+# ── P1-1 (2nd review): UPDATE cannot move a snapshot into a published/ ──────
+# archived version, and identity fields never drift.
+
+
+def _snapshot_row(
+    connection: psycopg.Connection, version_id: int
+) -> tuple[int, int, str]:
+    row = connection.execute(
+        "SELECT id, l3_node_id, l3_code FROM capability_standard_planning_snapshot "
+        "WHERE capability_standard_version_id=%s ORDER BY id LIMIT 1",
+        (version_id,),
+    ).fetchone()
+    assert row is not None, f"no snapshot for version {version_id}"
+    return int(row[0]), int(row[1]), str(row[2])
+
+
+def _another_l3_node(
+    connection: psycopg.Connection, model_id: int, exclude_node_id: int
+) -> int:
+    row = connection.execute(
+        "SELECT id FROM capability_node WHERE node_type='L3' AND model_id=%s "
+        "AND id <> %s ORDER BY id LIMIT 1",
+        (model_id, exclude_node_id),
+    ).fetchone()
+    if row is not None:
+        return int(row[0])
+    l1 = connection.execute(
+        """
+        INSERT INTO capability_node (
+            model_id, code, name, node_type, sort_order,
+            source_workbook, source_sheet, source_row
+        )
+        VALUES (%s, 'M-L1', 'M L1', 'L1', 99, 'x.xlsx', 's1', 1) RETURNING id
+        """,
+        (model_id,),
+    ).fetchone()
+    l2 = connection.execute(
+        """
+        INSERT INTO capability_node (
+            model_id, code, name, node_type, parent_node_id, sort_order,
+            source_workbook, source_sheet, source_row
+        )
+        VALUES (%s, 'M-L2', 'M L2', 'L2', %s, 99, 'x.xlsx', 's1', 1) RETURNING id
+        """,
+        (model_id, int(l1[0])),
+    ).fetchone()
+    l3 = connection.execute(
+        """
+        INSERT INTO capability_node (
+            model_id, code, name, node_type, parent_node_id, sort_order,
+            source_workbook, source_sheet, source_row
+        )
+        VALUES (%s, 'M-L3', 'M L3', 'L3', %s, 99, 'x.xlsx', 's1', 1) RETURNING id
+        """,
+        (model_id, int(l2[0])),
+    ).fetchone()
+    connection.commit()
+    return int(l3[0])
+
+
+def test_update_cannot_move_draft_snapshot_into_published_version(
+    snapshot_schema: psycopg.Connection,
+) -> None:
+    """P1-1: a draft snapshot must never be UPDATE-moved into a published
+    version (the trigger only checked OLD's status before)."""
+    draft_id, model_id = _draft_version(snapshot_schema, "move-to-published")
+    published_id = _published_version(snapshot_schema)
+    snapshot_id, node_id, l3_code = _snapshot_row(snapshot_schema, draft_id)
+    other_node = _another_l3_node(snapshot_schema, model_id, node_id)
+    with pytest.raises(psycopg.errors.RaiseException):
+        snapshot_schema.execute(
+            """
+            UPDATE capability_standard_planning_snapshot
+            SET capability_standard_version_id = %s, l3_node_id = %s
+            WHERE id = %s
+            """,
+            (published_id, other_node, snapshot_id),
+        )
+    snapshot_schema.rollback()
+    # zero partial writes: the row still belongs to the draft, unchanged
+    row = snapshot_schema.execute(
+        "SELECT capability_standard_version_id, l3_node_id FROM "
+        "capability_standard_planning_snapshot WHERE id=%s",
+        (snapshot_id,),
+    ).fetchone()
+    assert (int(row[0]), int(row[1])) == (draft_id, node_id)
+
+
+def test_update_cannot_move_draft_snapshot_into_archived_version(
+    snapshot_schema: psycopg.Connection,
+) -> None:
+    """P1-1: same protection against archived versions."""
+    draft_id, model_id = _draft_version(snapshot_schema, "move-to-archived")
+    published_id = _published_version(snapshot_schema)
+    archived_id = snapshot_schema.execute(
+        "UPDATE capability_standard_version SET status='已归档', archived_at=NOW() "
+        "WHERE id=%s RETURNING id",
+        (published_id,),
+    ).fetchone()[0]
+    snapshot_schema.commit()
+    snapshot_id, node_id, l3_code = _snapshot_row(snapshot_schema, draft_id)
+    other_node = _another_l3_node(snapshot_schema, model_id, node_id)
+    with pytest.raises(psycopg.errors.RaiseException):
+        snapshot_schema.execute(
+            """
+            UPDATE capability_standard_planning_snapshot
+            SET capability_standard_version_id = %s, l3_node_id = %s
+            WHERE id = %s
+            """,
+            (int(archived_id), other_node, snapshot_id),
+        )
+    snapshot_schema.rollback()
+    row = snapshot_schema.execute(
+        "SELECT capability_standard_version_id, l3_node_id FROM "
+        "capability_standard_planning_snapshot WHERE id=%s",
+        (snapshot_id,),
+    ).fetchone()
+    assert (int(row[0]), int(row[1])) == (draft_id, node_id)
+
+
+def test_update_cannot_change_snapshot_identity_fields(
+    snapshot_schema: psycopg.Connection,
+) -> None:
+    """P1-1: identity fields (version, node) are immutable for ANY snapshot,
+    even between two drafts."""
+    draft_id, model_id = _draft_version(snapshot_schema, "identity-a")
+    # A second draft on its own model (created directly: create_draft allows
+    # only one open draft per model).
+    model_b = snapshot_schema.execute(
+        """
+        INSERT INTO capability_model (
+            code, name, version, source_workbook, source_sheet, source_row
+        )
+        VALUES ('MB', 'Model B', 'v1', 'x.xlsx', 's1', 1) RETURNING id
+        """
+    ).fetchone()
+    draft_b = snapshot_schema.execute(
+        """
+        INSERT INTO capability_standard_version (
+            model_id, version_no, label, status, created_by
+        )
+        VALUES (%s, 1, 'identity-b', '草稿', %s) RETURNING id
+        """,
+        (int(model_b[0]), _actor_id(snapshot_schema)),
+    ).fetchone()
+    draft_b_id = int(draft_b[0])
+    snapshot_schema.commit()
+    snapshot_id, node_id, l3_code = _snapshot_row(snapshot_schema, draft_id)
+    # version drift to another draft
+    with pytest.raises(psycopg.errors.RaiseException):
+        snapshot_schema.execute(
+            "UPDATE capability_standard_planning_snapshot "
+            "SET capability_standard_version_id=%s WHERE id=%s",
+            (draft_b_id, snapshot_id),
+        )
+    snapshot_schema.rollback()
+    # node drift within the same draft
+    other_node = _another_l3_node(snapshot_schema, model_id, node_id)
+    with pytest.raises(psycopg.errors.RaiseException):
+        snapshot_schema.execute(
+            "UPDATE capability_standard_planning_snapshot "
+            "SET l3_node_id=%s WHERE id=%s",
+            (other_node, snapshot_id),
+        )
+    snapshot_schema.rollback()
+    row = snapshot_schema.execute(
+        "SELECT capability_standard_version_id, l3_node_id FROM "
+        "capability_standard_planning_snapshot WHERE id=%s",
+        (snapshot_id,),
+    ).fetchone()
+    assert (int(row[0]), int(row[1])) == (draft_id, node_id)

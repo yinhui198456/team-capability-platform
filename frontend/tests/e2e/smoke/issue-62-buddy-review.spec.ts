@@ -632,7 +632,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).toBeVisible()
   }
 
-  test('E2E-62-08 网络失败重试：同 payload 复用同 key，队列只减一次，无重复写入', async ({
+  test('E2E-62-08 真实响应丢失：服务端已提交但浏览器未收到响应，同 key 重试幂等重放', async ({
     page,
   }) => {
     const request = page.request
@@ -650,19 +650,35 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       },
     ])
     await loginAs(page, 'buddy')
-    // Simulate the first response being lost: abort the first POST, let the
-    // retry through.  Capture every Idempotency-Key header.
+    // P2-1: the first request REALLY reaches the backend and commits (the
+    // plan is written server-side), but the client response is suppressed —
+    // the browser sees a gateway failure.  The retry with the SAME key then
+    // hits the server's idempotency replay: idempotent_replayed=true and no
+    // second write anywhere.
     const keys: string[] = []
+    let replayed = false
     let call = 0
     await page.route('**/api/assessments/*/reviews/*', async (route) => {
       const headers = route.request().headers()
       keys.push(headers['idempotency-key'] ?? '')
       call += 1
+      const response = await route.fetch()
       if (call === 1) {
-        await route.abort('failed')
+        // Server committed; the response is dropped on the floor.
+        await route.fulfill({
+          status: 504,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'gateway timeout' }),
+        })
         return
       }
-      await route.continue()
+      const body = (await response.json()) as {
+        idempotent_replayed?: boolean
+      }
+      if (body.idempotent_replayed === true) {
+        replayed = true
+      }
+      await route.fulfill({ response })
     })
     await openWorkspaceForYear(page, year)
     await page.getByLabel('认可').first().click()
@@ -671,16 +687,46 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await expect(page.getByRole('alert').first()).toBeVisible()
     // same payload, unchanged input -> retry reuses the same idempotency key
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    await expect(page.getByText(/已提交（幂等重放/).first()).toBeVisible()
+    // the server-side replay flag was observed on the real response
+    expect(replayed).toBe(true)
     expect(keys.length).toBeGreaterThanOrEqual(2)
     expect(keys[0]).toBeTruthy()
     expect(keys[1]).toBe(keys[0])
-    // queue decremented once and exactly one plan/item/task written
+    // queue decremented exactly once: no pending review remains
+    const pending = await (
+      await request.get(`${BACKEND}/api/assessments/reviews/pending`)
+    ).json()
+    expect(
+      pending.filter(
+        (r: { assessment_id: number }) => r.assessment_id === draft.id,
+      ),
+    ).toHaveLength(0)
+    // exactly 1 review closed, 1 plan, 1 item, 1 task, 0 proposals
+    const reviews = await (
+      await request.get(`${BACKEND}/api/assessments/${draft.id}/history`)
+    ).json()
+    expect(
+      reviews.filter((r: { status: string }) => r.status === '已闭环'),
+    ).toHaveLength(1)
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
     ).json()
     expect(plan.items.length).toBe(1)
+    // exactly one learning task exists for the plan item
+    const tasks = await (
+      await request.get(`${BACKEND}/api/planning/learning-tasks`)
+    ).json()
+    expect(
+      tasks.filter((t: { plan_item_id: number }) =>
+        plan.items.some((i: { id: number }) => i.id === t.plan_item_id),
+      ),
+    ).toHaveLength(1)
+    const proposals = await (
+      await request.get(`${BACKEND}/api/planning/change-proposals?year=${year}`)
+    ).json()
+    expect(proposals.length).toBe(0)
   })
 
   test('E2E-62-09 失败后修改反馈：新 payload 用新 key，正常重新提交', async ({
