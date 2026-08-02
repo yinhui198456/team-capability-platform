@@ -618,6 +618,82 @@ async def _boot_lifespan(lifespan) -> None:
         pass
 
 
+def test_full_startup_order_boots_v0008_database(
+    pre_v0009_db: psycopg.Connection,
+) -> None:
+    """7th review: the v0008 leg of 'at least fresh, v0003, v0008' — the
+    production bootstrap order (catalog/access/assessment/planning schemas
+    then run_migrations, exactly like app.main.lifespan) must boot a real
+    v0008-era database.  On the broken baseline the access bootstrap
+    references the v0009-only expiry_date column and crashes before the
+    migration runner runs."""
+    connection = pre_v0009_db
+    data = connection.legacy_data
+    counts_before = {
+        table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        for table in (
+            "assessment",
+            "annual_growth_plan",
+            "plan_item",
+            "buddy_relationship",
+        )
+    }
+    from app.access.schema import create_access_schema
+    from app.assessment.schema import create_assessment_schema
+    from app.catalog.schema import create_catalog_schema
+    from app.migrations import run_migrations
+    from app.planning.schema import create_planning_schema
+
+    create_catalog_schema(connection)
+    create_access_schema(connection)
+    create_assessment_schema(connection)
+    create_planning_schema(connection)
+    run_migrations(connection)
+    connection.commit()
+    rows = connection.execute(
+        "SELECT version FROM schema_migration ORDER BY version"
+    ).fetchall()
+    assert [row[0] for row in rows] == [
+        "0001_standard_targets",
+        "0002_assessment_inheritance_revision",
+        "0003_assessment_explicit_clear",
+        "0004_legacy_draft_target_repair",
+        "0005_capability_standard_versioning",
+        "0006_assessment_scope_snapshots",
+        "0007_assessment_plan_selection",
+        "0008_plan_null_constraint",
+        "0009_review_plan_atomic",
+    ]
+    # Legacy data preserved through the full startup path.
+    for table, expected in counts_before.items():
+        actual = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        assert actual == expected, table
+    row = connection.execute(
+        "SELECT l3_code, priority FROM plan_item WHERE id=%s",
+        (data["item_id"],),
+    ).fetchone()
+    assert row == ("P01-L1-L2-L3", "中")
+    # v0009 indexes installed through the full path.
+    for index in (
+        "uniq_plan_first_source_assessment",
+        "uniq_plan_item_source_detail",
+        "uniq_active_primary_buddy_v2",
+    ):
+        row = connection.execute(
+            "SELECT 1 FROM pg_indexes WHERE indexname=%s", (index,)
+        ).fetchone()
+        assert row is not None, index
+    # Second boot: idempotent.
+    create_access_schema(connection)
+    create_assessment_schema(connection)
+    create_planning_schema(connection)
+    run_migrations(connection)
+    connection.commit()
+    assert (
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 9
+    )
+
+
 def test_proposal_source_guard_after_upgrade_legacy_preserved(
     pre_v0009_db: psycopg.Connection,
 ) -> None:

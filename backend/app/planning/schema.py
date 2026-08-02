@@ -295,20 +295,12 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
         )
         """
     )
-    connection.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uniq_plan_first_source_assessment
-        ON annual_growth_plan(source_assessment_id)
-        WHERE source_assessment_id IS NOT NULL
-        """
-    )
-    connection.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uniq_plan_item_source_detail
-        ON plan_item(source_assessment_detail_id)
-        WHERE source_assessment_detail_id IS NOT NULL
-        """
-    )
+    # uniq_plan_first_source_assessment / uniq_plan_item_source_detail are
+    # owned by migration v0009: the bootstrap runs BEFORE migrations on old
+    # ledgers, and the source columns only exist on tables v0009 has extended
+    # (a real v0003/v0008 database crashes here with UndefinedColumn before
+    # the migration runner ever runs).  v0009 creates both with IF NOT EXISTS,
+    # so fresh installs get them from the migration too — never from here.
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS annual_plan_change_proposal (
