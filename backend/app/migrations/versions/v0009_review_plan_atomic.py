@@ -990,9 +990,12 @@ def _guard_proposal_source_against_plan_first_source(
     - the plan's ``source_assessment_id`` (legacy NULL → non-NULL backfill)
       must not equal an existing proposal's source for the same plan.
 
-    The plan-side guard also closes the concurrent window between a legacy
-    provenance backfill and a simultaneous proposal insert.  Existing rows
-    are never scanned or rewritten — the guard only governs new writes.
+    Both directions serialise on the target plan ROW itself (READ COMMITTED):
+    the proposal guard reads the plan source under ``SELECT ... FOR UPDATE``
+    and the plan-side UPDATE already holds the row lock, so the pair can
+    never race into equal sources — the check always observes the latest
+    committed value after any wait.  Existing rows are never scanned or
+    rewritten — the guard only governs new writes.
     """
     connection.execute(
         """
@@ -1001,9 +1004,19 @@ def _guard_proposal_source_against_plan_first_source(
         DECLARE
             plan_source BIGINT;
         BEGIN
+            -- 5th review: serialise on the target plan ROW itself.  Both
+            -- directions (proposal INSERT/UPDATE and the plan's legacy
+            -- source backfill) contend for the same single row lock, so the
+            -- read below always observes the latest committed plan source.
+            -- A row lock (not an advisory key) is used on purpose: an
+            -- advisory lock held here would deadlock against the INSERT's
+            -- own foreign-key row lock when the plan-side UPDATE holds the
+            -- row first (proposal waits on the row, backfill waits on the
+            -- advisory key).
             SELECT source_assessment_id INTO plan_source
             FROM annual_growth_plan
-            WHERE id = NEW.target_annual_growth_plan_id;
+            WHERE id = NEW.target_annual_growth_plan_id
+            FOR UPDATE;
             IF plan_source IS NOT NULL
                AND NEW.source_assessment_id = plan_source THEN
                 RAISE EXCEPTION
@@ -1032,6 +1045,11 @@ def _guard_proposal_source_against_plan_first_source(
         RETURNS TRIGGER AS $$
         BEGIN
             IF TG_OP = 'UPDATE' AND NEW.source_assessment_id IS NOT NULL THEN
+                -- The UPDATE already holds the plan row lock; the proposal
+                -- guard takes the same row lock (SELECT ... FOR UPDATE)
+                -- before reading this column, so the EXISTS below sees every
+                -- committed proposal for this plan.  Single lock object, no
+                -- ordering differences, no deadlock.
                 IF EXISTS (
                     SELECT 1 FROM annual_plan_change_proposal p
                     WHERE p.target_annual_growth_plan_id = NEW.id
