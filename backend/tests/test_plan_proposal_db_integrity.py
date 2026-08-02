@@ -1,0 +1,686 @@
+"""Issue #62 P1-4: the database is the last line of defence.
+
+Composite FKs, unique keys and the extended completeness CHECK for
+``planning_source_type='assessment_approval'`` plan items and change
+proposal details.  Every destructive attempt is rolled back and leaves zero
+partial writes; repository-level corruption is rejected with a structured
+ReviewError, never a 500.
+"""
+
+import psycopg
+import pytest
+
+from app.assessment.repository import ReviewError
+from app.catalog.standard_versions import create_draft
+from tests.review_support import ReviewTestBase
+
+_L3 = "P01-L2A-L3A"
+_fresh_counter = 0
+
+_PLAN_ITEM_COLUMNS = (
+    "annual_growth_plan_id, growth_goal_id, l3_code, current_level, target_level, "
+    "priority, learning_material, learning_task_content, expected_output, "
+    "estimated_hours, plan_start_date, plan_end_date, target_month, status, "
+    "source_assessment_id, source_assessment_detail_id, "
+    "capability_standard_version_id, planning_snapshot_id, l3_node_id, l1_code, "
+    "l1_name, l2_code, l2_name, l3_name, scope_type, standard_target_level, "
+    "adjusted_target_level, effective_target_level, standard_job_level_snapshot, "
+    "member_current_level_snapshot, member_target_level_snapshot, plan_quarter, "
+    "plan_month, planning_source_type, assessment_revision, gap_value, "
+    "include_in_plan"
+)
+
+_PLAN_ITEM_TYPES = {
+    "annual_growth_plan_id": "bigint",
+    "growth_goal_id": "bigint",
+    "current_level": "int",
+    "target_level": "int",
+    "source_assessment_id": "bigint",
+    "source_assessment_detail_id": "bigint",
+    "capability_standard_version_id": "bigint",
+    "planning_snapshot_id": "bigint",
+    "l3_node_id": "bigint",
+    "standard_target_level": "int",
+    "adjusted_target_level": "int",
+    "effective_target_level": "int",
+    "assessment_revision": "bigint",
+    "gap_value": "int",
+    "plan_month": "int",
+    "target_month": "int",
+    "include_in_plan": "boolean",
+}
+
+
+class TestPlanProposalDbIntegrity(ReviewTestBase):
+    def _approved_item(self, review_schema: psycopg.Connection) -> tuple[int, int, int]:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema,
+            member_id,
+            2026,
+            [
+                {
+                    "l3_code": _L3,
+                    "current_level": 2,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+        )
+        self.approve(review_schema, assessment_id, buddy_id)
+        item = review_schema.execute(
+            "SELECT id, source_assessment_id, source_assessment_detail_id, "
+            "capability_standard_version_id, planning_snapshot_id, l3_node_id "
+            "FROM plan_item LIMIT 1"
+        ).fetchone()
+        assert item is not None
+        return member_id, buddy_id, assessment_id, item
+
+    def _copy_item_with_override(
+        self,
+        review_schema: psycopg.Connection,
+        item_id: int,
+        overrides: dict[str, str],
+    ) -> None:
+        """INSERT a copy of an existing valid plan_item, overriding columns.
+
+        The override expression keeps the overridden column's *original
+        position* in the SELECT list so the INSERT column list stays aligned.
+        """
+        columns = [column.strip() for column in _PLAN_ITEM_COLUMNS.split(",")]
+        select_parts = []
+        overrides = dict(overrides)
+        if "l3_code" not in overrides:
+            overrides["l3_code"] = "'ZZZ-COPYPK'"
+        if "source_assessment_detail_id" not in overrides:
+            # Give the copy its own assessment + detail on the item's own node:
+            # the (detail, assessment, node) triple stays valid while the
+            # business uniques (per-assessment node, per-plan l3_code, per
+            # source detail) are all dodged.  A test that overrides
+            # source_assessment_id (wrong-assessment case) keeps that override
+            # and only the detail is replaced.
+            item = review_schema.execute(
+                "SELECT source_assessment_id, l3_node_id FROM plan_item WHERE id=%s",
+                (item_id,),
+            ).fetchone()
+            assert item is not None
+            member_id = review_schema.execute(
+                "SELECT member_id FROM assessment WHERE id=%s", (int(item[0]),)
+            ).fetchone()[0]
+            global _fresh_counter
+            _fresh_counter += 1
+            fresh_assessment = review_schema.execute(
+                """
+                INSERT INTO assessment (
+                    member_id, year, version, assessment_type, status
+                )
+                VALUES (%s, %s, 1, '年度', '草稿') RETURNING id
+                """,
+                (int(member_id), 2099 + _fresh_counter),
+            ).fetchone()
+            review_schema.commit()
+            fresh_detail = review_schema.execute(
+                """
+                INSERT INTO assessment_detail (assessment_id, l3_code, l3_node_id)
+                VALUES (%s, 'ZZZ-NEWASSESS', %s) RETURNING id
+                """,
+                (int(fresh_assessment[0]), int(item[1])),
+            ).fetchone()
+            review_schema.commit()
+            if "source_assessment_id" not in overrides:
+                overrides["source_assessment_id"] = str(int(fresh_assessment[0]))
+            overrides["source_assessment_detail_id"] = str(int(fresh_detail[0]))
+        for column in columns:
+            if column in overrides:
+                literal = overrides[column]
+                cast = _PLAN_ITEM_TYPES.get(column)
+                select_parts.append(
+                    f"{literal}::{'int' if cast == 'int' else cast} AS {column}"
+                    if cast
+                    else f"{literal} AS {column}"
+                )
+            else:
+                select_parts.append(column)
+        review_schema.execute(
+            f"""
+            INSERT INTO plan_item ({_PLAN_ITEM_COLUMNS})
+            SELECT {", ".join(select_parts)} FROM plan_item WHERE id = %s
+            """,
+            (item_id,),
+        )
+
+    def _add_l3_node(
+        self, review_schema: psycopg.Connection, model_id: int, tag: str
+    ) -> int:
+        global _fresh_counter
+        _fresh_counter += 1
+        tag = f"{tag}-{_fresh_counter}"
+        l1 = review_schema.execute(
+            """
+            INSERT INTO capability_node (
+                model_id, code, name, node_type, sort_order,
+                source_workbook, source_sheet, source_row
+            )
+            VALUES (%s, %s, %s, 'L1', 99, 'x.xlsx', 's1', 1) RETURNING id
+            """,
+            (model_id, f"{tag}-L1", f"{tag} L1"),
+        ).fetchone()
+        l2 = review_schema.execute(
+            """
+            INSERT INTO capability_node (
+                model_id, code, name, node_type, parent_node_id, sort_order,
+                source_workbook, source_sheet, source_row
+            )
+            VALUES (%s, %s, %s, 'L2', %s, 99, 'x.xlsx', 's1', 1) RETURNING id
+            """,
+            (model_id, f"{tag}-L2", f"{tag} L2", int(l1[0])),
+        ).fetchone()
+        l3 = review_schema.execute(
+            """
+            INSERT INTO capability_node (
+                model_id, code, name, node_type, parent_node_id, sort_order,
+                source_workbook, source_sheet, source_row
+            )
+            VALUES (%s, %s, %s, 'L3', %s, 99, 'x.xlsx', 's1', 1) RETURNING id
+            """,
+            (model_id, f"{tag}-L3", f"{tag} L3", int(l2[0])),
+        ).fetchone()
+        review_schema.commit()
+        return int(l3[0])
+
+    def _count_items(self, review_schema: psycopg.Connection) -> int:
+        return int(
+            review_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0]
+        )
+
+    def test_plan_item_source_triple_rejects_wrong_assessment(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        _, _, assessment_id, item = self._approved_item(review_schema)
+        # A second member's assessment id (valid row otherwise).
+        member2, buddy2 = self.setup_second_member(review_schema)
+        other_id = self.submit(
+            review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}]
+        )
+        assert other_id != assessment_id
+        count = self._count_items(review_schema)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            self._copy_item_with_override(
+                review_schema,
+                int(item[0]),
+                {"source_assessment_id": str(other_id)},
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+
+    def test_plan_item_source_triple_rejects_wrong_node(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        _, _, _, item = self._approved_item(review_schema)
+        model_id = review_schema.execute(
+            "SELECT model_id FROM capability_standard_version WHERE id=%s",
+            (int(item[3]),),
+        ).fetchone()[0]
+        other_node = self._add_l3_node(review_schema, int(model_id), "WRONG")
+        count = self._count_items(review_schema)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            self._copy_item_with_override(
+                review_schema, int(item[0]), {"l3_node_id": str(other_node)}
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+
+    def test_plan_item_snapshot_triple_rejects_wrong_version(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        _, _, _, item = self._approved_item(review_schema)
+        model_id = review_schema.execute(
+            "SELECT model_id FROM capability_standard_version WHERE id=%s",
+            (int(item[3]),),
+        ).fetchone()[0]
+        # Another version of the same model (draft clone) whose snapshots are
+        # a different (version, node) key set.
+        draft = create_draft(review_schema, int(model_id), self.actor_id(review_schema))
+        review_schema.commit()
+        count = self._count_items(review_schema)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            self._copy_item_with_override(
+                review_schema,
+                int(item[0]),
+                {"capability_standard_version_id": str(int(draft["id"]))},
+            )
+        review_schema.rollback()
+        assert self._count_items(review_schema) == count
+
+    def test_plan_item_completeness_check_rejects_partial_source(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        _, _, _, item = self._approved_item(review_schema)
+        count = self._count_items(review_schema)
+        # NOT NULL base columns reject NULL with NotNullViolation; the
+        # assessment_approval completeness CHECK is proven by the nullable
+        # source columns.  Either way the write is rejected with zero rows.
+        not_null_columns = {"l3_code", "priority"}
+        for column in (
+            "planning_snapshot_id",
+            "source_assessment_id",
+            "source_assessment_detail_id",
+            "capability_standard_version_id",
+            "l3_node_id",
+            "l1_code",
+            "l1_name",
+            "l2_code",
+            "l2_name",
+            "l3_code",
+            "l3_name",
+            "standard_job_level_snapshot",
+            "assessment_revision",
+            "effective_target_level",
+            "gap_value",
+            "plan_quarter",
+            "plan_month",
+            "priority",
+            "include_in_plan",
+        ):
+            expected = (
+                psycopg.errors.NotNullViolation
+                if column in not_null_columns
+                else psycopg.errors.CheckViolation
+            )
+            with pytest.raises(expected):
+                self._copy_item_with_override(
+                    review_schema, int(item[0]), {column: "NULL"}
+                )
+            review_schema.rollback()
+            assert self._count_items(review_schema) == count, column
+
+    def _proposal_fixture(self, review_schema: psycopg.Connection) -> dict[str, int]:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        first = self.submit(
+            review_schema,
+            member_id,
+            2026,
+            [
+                {
+                    "l3_code": _L3,
+                    "current_level": 2,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+        )
+        self.approve(review_schema, first, buddy_id)
+        plan = review_schema.execute(
+            "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
+            (member_id,),
+        ).fetchone()
+        second = self.submit(
+            review_schema,
+            member_id,
+            2026,
+            [
+                {
+                    "l3_code": _L3,
+                    "current_level": 3,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+        )
+        self.approve(review_schema, second, buddy_id)
+        proposal = review_schema.execute(
+            "SELECT id, source_assessment_id, target_annual_growth_plan_id "
+            "FROM annual_plan_change_proposal"
+        ).fetchone()
+        assert proposal is not None
+        detail = review_schema.execute(
+            "SELECT id, proposal_id, source_assessment_detail_id, assessment_id, "
+            "l3_node_id, capability_standard_version_id, planning_snapshot_id "
+            "FROM annual_plan_change_proposal_detail LIMIT 1"
+        ).fetchone()
+        assert detail is not None
+        return {
+            "member_id": member_id,
+            "buddy_id": buddy_id,
+            "plan_id": int(plan[0]),
+            "assessment1": first,
+            "assessment2": second,
+            "proposal_id": int(proposal[0]),
+            "source_assessment_id": int(proposal[1]),
+            "target_plan_id": int(proposal[2]),
+            "detail_id": int(detail[0]),
+            "detail_proposal_id": int(detail[1]),
+            "detail_source_detail_id": int(detail[2]),
+            "detail_assessment_id": int(detail[3]),
+            "detail_l3_node_id": int(detail[4]),
+            "detail_version_id": int(detail[5]),
+            "detail_snapshot_id": int(detail[6]),
+        }
+
+    def test_proposal_detail_requires_snapshot(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal_detail (
+                    proposal_id, source_assessment_detail_id, assessment_id,
+                    l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
+                    l3_name, capability_standard_version_id, planning_snapshot_id,
+                    assessment_revision, planning_source_type
+                )
+                VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', 'L3', 'n',
+                        %s, NULL, 3, 'assessment_approval')
+                """,
+                (
+                    f["detail_proposal_id"],
+                    f["detail_source_detail_id"],
+                    f["detail_assessment_id"],
+                    f["detail_l3_node_id"],
+                    f["detail_version_id"],
+                ),
+            )
+        review_schema.rollback()
+
+    def test_proposal_detail_snapshot_triple_rejects_wrong_version(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        model_id = review_schema.execute(
+            "SELECT model_id FROM capability_standard_version WHERE id=%s",
+            (f["detail_version_id"],),
+        ).fetchone()[0]
+        draft = create_draft(review_schema, int(model_id), self.actor_id(review_schema))
+        review_schema.commit()
+        # A fresh detail on a NEW L3 node of assessment1 keeps the source
+        # triple valid while the snapshot triple is broken (the draft version
+        # has no snapshot row for that node).
+        fresh_node = self._add_l3_node(review_schema, int(model_id), "SNAP")
+        fresh_id, _node, fresh_code = self._fresh_detail(
+            review_schema, f["assessment1"], fresh_node, "SNAP"
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal_detail (
+                    proposal_id, source_assessment_detail_id, assessment_id,
+                    l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
+                    l3_name, capability_standard_version_id, planning_snapshot_id,
+                    assessment_revision, planning_source_type
+                )
+                VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
+                        %s, %s, 3, 'assessment_approval')
+                """,
+                (
+                    f["detail_proposal_id"],
+                    fresh_id,
+                    f["detail_assessment_id"],
+                    fresh_node,
+                    fresh_code,
+                    int(draft["id"]),
+                    f["detail_snapshot_id"],
+                ),
+            )
+        review_schema.rollback()
+
+    def test_proposal_detail_source_triple_rejects_wrong_assessment(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        # member2's assessment detail (fresh id, not referenced by any
+        # proposal); claiming member's assessment1 for it breaks the
+        # (detail, assessment, node) triple while the snapshot triple stays
+        # valid.
+        member2, buddy2 = self.setup_second_member(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        other_assessment = self.submit(
+            review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}]
+        )
+        other_detail = review_schema.execute(
+            "SELECT id, l3_node_id, l3_code FROM assessment_detail "
+            "WHERE assessment_id=%s",
+            (other_assessment,),
+        ).fetchone()
+        assert other_detail is not None
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal_detail (
+                    proposal_id, source_assessment_detail_id, assessment_id,
+                    l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
+                    l3_name, capability_standard_version_id, planning_snapshot_id,
+                    assessment_revision, planning_source_type
+                )
+                VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
+                        %s, %s, 3, 'assessment_approval')
+                """,
+                (
+                    f["detail_proposal_id"],
+                    int(other_detail[0]),
+                    f["assessment1"],
+                    int(other_detail[1]),
+                    str(other_detail[2]),
+                    f["detail_version_id"],
+                    f["detail_snapshot_id"],
+                ),
+            )
+        review_schema.rollback()
+
+    def _fresh_detail(
+        self,
+        review_schema: psycopg.Connection,
+        assessment_id: int,
+        node_id: int | None = None,
+        tag: str = "FRESH",
+    ) -> tuple[int, int, str]:
+        """A new assessment_detail row with a unique l3_code."""
+        global _fresh_counter
+        _fresh_counter += 1
+        if node_id is None:
+            node = review_schema.execute(
+                "SELECT id FROM capability_node WHERE node_type='L3' "
+                "ORDER BY id LIMIT 1"
+            ).fetchone()
+            node_id = int(node[0])
+        code = f"ZZZ-{tag}-{_fresh_counter}"
+        row = review_schema.execute(
+            """
+            INSERT INTO assessment_detail (assessment_id, l3_code, l3_node_id)
+            VALUES (%s, %s, %s) RETURNING id
+            """,
+            (assessment_id, code, node_id),
+        ).fetchone()
+        review_schema.commit()
+        return int(row[0]), node_id, code
+
+    def test_proposal_target_plan_must_belong_to_member_year(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        # Another member's plan for the same year: (member_id, year, plan)
+        # must be the member's own.
+        member2, buddy2 = self.setup_second_member(review_schema)
+        review_schema.execute(
+            "UPDATE tcp_user SET current_level='P4', target_level='P5' WHERE id=%s",
+            (member2,),
+        )
+        self.ensure_nodes(review_schema, [_L3])
+        first2 = self.submit(
+            review_schema,
+            member2,
+            2026,
+            [{"l3_code": _L3, "target_level": 3}],
+        )
+        self.approve(review_schema, first2, buddy2)
+        plan2 = review_schema.execute(
+            "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
+            (member2,),
+        ).fetchone()
+        third = self.submit(
+            review_schema, f["member_id"], 2027, [{"l3_code": _L3, "target_level": 3}]
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal (
+                    member_id, year, source_assessment_id,
+                    target_annual_growth_plan_id, status, created_by, summary
+                )
+                VALUES (%s, 2026, %s, %s, '待处理', %s, '{}'::jsonb)
+                """,
+                (
+                    f["member_id"],
+                    third,
+                    int(plan2[0]),
+                    f["buddy_id"],
+                ),
+            )
+        review_schema.rollback()
+
+    def test_proposal_source_assessment_must_belong_to_member_year(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        f = self._proposal_fixture(review_schema)
+        member2, buddy2 = self.setup_second_member(review_schema)
+        review_schema.execute(
+            "UPDATE tcp_user SET current_level='P4', target_level='P5' WHERE id=%s",
+            (member2,),
+        )
+        self.ensure_nodes(review_schema, [_L3])
+        self.submit(review_schema, member2, 2026, [{"l3_code": _L3, "target_level": 3}])
+        third = self.submit(
+            review_schema, f["member_id"], 2027, [{"l3_code": _L3, "target_level": 3}]
+        )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            review_schema.execute(
+                """
+                INSERT INTO annual_plan_change_proposal (
+                    member_id, year, source_assessment_id,
+                    target_annual_growth_plan_id, status, created_by, summary
+                )
+                VALUES (%s, 2026, %s, %s, '待处理', %s, '{}'::jsonb)
+                """,
+                (
+                    f["member_id"],
+                    third,
+                    f["target_plan_id"],
+                    f["buddy_id"],
+                ),
+            )
+        review_schema.rollback()
+
+    def test_corrupt_scope_rejected_structured_no_partial_writes(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """Repository-level: corrupt the assessment's bound version, approval
+        fails with a structured ReviewError (422), and no plan/proposal rows
+        are left behind."""
+        f = self._proposal_fixture(review_schema)
+        # A third pending assessment with an included plan row.
+        third = self.submit(
+            review_schema,
+            f["member_id"],
+            2027,
+            [
+                {
+                    "l3_code": _L3,
+                    "current_level": 2,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
+                }
+            ],
+        )
+        # Corrupt the scope: bind to a draft whose snapshots were deleted
+        # (drafts are mutable, so no trigger bypass is needed).
+        model_id = review_schema.execute(
+            "SELECT model_id FROM capability_standard_version WHERE id=%s",
+            (f["detail_version_id"],),
+        ).fetchone()[0]
+        draft = create_draft(review_schema, int(model_id), self.actor_id(review_schema))
+        review_schema.commit()
+        review_schema.execute(
+            "DELETE FROM capability_standard_planning_snapshot "
+            "WHERE capability_standard_version_id=%s",
+            (int(draft["id"]),),
+        )
+        review_schema.execute(
+            "UPDATE assessment SET capability_standard_version_id=%s WHERE id=%s",
+            (int(draft["id"]), third),
+        )
+        review_schema.commit()
+        review_row = review_schema.execute(
+            "SELECT id, sequence FROM assessment_review WHERE assessment_id=%s "
+            "AND status='待复核'",
+            (third,),
+        ).fetchone()
+        assert review_row is not None
+        from app.assessment.repository import submit_assessment_review
+
+        with pytest.raises(ReviewError) as excinfo:
+            submit_assessment_review(
+                review_schema,
+                int(review_row[0]),
+                f["buddy_id"],
+                "认可",
+                "符合预期",
+                expected_revision=3,
+                assessment_id_from_url=third,
+            )
+        assert excinfo.value.code == "planning_snapshot_missing"
+        assert excinfo.value.status_code == 422
+        review_schema.rollback()
+        # zero partial writes: no new proposal, no new plan, review still open
+        assert (
+            review_schema.execute(
+                "SELECT COUNT(*) FROM annual_plan_change_proposal"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
+                0
+            ]
+            == 1
+        )
+        status = review_schema.execute(
+            "SELECT status FROM assessment WHERE id=%s", (third,)
+        ).fetchone()
+        assert status[0] == "待复核"
+
+    def setup_second_member(self, review_schema: psycopg.Connection) -> tuple[int, int]:
+        from app.access.repository import assign_role, create_user
+
+        member2 = create_user(review_schema, "rv-member-2", "RV Member 2", "secret")
+        assign_role(review_schema, member2, "Member")
+        buddy2 = create_user(review_schema, "rv-buddy-3", "RV Buddy 3", "secret")
+        assign_role(review_schema, buddy2, "Buddy")
+        review_schema.execute(
+            "UPDATE tcp_user SET current_level='P4', target_level='P5' WHERE id=%s",
+            (member2,),
+        )
+        from app.access.repository import create_buddy_relationship
+
+        create_buddy_relationship(review_schema, member2, buddy2)
+        review_schema.commit()
+        return member2, buddy2
+
+    def actor_id(self, review_schema: psycopg.Connection) -> int:
+        row = review_schema.execute(
+            "SELECT id FROM tcp_user ORDER BY id LIMIT 1"
+        ).fetchone()
+        return int(row[0])

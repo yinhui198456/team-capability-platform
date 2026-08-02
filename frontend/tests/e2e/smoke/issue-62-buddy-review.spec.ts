@@ -610,4 +610,191 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
     await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
   })
+
+  // ── P1-5: frontend idempotency-key lifecycle ──────────────────────────────
+
+  /** Open the Buddy workspace and select THIS scenario's pending review. */
+  async function openWorkspaceForYear(
+    page: Parameters<Parameters<typeof test>[1]>[0]['page'],
+    year: number,
+  ) {
+    await page.goto('/mentoring/dashboard')
+    await expect(
+      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+    ).toBeVisible()
+    await page
+      .locator('tr', { hasText: String(year) })
+      .getByRole('button')
+      .first()
+      .click()
+    await expect(
+      page.getByText(/首次认可将原子生成正式年度计划/).first(),
+    ).toBeVisible()
+  }
+
+  test('E2E-62-08 网络失败重试：同 payload 复用同 key，队列只减一次，无重复写入', async ({
+    page,
+  }) => {
+    const request = page.request
+    const year = yearFor('E2E-62-08')
+    await loginAs(page, 'member')
+    const draft = await ensureDraft(page, request, year, 'member')
+    await pickAndFill(page, request, draft, [
+      {
+        current_level: 2,
+        target_level: 4,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_quarter: 'Q2',
+        plan_month: 5,
+      },
+    ])
+    await loginAs(page, 'buddy')
+    // Simulate the first response being lost: abort the first POST, let the
+    // retry through.  Capture every Idempotency-Key header.
+    const keys: string[] = []
+    let call = 0
+    await page.route('**/api/assessments/*/reviews/*', async (route) => {
+      const headers = route.request().headers()
+      keys.push(headers['idempotency-key'] ?? '')
+      call += 1
+      if (call === 1) {
+        await route.abort('failed')
+        return
+      }
+      await route.continue()
+    })
+    await openWorkspaceForYear(page, year)
+    await page.getByLabel('认可').first().click()
+    await page.getByLabel('反馈').first().fill('重试认可')
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    await expect(page.getByRole('alert').first()).toBeVisible()
+    // same payload, unchanged input -> retry reuses the same idempotency key
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    expect(keys.length).toBeGreaterThanOrEqual(2)
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).toBe(keys[0])
+    // queue decremented once and exactly one plan/item/task written
+    await loginAs(page, 'member')
+    const plan = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(plan.items.length).toBe(1)
+  })
+
+  test('E2E-62-09 失败后修改反馈：新 payload 用新 key，正常重新提交', async ({
+    page,
+  }) => {
+    const request = page.request
+    const year = yearFor('E2E-62-09')
+    await loginAs(page, 'member')
+    const draft = await ensureDraft(page, request, year, 'member')
+    await pickAndFill(page, request, draft, [
+      {
+        current_level: 2,
+        target_level: 4,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_quarter: 'Q2',
+        plan_month: 5,
+      },
+    ])
+    await loginAs(page, 'buddy')
+    const keys: string[] = []
+    let call = 0
+    await page.route('**/api/assessments/*/reviews/*', async (route) => {
+      keys.push(route.request().headers()['idempotency-key'] ?? '')
+      call += 1
+      if (call === 1) {
+        await route.abort('failed')
+        return
+      }
+      await route.continue()
+    })
+    await openWorkspaceForYear(page, year)
+    await page.getByLabel('认可').first().click()
+    await page.getByLabel('反馈').first().fill('初版反馈')
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    await expect(page.getByRole('alert').first()).toBeVisible()
+    // the member edits the feedback before retrying -> a NEW key must be used
+    await page.getByLabel('反馈').first().fill('修订后反馈')
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    expect(keys.length).toBeGreaterThanOrEqual(2)
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).not.toBe(keys[0])
+    await loginAs(page, 'member')
+    const plan = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(plan.items.length).toBe(1)
+  })
+
+  test('E2E-62-10 409 版本冲突：输入保留、工作区刷新、新 key 重新提交成功', async ({
+    page,
+  }) => {
+    const request = page.request
+    const year = yearFor('E2E-62-10')
+    await loginAs(page, 'member')
+    const draft = await ensureDraft(page, request, year, 'member')
+    await pickAndFill(page, request, draft, [
+      {
+        current_level: 2,
+        target_level: 4,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_quarter: 'Q2',
+        plan_month: 5,
+      },
+    ])
+    await loginAs(page, 'buddy')
+    const keys: string[] = []
+    let call = 0
+    let workspaceGets = 0
+    await page.route('**/api/assessments/*/buddy-review', async (route) => {
+      workspaceGets += 1
+      await route.continue()
+    })
+    await page.route('**/api/assessments/*/reviews/*', async (route) => {
+      keys.push(route.request().headers()['idempotency-key'] ?? '')
+      call += 1
+      if (call === 1) {
+        // A stale revision: the server would answer 409 revision_conflict.
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            detail: { code: 'revision_conflict', message: 'revision conflict' },
+          }),
+        })
+        return
+      }
+      await route.continue()
+    })
+    await openWorkspaceForYear(page, year)
+    await page.getByLabel('认可').first().click()
+    await page.getByLabel('反馈').first().fill('冲突后保留')
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    // 409 keeps the input and explains the situation
+    await expect(page.getByRole('alert').first()).toContainText(
+      '复核版本已更新，请确认后重新提交。',
+    )
+    await expect(page.getByLabel('反馈').first()).toHaveValue('冲突后保留')
+    await expect(page.getByLabel('认可').first()).toBeChecked()
+    // the workspace was refreshed (fresh expected_revision)...
+    await expect.poll(() => workspaceGets).toBeGreaterThan(1)
+    // ...and the resubmit uses a NEW key and succeeds
+    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
+    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    expect(keys.length).toBeGreaterThanOrEqual(2)
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).not.toBe(keys[0])
+    // exactly one plan; no duplicates anywhere
+    await loginAs(page, 'member')
+    const plan = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(plan.items.length).toBe(1)
+  })
 })

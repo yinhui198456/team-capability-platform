@@ -713,14 +713,22 @@ def get_review_workspace(
     user: CurrentUser,
     connection: Connection,
 ) -> dict[str, object]:
-    """Buddy Review workspace DTO (frozen facts only)."""
+    """Buddy Review workspace DTO (frozen facts only).
+
+    P1-3: Buddy-exclusive.  Only the current responsible Buddy (Buddy role +
+    canonical is_current_responsible_buddy relationship) may read this
+    endpoint; Member/Leader/Admin, old buddies, future or expired
+    relationships and deactivated users all get 403.  Admin/Leader reads use
+    the generic assessment endpoints (``/assessments/{id}``,
+    ``/assessments/{id}/history``) which keep the broader policy.
+    """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="assessment not found",
         )
-    if not policies.can_view_assessment(connection, user, assessment):
+    if not policies.can_buddy_review(connection, user, assessment):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",

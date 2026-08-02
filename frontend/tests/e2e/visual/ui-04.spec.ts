@@ -78,6 +78,29 @@ for (const viewport of VIEWPORTS) {
       await expect(workspace).toContainText('3 → 4（岗位项目要求）')
     })
 
+    test('layout integrity: no overall horizontal overflow, action reachable', async ({
+      page,
+    }) => {
+      // P1-7: at every viewport the page must not overflow horizontally; the
+      // table may scroll locally, but the submit action must stay reachable
+      // and unobstructed.
+      const dims = await page.evaluate(() => ({
+        docScrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      }))
+      expect(dims.docScrollWidth).toBeLessThanOrEqual(dims.innerWidth)
+      const submit = page.getByRole('button', { name: '提交复核反馈' })
+      await expect(submit).toBeVisible()
+      await submit.scrollIntoViewIfNeeded()
+      await expect(submit).toBeInViewport()
+      const box = await submit.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.width).toBeGreaterThan(0)
+      expect(box!.height).toBeGreaterThan(0)
+      // The feedback field is part of the submit area and is not clipped.
+      await expect(page.getByLabel('反馈').first()).toBeVisible()
+    })
+
     test('default all members screenshot', async ({ page }) => {
       const filename =
         viewport.name === '1280x800'

@@ -186,9 +186,12 @@ def create_buddy_relationship(
     with connection.transaction():
         # Serialise concurrent relationship writes for the same member; the
         # interval-overlap trigger and unique index are the DB last line.
+        # P1-2: the Review path takes the same lock (buddy relationship first,
+        # then the member+year review/plan lock) so a relationship switch and a
+        # Review submission can never interleave.
         connection.execute(
             "SELECT pg_advisory_xact_lock(hashtext(%s))",
-            (f"tcp_buddy_rel:{member_id}",),
+            (f"tcp_buddy_relationship:{member_id}",),
         )
         try:
             row = connection.execute(

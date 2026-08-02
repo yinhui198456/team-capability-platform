@@ -3,8 +3,8 @@
 Additive, forward-only. Adds:
 
 - ``capability_standard_planning_snapshot`` — immutable planning source per
-  (version, L3), with a DB trigger blocking UPDATE/DELETE once the version is
-  published/archived;
+  (version, L3), with a DB trigger blocking INSERT/UPDATE/DELETE once the
+  version is published/archived (enabled only after the legacy backfill);
 - ``legacy_catalog_capture_v0009`` backfill for pre-v0009 published/archived
   versions (explicitly marked as a one-time capture, never claimed to be the
   original publish-time snapshot);
@@ -110,16 +110,42 @@ def _create_planning_snapshot(connection: psycopg.Connection) -> None:
         "FOREIGN KEY (capability_standard_version_id) "
         "REFERENCES capability_standard_version(id) ON DELETE RESTRICT",
     )
+    # P1-4: composite key (id, version, node) so plan_item and proposal_detail
+    # can FK the exact (snapshot, version, node) triple.
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_snapshot_id_version_node
+        ON capability_standard_planning_snapshot (
+            id, capability_standard_version_id, l3_node_id
+        )
+        """
+    )
+
+
+def _enable_planning_snapshot_immutability(connection: psycopg.Connection) -> None:
+    """P1-1: DB-level immutability for published/archived planning snapshots.
+
+    Runs *after* the legacy backfill: the backfill inserts snapshots for
+    already-published/archived versions, so the trigger must not exist yet.
+    INSERT/UPDATE/DELETE all consult the version status; NEW is used for
+    INSERT, OLD for UPDATE/DELETE (the version id must never change).
+    """
     connection.execute(
         """
         CREATE OR REPLACE FUNCTION guard_planning_snapshot_immutable()
         RETURNS TRIGGER AS $$
         DECLARE
+            v_version_id BIGINT;
             v_status TEXT;
         BEGIN
+            IF TG_OP = 'INSERT' THEN
+                v_version_id := NEW.capability_standard_version_id;
+            ELSE
+                v_version_id := OLD.capability_standard_version_id;
+            END IF;
             SELECT status INTO v_status
             FROM capability_standard_version
-            WHERE id = OLD.capability_standard_version_id;
+            WHERE id = v_version_id;
             IF v_status IN ('已发布', '已归档') THEN
                 RAISE EXCEPTION
                     'planning snapshot is immutable for published/archived versions'
@@ -142,7 +168,7 @@ def _create_planning_snapshot(connection: psycopg.Connection) -> None:
     connection.execute(
         """
         CREATE TRIGGER trg_planning_snapshot_immutable
-        BEFORE UPDATE OR DELETE ON capability_standard_planning_snapshot
+        BEFORE INSERT OR UPDATE OR DELETE ON capability_standard_planning_snapshot
         FOR EACH ROW EXECUTE FUNCTION guard_planning_snapshot_immutable()
         """
     )
@@ -286,6 +312,21 @@ def _extend_annual_growth_plan(connection: psycopg.Connection) -> None:
         WHERE source_assessment_id IS NOT NULL
         """
     )
+    # P1-4: composite keys so proposals can FK (member, year, plan) and
+    # (member, year, assessment) exactly — the proposal must point at the
+    # member's own plan/assessment for that year.
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_annual_growth_plan_member_year_id
+        ON annual_growth_plan (member_id, year, id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_assessment_member_year_id
+        ON assessment (member_id, year, id)
+        """
+    )
 
 
 def _extend_plan_item(connection: psycopg.Connection) -> None:
@@ -327,6 +368,15 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
     connection.execute("ALTER TABLE plan_item ALTER COLUMN created_at SET NOT NULL")
     # Old flow no longer gets a silent "中" default: members decide priority.
     connection.execute("ALTER TABLE plan_item ALTER COLUMN priority DROP DEFAULT")
+    # P1-4: composite key on assessment_detail so plan_item can FK the exact
+    # (detail, assessment, node) triple — a source detail can never belong to
+    # another assessment or point at a different node.
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_assessment_detail_id_assessment_node
+        ON assessment_detail (id, assessment_id, l3_node_id)
+        """
+    )
     for constraint, definition in (
         (
             "plan_item_source_assessment_fk",
@@ -343,6 +393,16 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
         (
             "plan_item_planning_snapshot_fk",
             "FOREIGN KEY (planning_snapshot_id) REFERENCES capability_standard_planning_snapshot(id) ON DELETE RESTRICT",
+        ),
+        (
+            "plan_item_source_detail_assessment_node_fk",
+            "FOREIGN KEY (source_assessment_detail_id, source_assessment_id, l3_node_id) "
+            "REFERENCES assessment_detail(id, assessment_id, l3_node_id)",
+        ),
+        (
+            "plan_item_snapshot_version_node_fk",
+            "FOREIGN KEY (planning_snapshot_id, capability_standard_version_id, l3_node_id) "
+            "REFERENCES capability_standard_planning_snapshot(id, capability_standard_version_id, l3_node_id)",
         ),
     ):
         _add_fk(connection, "plan_item", constraint, definition)
@@ -396,13 +456,38 @@ def _extend_plan_item(connection: psycopg.Connection) -> None:
             "plan_item_gap_value_check",
             "gap_value IS NULL OR gap_value >= 0",
         ),
-        (
-            "plan_item_approval_completeness",
-            "planning_source_type IS DISTINCT FROM 'assessment_approval'"
-            " OR (include_in_plan = TRUE AND priority IN ('高', '中', '低'))",
-        ),
     ):
         _add_check(connection, "plan_item", constraint, expression)
+    # The completeness contract was tightened (P1-4): drop any earlier
+    # definition of the guard so upgraded databases get the strong version,
+    # then add it.
+    connection.execute(
+        "ALTER TABLE plan_item "
+        "DROP CONSTRAINT IF EXISTS plan_item_approval_completeness"
+    )
+    _add_check(
+        connection,
+        "plan_item",
+        "plan_item_approval_completeness",
+        "planning_source_type IS DISTINCT FROM 'assessment_approval'"
+        " OR ("
+        "include_in_plan IS TRUE"
+        " AND priority IN ('高', '中', '低')"
+        " AND source_assessment_id IS NOT NULL"
+        " AND source_assessment_detail_id IS NOT NULL"
+        " AND capability_standard_version_id IS NOT NULL"
+        " AND planning_snapshot_id IS NOT NULL"
+        " AND l3_node_id IS NOT NULL"
+        " AND l1_code IS NOT NULL AND l1_name IS NOT NULL"
+        " AND l2_code IS NOT NULL AND l2_name IS NOT NULL"
+        " AND l3_code IS NOT NULL AND l3_name IS NOT NULL"
+        " AND standard_job_level_snapshot IS NOT NULL"
+        " AND assessment_revision IS NOT NULL"
+        " AND effective_target_level IS NOT NULL"
+        " AND gap_value IS NOT NULL"
+        " AND plan_quarter IS NOT NULL AND plan_month IS NOT NULL"
+        ")",
+    )
     connection.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS uniq_plan_item_source_detail
@@ -553,9 +638,31 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
             created_by BIGINT NOT NULL REFERENCES tcp_user(id) ON DELETE RESTRICT,
             summary JSONB NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            UNIQUE (source_assessment_id)
+            UNIQUE (source_assessment_id),
+            CONSTRAINT proposal_target_plan_member_year_fk
+                FOREIGN KEY (member_id, year, target_annual_growth_plan_id)
+                REFERENCES annual_growth_plan (member_id, year, id),
+            CONSTRAINT proposal_source_assessment_member_year_fk
+                FOREIGN KEY (member_id, year, source_assessment_id)
+                REFERENCES assessment (member_id, year, id)
         )
         """
+    )
+    # P1-4: the proposal must point at the member's own plan and assessment
+    # for that year (idempotent for databases where the table already exists).
+    _add_fk(
+        connection,
+        "annual_plan_change_proposal",
+        "proposal_target_plan_member_year_fk",
+        "FOREIGN KEY (member_id, year, target_annual_growth_plan_id) "
+        "REFERENCES annual_growth_plan (member_id, year, id)",
+    )
+    _add_fk(
+        connection,
+        "annual_plan_change_proposal",
+        "proposal_source_assessment_member_year_fk",
+        "FOREIGN KEY (member_id, year, source_assessment_id) "
+        "REFERENCES assessment (member_id, year, id)",
     )
     connection.execute(
         """
@@ -609,12 +716,20 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
                 OR member_target_level_snapshot IN ('P4', 'P5', 'P6', 'P7', 'P8')
             ),
             capability_standard_version_id BIGINT NOT NULL,
-            planning_snapshot_id BIGINT,
+            planning_snapshot_id BIGINT NOT NULL,
             assessment_revision BIGINT NOT NULL,
             planning_source_type TEXT NOT NULL DEFAULT 'assessment_approval'
                 CHECK (planning_source_type IN ('assessment_approval')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (source_assessment_detail_id),
+            CONSTRAINT proposal_detail_snapshot_version_node_fk
+                FOREIGN KEY (planning_snapshot_id, capability_standard_version_id, l3_node_id)
+                REFERENCES capability_standard_planning_snapshot (
+                    id, capability_standard_version_id, l3_node_id
+                ),
+            CONSTRAINT proposal_detail_source_assessment_node_fk
+                FOREIGN KEY (source_assessment_detail_id, assessment_id, l3_node_id)
+                REFERENCES assessment_detail (id, assessment_id, l3_node_id),
             CHECK (
                 plan_quarter IS NULL OR plan_month IS NULL
                 OR (plan_quarter = 'Q1' AND plan_month BETWEEN 1 AND 3)
@@ -624,6 +739,38 @@ def _create_change_proposal_tables(connection: psycopg.Connection) -> None:
             )
         )
         """
+    )
+    # P1-4: idempotent guards for databases where the detail table already
+    # exists without the NOT NULL / composite FKs.
+    connection.execute(
+        """
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'annual_plan_change_proposal_detail'
+                  AND column_name = 'planning_snapshot_id'
+                  AND is_nullable = 'YES'
+            ) THEN
+                ALTER TABLE annual_plan_change_proposal_detail
+                ALTER COLUMN planning_snapshot_id SET NOT NULL;
+            END IF;
+        END $$
+        """
+    )
+    _add_fk(
+        connection,
+        "annual_plan_change_proposal_detail",
+        "proposal_detail_snapshot_version_node_fk",
+        "FOREIGN KEY (planning_snapshot_id, capability_standard_version_id, l3_node_id) "
+        "REFERENCES capability_standard_planning_snapshot ("
+        "id, capability_standard_version_id, l3_node_id)",
+    )
+    _add_fk(
+        connection,
+        "annual_plan_change_proposal_detail",
+        "proposal_detail_source_assessment_node_fk",
+        "FOREIGN KEY (source_assessment_detail_id, assessment_id, l3_node_id) "
+        "REFERENCES assessment_detail (id, assessment_id, l3_node_id)",
     )
 
 
@@ -651,8 +798,12 @@ def _create_review_idempotency_table(connection: psycopg.Connection) -> None:
 
 
 def upgrade(connection: psycopg.Connection) -> None:
+    # Order matters: the legacy backfill inserts snapshots for
+    # already-published/archived versions, so the immutability trigger may only
+    # be enabled *after* the backfill completes.
     _create_planning_snapshot(connection)
     _capture_legacy_planning_snapshots(connection)
+    _enable_planning_snapshot_immutability(connection)
     _extend_annual_growth_plan(connection)
     _extend_plan_item(connection)
     _extend_assessment_review(connection)

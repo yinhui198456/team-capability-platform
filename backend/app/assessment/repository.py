@@ -2581,6 +2581,8 @@ def get_pending_reviews_for_buddy(
         JOIN assessment a ON a.id = ar.assessment_id
         JOIN buddy_relationship br ON br.member_id = a.member_id
         JOIN tcp_user u ON u.id = br.buddy_id
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id AND r.code = 'Buddy'
         WHERE br.buddy_id = %s
           AND br.is_primary = TRUE
           AND br.effective_date <= CURRENT_DATE
@@ -3119,7 +3121,16 @@ def submit_assessment_review(
             if replay is not None:
                 return replay
 
-        # 2. Member+Year business lock, then assessment and review row locks.
+        # 2. P1-2: fixed global lock order — buddy relationship lock first,
+        # then the member+year review/plan lock, then the row locks.  The
+        # relationship write path takes only the first lock, so the orders can
+        # never deadlock; holding the relationship lock until commit closes the
+        # TOCTOU where an Admin switches/ends the relationship between the
+        # permission re-read and the Review commit.
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"tcp_buddy_relationship:{member_id}",),
+        )
         connection.execute(
             "SELECT pg_advisory_xact_lock(hashtext(%s))",
             (f"{_REVIEW_LOCK_NAMESPACE}:{member_id}:{year}",),

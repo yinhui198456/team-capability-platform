@@ -99,9 +99,20 @@ def capture_planning_snapshot(
     """Capture the current catalog planning source for one L3 into the version.
 
     Used by the draft lifecycle (reconcile/publish).  Published/archived
-    versions are frozen by the v0009 immutability trigger and never re-captured.
+    versions are frozen by the v0009 immutability trigger and never re-captured;
+    this repository guard rejects non-draft versions with a structured error
+    before any write is attempted.
     Returns the captured row (or None when the node no longer exists).
     """
+    status = connection.execute(
+        "SELECT status FROM capability_standard_version WHERE id = %s",
+        (version_id,),
+    ).fetchone()
+    if status is None or status[0] != "草稿":
+        raise StandardVersionError(
+            "standard_version_not_draft",
+            "planning snapshots can only be captured for draft versions",
+        )
     row = connection.execute(
         """
         SELECT n.code, n.name, n.materials_text, n.expected_output,
@@ -909,25 +920,125 @@ def _ensure_planning_snapshots(connection: psycopg.Connection, version_id: int) 
 def _assert_planning_snapshots_complete(
     connection: psycopg.Connection, version_id: int
 ) -> None:
-    """Publish gate: every L3 in the version has exactly one planning snapshot."""
+    """Publish gate: the snapshot set exactly matches the version matrix.
+
+    Checks (all read-only, no writes from this function):
+    - bidirectional anti-join: no version L3 without a snapshot, no snapshot
+      without a version L3 (missing / extra / duplicated);
+    - every snapshot node belongs to the version's capability model
+      (cross-model rows are rejected even when the counts would match);
+    - every stored ``source_hash`` is recomputed from the frozen fields and
+      compared (stale hash → reject).
+    All issues are collected and raised as one structured error.
+    """
     if not _planning_snapshot_table_exists(connection):
         return
-    row = connection.execute(
+    issues: list[dict[str, object]] = []
+    missing = connection.execute(
         """
-        SELECT
-            (SELECT COUNT(DISTINCT l3_node_id) FROM capability_standard_item
-             WHERE version_id = %s) AS item_nodes,
-            (SELECT COUNT(*) FROM capability_standard_planning_snapshot
-             WHERE capability_standard_version_id = %s) AS snapshot_rows
+        SELECT i.l3_node_id, i.l3_code
+        FROM capability_standard_item i
+        LEFT JOIN capability_standard_planning_snapshot s
+          ON s.capability_standard_version_id = i.version_id
+         AND s.l3_node_id = i.l3_node_id
+        WHERE i.version_id = %s AND s.id IS NULL
+        ORDER BY i.l3_node_id
         """,
-        (version_id, version_id),
-    ).fetchone()
-    item_nodes, snapshot_rows = (int(row[0] or 0), int(row[1] or 0))
-    if item_nodes != snapshot_rows:
+        (version_id,),
+    ).fetchall()
+    for node_id, code in missing:
+        issues.append(
+            {
+                "issue": "missing_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    extra = connection.execute(
+        """
+        SELECT s.l3_node_id, s.l3_code, s.source_hash
+        FROM capability_standard_planning_snapshot s
+        LEFT JOIN capability_standard_item i
+          ON i.version_id = s.capability_standard_version_id
+         AND i.l3_node_id = s.l3_node_id
+        WHERE s.capability_standard_version_id = %s AND i.version_id IS NULL
+        ORDER BY s.l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for node_id, code, _hash in extra:
+        issues.append(
+            {
+                "issue": "extra_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    # Cross-model snapshots: the snapshot node must live in the version's model.
+    cross_model = connection.execute(
+        """
+        SELECT s.l3_node_id, s.l3_code
+        FROM capability_standard_planning_snapshot s
+        JOIN capability_standard_version v ON v.id = s.capability_standard_version_id
+        JOIN capability_node n ON n.id = s.l3_node_id
+        WHERE s.capability_standard_version_id = %s
+          AND n.model_id <> v.model_id
+        ORDER BY s.l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for node_id, code in cross_model:
+        issues.append(
+            {
+                "issue": "cross_model_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    # Per-row hash recomputation over every frozen field.
+    snapshots = connection.execute(
+        """
+        SELECT id, l3_node_id, l3_code, l3_name, materials_text, resource_snapshot,
+               expected_output, estimated_hours, output_type, notes,
+               source_workbook, source_sheet, source_row, source_type, source_hash
+        FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id = %s
+        ORDER BY l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for row in snapshots:
+        resources = row[5]
+        if isinstance(resources, str):
+            resources = json.loads(resources)
+        recomputed = planning_snapshot_hash(
+            l3_node_id=int(row[1]),
+            l3_code=str(row[2]),
+            l3_name=str(row[3]),
+            materials_text=row[4],
+            resources=resources,
+            expected_output=row[6],
+            estimated_hours=row[7],
+            output_type=row[8],
+            notes=row[9],
+            source_workbook=row[10],
+            source_sheet=row[11],
+            source_row=row[12],
+            source_type=str(row[13]),
+        )
+        if recomputed != str(row[14]):
+            issues.append(
+                {
+                    "issue": "stale_source_hash",
+                    "l3_node_id": int(row[1]),
+                    "l3_code": str(row[2]),
+                }
+            )
+    if issues:
         raise StandardVersionError(
             "planning_snapshot_incomplete",
-            "every enabled L3 requires exactly one planning snapshot",
-            [{"item_nodes": item_nodes, "snapshot_rows": snapshot_rows}],
+            "planning snapshots do not exactly match the version matrix",
+            issues,
         )
 
 
@@ -1086,8 +1197,10 @@ def publish_preview(
         )
     drift = catalog_drift(connection, version_id)
     validation = validate_version(connection, version_id)
+    # Preview is strictly read-only (P1-1): it validates the existing snapshot
+    # set — including the exact-set and hash checks — but never writes missing
+    # snapshots.  A preview with gaps reports can_publish=False.
     try:
-        _ensure_planning_snapshots(connection, version_id)
         _assert_planning_snapshots_complete(connection, version_id)
         snapshots_ok = True
     except StandardVersionError:

@@ -34,6 +34,7 @@ import {
   type EvidenceReview,
 } from './planning'
 import { useYear } from './YearContext'
+import type { ApiError } from './shared/api'
 
 type QueueFilter = '全部待处理' | '自评复核' | 'Evidence Review'
 
@@ -169,10 +170,12 @@ export function BuddyReviewCenter() {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  // Idempotency: a new key per user action; the same key is reused when the
-  // same action is retried (network retry or 409), so the server replays the
-  // first response instead of writing twice.
-  const idemKeyRef = useRef<string | null>(null)
+  // Idempotency (P1-5): the key is bound to the exact payload fingerprint.
+  // An unchanged retry (network loss) reuses the key so the server replays the
+  // first response instead of writing twice; any change to conclusion or
+  // feedback is a NEW operation with a NEW key; a revision 409 keeps the input,
+  // refreshes the workspace revision and starts a new key.
+  const idemRef = useRef<{ key: string; fingerprint: string } | null>(null)
 
   const members = useMemo(() => {
     if (isMockEnabled()) return mockAssignedMembers
@@ -272,6 +275,7 @@ export function BuddyReviewCenter() {
     setSearch('')
     setConclusion('')
     setFeedback('')
+    idemRef.current = null
 
     if (!selected) return
 
@@ -349,6 +353,7 @@ export function BuddyReviewCenter() {
     setSelectedKey(null)
     setConclusion('')
     setFeedback('')
+    idemRef.current = null
   }
 
   function selectItem(key: string) {
@@ -357,7 +362,7 @@ export function BuddyReviewCenter() {
     setFeedback('')
     setMessage('')
     setError('')
-    idemKeyRef.current = null
+    idemRef.current = null
   }
 
   function selectMember(id: number | null) {
@@ -365,6 +370,21 @@ export function BuddyReviewCenter() {
     setSelectedKey(null)
     setConclusion('')
     setFeedback('')
+    idemRef.current = null
+  }
+
+  // P1-5: re-fetch the workspace of the currently selected item after a
+  // revision 409, so the next submit carries the fresh expected_revision.
+  // Local inputs are untouched — only the frozen workspace facts refresh.
+  async function refreshWorkspace(item: QueueItem) {
+    try {
+      if (item.kind === 'assessment') {
+        const ws = await getBuddyReviewWorkspace(item.review.assessment_id)
+        setWorkspace(ws)
+      }
+    } catch {
+      // keep inputs; the 409 notice already explains the situation
+    }
   }
 
   const filteredDetails = useMemo(() => {
@@ -402,11 +422,14 @@ export function BuddyReviewCenter() {
     try {
       if (selected.kind === 'assessment') {
         const value = conclusion as '认可' | '建议调整'
-        // Same action reuses its idempotency key; a fresh action gets a new one.
-        let idemKey = idemKeyRef.current
-        if (!idemKey) {
-          idemKey = crypto.randomUUID()
-          idemKeyRef.current = idemKey
+        // P1-5: the key travels with its payload fingerprint.  The same
+        // payload retry reuses the key; a changed payload (or a cleared key
+        // after a revision 409) gets a fresh key.
+        const fingerprint = `${value}|${feedback || ''}`
+        let idem = idemRef.current
+        if (!idem || idem.fingerprint !== fingerprint) {
+          idem = { key: crypto.randomUUID(), fingerprint }
+          idemRef.current = idem
         }
         const result = await submitReview(
           selected.review.assessment_id,
@@ -416,7 +439,7 @@ export function BuddyReviewCenter() {
             feedback: feedback || undefined,
             expected_revision: workspace?.revision ?? 0,
           },
-          idemKey,
+          idem.key,
         )
         setAssessmentReviews((items) =>
           items.filter((item) => item.id !== selected.review.id),
@@ -426,7 +449,7 @@ export function BuddyReviewCenter() {
           assessmentPending: Math.max(0, prev.assessmentPending - 1),
           completedThisYear: prev.completedThisYear + 1,
         }))
-        idemKeyRef.current = null
+        idemRef.current = null
         if (result.idempotent_replayed) {
           setMessage('已提交（幂等重放，未重复写入）。')
         } else if (value === '认可') {
@@ -459,9 +482,25 @@ export function BuddyReviewCenter() {
       setConclusion('')
       setFeedback('')
     } catch (err) {
-      // Keep the idempotency key and all local inputs so a retry of the same
-      // action replays server-side instead of double-writing.
-      setError(err instanceof Error ? err.message : '提交反馈失败')
+      const apiErr = err as ApiError
+      if (
+        apiErr.status === 409 &&
+        apiErr.detail !== null &&
+        typeof apiErr.detail === 'object' &&
+        'code' in apiErr.detail &&
+        apiErr.detail.code === 'revision_conflict'
+      ) {
+        // P1-5: the workspace revision is stale.  Keep all local inputs,
+        // refresh the workspace (fresh expected_revision) and invalidate the
+        // key: the next submit is a new operation with a new key.
+        idemRef.current = null
+        void refreshWorkspace(selected)
+        setError('复核版本已更新，请确认后重新提交。')
+      } else {
+        // Keep the idempotency key and all local inputs so a retry of the
+        // same action replays server-side instead of double-writing.
+        setError(err instanceof Error ? err.message : '提交反馈失败')
+      }
     } finally {
       setSubmitting(false)
     }

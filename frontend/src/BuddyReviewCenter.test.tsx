@@ -517,4 +517,186 @@ describe('BuddyReviewCenter', () => {
       )
     },
   )
+
+  // ── P1-5: idempotency key lifecycle bound to the payload fingerprint ──────
+
+  it('uses a new idempotency key when the payload changed after a failure', async () => {
+    mockBuddyData({ includeEvidence: false })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockRejectedValueOnce(new Error('network lost'))
+      .mockResolvedValue({
+        ok: true,
+        assessment_status: '已归档',
+        assessment_id: 2,
+        revision: 4,
+        review: {
+          id: 1,
+          sequence: 1,
+          conclusion: '认可',
+          feedback: '依据充分',
+          reviewed_by_buddy_id: 3,
+        },
+        plan: {
+          created: true,
+          plan_id: 10,
+          items_created: 0,
+          tasks_created: 0,
+          target_is_legacy: null,
+        },
+        proposal: null,
+        idempotent_replayed: false,
+      })
+
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '依据充分' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('network lost'),
+    )
+    // The member edits the feedback: a different payload is a new operation.
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '依据充分（修订）' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() => expect(screen.getByText(/年度计划已生成/)).toBeTruthy())
+    expect(submitReview).toHaveBeenCalledTimes(2)
+    const firstKey = submitReview.mock.calls[0][3]
+    const secondKey = submitReview.mock.calls[1][3]
+    expect(secondKey).not.toBe(firstKey)
+  })
+
+  it('unchanged payload after a failure keeps the same idempotency key', async () => {
+    mockBuddyData({ includeEvidence: false })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockRejectedValueOnce(new Error('network lost'))
+      .mockResolvedValue({
+        ok: true,
+        assessment_status: '已归档',
+        assessment_id: 2,
+        revision: 4,
+        review: {
+          id: 1,
+          sequence: 1,
+          conclusion: '认可',
+          feedback: '依据充分',
+          reviewed_by_buddy_id: 3,
+        },
+        plan: {
+          created: true,
+          plan_id: 10,
+          items_created: 0,
+          tasks_created: 0,
+          target_is_legacy: null,
+        },
+        proposal: null,
+        idempotent_replayed: true,
+      })
+
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '依据充分' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('network lost'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() =>
+      expect(screen.getByText(/已提交（幂等重放/)).toBeTruthy(),
+    )
+    expect(submitReview).toHaveBeenCalledTimes(2)
+    const firstKey = submitReview.mock.calls[0][3]
+    const secondKey = submitReview.mock.calls[1][3]
+    expect(secondKey).toBe(firstKey)
+  })
+
+  it('revision 409 keeps input, refreshes the workspace and uses a new key', async () => {
+    mockBuddyData({ includeEvidence: false })
+    const submitReview = vi
+      .spyOn(assessmentReviewApi, 'submitReview')
+      .mockRejectedValueOnce({
+        name: 'Error',
+        message: 'revision conflict',
+        status: 409,
+        detail: { code: 'revision_conflict', message: 'revision conflict' },
+      })
+      .mockResolvedValue({
+        ok: true,
+        assessment_status: '已归档',
+        assessment_id: 2,
+        revision: 5,
+        review: {
+          id: 1,
+          sequence: 1,
+          conclusion: '认可',
+          feedback: '依据充分',
+          reviewed_by_buddy_id: 3,
+        },
+        plan: {
+          created: true,
+          plan_id: 10,
+          items_created: 0,
+          tasks_created: 0,
+          target_is_legacy: null,
+        },
+        proposal: null,
+        idempotent_replayed: false,
+      })
+    const workspaceSpy = vi
+      .spyOn(assessmentReviewApi, 'getBuddyReviewWorkspace')
+      .mockResolvedValue({ ...workspaceFixture(), revision: 4 })
+    const initialCalls = workspaceSpy.mock.calls.length
+
+    render(
+      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByLabelText('认可')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('认可'))
+    fireEvent.change(screen.getByLabelText('反馈'), {
+      target: { value: '依据充分' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        '复核版本已更新，请确认后重新提交。',
+      ),
+    )
+    // The local input survives the 409.
+    expect((screen.getByLabelText('认可') as HTMLInputElement).checked).toBe(
+      true,
+    )
+    expect((screen.getByLabelText('反馈') as HTMLTextAreaElement).value).toBe(
+      '依据充分',
+    )
+    // The workspace was refreshed (fresh revision) and the next submit uses a
+    // new key and succeeds.
+    expect(workspaceSpy.mock.calls.length).toBeGreaterThan(initialCalls)
+    fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
+    await waitFor(() => expect(screen.getByText(/年度计划已生成/)).toBeTruthy())
+    expect(submitReview).toHaveBeenCalledTimes(2)
+    const firstKey = submitReview.mock.calls[0][3]
+    const secondKey = submitReview.mock.calls[1][3]
+    expect(secondKey).not.toBe(firstKey)
+    expect(submitReview.mock.calls[1][2]).toMatchObject({
+      expected_revision: 4,
+    })
+  })
 })
