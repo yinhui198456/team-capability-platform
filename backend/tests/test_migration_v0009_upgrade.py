@@ -616,3 +616,136 @@ def test_runner_rerun_and_double_lifespan_idempotent(
 async def _boot_lifespan(lifespan) -> None:
     async with lifespan(None):
         pass
+
+
+def test_proposal_source_guard_after_upgrade_legacy_preserved(
+    pre_v0009_db: psycopg.Connection,
+) -> None:
+    """4th review: after a genuine v0008 → v0009 upgrade the proposal-source
+    guard is installed and enforced, legacy double-NULL provenance survives,
+    and a legal subsequent-assessment proposal still works."""
+    connection = pre_v0009_db
+    data = connection.legacy_data
+    _run_runner(connection)
+    # 1. the trigger is installed by the upgrade (both sides)
+    for trigger, table in (
+        ("trg_proposal_source_not_plan_first_source", "annual_plan_change_proposal"),
+        ("trg_plan_source_not_proposal_source", "annual_growth_plan"),
+    ):
+        row = connection.execute(
+            "SELECT 1 FROM pg_trigger WHERE tgname=%s AND tgrelid=%s::regclass",
+            (trigger, table),
+        ).fetchone()
+        assert row is not None, (trigger, table)
+    # 2. legacy double-NULL plan provenance is preserved and readable
+    row = connection.execute(
+        "SELECT source_assessment_id, planning_source_type "
+        "FROM annual_growth_plan WHERE id=%s",
+        (data["plan_id"],),
+    ).fetchone()
+    assert (row[0], row[1]) == (None, None)
+    # 3. legal legacy backfill of the plan's first source (NULL → non-NULL)
+    connection.execute(
+        "UPDATE annual_growth_plan SET source_assessment_id=%s, "
+        "planning_source_type='assessment_approval' WHERE id=%s",
+        (data["assessment_id"], data["plan_id"]),
+    )
+    connection.commit()
+    # 4. a proposal reusing the plan's first source is rejected
+    with pytest.raises(psycopg.errors.RaiseException):
+        connection.execute(
+            """
+            INSERT INTO annual_plan_change_proposal (
+                member_id, year, source_assessment_id,
+                target_annual_growth_plan_id, status, created_by, summary
+            )
+            VALUES (%s, 2024, %s, %s, '待处理', %s, '{}')
+            """,
+            (
+                data["member_id"],
+                data["assessment_id"],
+                data["plan_id"],
+                data["member_id"],
+            ),
+        )
+    connection.rollback()
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM annual_plan_change_proposal"
+        ).fetchone()[0]
+        == 0
+    )
+    # 5. a legal subsequent assessment proposal still works
+    second = connection.execute(
+        """
+        INSERT INTO assessment (member_id, year, version, assessment_type, status)
+        VALUES (%s, 2024, 2, '年度', '已复核') RETURNING id
+        """,
+        (data["member_id"],),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        INSERT INTO annual_plan_change_proposal (
+            member_id, year, source_assessment_id,
+            target_annual_growth_plan_id, status, created_by, summary
+        )
+        VALUES (%s, 2024, %s, %s, '待处理', %s, '{}')
+        """,
+        (data["member_id"], second, data["plan_id"], data["member_id"]),
+    )
+    connection.commit()
+    # 6. legacy data untouched
+    row = connection.execute(
+        "SELECT l3_code, priority FROM plan_item WHERE id=%s",
+        (data["item_id"],),
+    ).fetchone()
+    assert row == ("P01-L1-L2-L3", "中")
+
+
+def test_plan_source_drift_to_proposal_source_guarded_after_upgrade(
+    pre_v0009_db: psycopg.Connection,
+) -> None:
+    """4th review: the plan-side guard closes the concurrent window — a plan
+    with NULL provenance cannot later claim as its first source an assessment
+    that an existing proposal of the same plan already uses."""
+    connection = pre_v0009_db
+    data = connection.legacy_data
+    _run_runner(connection)
+    # legal proposal on the legacy plan while its provenance is still NULL
+    second = connection.execute(
+        """
+        INSERT INTO assessment (member_id, year, version, assessment_type, status)
+        VALUES (%s, 2024, 2, '年度', '已复核') RETURNING id
+        """,
+        (data["member_id"],),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        INSERT INTO annual_plan_change_proposal (
+            member_id, year, source_assessment_id,
+            target_annual_growth_plan_id, status, created_by, summary
+        )
+        VALUES (%s, 2024, %s, %s, '待处理', %s, '{}')
+        """,
+        (data["member_id"], second, data["plan_id"], data["member_id"]),
+    )
+    connection.commit()
+    # the plan may not later claim that same assessment as its first source
+    with pytest.raises(psycopg.errors.RaiseException):
+        connection.execute(
+            "UPDATE annual_growth_plan SET source_assessment_id=%s WHERE id=%s",
+            (second, data["plan_id"]),
+        )
+    connection.rollback()
+    # the plan's provenance is still NULL and the proposal is untouched
+    row = connection.execute(
+        "SELECT source_assessment_id FROM annual_growth_plan WHERE id=%s",
+        (data["plan_id"],),
+    ).fetchone()
+    assert row[0] is None
+    row = connection.execute(
+        "SELECT source_assessment_id, target_annual_growth_plan_id "
+        "FROM annual_plan_change_proposal WHERE source_assessment_id=%s",
+        (second,),
+    ).fetchone()
+    assert int(row[1]) == data["plan_id"]
