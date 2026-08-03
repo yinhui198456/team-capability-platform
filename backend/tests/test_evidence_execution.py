@@ -305,14 +305,43 @@ def test_evidence_put_cas_rejects_stale_revision(seeded: dict[str, object]) -> N
     assert evidence["description"] == "第一版"
 
 
+def _bounded_worker(target: Any, timeout: float, label: str) -> Any:
+    """Run target in a DAEMON thread with a hard deadline.  Worker exceptions
+    propagate verbatim to the caller; if the worker is still alive after the
+    deadline the test fails immediately — and because the thread is daemon,
+    a DB-locked worker can never block process exit."""
+    import threading
+
+    errors: list[BaseException] = []
+    result: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = target()
+        except BaseException as exc:  # noqa: BLE001 — propagate verbatim
+            errors.append(exc)
+
+    worker = threading.Thread(target=_runner, daemon=True, name=label)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise AssertionError(f"{label} did not finish within {timeout}s")
+    if errors:
+        raise errors[0]
+    return result.get("value")
+
+
 def _run_switch_race(
     seeded: dict[str, object],
-    monkeypatch: pytest.MonkeyPatch | None,
-) -> tuple[tuple[int, Any], int]:
-    """Shared race scaffolding: the switch holds the production advisory
-    lock; the review is submitted concurrently and must wait on it.  Returns
-    (status, body) of the ex-buddy review.  All waits are bounded; worker
-    exceptions propagate as their original cause."""
+) -> tuple[tuple[int, Any], int, str]:
+    """Shared race scaffolding with OBSERVABLE synchronisation: the switch
+    holds the production advisory lock and commits the relationship switch
+    ONLY after pg_locks proves the review is actually waiting on the lock
+    (granted=false advisory waiter) — no fixed sleep.  Returns
+    (review outcome, evidence id, switch result) where switch result is
+    'waited' (review was blocked on the lock) or 'no-wait-evidence' (the
+    review never reached the lock — the mutation case).  All waits are
+    hard-deadlined; worker exceptions propagate verbatim."""
     import threading
     import time
 
@@ -333,15 +362,14 @@ def _run_switch_race(
     ).fetchone()[0]
 
     switch_holder_ready = threading.Event()
-    review_started = threading.Event()
-    overall_deadline = time.monotonic() + 30.0
+    switch_state: dict[str, Any] = {"result": None, "error": None}
 
     # The worker thread must use the authoritative test database URL (the
     # session fixture pointed settings.database_url at TEST_DATABASE_URL,
     # which honours POSTGRES_HOST/POSTGRES_PORT) — never a host-mapped port.
     from app.settings import settings
 
-    def _switch_relationship() -> None:
+    def _switch_relationship() -> str:
         with psycopg.connect(settings.database_url) as switch_conn:
             switch_conn.execute("BEGIN")
             switch_conn.execute(
@@ -349,19 +377,38 @@ def _run_switch_race(
                 (f"tcp_buddy_relationship:{member_id}",),
             )
             switch_holder_ready.set()
-            if not review_started.wait(timeout=10):
-                raise AssertionError("review never started within 10s")
-            time.sleep(0.3)  # give the review a chance to block on the lock
-            switch_conn.execute(
-                "UPDATE buddy_relationship SET expiry_date = CURRENT_DATE - 1, "
-                "effective_to = CURRENT_DATE - 1 "
-                "WHERE member_id = %s AND is_primary = TRUE AND effective_to IS NULL",
-                (member_id,),
-            )
-            switch_conn.execute("COMMIT")
+            # Observability: wait until pg_locks shows a waiter on the
+            # advisory lock (the review).  No fixed sleep is used to infer
+            # blocking; if no waiter ever appears the switch rolls back and
+            # reports 'no-wait-evidence'.
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                row = switch_conn.execute(
+                    "SELECT count(*) FROM pg_locks "
+                    "WHERE locktype = 'advisory' AND granted = false"
+                ).fetchone()
+                if row is not None and int(row[0]) > 0:
+                    switch_conn.execute(
+                        "UPDATE buddy_relationship "
+                        "SET expiry_date = CURRENT_DATE - 1, "
+                        "effective_to = CURRENT_DATE - 1 "
+                        "WHERE member_id = %s AND is_primary = TRUE "
+                        "AND effective_to IS NULL",
+                        (member_id,),
+                    )
+                    switch_conn.execute("COMMIT")
+                    return "waited"
+                time.sleep(0.02)
+            switch_conn.execute("ROLLBACK")
+            return "no-wait-evidence"
+
+    def _switch_runner() -> None:
+        try:
+            switch_state["result"] = _switch_relationship()
+        except BaseException as exc:  # noqa: BLE001
+            switch_state["error"] = exc
 
     def _submit_review() -> tuple[int, Any]:
-        review_started.set()
         return _request(
             "POST",
             f"/api/planning/evidences/{ev_id}/review",
@@ -369,23 +416,24 @@ def _run_switch_race(
             cookies=bc,
         )[:2]
 
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        switcher_future = pool.submit(_switch_relationship)
-        # Bounded, failure-aware wait for the switch to hold the lock.
-        while not switch_holder_ready.is_set():
-            if switcher_future.done():
-                switcher_future.result()  # raises the original exception
-            if time.monotonic() > overall_deadline:
-                raise AssertionError(
-                    "switch never held the relationship lock within 30s"
-                )
-            time.sleep(0.05)
-        reviewer_future = pool.submit(_submit_review)
-        switcher_future.result(timeout=15)  # switch holds the lock, then commits
-        review_outcome = reviewer_future.result(timeout=15)  # no deadlock
-    return review_outcome, ev_id
+    switcher = threading.Thread(
+        target=_switch_runner, daemon=True, name="switch-worker"
+    )
+    switcher.start()
+    deadline = time.monotonic() + 20.0
+    while not switch_holder_ready.is_set():
+        if switch_state["error"] is not None:
+            raise switch_state["error"]
+        if time.monotonic() > deadline:
+            raise AssertionError("switch never held the relationship lock within 20s")
+        time.sleep(0.02)
+    review_outcome = _bounded_worker(_submit_review, 20, "review-worker")
+    switcher.join(20)
+    if switcher.is_alive():
+        raise AssertionError("switch worker did not finish within 20s")
+    if switch_state["error"] is not None:
+        raise switch_state["error"]
+    return review_outcome, ev_id, str(switch_state["result"])
 
 
 def test_evidence_review_waits_for_buddy_relationship_switch(
@@ -397,7 +445,8 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
     connection = seeded["connection"]
     task_id = int(seeded["task_id"])
 
-    review_outcome, ev_id = _run_switch_race(seeded, None)
+    review_outcome, ev_id, switch_result = _run_switch_race(seeded)
+    assert switch_result == "waited"  # the review observably blocked on the lock
     assert review_outcome[0] == 403  # ex-buddy rejected after the switch
 
     # A legitimate current buddy can still review (no residual lock).
@@ -435,10 +484,13 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
 def test_switch_race_red_without_review_lock(
     seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation sensitivity: remove the shared advisory lock from the review
-    path and the same interleaving must NOT yield the 403 — the review
-    completes while the relationship is still valid (200).  This proves the
-    main test depends on the lock, not on timing."""
+    """Mutation sensitivity under the SAME observable interleaving: with the
+    shared advisory lock removed from the review path, the switch never
+    observes a lock waiter (no-wait-evidence) and never commits the switch —
+    the review completes while the relationship is still valid (200).  The
+    guarded test's 403 assertion is therefore red under this mutation, and
+    the red is deterministic (driven by the pg_locks observability, not by
+    scheduling speed)."""
     from app.planning import repository as planning_repository
 
     monkeypatch.setattr(
@@ -446,10 +498,9 @@ def test_switch_race_red_without_review_lock(
         "_acquire_buddy_relationship_lock",
         lambda connection, member_id: None,
     )
-    review_outcome, _ = _run_switch_race(seeded, monkeypatch)
-    # Without the lock the review is not blocked: it succeeds (200) before
-    # the switch commits — the guarded test's 403 assertion would be red.
-    assert review_outcome[0] == 200
+    review_outcome, _, switch_result = _run_switch_race(seeded)
+    assert switch_result == "no-wait-evidence"
+    assert review_outcome[0] == 200  # review never blocked → succeeds
 
 
 def test_evidence_put_requires_expected_revision_concurrent(
@@ -514,18 +565,35 @@ def test_evidence_put_response_is_own_returning_snapshot(
 ) -> None:
     """P2 red: A's PUT response must be exactly A's own committed snapshot,
     even when B writes right after — the final GET may show B's update."""
-    import threading
 
     mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
     status, ev = _create_evidence(mc, task_id)
     ev_id = int(ev["id"])
+    connection = seeded["connection"]
 
-    b_wrote = threading.Event()
-    a_response: dict[str, Any] = {}
+    def _a_writes() -> tuple[int, Any]:
+        return _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": "A-首次写入", "expected_revision": 0},
+            cookies=mc,
+        )[:2]
 
-    def _writer_b() -> None:
-        # B updates the same evidence with the next revision after A commits.
-        b_wrote.wait(timeout=10)
+    def _b_writes_after_a_commits() -> None:
+        # Deterministic trigger: B writes the moment A's UPDATE is visible
+        # (revision 1 committed) — while A may not have built its response
+        # yet.  Polling pg_locks would be weaker; revision visibility is the
+        # commit signal.
+        import time
+
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            row = connection.execute(
+                "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
+            ).fetchone()
+            if row is not None and int(row[0]) >= 1:
+                break
+            time.sleep(0.02)
         status, payload, _ = _request(
             "PUT",
             f"/api/planning/evidences/{ev_id}",
@@ -534,24 +602,13 @@ def test_evidence_put_response_is_own_returning_snapshot(
         )
         assert status == 200, f"B write failed: {status} {payload}"
 
-    from concurrent.futures import ThreadPoolExecutor
+    a_response = _bounded_worker(_a_writes, 20, "a-writer")
+    _bounded_worker(_b_writes_after_a_commits, 20, "b-writer")
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        b_future = pool.submit(_writer_b)
-        status, payload, _ = _request(
-            "PUT",
-            f"/api/planning/evidences/{ev_id}",
-            {"description": "A-首次写入", "expected_revision": 0},
-            cookies=mc,
-        )
-        a_response["status"] = status
-        a_response["payload"] = payload
-        b_wrote.set()
-        b_future.result(timeout=15)
-
-    assert a_response["status"] == 200
-    a = a_response["payload"]
-    # A's response is A's own snapshot: revision 1, A's description.
+    assert a_response[0] == 200
+    a = a_response[1]
+    # A's response is A's own committed snapshot (UPDATE ... RETURNING):
+    # revision 1, A's description — regardless of B writing right after.
     assert a["revision"] == 1
     assert a["description"] == "A-首次写入"
     # The final GET may already show B's update.
@@ -561,3 +618,118 @@ def test_evidence_put_response_is_own_returning_snapshot(
     assert evidence["revision"] in (1, 2)
     if evidence["revision"] == 2:
         assert evidence["description"] == "B-后续写入"
+
+
+def test_put_response_old_impl_returns_b_snapshot_mutation_red(
+    seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-2 mutation red: with the OLD implementation (no CAS, post-commit
+    re-read that waits for B inside the defect window), A's response must be
+    B's committed write (revision 2 / B description) — proving the guarded
+    test catches the exact defect window and is red on the old behaviour."""
+    import time
+
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    connection = seeded["connection"]
+    status, ev = _create_evidence(mc, task_id)
+    ev_id = int(ev["id"])
+
+    from app.planning import repository as planning_repository
+
+    def _old_update(
+        conn: psycopg.Connection,
+        member_id: int,
+        evidence_id: int,
+        fields: dict[str, object],
+        expected_revision: int,
+    ) -> tuple[Any, ...]:
+        # Old semantics: unconditional UPDATE (no row lock, no CAS), then a
+        # post-commit re-read that can observe another writer.
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
+        values = [fields[k] for k in fields] + [evidence_id]
+        conn.execute(
+            f"UPDATE evidence SET {set_clause}, revision = revision + 1 "
+            f"WHERE id = %s",
+            values,
+        )
+        conn.commit()  # the old implementation commits before re-reading
+        # Defect window: after this write commits, wait until the OTHER
+        # writer (B) has committed revision 2, then re-read — the response
+        # must be B's snapshot (the old defect).
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            row = conn.execute(
+                "SELECT revision FROM evidence WHERE id = %s", (evidence_id,)
+            ).fetchone()
+            if row is not None and int(row[0]) >= 2:
+                break
+            time.sleep(0.02)
+        row = conn.execute(
+            f"SELECT {_evidence_columns_sql()} FROM evidence WHERE id = %s",
+            (evidence_id,),
+        ).fetchone()
+        assert row is not None
+        return planning_repository._evidence_row(row)
+
+    from app.planning import api as planning_api
+    from app.planning import repository as planning_repository
+
+    monkeypatch.setattr(planning_api, "update_evidence_draft", _old_update)
+    monkeypatch.setattr(planning_repository, "update_evidence_draft", _old_update)
+
+    def _evidence_columns_sql() -> str:
+        return planning_repository._EVIDENCE_COLUMNS
+
+    def _a_writes() -> tuple[int, Any]:
+        return _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": "A-首次写入", "expected_revision": 0},
+            cookies=mc,
+        )[:2]
+
+    def _b_writes_after_a_commits() -> None:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            row = connection.execute(
+                "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
+            ).fetchone()
+            if row is not None and int(row[0]) >= 1:
+                break
+            time.sleep(0.02)
+        status, payload, _ = _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": "B-后续写入", "expected_revision": 1},
+            cookies=mc,
+        )
+        assert status == 200, f"B write failed: {status} {payload}"
+
+    # B starts first (daemon, waiting for A's commit); A then runs and must
+    # observe B's committed revision 2 in its post-commit re-read.
+    b_errors: list[BaseException] = []
+
+    def _b_runner() -> None:
+        try:
+            _b_writes_after_a_commits()
+        except BaseException as exc:  # noqa: BLE001
+            b_errors.append(exc)
+
+    import threading
+
+    b_thread = threading.Thread(target=_b_runner, daemon=True, name="b-writer")
+    b_thread.start()
+    a_response = _bounded_worker(_a_writes, 25, "a-writer")
+    b_thread.join(25)
+    if b_thread.is_alive():
+        raise AssertionError("B writer did not finish within 25s")
+    if b_errors:
+        raise b_errors[0]
+
+    assert a_response[0] == 200
+    a = a_response[1]
+    # Old implementation: A's response is B's snapshot (revision 2, B's
+    # description) — the guarded main test (revision == 1, A description)
+    # would be RED on this old behaviour.
+    assert a["revision"] == 2
+    assert a["description"] == "B-后续写入"
