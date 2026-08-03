@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from ..access.policies import Connection, CurrentUser
 from .gate import check_annual_plan_gate
 from .repository import (
+    EvidenceValidationError,
     LegacyPlanningWriteDisabled,
     PlanningDomainError,
     archive_team_annual_plan,
@@ -551,13 +552,25 @@ def put_evidence(
     _require_member(user)
     try:
         expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise EvidenceValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="evidence",
+                entity_id=evidence_id,
+                field="expected_revision",
+            )
         fields = {k: v for k, v in body.items() if k != "expected_revision"}
         return update_evidence_draft(
             connection,
             int(user["id"]),
             evidence_id,
             fields,
-            expected_revision=int(expected) if expected is not None else None,
+            expected_revision=expected,
         )
     except PermissionError as exc:
         raise HTTPException(

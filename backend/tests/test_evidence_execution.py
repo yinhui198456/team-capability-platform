@@ -305,12 +305,14 @@ def test_evidence_put_cas_rejects_stale_revision(seeded: dict[str, object]) -> N
     assert evidence["description"] == "第一版"
 
 
-def test_evidence_review_waits_for_buddy_relationship_switch(
+def _run_switch_race(
     seeded: dict[str, object],
-) -> None:
-    """P3b: a review must wait on the shared buddy-relationship advisory lock
-    and re-read the canonical relationship afterwards — an ex-buddy cannot
-    submit once the relationship switched, without deadlock."""
+    monkeypatch: pytest.MonkeyPatch | None,
+) -> tuple[tuple[int, Any], int]:
+    """Shared race scaffolding: the switch holds the production advisory
+    lock; the review is submitted concurrently and must wait on it.  Returns
+    (status, body) of the ex-buddy review.  All waits are bounded; worker
+    exceptions propagate as their original cause."""
     import threading
     import time
 
@@ -329,10 +331,10 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
         "WHERE lt.id=%s)",
         (task_id,),
     ).fetchone()[0]
-    relationship_key = f"tcp_buddy_relationship:{member_id}"
 
     switch_holder_ready = threading.Event()
-    review_may_start = threading.Event()
+    review_started = threading.Event()
+    overall_deadline = time.monotonic() + 30.0
 
     # The worker thread must use the authoritative test database URL (the
     # session fixture pointed settings.database_url at TEST_DATABASE_URL,
@@ -343,11 +345,13 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
         with psycopg.connect(settings.database_url) as switch_conn:
             switch_conn.execute("BEGIN")
             switch_conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))", (relationship_key,)
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"tcp_buddy_relationship:{member_id}",),
             )
             switch_holder_ready.set()
-            review_may_start.wait(timeout=10)
-            time.sleep(0.3)  # let the review block on the advisory lock
+            if not review_started.wait(timeout=10):
+                raise AssertionError("review never started within 10s")
+            time.sleep(0.3)  # give the review a chance to block on the lock
             switch_conn.execute(
                 "UPDATE buddy_relationship SET expiry_date = CURRENT_DATE - 1, "
                 "effective_to = CURRENT_DATE - 1 "
@@ -357,7 +361,7 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
             switch_conn.execute("COMMIT")
 
     def _submit_review() -> tuple[int, Any]:
-        review_may_start.set()
+        review_started.set()
         return _request(
             "POST",
             f"/api/planning/evidences/{ev_id}/review",
@@ -365,26 +369,46 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
             cookies=bc,
         )[:2]
 
-    # Worker exceptions (connection, SQL, assertion) propagate to the main
-    # thread via future.result() and fail the test with the original cause —
-    # never an Event timeout or a background warning.  The wait loop below is
-    # failure-aware: it blocks until the switch either holds the lock (ready)
-    # or dies, surfacing the original worker exception immediately.
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         switcher_future = pool.submit(_switch_relationship)
+        # Bounded, failure-aware wait for the switch to hold the lock.
         while not switch_holder_ready.is_set():
             if switcher_future.done():
                 switcher_future.result()  # raises the original exception
+            if time.monotonic() > overall_deadline:
+                raise AssertionError(
+                    "switch never held the relationship lock within 30s"
+                )
             time.sleep(0.05)
         reviewer_future = pool.submit(_submit_review)
         switcher_future.result(timeout=15)  # switch holds the lock, then commits
         review_outcome = reviewer_future.result(timeout=15)  # no deadlock
+    return review_outcome, ev_id
 
+
+def test_evidence_review_waits_for_buddy_relationship_switch(
+    seeded: dict[str, object],
+) -> None:
+    """P3b: a review must wait on the shared buddy-relationship advisory lock
+    and re-read the canonical relationship afterwards — an ex-buddy cannot
+    submit once the relationship switched, without deadlock."""
+    connection = seeded["connection"]
+    task_id = int(seeded["task_id"])
+
+    review_outcome, ev_id = _run_switch_race(seeded, None)
     assert review_outcome[0] == 403  # ex-buddy rejected after the switch
 
     # A legitimate current buddy can still review (no residual lock).
+    member_id = connection.execute(
+        "SELECT member_id FROM annual_growth_plan WHERE member_id IN "
+        "(SELECT agp.member_id FROM learning_task lt "
+        "JOIN plan_item pi ON pi.id=lt.plan_item_id "
+        "JOIN annual_growth_plan agp ON agp.id=pi.annual_growth_plan_id "
+        "WHERE lt.id=%s)",
+        (task_id,),
+    ).fetchone()[0]
     from tests.test_learning_task import _login
 
     new_buddy_id = create_user(connection, "new_current_buddy", "New Buddy", "secret")
@@ -398,8 +422,7 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
     create_buddy_relationship(connection, int(member_id), new_buddy_id, is_primary=True)
     connection.commit()
     new_cookies = _login(connection, "new_current_buddy")
-    # The old evidence was already reviewed by the switch race? No — the
-    # ex-buddy review failed with 403, so the evidence is still pending.
+    # The ex-buddy review failed with 403, so the evidence is still pending.
     status, _, _ = _request(
         "POST",
         f"/api/planning/evidences/{ev_id}/review",
@@ -407,3 +430,134 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
         cookies=new_cookies,
     )
     assert status == 200
+
+
+def test_switch_race_red_without_review_lock(
+    seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation sensitivity: remove the shared advisory lock from the review
+    path and the same interleaving must NOT yield the 403 — the review
+    completes while the relationship is still valid (200).  This proves the
+    main test depends on the lock, not on timing."""
+    from app.planning import repository as planning_repository
+
+    monkeypatch.setattr(
+        planning_repository,
+        "_acquire_buddy_relationship_lock",
+        lambda connection, member_id: None,
+    )
+    review_outcome, _ = _run_switch_race(seeded, monkeypatch)
+    # Without the lock the review is not blocked: it succeeds (200) before
+    # the switch commits — the guarded test's 403 assertion would be red.
+    assert review_outcome[0] == 200
+
+
+def test_evidence_put_requires_expected_revision_concurrent(
+    seeded: dict[str, object],
+) -> None:
+    """P1 red: two concurrent PUTs WITHOUT expected_revision must both be
+    rejected (structured 422, zero writes) — the current baseline lets both
+    succeed with last-write-wins (revision=2)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    status, ev = _create_evidence(mc, task_id)
+    ev_id = int(ev["id"])
+
+    def _fire(description: str) -> tuple[int, Any]:
+        return _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": description},
+            cookies=mc,
+        )[:2]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(_fire, ("无CAS-A", "无CAS-B")))
+    assert [r[0] for r in results] == [422, 422]
+    for _, body in results:
+        assert body["detail"]["code"] == "invalid_evidence"
+        assert body["detail"]["field"] == "expected_revision"
+    status, evidence, _ = _request(
+        "GET", f"/api/planning/evidences/{ev_id}", cookies=mc
+    )
+    assert evidence["revision"] == 0  # zero writes
+    assert evidence["description"] is None
+
+
+def test_evidence_put_rejects_bad_expected_revision_types(
+    seeded: dict[str, object],
+) -> None:
+    """P1: missing/bool/non-integer/negative expected_revision → 422,
+    field=expected_revision, zero writes."""
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    status, ev = _create_evidence(mc, task_id)
+    ev_id = int(ev["id"])
+
+    for bad in (None, True, "0", -1, 1.5):
+        body: dict[str, object] = {"description": "bad-rev"}
+        if bad is not None:
+            body["expected_revision"] = bad
+        status, payload, _ = _request(
+            "PUT", f"/api/planning/evidences/{ev_id}", body, cookies=mc
+        )
+        assert status == 422, f"expected 422 for {bad!r}, got {status}"
+        assert payload["detail"]["field"] == "expected_revision"
+    status, evidence, _ = _request(
+        "GET", f"/api/planning/evidences/{ev_id}", cookies=mc
+    )
+    assert evidence["revision"] == 0
+
+
+def test_evidence_put_response_is_own_returning_snapshot(
+    seeded: dict[str, object],
+) -> None:
+    """P2 red: A's PUT response must be exactly A's own committed snapshot,
+    even when B writes right after — the final GET may show B's update."""
+    import threading
+
+    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    status, ev = _create_evidence(mc, task_id)
+    ev_id = int(ev["id"])
+
+    b_wrote = threading.Event()
+    a_response: dict[str, Any] = {}
+
+    def _writer_b() -> None:
+        # B updates the same evidence with the next revision after A commits.
+        b_wrote.wait(timeout=10)
+        status, payload, _ = _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": "B-后续写入", "expected_revision": 1},
+            cookies=mc,
+        )
+        assert status == 200, f"B write failed: {status} {payload}"
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        b_future = pool.submit(_writer_b)
+        status, payload, _ = _request(
+            "PUT",
+            f"/api/planning/evidences/{ev_id}",
+            {"description": "A-首次写入", "expected_revision": 0},
+            cookies=mc,
+        )
+        a_response["status"] = status
+        a_response["payload"] = payload
+        b_wrote.set()
+        b_future.result(timeout=15)
+
+    assert a_response["status"] == 200
+    a = a_response["payload"]
+    # A's response is A's own snapshot: revision 1, A's description.
+    assert a["revision"] == 1
+    assert a["description"] == "A-首次写入"
+    # The final GET may already show B's update.
+    status, evidence, _ = _request(
+        "GET", f"/api/planning/evidences/{ev_id}", cookies=mc
+    )
+    assert evidence["revision"] in (1, 2)
+    if evidence["revision"] == 2:
+        assert evidence["description"] == "B-后续写入"

@@ -418,7 +418,11 @@ def test_update_evidence_draft_success(evidence_schema: psycopg.Connection) -> N
     status, updated, _ = _request(
         "PUT",
         f"/api/planning/evidences/{evidence_id}",
-        {"content": "完成 P01 实践项目", "evidence_link": "http://example.com/demo"},
+        {
+            "content": "完成 P01 实践项目",
+            "evidence_link": "http://example.com/demo",
+            "expected_revision": 0,
+        },
         cookies=cookies,
     )
     assert status == 200
@@ -494,7 +498,7 @@ def test_update_non_draft_evidence_returns_422(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/evidences/{evidence_id}",
-        {"content": "修改"},
+        {"content": "修改", "expected_revision": 0},
         cookies=cookies,
     )
     assert status == 422

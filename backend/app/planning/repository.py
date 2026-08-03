@@ -1974,16 +1974,31 @@ def create_evidence_draft(
     return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
+def _validate_expected_revision(value: object) -> int:
+    """P1: any draft-updating PUT must carry a non-negative integer
+    expected_revision — bool, non-integer, negative or missing is a 422."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise EvidenceValidationError(
+            "expected_revision must be a non-negative integer",
+            field="expected_revision",
+        )
+    return value
+
+
 def update_evidence_draft(
     connection: psycopg.Connection,
     member_id: int,
     evidence_id: int,
     fields: dict[str, object],
-    expected_revision: int | None = None,
+    expected_revision: int,
 ) -> dict[str, object]:
-    """CAS update: the evidence row is locked inside the transaction, status
-    and revision are re-read, and the write only lands when
-    expected_revision matches — concurrent PUTs cannot last-write-wins."""
+    """CAS update with no bypassable path: expected_revision is required and
+    validated at the repository boundary; the row is locked, status/revision
+    re-read, and the response is the UPDATE ... RETURNING snapshot captured
+    inside the same transaction — never a re-read of a row another concurrent
+    operation may have changed."""
+    expected_revision = _validate_expected_revision(expected_revision)
+
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _EVIDENCE_UPDATABLE_FIELDS:
@@ -2017,10 +2032,7 @@ def update_evidence_draft(
                 entity_id=evidence_id,
                 field="status",
             )
-        if (
-            expected_revision is not None
-            and int(evidence["revision"]) != expected_revision
-        ):
+        if int(evidence["revision"]) != expected_revision:
             raise EvidenceRevisionConflict(
                 "evidence revision conflict",
                 entity_id=evidence_id,
@@ -2034,17 +2046,19 @@ def update_evidence_draft(
         set_clause = ", ".join(f"{col} = %s" for col in columns)
         values = [updates[col] for col in columns]
         values.append(evidence_id)
-        connection.execute(
-            f"UPDATE evidence SET {set_clause}, revision = revision + 1 "
-            f"WHERE id = %s",
+        updated = connection.execute(
+            f"""
+            UPDATE evidence
+            SET {set_clause}, revision = revision + 1
+            WHERE id = %s
+            RETURNING {_EVIDENCE_COLUMNS}
+            """,
             values,
-        )
-    row = connection.execute(
-        f"SELECT {_EVIDENCE_COLUMNS} FROM evidence WHERE id = %s",
-        (evidence_id,),
-    ).fetchone()
-    assert row is not None
-    return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
+        ).fetchone()
+        assert updated is not None
+    # Only read-only L3 context is attached outside the transaction; the
+    # mutable evidence row is never re-read for the response.
+    return _attach_l3_contexts(connection, [_evidence_row(updated)])[0]
 
 
 def submit_evidence(
@@ -2226,6 +2240,20 @@ def get_evidence_review_for_buddy(
     )[0]
 
 
+def _acquire_buddy_relationship_lock(
+    connection: psycopg.Connection, member_id: int
+) -> None:
+    """The shared advisory lock the buddy-relationship write path uses
+    (access/repository.create_buddy_relationship).  The evidence-review path
+    takes it FIRST, then the evidence row — a relationship switch and a
+    review can never interleave.  Extracted as a module function so the
+    mutation test can prove the review depends on it."""
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"tcp_buddy_relationship:{member_id}",),
+    )
+
+
 def submit_evidence_review(
     connection: psycopg.Connection,
     evidence_id: int,
@@ -2275,10 +2303,7 @@ def submit_evidence_review(
                 "evidence not found", entity_id=evidence_id, field="evidence"
             )
         member_id = int(member_row[0])
-        connection.execute(
-            "SELECT pg_advisory_xact_lock(hashtext(%s))",
-            (f"tcp_buddy_relationship:{member_id}",),
-        )
+        _acquire_buddy_relationship_lock(connection, member_id)
         # Re-read under the lock; the relationship may have changed.
         row = connection.execute(
             """
