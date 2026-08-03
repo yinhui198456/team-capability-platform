@@ -377,6 +377,25 @@ test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与
   await panel.getByLabel('计划开始日期').fill(`${year}-04-15`)
   await panel.getByRole('button', { name: '保存日期' }).click()
   await expect(panel.getByRole('alert')).toBeHidden()
+  // The banner clears before the PUT resolves (saveDates hides it
+  // synchronously), so poll the real API until the edit is durable — the
+  // assertions below must read the post-edit row, never the pre-edit one
+  // (generation leaves plan_start_date NULL).
+  await expect
+    .poll(
+      async () => {
+        const planAfterEdit = await (
+          await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+        ).json()
+        return (
+          planAfterEdit.items.find(
+            (candidate: { id: number }) => candidate.id === seed.itemId,
+          )?.plan_start_date ?? null
+        )
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(`${year}-04-15`)
   const planAfterEdit = await (
     await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
   ).json()

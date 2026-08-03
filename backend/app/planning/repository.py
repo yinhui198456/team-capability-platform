@@ -1633,9 +1633,11 @@ def get_monthly_review(
             "task_id": d["task_id"],
             "l3_code": d["l3_code"],
             "status": d["status"],
-            "actual_hours": hours_by_task.get(int(d["task_id"]), 0)
-            if d["task_id"] is not None
-            else 0,
+            "actual_hours": (
+                hours_by_task.get(int(d["task_id"]), 0)
+                if d["task_id"] is not None
+                else 0
+            ),
         }
         for d in items
     ]
