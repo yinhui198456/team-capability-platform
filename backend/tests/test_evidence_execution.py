@@ -333,15 +333,17 @@ def _bounded_worker(target: Any, timeout: float, label: str) -> Any:
 
 def _run_switch_race(
     seeded: dict[str, object],
-) -> tuple[tuple[int, Any], int, str]:
-    """Shared race scaffolding with OBSERVABLE synchronisation: the switch
-    holds the production advisory lock and commits the relationship switch
-    ONLY after pg_locks proves the review is actually waiting on the lock
-    (granted=false advisory waiter) — no fixed sleep.  Returns
-    (review outcome, evidence id, switch result) where switch result is
-    'waited' (review was blocked on the lock) or 'no-wait-evidence' (the
-    review never reached the lock — the mutation case).  All waits are
-    hard-deadlined; worker exceptions propagate verbatim."""
+) -> tuple[tuple[int, Any], int, str, int, int | None]:
+    """Shared race scaffolding with OBSERVABLE synchronisation bound to the
+    EXACT target lock identity: the switch holds the production advisory
+    lock, reads its own holder identity (classid/objid/objsubid) from
+    pg_locks, and commits the relationship switch ONLY after pg_locks shows
+    a waiter on that same identity with a different PID — no fixed sleep, no
+    library-wide waiter count.  Returns
+    (review outcome, evidence id, switch result, holder pid, waiter pid).
+    The switch connection sets lock_timeout so a stuck worker ends itself
+    (rollback + connection close) inside the deadline — the daemon thread is
+    only the last resort, never the cleanup path."""
     import threading
     import time
 
@@ -369,38 +371,68 @@ def _run_switch_race(
     # which honours POSTGRES_HOST/POSTGRES_PORT) — never a host-mapped port.
     from app.settings import settings
 
-    def _switch_relationship() -> str:
+    def _switch_relationship() -> dict[str, Any]:
         with psycopg.connect(settings.database_url) as switch_conn:
+            switch_conn.execute("SET lock_timeout = '20s'")
             switch_conn.execute("BEGIN")
             switch_conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 (f"tcp_buddy_relationship:{member_id}",),
             )
             switch_holder_ready.set()
-            # Observability: wait until pg_locks shows a waiter on the
-            # advisory lock (the review).  No fixed sleep is used to infer
-            # blocking; if no waiter ever appears the switch rolls back and
-            # reports 'no-wait-evidence'.
+            # Exact lock identity of THIS holder (single-key advisory form:
+            # classid=4294967295, objid=hashtext key, objsubid=1).
+            holder = switch_conn.execute(
+                """
+                SELECT pid, classid, objid, objsubid
+                FROM pg_locks
+                WHERE locktype = 'advisory' AND granted
+                  AND pid = pg_backend_pid()
+                LIMIT 1
+                """
+            ).fetchone()
+            assert holder is not None
+            holder_pid, classid, objid, objsubid = (int(v) for v in holder)
+            # Wait for a waiter on the SAME identity with a DIFFERENT pid.
             deadline = time.monotonic() + 10.0
+            waiter_pid: int | None = None
             while time.monotonic() < deadline:
                 row = switch_conn.execute(
-                    "SELECT count(*) FROM pg_locks "
-                    "WHERE locktype = 'advisory' AND granted = false"
+                    """
+                    SELECT pid FROM pg_locks
+                    WHERE locktype = 'advisory' AND NOT granted
+                      AND classid = %s AND objid = %s AND objsubid = %s
+                      AND pid <> pg_backend_pid()
+                    LIMIT 1
+                    """,
+                    (classid, objid, objsubid),
                 ).fetchone()
-                if row is not None and int(row[0]) > 0:
-                    switch_conn.execute(
-                        "UPDATE buddy_relationship "
-                        "SET expiry_date = CURRENT_DATE - 1, "
-                        "effective_to = CURRENT_DATE - 1 "
-                        "WHERE member_id = %s AND is_primary = TRUE "
-                        "AND effective_to IS NULL",
-                        (member_id,),
-                    )
-                    switch_conn.execute("COMMIT")
-                    return "waited"
+                if row is not None:
+                    waiter_pid = int(row[0])
+                    break
                 time.sleep(0.02)
-            switch_conn.execute("ROLLBACK")
-            return "no-wait-evidence"
+            if waiter_pid is None:
+                switch_conn.execute("ROLLBACK")  # active cleanup, no commit
+                return {
+                    "result": "no-wait-evidence",
+                    "holder_pid": holder_pid,
+                    "waiter_pid": None,
+                }
+            assert waiter_pid != holder_pid
+            switch_conn.execute(
+                "UPDATE buddy_relationship "
+                "SET expiry_date = CURRENT_DATE - 1, "
+                "effective_to = CURRENT_DATE - 1 "
+                "WHERE member_id = %s AND is_primary = TRUE "
+                "AND effective_to IS NULL",
+                (member_id,),
+            )
+            switch_conn.execute("COMMIT")
+            return {
+                "result": "waited",
+                "holder_pid": holder_pid,
+                "waiter_pid": waiter_pid,
+            }
 
     def _switch_runner() -> None:
         try:
@@ -427,13 +459,20 @@ def _run_switch_race(
         if time.monotonic() > deadline:
             raise AssertionError("switch never held the relationship lock within 20s")
         time.sleep(0.02)
-    review_outcome = _bounded_worker(_submit_review, 20, "review-worker")
+    review_outcome = _bounded_worker(_submit_review, 25, "review-worker")
     switcher.join(20)
     if switcher.is_alive():
         raise AssertionError("switch worker did not finish within 20s")
     if switch_state["error"] is not None:
         raise switch_state["error"]
-    return review_outcome, ev_id, str(switch_state["result"])
+    result = switch_state["result"]
+    return (
+        review_outcome,
+        ev_id,
+        str(result["result"]),
+        int(result["holder_pid"]),
+        int(result["waiter_pid"]) if result["waiter_pid"] is not None else None,
+    )
 
 
 def test_evidence_review_waits_for_buddy_relationship_switch(
@@ -445,8 +484,12 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
     connection = seeded["connection"]
     task_id = int(seeded["task_id"])
 
-    review_outcome, ev_id, switch_result = _run_switch_race(seeded)
+    review_outcome, ev_id, switch_result, holder_pid, waiter_pid = _run_switch_race(
+        seeded
+    )
     assert switch_result == "waited"  # the review observably blocked on the lock
+    assert holder_pid > 0
+    assert waiter_pid is not None and waiter_pid != holder_pid
     assert review_outcome[0] == 403  # ex-buddy rejected after the switch
 
     # A legitimate current buddy can still review (no residual lock).
@@ -498,8 +541,10 @@ def test_switch_race_red_without_review_lock(
         "_acquire_buddy_relationship_lock",
         lambda connection, member_id: None,
     )
-    review_outcome, _, switch_result = _run_switch_race(seeded)
+    review_outcome, _, switch_result, holder_pid, waiter_pid = _run_switch_race(seeded)
     assert switch_result == "no-wait-evidence"
+    assert waiter_pid is None  # no waiter on the target lock identity
+    assert holder_pid > 0
     assert review_outcome[0] == 200  # review never blocked → succeeds
 
 
@@ -560,153 +605,141 @@ def test_evidence_put_rejects_bad_expected_revision_types(
     assert evidence["revision"] == 0
 
 
-def test_evidence_put_response_is_own_returning_snapshot(
+def _run_put_snapshot_contract(
     seeded: dict[str, object],
-) -> None:
-    """P2 red: A's PUT response must be exactly A's own committed snapshot,
-    even when B writes right after — the final GET may show B's update."""
-
-    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
-    status, ev = _create_evidence(mc, task_id)
-    ev_id = int(ev["id"])
-    connection = seeded["connection"]
-
-    def _a_writes() -> tuple[int, Any]:
-        return _request(
-            "PUT",
-            f"/api/planning/evidences/{ev_id}",
-            {"description": "A-首次写入", "expected_revision": 0},
-            cookies=mc,
-        )[:2]
-
-    def _b_writes_after_a_commits() -> None:
-        # Deterministic trigger: B writes the moment A's UPDATE is visible
-        # (revision 1 committed) — while A may not have built its response
-        # yet.  Polling pg_locks would be weaker; revision visibility is the
-        # commit signal.
-        import time
-
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            row = connection.execute(
-                "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
-            ).fetchone()
-            if row is not None and int(row[0]) >= 1:
-                break
-            time.sleep(0.02)
-        status, payload, _ = _request(
-            "PUT",
-            f"/api/planning/evidences/{ev_id}",
-            {"description": "B-后续写入", "expected_revision": 1},
-            cookies=mc,
-        )
-        assert status == 200, f"B write failed: {status} {payload}"
-
-    a_response = _bounded_worker(_a_writes, 20, "a-writer")
-    _bounded_worker(_b_writes_after_a_commits, 20, "b-writer")
-
-    assert a_response[0] == 200
-    a = a_response[1]
-    # A's response is A's own committed snapshot (UPDATE ... RETURNING):
-    # revision 1, A's description — regardless of B writing right after.
-    assert a["revision"] == 1
-    assert a["description"] == "A-首次写入"
-    # The final GET may already show B's update.
-    status, evidence, _ = _request(
-        "GET", f"/api/planning/evidences/{ev_id}", cookies=mc
-    )
-    assert evidence["revision"] in (1, 2)
-    if evidence["revision"] == 2:
-        assert evidence["description"] == "B-后续写入"
-
-
-def test_put_response_old_impl_returns_b_snapshot_mutation_red(
-    seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """P2-2 mutation red: with the OLD implementation (no CAS, post-commit
-    re-read that waits for B inside the defect window), A's response must be
-    B's committed write (revision 2 / B description) — proving the guarded
-    test catches the exact defect window and is red on the old behaviour."""
+    monkeypatch: pytest.MonkeyPatch,
+    use_old_impl: bool,
+) -> dict[str, object]:
+    """The ONE shared contract harness for the PUT-response snapshot, at the
+    repository layer with dedicated connections: each writer connection has
+    NO implicit transaction, so ``with connection.transaction()`` commits on
+    exit — the "A committed but A not yet responded" window is real.  B
+    completes its expected_revision=1 write inside that window (commit
+    barrier seam on the response construction).  With use_old_impl the OLD
+    post-commit re-read implementation is injected; the caller asserts the
+    SAME A contract, which must be red there."""
+    import threading
     import time
 
-    mc, task_id = seeded["member_cookies"], int(seeded["task_id"])
+    mc = seeded["member_cookies"]
     connection = seeded["connection"]
+    task_id = int(seeded["task_id"])
     status, ev = _create_evidence(mc, task_id)
     ev_id = int(ev["id"])
+    member_id = int(
+        connection.execute(
+            "SELECT id FROM tcp_user WHERE username = 'member_task'"
+        ).fetchone()[0]
+    )
 
     from app.planning import repository as planning_repository
+    from app.settings import settings as app_settings
 
-    def _old_update(
-        conn: psycopg.Connection,
-        member_id: int,
-        evidence_id: int,
-        fields: dict[str, object],
-        expected_revision: int,
-    ) -> tuple[Any, ...]:
-        # Old semantics: unconditional UPDATE (no row lock, no CAS), then a
-        # post-commit re-read that can observe another writer.
-        set_clause = ", ".join(f"{k} = %s" for k in fields)
-        values = [fields[k] for k in fields] + [evidence_id]
-        conn.execute(
-            f"UPDATE evidence SET {set_clause}, revision = revision + 1 "
-            f"WHERE id = %s",
-            values,
-        )
-        conn.commit()  # the old implementation commits before re-reading
-        # Defect window: after this write commits, wait until the OTHER
-        # writer (B) has committed revision 2, then re-read — the response
-        # must be B's snapshot (the old defect).
+    if use_old_impl:
+
+        def _old_update(
+            conn: psycopg.Connection,
+            member_id: int,
+            evidence_id: int,
+            fields: dict[str, object],
+            expected_revision: int,
+        ) -> dict[str, object]:
+            # Old semantics: unconditional UPDATE (no row lock, no CAS),
+            # then a post-commit re-read that can observe another writer.
+            set_clause = ", ".join(f"{k} = %s" for k in fields)
+            values = [fields[k] for k in fields] + [evidence_id]
+            conn.execute(
+                f"UPDATE evidence SET {set_clause}, revision = revision + 1 "
+                f"WHERE id = %s",
+                values,
+            )
+            conn.commit()  # the old implementation commits before re-reading
+            # Defect window: wait until B committed revision 2, then
+            # re-read — the response must be B's snapshot.
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                row = conn.execute(
+                    "SELECT revision FROM evidence WHERE id = %s",
+                    (evidence_id,),
+                ).fetchone()
+                if row is not None and int(row[0]) >= 2:
+                    break
+                time.sleep(0.02)
+            else:
+                raise AssertionError(
+                    "B never committed revision 2 within 15s — old re-read "
+                    "refuses to continue"
+                )
+            row = conn.execute(
+                f"SELECT {planning_repository._EVIDENCE_COLUMNS} "
+                f"FROM evidence WHERE id = %s",
+                (evidence_id,),
+            ).fetchone()
+            assert row is not None
+            return planning_repository._evidence_row(row)
+
+        monkeypatch.setattr(planning_repository, "update_evidence_draft", _old_update)
+
+    # Commit-barrier seam: A's response construction waits until B's
+    # revision-2 write is committed.  B's own attach runs after its commit
+    # (revision 2 visible) and passes immediately — no deadlock.
+    original_attach = planning_repository._attach_l3_contexts
+
+    def _attach_after_b_commit(conn: psycopg.Connection, rows: list[Any]) -> list[Any]:
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
             row = conn.execute(
-                "SELECT revision FROM evidence WHERE id = %s", (evidence_id,)
+                "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
             ).fetchone()
             if row is not None and int(row[0]) >= 2:
                 break
             time.sleep(0.02)
-        row = conn.execute(
-            f"SELECT {_evidence_columns_sql()} FROM evidence WHERE id = %s",
-            (evidence_id,),
-        ).fetchone()
-        assert row is not None
-        return planning_repository._evidence_row(row)
+        else:
+            raise AssertionError(
+                "B never committed revision 2 within 15s — contract window "
+                "not reached; refusing to continue"
+            )
+        return original_attach(conn, rows)
 
-    from app.planning import api as planning_api
-    from app.planning import repository as planning_repository
+    monkeypatch.setattr(
+        planning_repository, "_attach_l3_contexts", _attach_after_b_commit
+    )
 
-    monkeypatch.setattr(planning_api, "update_evidence_draft", _old_update)
-    monkeypatch.setattr(planning_repository, "update_evidence_draft", _old_update)
-
-    def _evidence_columns_sql() -> str:
-        return planning_repository._EVIDENCE_COLUMNS
-
-    def _a_writes() -> tuple[int, Any]:
-        return _request(
-            "PUT",
-            f"/api/planning/evidences/{ev_id}",
-            {"description": "A-首次写入", "expected_revision": 0},
-            cookies=mc,
-        )[:2]
+    def _a_writes() -> dict[str, object]:
+        with psycopg.connect(app_settings.database_url) as conn_a:
+            return planning_repository.update_evidence_draft(
+                conn_a,
+                member_id,
+                ev_id,
+                {"description": "A-首次写入"},
+                0,
+            )
 
     def _b_writes_after_a_commits() -> None:
+        # B starts when A's commit is visible (revision 1) — explicitly
+        # asserting the observed state; a timeout must not continue.
         deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            row = connection.execute(
-                "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
-            ).fetchone()
-            if row is not None and int(row[0]) >= 1:
-                break
-            time.sleep(0.02)
-        status, payload, _ = _request(
-            "PUT",
-            f"/api/planning/evidences/{ev_id}",
-            {"description": "B-后续写入", "expected_revision": 1},
-            cookies=mc,
-        )
-        assert status == 200, f"B write failed: {status} {payload}"
+        with psycopg.connect(app_settings.database_url) as observer:
+            while time.monotonic() < deadline:
+                row = observer.execute(
+                    "SELECT revision FROM evidence WHERE id = %s", (ev_id,)
+                ).fetchone()
+                if row is not None and int(row[0]) >= 1:
+                    break
+                time.sleep(0.02)
+            else:
+                raise AssertionError(
+                    "A never committed revision 1 within 15s — refusing to write B"
+                )
+        with psycopg.connect(app_settings.database_url) as conn_b:
+            planning_repository.update_evidence_draft(
+                conn_b,
+                member_id,
+                ev_id,
+                {"description": "B-后续写入"},
+                1,
+            )
 
-    # B starts first (daemon, waiting for A's commit); A then runs and must
-    # observe B's committed revision 2 in its post-commit re-read.
     b_errors: list[BaseException] = []
 
     def _b_runner() -> None:
@@ -714,8 +747,6 @@ def test_put_response_old_impl_returns_b_snapshot_mutation_red(
             _b_writes_after_a_commits()
         except BaseException as exc:  # noqa: BLE001
             b_errors.append(exc)
-
-    import threading
 
     b_thread = threading.Thread(target=_b_runner, daemon=True, name="b-writer")
     b_thread.start()
@@ -725,11 +756,45 @@ def test_put_response_old_impl_returns_b_snapshot_mutation_red(
         raise AssertionError("B writer did not finish within 25s")
     if b_errors:
         raise b_errors[0]
+    return a_response
 
-    assert a_response[0] == 200
-    a = a_response[1]
-    # Old implementation: A's response is B's snapshot (revision 2, B's
-    # description) — the guarded main test (revision == 1, A description)
-    # would be RED on this old behaviour.
-    assert a["revision"] == 2
-    assert a["description"] == "B-后续写入"
+
+def _assert_put_snapshot_contract(
+    seeded: dict[str, object], a: dict[str, object]
+) -> None:
+    """The ONE contract: A's response is A's own committed snapshot and the
+    final GET is exactly B's committed write."""
+    mc = seeded["member_cookies"]
+    assert a["revision"] == 1
+    assert a["description"] == "A-首次写入"
+    status, evidence, _ = _request(
+        "GET", f"/api/planning/evidences/{int(a['id'])}", cookies=mc
+    )
+    assert status == 200
+    assert evidence["revision"] == 2  # B committed inside the window
+    assert evidence["description"] == "B-后续写入"
+
+
+def test_evidence_put_response_is_own_returning_snapshot(
+    seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2 contract: with the production UPDATE ... RETURNING implementation,
+    A's response is A's own snapshot even though B commits inside the
+    "A committed, A not yet responded" window (commit-barrier seam); the
+    final GET is exactly B's write."""
+    a_response = _run_put_snapshot_contract(seeded, monkeypatch, use_old_impl=False)
+    _assert_put_snapshot_contract(seeded, a_response)
+
+
+def test_put_response_old_impl_breaks_same_contract_mutation_red(
+    seeded: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-2 mutation red: the SAME contract, run with the OLD post-commit
+    re-read implementation injected, must fail — A's response carries B's
+    committed snapshot (revision 2 / B description) instead of A's own."""
+    a_response = _run_put_snapshot_contract(seeded, monkeypatch, use_old_impl=True)
+    with pytest.raises(AssertionError):
+        _assert_put_snapshot_contract(seeded, a_response)
+    # And the old defect is exactly what the response shows.
+    assert a_response["revision"] == 2
+    assert a_response["description"] == "B-后续写入"
