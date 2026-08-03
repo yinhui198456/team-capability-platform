@@ -1139,6 +1139,56 @@ describe('plan item schedule editing (issue #63)', () => {
     expect(update).not.toHaveBeenCalled()
   })
 
+  it('rejects dates outside the source quarter when the source month is missing', async () => {
+    await renderMember(
+      [
+        makeItem({
+          revision: 1,
+          plan_start_date: '2026-04-01',
+          plan_end_date: '2026-06-30',
+          plan_quarter: 'Q2',
+          plan_month: null,
+          target_month: null,
+        }),
+      ],
+      [makeTask({ id: 1, plan_item_id: 1 })],
+    )
+    const update = vi
+      .spyOn(planningApi, 'updatePlanItem')
+      .mockResolvedValue(makeItem({ revision: 2 }))
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-03-31' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('来源季度')
+    })
+    expect(update).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-04-01' },
+    })
+    fireEvent.change(screen.getByLabelText('计划结束日期'), {
+      target: { value: '2026-07-01' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('来源季度')
+    })
+    expect(update).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('计划结束日期'), {
+      target: { value: '2026-06-30' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+  })
+
   it('keeps the edited dates on a 409, refreshes the plan and retries only after confirm', async () => {
     const item = makeItem({
       revision: 1,

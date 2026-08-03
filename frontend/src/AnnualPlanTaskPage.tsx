@@ -835,15 +835,16 @@ function TaskExecutionPanel({
     })
   }
 
-  // Mirrors the server rules: start <= due; due inside the source plan
-  // month; start inside the source quarter. ISO strings compare lexically.
+  // Mirrors the server rules: start <= due; both dates inside the source
+  // quarter; due inside the source plan month when one is present. ISO strings
+  // compare lexically.
   function validateDates(start: string, end: string): string | null {
     if (start && end && start > end) {
       return '计划开始日期不得晚于计划结束日期。'
     }
     const month = item.plan_month ?? item.target_month
+    const pad = (n: number) => String(n).padStart(2, '0')
     if (month != null) {
-      const pad = (n: number) => String(n).padStart(2, '0')
       if (
         end &&
         !(
@@ -854,11 +855,23 @@ function TaskExecutionPanel({
       ) {
         return '计划结束日期需保持在来源计划月内。'
       }
-      const qStart = Math.floor((month - 1) / 3) * 3 + 1
-      const qFirst = `${year}-${pad(qStart)}-01`
-      const qLast = `${year}-${pad(qStart + 2)}-${pad(new Date(year, qStart + 2, 0).getDate())}`
-      if (start && !(start >= qFirst && start <= qLast)) {
-        return '计划开始日期需保持在来源季度内。'
+    }
+    const quarter =
+      item.plan_quarter ??
+      (month != null
+        ? (`Q${Math.floor((month - 1) / 3) + 1}` as 'Q1' | 'Q2' | 'Q3' | 'Q4')
+        : null)
+    if (quarter != null) {
+      const qStart = { Q1: 1, Q2: 4, Q3: 7, Q4: 10 }[quarter]
+      if (qStart != null) {
+        const qFirst = `${year}-${pad(qStart)}-01`
+        const qLast = `${year}-${pad(qStart + 2)}-${pad(new Date(year, qStart + 2, 0).getDate())}`
+        if (start && !(start >= qFirst && start <= qLast)) {
+          return '计划开始日期需保持在来源季度内。'
+        }
+        if (month == null && end && !(end >= qFirst && end <= qLast)) {
+          return '计划结束日期需保持在来源季度内。'
+        }
       }
     }
     return null

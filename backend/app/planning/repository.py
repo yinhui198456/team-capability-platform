@@ -635,7 +635,10 @@ def _validate_plan_item_dates(
 
     start = _as_date(updates.get("plan_start_date", row[0]))
     due = _as_date(updates.get("plan_end_date", row[1]))
-    month = row[3] if row[3] is not None else row[4]
+    plan_quarter = row[2]
+    plan_month = row[3]
+    target_month = row[4]
+    month = plan_month if plan_month is not None else target_month
     year = int(row[5])
 
     if start is not None and due is not None and start > due:
@@ -644,6 +647,34 @@ def _validate_plan_item_dates(
             entity_id=plan_item_id,
             field="plan_start_date",
         )
+
+    # Quarter is authoritative when present; otherwise derive it from month.
+    quarter_key = plan_quarter
+    if quarter_key is None and month is not None:
+        quarter_key = f"Q{(month - 1) // 3 + 1}"
+    if quarter_key is not None:
+        quarter_first_month = {"Q1": 1, "Q2": 4, "Q3": 7, "Q4": 10}.get(quarter_key)
+        if quarter_first_month is None:
+            raise PlanItemDateError(
+                "invalid source quarter",
+                entity_id=plan_item_id,
+                field="plan_quarter",
+            )
+        q_first = date(year, quarter_first_month, 1)
+        q_last = _month_end(year, quarter_first_month + 2)
+        if start is not None and not q_first <= start <= q_last:
+            raise PlanItemDateError(
+                "plan_start_date must stay inside the source quarter",
+                entity_id=plan_item_id,
+                field="plan_start_date",
+            )
+        if due is not None and not q_first <= due <= q_last:
+            raise PlanItemDateError(
+                "plan_end_date must stay inside the source quarter",
+                entity_id=plan_item_id,
+                field="plan_end_date",
+            )
+
     if due is not None and month is not None:
         first, last = date(year, month, 1), _month_end(year, month)
         if not first <= due <= last:
@@ -651,15 +682,6 @@ def _validate_plan_item_dates(
                 "plan_end_date must fall inside the source plan month",
                 entity_id=plan_item_id,
                 field="plan_end_date",
-            )
-    if start is not None and month is not None:
-        q_start = (month - 1) // 3 * 3 + 1
-        q_first, q_last = date(year, q_start, 1), _month_end(year, q_start + 2)
-        if not q_first <= start <= q_last:
-            raise PlanItemDateError(
-                "plan_start_date must stay inside the source quarter",
-                entity_id=plan_item_id,
-                field="plan_start_date",
             )
 
 
@@ -715,8 +737,11 @@ def update_plan_item(
                 ) from exc
 
     if not updates:
-        rows = list_plan_items(connection, member_id)
-        return next(item for item in rows if item["id"] == plan_item_id)
+        raise PlanItemValidationError(
+            "PUT requires at least one writable business field",
+            entity_id=plan_item_id,
+            field="fields",
+        )
 
     with connection.transaction():
         locked = connection.execute(
@@ -871,6 +896,22 @@ def update_learning_task(
     expected_revision = _validate_expected_revision(
         expected_revision, TaskValidationError
     )
+
+    # Ownership pre-check: a token-only PUT must never read another member's
+    # task back, so we verify membership before looking at business fields.
+    owned = connection.execute(
+        """
+        SELECT lt.id
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE lt.id = %s AND agp.member_id = %s
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if owned is None:
+        raise PermissionError("learning task does not belong to member")
+
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _UPDATABLE_TASK_FIELDS:
@@ -908,7 +949,13 @@ def update_learning_task(
             )
 
     if not updates:
-        return _task_row(connection, task_id)
+        # Mirror the plan-item contract: a PUT with no writable business fields
+        # is a request error, not a read interface.
+        raise TaskValidationError(
+            "PUT requires at least one writable business field",
+            entity_id=task_id,
+            field="fields",
+        )
 
     with connection.transaction():
         locked = connection.execute(
