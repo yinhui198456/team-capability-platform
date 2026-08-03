@@ -1,5 +1,4 @@
 # ruff: noqa: F811  (pytest fixture arg shadows import)
-# ruff: noqa: F811  (pytest fixture arg shadows import)
 """Issue #63: evidence version chains, immutable review history, buddy
 permission re-read and Assessment Review isolation."""
 
@@ -334,12 +333,14 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
 
     switch_holder_ready = threading.Event()
     review_may_start = threading.Event()
-    outcomes: list[tuple[int, Any]] = []
+
+    # The worker thread must use the authoritative test database URL (the
+    # session fixture pointed settings.database_url at TEST_DATABASE_URL,
+    # which honours POSTGRES_HOST/POSTGRES_PORT) — never a host-mapped port.
+    from app.settings import settings
 
     def _switch_relationship() -> None:
-        with psycopg.connect(
-            "postgresql://tcp:tcp_dev_only@127.0.0.1:15460/tcp_test"
-        ) as switch_conn:
+        with psycopg.connect(settings.database_url) as switch_conn:
             switch_conn.execute("BEGIN")
             switch_conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))", (relationship_key,)
@@ -355,27 +356,33 @@ def test_evidence_review_waits_for_buddy_relationship_switch(
             )
             switch_conn.execute("COMMIT")
 
-    def _submit_review() -> None:
+    def _submit_review() -> tuple[int, Any]:
         review_may_start.set()
-        outcomes.append(
-            _request(
-                "POST",
-                f"/api/planning/evidences/{ev_id}/review",
-                {"conclusion": "通过"},
-                cookies=bc,
-            )[:2]
-        )
+        return _request(
+            "POST",
+            f"/api/planning/evidences/{ev_id}/review",
+            {"conclusion": "通过"},
+            cookies=bc,
+        )[:2]
 
-    switcher = threading.Thread(target=_switch_relationship)
-    reviewer = threading.Thread(target=_submit_review)
-    switcher.start()
-    assert switch_holder_ready.wait(timeout=10)
-    reviewer.start()
-    switcher.join(timeout=15)
-    reviewer.join(timeout=15)
-    assert not switcher.is_alive() and not reviewer.is_alive()  # no deadlock
+    # Worker exceptions (connection, SQL, assertion) propagate to the main
+    # thread via future.result() and fail the test with the original cause —
+    # never an Event timeout or a background warning.  The wait loop below is
+    # failure-aware: it blocks until the switch either holds the lock (ready)
+    # or dies, surfacing the original worker exception immediately.
+    from concurrent.futures import ThreadPoolExecutor
 
-    assert outcomes[0][0] == 403  # ex-buddy rejected after the switch
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        switcher_future = pool.submit(_switch_relationship)
+        while not switch_holder_ready.is_set():
+            if switcher_future.done():
+                switcher_future.result()  # raises the original exception
+            time.sleep(0.05)
+        reviewer_future = pool.submit(_submit_review)
+        switcher_future.result(timeout=15)  # switch holds the lock, then commits
+        review_outcome = reviewer_future.result(timeout=15)  # no deadlock
+
+    assert review_outcome[0] == 403  # ex-buddy rejected after the switch
 
     # A legitimate current buddy can still review (no residual lock).
     from tests.test_learning_task import _login
