@@ -3,6 +3,17 @@
  * Verifies 7-column table layout at three common viewport sizes,
  * checking that no horizontal overflow occurs and the plan-time
  * column is visible.
+ *
+ * Determinism contract:
+ * - AssessmentGapPage ignores the URL year and always loads the NEWEST
+ *   open draft (status 草稿/建议调整) of the logged-in member, so the
+ *   screenshot content is whatever the newest draft is in the shared DB.
+ * - Other suites occupy 2026 (seed), 2201-2218, 2261-2270 and 2311-2315,
+ *   so pinning any of those years would drift with their leftovers.
+ * - This spec therefore creates (or reuses) its own dedicated draft for
+ *   year 2280 via the real API — the same business-key contract as the
+ *   smoke suites — before loading the page. Created last, it is the
+ *   newest draft, hence the page's guaranteed content source.
  */
 
 import { expect, test, type Page } from '@playwright/test'
@@ -17,44 +28,37 @@ const VIEWPORTS = [
 
 const BACKEND = process.env.PLAYWRIGHT_BACKEND_URL ?? 'http://localhost:18001'
 
-const VISUAL_YEAR = 2271
+// Dedicated year: collides with no other suite (seed=2026, smoke=2201-2218,
+// 2261-2270, 2311-2315) and exists in available_years once the draft is
+// created, so YearContext never redirects away from it.
+const VISUAL_YEAR = 2280
 
-async function ensureAssessmentDraft(page: Page): Promise<void> {
-  // Pin a fixed isolated year so the 7-column table content is deterministic
-  // regardless of other suites' leftover drafts in the shared database.
-  await page.goto(`/capability/assessment?year=${VISUAL_YEAR}`)
-  await page.waitForLoadState('networkidle')
+async function ensureVisualDraft(page: Page): Promise<void> {
+  const previewResp = await page.request.get(
+    `${BACKEND}/api/assessments/scope-preview?year=${VISUAL_YEAR}&assessment_type=年度`,
+  )
+  expect(previewResp.ok()).toBeTruthy()
+  const preview = await previewResp.json()
 
-  // If already on the assessment form (no preview button), we're done
-  const previewBtn = page.getByRole('button', { name: '预览评估范围' })
-  if (!(await previewBtn.isVisible().catch(() => false))) {
-    return
-  }
-
-  // Check for existing draft via API — if one exists, use it
   const listResp = await page.request.get(`${BACKEND}/api/assessments`)
-  if (listResp.ok()) {
-    const list = await listResp.json()
-    const existing = list.find((a: { status: string }) =>
-      ['draft', 'open'].includes(a.status),
-    )
-    if (existing) {
-      // Navigate to the existing draft
-      await page.goto(`/capability/assessment?id=${existing.id}`)
-      await page.waitForLoadState('networkidle')
-      return
-    }
-  }
+  expect(listResp.ok()).toBeTruthy()
+  const list = await listResp.json()
+  const existing = list.find(
+    (a: { year: number; assessment_type: string; status: string }) =>
+      a.year === VISUAL_YEAR &&
+      a.assessment_type === '年度' &&
+      ['草稿', '建议调整'].includes(a.status),
+  )
+  if (existing) return
 
-  // Create a new draft via preview
-  await previewBtn.click()
-  await page.waitForTimeout(2000)
-
-  const createBtn = page.getByRole('button', { name: /确认创建/ })
-  if (await createBtn.isVisible().catch(() => false)) {
-    await createBtn.click()
-    await page.waitForLoadState('networkidle')
-  }
+  const createResp = await page.request.post(`${BACKEND}/api/assessments`, {
+    data: {
+      year: VISUAL_YEAR,
+      assessment_type: '年度',
+      scope_token: preview.scope_token,
+    },
+  })
+  expect(createResp.ok()).toBeTruthy()
 }
 
 test.describe('Issue #61 — assessment page visual', () => {
@@ -64,7 +68,15 @@ test.describe('Issue #61 — assessment page visual', () => {
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height })
       await loginAs(page, 'member')
-      await ensureAssessmentDraft(page)
+      await ensureVisualDraft(page)
+
+      // The page loads the newest open draft; ours (created last) is it.
+      // The URL pin is accepted (2280 exists in available_years), and the
+      // scope header proves the rendered content is the dedicated draft.
+      await page.goto(`/capability/assessment?year=${VISUAL_YEAR}`)
+      await expect(page).toHaveURL(new RegExp(`[?&]year=${VISUAL_YEAR}`))
+      const scopeHeader = page.getByTestId('scope-header')
+      await expect(scopeHeader).toContainText(`${VISUAL_YEAR} 年度`)
 
       // Verify 7-column headers
       const headers = page.locator('thead th')
