@@ -1,4 +1,4 @@
-import { request, getOrNull } from './shared/api'
+import { request, getOrNull, type ApiError } from './shared/api'
 import type { EstimatedHours, EstimatedHoursSummary } from './estimatedHours'
 
 export type AvailableYears = {
@@ -69,14 +69,36 @@ export type GrowthGoal = CapabilityContext & {
 export type PlanItemStatus =
   '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
 
+// v0010 six-state machine — '待 Evidence Review' is gone for tasks; a task
+// stays 进行中 while evidence awaits review and completes via the gate.
 export type LearningTaskStatus =
-  | '未开始'
-  | '进行中'
-  | '待 Evidence Review'
-  | '已完成'
-  | '延期'
-  | '暂停'
-  | '取消'
+  '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
+
+export const TASK_TRANSITIONS: Record<
+  LearningTaskStatus,
+  LearningTaskStatus[]
+> = {
+  未开始: ['进行中', '取消'],
+  进行中: ['暂停', '延期', '已完成', '取消'],
+  暂停: ['进行中', '取消'],
+  延期: ['进行中', '暂停', '已完成', '取消'],
+  已完成: [],
+  取消: [],
+}
+
+// Reasons are required when ENTERING these states (server-enforced).
+export const STATUS_REASON_FIELDS: Partial<Record<LearningTaskStatus, string>> =
+  {
+    延期: 'delay_reason',
+    暂停: 'pause_reason',
+    取消: 'cancel_reason',
+  }
+
+export const COMPLETION_QUALITY_VALUES = [
+  '达到预期',
+  '部分达到',
+  '超出预期',
+] as const
 
 export type PlanItem = CapabilityContext & {
   id: number
@@ -132,7 +154,13 @@ export type LearningTask = CapabilityContext & {
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
-  delay_reason?: string | null
+  revision: number
+  actual_started_at: string | null
+  actual_completed_at: string | null
+  delay_reason: string | null
+  pause_reason: string | null
+  cancel_reason: string | null
+  revised_due_date: string | null
   plan_item_current_level: number
   plan_item_target_level: number
   plan_item_priority: '高' | '中' | '低'
@@ -286,11 +314,35 @@ export type Evidence = CapabilityContext & {
   status: EvidenceStatus
   submitted_at: string | null
   created_at: string
+  submitted_by: number | null
+  description: string | null
+  evidence_type: 'link' | 'file' | null
+  url: string | null
+  file_reference: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  supersedes_evidence_id: number | null
+  revision: number
 }
+
+export type EvidenceCreate = Partial<{
+  content: string | null
+  evidence_link: string | null
+  description: string | null
+  evidence_type: 'link' | 'file'
+  url: string | null
+  file_reference: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  supersedes_evidence_id: number
+}>
 
 export type EvidenceUpdate = Partial<{
   content: string | null
   evidence_link: string | null
+  description: string | null
 }>
 
 export async function getAnnualPlanEligibility(): Promise<AnnualPlanEligibility> {
@@ -393,6 +445,8 @@ export async function getLearningTask(task_id: number): Promise<LearningTask> {
   })
 }
 
+// Append-only progress log.  Rows are voided (invalidated_at) or corrected
+// (correction_of_log_id) — never physically deleted.
 export type ProgressLog = {
   id: number
   task_id: number
@@ -400,13 +454,20 @@ export type ProgressLog = {
   actual_hours: number
   note: string | null
   recorder_id: number
+  created_at: string
+  invalidated_at: string | null
+  invalidated_by: number | null
+  correction_of_log_id: number | null
+  idempotency_key: string | null
 }
 
-export type ProgressLogUpdate = Partial<{
+export type ProgressLogCreate = {
   record_date: string
   actual_hours: number
-  note: string | null
-}>
+  note?: string
+  idempotency_key?: string
+  correction_of_log_id?: number
+}
 
 export type MonthlyHours = {
   month: number
@@ -414,9 +475,6 @@ export type MonthlyHours = {
 }
 
 export type LearningTaskUpdate = Partial<{
-  status: '未开始' | '进行中' | '延期' | '暂停' | '取消'
-  actual_start_date: string | null
-  actual_end_date: string | null
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
@@ -425,24 +483,62 @@ export type LearningTaskUpdate = Partial<{
 export async function updateLearningTask(
   task_id: number,
   fields: LearningTaskUpdate,
+  expected_revision?: number,
 ): Promise<LearningTask> {
   return request<LearningTask>(
     `/api/planning/learning-tasks/${task_id}`,
     { method: 'PUT' },
-    fields,
+    expected_revision === undefined ? fields : { ...fields, expected_revision },
+  )
+}
+
+export type TaskTransitionPayload = {
+  to_status: LearningTaskStatus
+  reason?: string
+  expected_revision: number
+  idempotency_key?: string
+  revised_due_date?: string
+}
+
+export async function transitionLearningTask(
+  task_id: number,
+  payload: TaskTransitionPayload,
+): Promise<LearningTask> {
+  return request<LearningTask>(
+    `/api/planning/learning-tasks/${task_id}/transitions`,
+    { method: 'POST' },
+    payload,
+  )
+}
+
+export type TransitionHistoryItem = {
+  id: number
+  learning_task_id: number
+  from_status: string
+  to_status: string
+  reason: string | null
+  actor_id: number
+  occurred_at: string
+  request_key: string | null
+}
+
+export async function listTaskTransitionHistory(
+  task_id: number,
+): Promise<TransitionHistoryItem[]> {
+  return request<TransitionHistoryItem[]>(
+    `/api/planning/learning-tasks/${task_id}/transition-history`,
+    { method: 'GET' },
   )
 }
 
 export async function createProgressLog(
   task_id: number,
-  record_date: string,
-  actual_hours: number,
-  note: string,
+  fields: ProgressLogCreate,
 ): Promise<ProgressLog> {
   return request<ProgressLog>(
     `/api/planning/learning-tasks/${task_id}/progress-logs`,
     { method: 'POST' },
-    { record_date, actual_hours, note },
+    fields,
   )
 }
 
@@ -455,21 +551,15 @@ export async function listProgressLogs(
   )
 }
 
-export async function updateProgressLog(
+export async function invalidateProgressLog(
   log_id: number,
-  fields: ProgressLogUpdate,
+  idempotency_key?: string,
 ): Promise<ProgressLog> {
   return request<ProgressLog>(
-    `/api/planning/progress-logs/${log_id}`,
-    { method: 'PUT' },
-    fields,
+    `/api/planning/progress-logs/${log_id}/invalidate`,
+    { method: 'POST' },
+    idempotency_key === undefined ? {} : { idempotency_key },
   )
-}
-
-export async function deleteProgressLog(log_id: number): Promise<void> {
-  await request<void>(`/api/planning/progress-logs/${log_id}`, {
-    method: 'DELETE',
-  })
 }
 
 export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
@@ -481,24 +571,26 @@ export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
 
 export async function createEvidence(
   task_id: number,
-  content: string,
-  evidence_link: string,
+  fields: EvidenceCreate,
 ): Promise<Evidence> {
   return request<Evidence>(
     `/api/planning/learning-tasks/${task_id}/evidences`,
     { method: 'POST' },
-    { content, evidence_link },
+    fields,
   )
 }
 
+// CAS contract: every draft-updating PUT carries the evidence's current
+// revision; a stale client gets a 409 evidence_revision_conflict.
 export async function updateEvidence(
   evidence_id: number,
   fields: EvidenceUpdate,
+  expected_revision: number,
 ): Promise<Evidence> {
   return request<Evidence>(
     `/api/planning/evidences/${evidence_id}`,
     { method: 'PUT' },
-    fields,
+    { ...fields, expected_revision },
   )
 }
 
@@ -523,32 +615,26 @@ export async function getEvidence(evidence_id: number): Promise<Evidence> {
   })
 }
 
-export type EvidenceReviewStatus =
-  '待 Review' | '通过' | '需补充' | '驳回' | '已闭环'
+// The server accepts exactly 通过 / 需补充 for evidence review conclusions.
+export type EvidenceReviewConclusion = '通过' | '需补充'
 
-export type EvidenceReviewConclusion = '通过' | '需补充' | '驳回'
+// A pending queue item is the evidence row itself, joined with the member
+// owning the task (server already scoped it to the current primary Buddy).
+export type PendingEvidenceReview = Evidence & {
+  member_id: number
+  username: string
+}
 
-export type EvidenceReview = {
+// The immutable review history for a task: one closed row per evidence version.
+export type EvidenceReviewRecord = {
   id: number
   evidence_id: number
   version_number: number
-  status: EvidenceReviewStatus
+  status: string
   conclusion: EvidenceReviewConclusion | null
   feedback: string | null
   reviewed_at: string | null
-  created_at?: string
-  submitted_at?: string | null
-  member_id?: number
-  username?: string
-  learning_task_id?: number
-  l3_code?: string
-  l1_code?: string | null
-  l1_name?: string | null
-  l2_code?: string | null
-  l2_name?: string | null
-  l3_name?: string | null
-  content?: string | null
-  evidence_link?: string | null
+  created_at: string
 }
 
 export type CapabilityProfileAssessmentReview = {
@@ -581,7 +667,7 @@ export type CapabilityProfilePlanItem = PlanItem & {
     | (LearningTask & {
         l3_name?: string | null
         progress_logs: ProgressLog[]
-        evidences: (Evidence & { review: EvidenceReview | null })[]
+        evidences: (Evidence & { review: EvidenceReviewRecord | null })[]
       })
     | null
 }
@@ -669,10 +755,15 @@ export async function getCapabilityProfileForMember(
   )
 }
 
-export async function listPendingEvidenceReviews(): Promise<EvidenceReview[]> {
-  return request<EvidenceReview[]>('/api/planning/evidence-reviews/pending', {
-    method: 'GET',
-  })
+export async function listPendingEvidenceReviews(): Promise<
+  PendingEvidenceReview[]
+> {
+  return request<PendingEvidenceReview[]>(
+    '/api/planning/evidence-reviews/pending',
+    {
+      method: 'GET',
+    },
+  )
 }
 
 export type ReviewSummary = {
@@ -689,25 +780,65 @@ export async function getEvidenceReviewSummary(
   )
 }
 
+// Review is submitted against the evidence id (the queue item), not a review
+// row id.  The idempotency key is bound to the exact payload so an unchanged
+// retry replays server-side instead of double-writing.
 export async function submitEvidenceReview(
-  review_id: number,
+  evidence_id: number,
   conclusion: EvidenceReviewConclusion,
   feedback: string,
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/planning/evidence-reviews/${review_id}`,
+  idempotency_key?: string,
+): Promise<EvidenceReviewRecord> {
+  return request<EvidenceReviewRecord>(
+    `/api/planning/evidences/${evidence_id}/review`,
     { method: 'POST' },
-    { conclusion, feedback },
+    idempotency_key === undefined
+      ? { conclusion, feedback }
+      : { conclusion, feedback, idempotency_key },
   )
 }
 
 export async function listEvidenceReviewsForTask(
   task_id: number,
-): Promise<EvidenceReview[]> {
-  return request<EvidenceReview[]>(
+): Promise<EvidenceReviewRecord[]> {
+  return request<EvidenceReviewRecord[]>(
     `/api/planning/learning-tasks/${task_id}/evidence-reviews`,
     { method: 'GET' },
   )
+}
+
+export type ApiErrorDetail = {
+  status: number
+  code: string | null
+  field: string | null
+  message: string
+  isConflict: boolean
+}
+
+// Maps the structured server envelope {code, field, reason, message} (409) and
+// {code, field, message} (422) plus plain 403s to a field-locatable state.
+export function parseApiErrorDetail(error: unknown): ApiErrorDetail {
+  const apiError = error as ApiError
+  const detail = apiError?.detail
+  const structured =
+    detail !== null &&
+    typeof detail === 'object' &&
+    !Array.isArray(detail) &&
+    detail !== undefined
+      ? (detail as Record<string, unknown>)
+      : null
+  return {
+    status: apiError?.status ?? 0,
+    code: typeof structured?.code === 'string' ? structured.code : null,
+    field: typeof structured?.field === 'string' ? structured.field : null,
+    message:
+      typeof structured?.message === 'string'
+        ? structured.message
+        : apiError instanceof Error
+          ? apiError.message
+          : '请求失败',
+    isConflict: apiError?.status === 409,
+  }
 }
 
 export type TeamAnnualCapabilityPlan = {

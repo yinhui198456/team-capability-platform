@@ -14,7 +14,6 @@ import { App } from './App'
 import * as accessApi from './access'
 import * as assessmentApi from './assessment'
 import * as assessmentReviewApi from './assessmentReview'
-import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
 
 describe('BuddyReviewCenter', () => {
@@ -83,11 +82,7 @@ describe('BuddyReviewCenter', () => {
 
   function mockBuddyData(
     options: {
-      includeEvidence?: boolean
       workspace?: assessmentReviewApi.BuddyReviewWorkspace
-      evidenceHistory?: Awaited<
-        ReturnType<typeof planningApi.listEvidenceReviewsForTask>
-      >
     } = {},
   ) {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
@@ -113,25 +108,6 @@ describe('BuddyReviewCenter', () => {
         submitted_at: null,
       },
     ])
-    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue(
-      options.includeEvidence === false
-        ? []
-        : [
-            {
-              id: 2,
-              evidence_id: 3,
-              version_number: 1,
-              status: '待 Review',
-              conclusion: null,
-              feedback: null,
-              reviewed_at: null,
-              member_id: 4,
-              username: 'member',
-              l3_code: 'P01-L2A-L3A',
-              content: '数据建模 Evidence',
-            },
-          ],
-    )
     vi.spyOn(assessmentApi, 'getAssessmentHistory').mockResolvedValue([
       {
         id: 10,
@@ -147,9 +123,6 @@ describe('BuddyReviewCenter', () => {
     vi.spyOn(assessmentReviewApi, 'getBuddyReviewWorkspace').mockResolvedValue(
       options.workspace ?? workspaceFixture(),
     )
-    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue(
-      options.evidenceHistory ?? [],
-    )
     vi.spyOn(
       assessmentReviewApi,
       'getAssessmentReviewSummary',
@@ -157,26 +130,10 @@ describe('BuddyReviewCenter', () => {
       pending_count: 1,
       completed_count: 0,
     })
-    vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
-      pending_count: options.includeEvidence === false ? 0 : 1,
-      completed_count: 0,
-    })
   }
 
-  it('summarizes assessment and Evidence review queues', async () => {
-    mockBuddyData({
-      evidenceHistory: [
-        {
-          id: 12,
-          evidence_id: 3,
-          version_number: 1,
-          status: '通过',
-          conclusion: '通过',
-          feedback: 'Evidence 历史反馈',
-          reviewed_at: '2026-07-02T09:00:00',
-        },
-      ],
-    })
+  it('summarizes the assessment review queue', async () => {
+    mockBuddyData()
 
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
@@ -189,7 +146,6 @@ describe('BuddyReviewCenter', () => {
       ).toBeTruthy(),
     )
     expect(screen.getByText('待复核自评')).toBeTruthy()
-    expect(screen.getByText('待 Review Evidence')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '辅导成员' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '全部成员' })).toBeTruthy()
     const memberList = screen.getByRole('heading', {
@@ -214,20 +170,10 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByText(/3 → 4（岗位项目要求）/)).toBeTruthy()
     // ordinary evidence notes are not part of the main detail
     expect(screen.queryByText('历史依据')).toBeNull()
-    fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
-    await waitFor(() =>
-      expect(screen.getByText('数据建模 Evidence')).toBeTruthy(),
-    )
-    expect(
-      screen.getByRole('heading', { name: 'Evidence 版本 1' }),
-    ).toBeTruthy()
-    await waitFor(() =>
-      expect(screen.getByText(/Evidence 历史反馈/)).toBeTruthy(),
-    )
   })
 
   it('submits an assessment conclusion with an idempotency key', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     const submitReview = vi
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockResolvedValue({
@@ -285,7 +231,7 @@ describe('BuddyReviewCenter', () => {
   })
 
   it('keeps the idempotency key and local input on a failed submit', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     const submitReview = vi
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockRejectedValueOnce(new Error('revision conflict'))
@@ -353,7 +299,7 @@ describe('BuddyReviewCenter', () => {
     ws.summary.existing_formal_plan = true
     ws.summary.will_create_proposal = true
     ws.summary.target_is_legacy = true
-    mockBuddyData({ includeEvidence: false, workspace: ws })
+    mockBuddyData({ workspace: ws })
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
@@ -389,7 +335,7 @@ describe('BuddyReviewCenter', () => {
       include_in_plan: false,
       data_issue: false,
     })
-    mockBuddyData({ includeEvidence: false, workspace: ws })
+    mockBuddyData({ workspace: ws })
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
@@ -410,7 +356,7 @@ describe('BuddyReviewCenter', () => {
   })
 
   it('searches by L3 code', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
@@ -423,52 +369,20 @@ describe('BuddyReviewCenter', () => {
     expect(screen.getByText('当前筛选范围暂无能力项。')).toBeTruthy()
   })
 
-  it('submits an Evidence Review in the unified workspace', async () => {
-    mockBuddyData()
-    const submitEvidenceReview = vi
-      .spyOn(planningApi, 'submitEvidenceReview')
-      .mockResolvedValue({ ok: true })
-
-    render(
-      <MemoryRouter initialEntries={['/mentoring/dashboard']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await waitFor(() =>
-      expect(screen.getByRole('tab', { name: 'Evidence Review' })).toBeTruthy(),
-    )
-    fireEvent.click(screen.getByRole('tab', { name: 'Evidence Review' }))
-    await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
-    fireEvent.click(screen.getByLabelText('通过'))
-    fireEvent.change(screen.getByLabelText('反馈'), {
-      target: { value: '输出可验证' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '提交 Review 反馈' }))
-
-    await waitFor(() =>
-      expect(
-        screen.getByText('Evidence 已通过，反馈已归入历史。'),
-      ).toBeTruthy(),
-    )
-    expect(submitEvidenceReview).toHaveBeenCalledWith(2, '通过', '输出可验证')
-  })
-
   it('does not expose a queue item outside the Buddy assignment', async () => {
-    mockBuddyData({ includeEvidence: false })
-    vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([])
-    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([
+    mockBuddyData()
+    vi.spyOn(assessmentReviewApi, 'listPendingReviews').mockResolvedValue([
       {
-        id: 9,
-        evidence_id: 9,
-        version_number: 1,
-        status: '待 Review',
-        conclusion: null,
-        feedback: null,
-        reviewed_at: null,
-        member_id: 99,
-        username: '非负责成员',
-        learning_task_id: 9,
-        l3_code: 'P01-L2A-L3A',
+        id: 99,
+        assessment_id: 999,
+        sequence: 1,
+        buddy_id: 3,
+        status: '待复核',
+        member_id: 42,
+        year: 2026,
+        version: 1,
+        assessment_status: '待复核',
+        submitted_at: null,
       },
     ])
 
@@ -480,14 +394,13 @@ describe('BuddyReviewCenter', () => {
     await waitFor(() =>
       expect(screen.getByText('当前范围暂无待处理项。')).toBeTruthy(),
     )
-    expect(screen.queryByText('非负责成员')).toBeNull()
-    expect(
-      screen.getByRole('button', { name: /待 Review Evidence/ }).textContent,
-    ).toContain('0')
+    expect(screen.queryByText('成员 42')).toBeNull()
+    // Evidence review lives in its own queue, not in the assessment center.
+    expect(screen.queryByRole('tab', { name: 'Evidence Review' })).toBeNull()
   })
 
   it('selects an assessment conclusion by clicking the label text', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     render(
       <MemoryRouter initialEntries={['/mentoring/dashboard']}>
         <App />
@@ -500,28 +413,25 @@ describe('BuddyReviewCenter', () => {
     ).toBe(true)
   })
 
-  it.each(['/mentoring/assessment-review', '/mentoring/evidence-review'])(
-    'redirects %s to the unified center',
-    async (path) => {
-      mockBuddyData({ includeEvidence: false })
-      render(
-        <MemoryRouter initialEntries={[path]}>
-          <App />
-        </MemoryRouter>,
-      )
+  it('redirects /mentoring/assessment-review to the unified center', async () => {
+    mockBuddyData()
+    render(
+      <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
+        <App />
+      </MemoryRouter>,
+    )
 
-      await waitFor(() =>
-        expect(
-          screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
-        ).toBeTruthy(),
-      )
-    },
-  )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { level: 1, name: 'Buddy 复核中心' }),
+      ).toBeTruthy(),
+    )
+  })
 
   // ── P1-5: idempotency key lifecycle bound to the payload fingerprint ──────
 
   it('uses a new idempotency key when the payload changed after a failure', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     const submitReview = vi
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockRejectedValueOnce(new Error('network lost'))
@@ -575,7 +485,7 @@ describe('BuddyReviewCenter', () => {
   })
 
   it('unchanged payload after a failure keeps the same idempotency key', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     const submitReview = vi
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockRejectedValueOnce(new Error('network lost'))
@@ -627,7 +537,7 @@ describe('BuddyReviewCenter', () => {
   })
 
   it('revision 409 keeps input, refreshes the workspace and uses a new key', async () => {
-    mockBuddyData({ includeEvidence: false })
+    mockBuddyData()
     const submitReview = vi
       .spyOn(assessmentReviewApi, 'submitReview')
       .mockRejectedValueOnce({

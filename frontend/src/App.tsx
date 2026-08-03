@@ -13,6 +13,7 @@ import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
+import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
 import { LearningResourcesPage } from './LearningResourcesPage'
@@ -66,7 +67,7 @@ export function App() {
         />
         <Route
           path="/mentoring/evidence-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
+          element={<EvidenceReviewPage />}
         />
         <Route
           path="/capability/gap"

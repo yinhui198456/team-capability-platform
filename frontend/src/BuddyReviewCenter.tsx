@@ -21,26 +21,18 @@ import {
   mockAssessmentReviewSummary,
   mockAssessmentReviews,
   mockAssignedMembers,
-  mockEvidenceHistories,
-  mockEvidenceReviewSummary,
-  mockEvidenceReviews,
 } from './__fixtures__/buddyReviewMock'
-import {
-  getEvidenceReviewSummary,
-  listEvidenceReviewsForTask,
-  listPendingEvidenceReviews,
-  submitEvidenceReview,
-  type EvidenceReviewConclusion,
-  type EvidenceReview,
-} from './planning'
 import { useYear } from './YearContext'
 import type { ApiError } from './shared/api'
 
-type QueueFilter = '全部待处理' | '自评复核' | 'Evidence Review'
+type QueueFilter = '全部待处理' | '自评复核'
 
-type QueueItem =
-  | { key: string; kind: 'assessment'; review: PendingReview; memberId: number }
-  | { key: string; kind: 'evidence'; review: EvidenceReview; memberId: number }
+type QueueItem = {
+  key: string
+  kind: 'assessment'
+  review: PendingReview
+  memberId: number
+}
 
 type HistoryItem = {
   id: number
@@ -65,14 +57,8 @@ function formatDateTime(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
-function feedbackRequired(
-  kind: QueueItem['kind'],
-  conclusion: string,
-): boolean {
-  if (kind === 'assessment') {
-    return conclusion === '建议调整'
-  }
-  return conclusion === '需补充' || conclusion === '驳回'
+function feedbackRequired(conclusion: string): boolean {
+  return conclusion === '建议调整'
 }
 
 function matchesFilter(
@@ -150,10 +136,8 @@ export function BuddyReviewCenter() {
   const [assessmentReviews, setAssessmentReviews] = useState<PendingReview[]>(
     [],
   )
-  const [evidenceReviews, setEvidenceReviews] = useState<EvidenceReview[]>([])
   const [summary, setSummary] = useState({
     assessmentPending: 0,
-    evidencePending: 0,
     completedThisYear: 0,
   })
   const [memberId, setMemberId] = useState<number | null>(null)
@@ -163,9 +147,7 @@ export function BuddyReviewCenter() {
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('全部')
   const [search, setSearch] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
-  const [conclusion, setConclusion] = useState<
-    '认可' | '建议调整' | EvidenceReviewConclusion | ''
-  >('')
+  const [conclusion, setConclusion] = useState<'认可' | '建议调整' | ''>('')
   const [feedback, setFeedback] = useState('')
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -188,21 +170,15 @@ export function BuddyReviewCenter() {
 
   const queueItems = useMemo<QueueItem[]>(() => {
     const assignedIds = new Set(members.map((member) => member.id))
-    return [
-      ...assessmentReviews.map((review) => ({
+    return assessmentReviews
+      .map((review) => ({
         key: `assessment-${review.id}`,
         kind: 'assessment' as const,
         review,
         memberId: review.member_id,
-      })),
-      ...evidenceReviews.map((review) => ({
-        key: `evidence-${review.id}`,
-        kind: 'evidence' as const,
-        review,
-        memberId: review.member_id ?? -1,
-      })),
-    ].filter((item) => assignedIds.has(item.memberId))
-  }, [assessmentReviews, evidenceReviews, members])
+      }))
+      .filter((item) => assignedIds.has(item.memberId))
+  }, [assessmentReviews, members])
 
   const memberName = (id: number) =>
     members.find((member) => member.id === id)?.full_name ?? `成员 ${id}`
@@ -211,8 +187,7 @@ export function BuddyReviewCenter() {
     if (memberId !== null && item.memberId !== memberId) return false
     return (
       queueFilter === '全部待处理' ||
-      (queueFilter === '自评复核' && item.kind === 'assessment') ||
-      (queueFilter === 'Evidence Review' && item.kind === 'evidence')
+      (queueFilter === '自评复核' && item.kind === 'assessment')
     )
   })
 
@@ -224,13 +199,9 @@ export function BuddyReviewCenter() {
   useEffect(() => {
     if (isMockEnabled()) {
       setAssessmentReviews(mockAssessmentReviews)
-      setEvidenceReviews(mockEvidenceReviews)
       setSummary({
         assessmentPending: mockAssessmentReviewSummary.pending_count,
-        evidencePending: mockEvidenceReviewSummary.pending_count,
-        completedThisYear:
-          mockAssessmentReviewSummary.completed_count +
-          mockEvidenceReviewSummary.completed_count,
+        completedThisYear: mockAssessmentReviewSummary.completed_count,
       })
       return
     }
@@ -238,21 +209,15 @@ export function BuddyReviewCenter() {
     let active = true
     async function load() {
       try {
-        const [assessments, evidences, assessmentSummary, evidenceSummary] =
-          await Promise.all([
-            listPendingReviews(),
-            listPendingEvidenceReviews(),
-            getAssessmentReviewSummary(year),
-            getEvidenceReviewSummary(year),
-          ])
+        const [assessments, assessmentSummary] = await Promise.all([
+          listPendingReviews(),
+          getAssessmentReviewSummary(year),
+        ])
         if (!active) return
         setAssessmentReviews(assessments)
-        setEvidenceReviews(evidences)
         setSummary({
           assessmentPending: assessmentSummary.pending_count,
-          evidencePending: evidenceSummary.pending_count,
-          completedThisYear:
-            assessmentSummary.completed_count + evidenceSummary.completed_count,
+          completedThisYear: assessmentSummary.completed_count,
         })
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : '加载失败')
@@ -280,60 +245,41 @@ export function BuddyReviewCenter() {
     if (!selected) return
 
     if (isMockEnabled()) {
-      if (selected.kind === 'assessment') {
-        const details =
-          mockAssessmentDetails[selected.review.assessment_id] ?? []
-        setWorkspace(
-          workspaceFromMocks(
-            selected.review,
-            details.map((detail, index) => ({
-              ...detail,
-              id: index + 1,
-              l1_code: undefined,
-              l1_name: undefined,
-              l2_code: undefined,
-              l2_name: undefined,
-              recommended_start_level: undefined,
-              plan_candidate: false,
-              evidence_note: detail.evidence_note ?? null,
-            })) as AssessmentDetail[],
-          ),
-        )
-        setHistory(mockAssessmentHistories[selected.review.assessment_id] ?? [])
-      } else {
-        const taskId = selected.review.learning_task_id ?? 0
-        setHistory(mockEvidenceHistories[taskId] ?? [])
-      }
+      const details = mockAssessmentDetails[selected.review.assessment_id] ?? []
+      setWorkspace(
+        workspaceFromMocks(
+          selected.review,
+          details.map((detail, index) => ({
+            ...detail,
+            id: index + 1,
+            l1_code: undefined,
+            l1_name: undefined,
+            l2_code: undefined,
+            l2_name: undefined,
+            recommended_start_level: undefined,
+            plan_candidate: false,
+            evidence_note: detail.evidence_note ?? null,
+          })) as AssessmentDetail[],
+        ),
+      )
+      setHistory(mockAssessmentHistories[selected.review.assessment_id] ?? [])
       return
     }
 
     let active = true
     async function loadWorkspace() {
       try {
-        if (selected.kind === 'assessment') {
-          const [ws, reviews] = await Promise.all([
-            getBuddyReviewWorkspace(selected.review.assessment_id),
-            getAssessmentHistory(selected.review.assessment_id),
-          ])
-          if (!active) return
-          setWorkspace(ws)
-          setHistory(
-            reviews.filter(
-              (review: AssessmentReview) => review.status === '已闭环',
-            ),
-          )
-        } else {
-          const reviews = await listEvidenceReviewsForTask(
-            selected.review.learning_task_id ?? 0,
-          )
-          if (!active) return
-          setWorkspace(null)
-          setHistory(
-            reviews.filter(
-              (review: EvidenceReview) => review.conclusion !== null,
-            ),
-          )
-        }
+        const [ws, reviews] = await Promise.all([
+          getBuddyReviewWorkspace(selected.review.assessment_id),
+          getAssessmentHistory(selected.review.assessment_id),
+        ])
+        if (!active) return
+        setWorkspace(ws)
+        setHistory(
+          reviews.filter(
+            (review: AssessmentReview) => review.status === '已闭环',
+          ),
+        )
       } catch (err) {
         if (active) {
           setWorkspace(null)
@@ -412,71 +358,53 @@ export function BuddyReviewCenter() {
 
   async function submitFeedback() {
     if (!selected || !conclusion) return
-    if (feedbackRequired(selected.kind, conclusion) && !feedback.trim()) {
-      setError('建议调整、需补充、驳回必须填写反馈。')
+    if (feedbackRequired(conclusion) && !feedback.trim()) {
+      setError('建议调整必须填写反馈。')
       return
     }
     setError('')
     setMessage('')
     setSubmitting(true)
     try {
-      if (selected.kind === 'assessment') {
-        const value = conclusion as '认可' | '建议调整'
-        // P1-5: the key travels with its payload fingerprint.  The same
-        // payload retry reuses the key; a changed payload (or a cleared key
-        // after a revision 409) gets a fresh key.
-        const fingerprint = `${value}|${feedback || ''}`
-        let idem = idemRef.current
-        if (!idem || idem.fingerprint !== fingerprint) {
-          idem = { key: crypto.randomUUID(), fingerprint }
-          idemRef.current = idem
-        }
-        const result = await submitReview(
-          selected.review.assessment_id,
-          selected.review.id,
-          {
-            conclusion: value,
-            feedback: feedback || undefined,
-            expected_revision: workspace?.revision ?? 0,
-          },
-          idem.key,
-        )
-        setAssessmentReviews((items) =>
-          items.filter((item) => item.id !== selected.review.id),
-        )
-        setSummary((prev) => ({
-          ...prev,
-          assessmentPending: Math.max(0, prev.assessmentPending - 1),
-          completedThisYear: prev.completedThisYear + 1,
-        }))
-        idemRef.current = null
-        if (result.idempotent_replayed) {
-          setMessage('已提交（幂等重放，未重复写入）。')
-        } else if (value === '认可') {
-          setMessage(
-            result.proposal?.created
-              ? '已认可；已生成变更提案（只读），正式计划保持不变。'
-              : `已认可并归档；年度计划已生成（${result.plan?.items_created ?? 0} 项 / ${result.plan?.tasks_created ?? 0} 个任务）。`,
-          )
-        } else {
-          setMessage('已建议调整，等待成员修改。')
-        }
-      } else {
-        const value = conclusion as EvidenceReviewConclusion
-        await submitEvidenceReview(selected.review.id, value, feedback)
-        setEvidenceReviews((items) =>
-          items.filter((item) => item.id !== selected.review.id),
-        )
-        setSummary((prev) => ({
-          ...prev,
-          evidencePending: Math.max(0, prev.evidencePending - 1),
-          completedThisYear: prev.completedThisYear + 1,
-        }))
+      const value = conclusion as '认可' | '建议调整'
+      // P1-5: the key travels with its payload fingerprint.  The same
+      // payload retry reuses the key; a changed payload (or a cleared key
+      // after a revision 409) gets a fresh key.
+      const fingerprint = `${value}|${feedback || ''}`
+      let idem = idemRef.current
+      if (!idem || idem.fingerprint !== fingerprint) {
+        idem = { key: crypto.randomUUID(), fingerprint }
+        idemRef.current = idem
+      }
+      const result = await submitReview(
+        selected.review.assessment_id,
+        selected.review.id,
+        {
+          conclusion: value,
+          feedback: feedback || undefined,
+          expected_revision: workspace?.revision ?? 0,
+        },
+        idem.key,
+      )
+      setAssessmentReviews((items) =>
+        items.filter((item) => item.id !== selected.review.id),
+      )
+      setSummary((prev) => ({
+        ...prev,
+        assessmentPending: Math.max(0, prev.assessmentPending - 1),
+        completedThisYear: prev.completedThisYear + 1,
+      }))
+      idemRef.current = null
+      if (result.idempotent_replayed) {
+        setMessage('已提交（幂等重放，未重复写入）。')
+      } else if (value === '认可') {
         setMessage(
-          value === '通过'
-            ? 'Evidence 已通过，反馈已归入历史。'
-            : `Evidence 已${value}，反馈已归入历史。`,
+          result.proposal?.created
+            ? '已认可；已生成变更提案（只读），正式计划保持不变。'
+            : `已认可并归档；年度计划已生成（${result.plan?.items_created ?? 0} 项 / ${result.plan?.tasks_created ?? 0} 个任务）。`,
         )
+      } else {
+        setMessage('已建议调整，等待成员修改。')
       }
       setSelectedKey(null)
       setConclusion('')
@@ -533,12 +461,8 @@ export function BuddyReviewCenter() {
           <span>待复核自评</span>
           <strong>{summary.assessmentPending}</strong>
         </button>
-        <button type="button" onClick={() => selectQueue('Evidence Review')}>
-          <span>待 Review Evidence</span>
-          <strong>{summary.evidencePending}</strong>
-        </button>
         <button type="button" onClick={() => selectQueue('全部待处理')}>
-          <span>本年度已完成 Review</span>
+          <span>本年度已完成复核</span>
           <strong>{summary.completedThisYear}</strong>
         </button>
       </div>
@@ -576,9 +500,7 @@ export function BuddyReviewCenter() {
             <h2>复核队列</h2>
           </div>
           <div className="queue-tabs" role="tablist" aria-label="复核队列类型">
-            {(
-              ['全部待处理', '自评复核', 'Evidence Review'] as QueueFilter[]
-            ).map((filter) => (
+            {(['全部待处理', '自评复核'] as QueueFilter[]).map((filter) => (
               <button
                 aria-selected={queueFilter === filter}
                 className={queueFilter === filter ? 'active' : ''}
@@ -618,18 +540,8 @@ export function BuddyReviewCenter() {
                         {memberName(item.memberId)}
                       </button>
                     </td>
-                    <td>
-                      {item.kind === 'assessment'
-                        ? '自评复核'
-                        : 'Evidence Review'}
-                    </td>
-                    <td>
-                      {item.kind === 'assessment'
-                        ? `${item.review.year} 年度自评`
-                        : item.review.l3_code
-                          ? `${item.review.l2_code ?? '未映射'}${item.review.l2_name ? ` · ${item.review.l2_name}` : ''} → ${item.review.l3_code}${item.review.l3_name ? ` · ${item.review.l3_name}` : ''}`
-                          : '未关联三级达成路径'}
-                    </td>
+                    <td>自评复核</td>
+                    <td>{item.review.year} 年度自评</td>
                     <td>{formatDateTime(item.review.submitted_at)}</td>
                     <td>{item.review.status}</td>
                   </tr>
@@ -643,80 +555,6 @@ export function BuddyReviewCenter() {
           <h2>复核工作区</h2>
           {!selected ? (
             <p className="muted">选择一项待复核内容后查看依据和历史反馈。</p>
-          ) : selected.kind === 'evidence' ? (
-            <>
-              <p>
-                <strong>{memberName(selected.memberId)}</strong> ·{' '}
-                {selected.review.l2_code ?? '未映射'}
-                {selected.review.l2_name
-                  ? ` · ${selected.review.l2_name}`
-                  : ''}{' '}
-                → {selected.review.l3_code ?? '未关联三级达成路径'}
-                {selected.review.l3_name ? ` · ${selected.review.l3_name}` : ''}
-              </p>
-              <h3>Evidence 版本 {selected.review.version_number}</h3>
-              <p>{selected.review.content || '未提供提交内容。'}</p>
-              {selected.review.evidence_link && (
-                <a
-                  href={selected.review.evidence_link}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  查看 Evidence 链接
-                </a>
-              )}
-              <fieldset>
-                <legend>Review 结论</legend>
-                {(['通过', '需补充', '驳回'] as const).map((value) => (
-                  <label className="radio" key={value}>
-                    <input
-                      checked={conclusion === value}
-                      name="conclusion"
-                      onChange={() => setConclusion(value)}
-                      type="radio"
-                      value={value}
-                    />
-                    {value}
-                  </label>
-                ))}
-              </fieldset>
-              <label>
-                反馈
-                <textarea
-                  onChange={(event) => setFeedback(event.target.value)}
-                  placeholder="请输入复核反馈"
-                  value={feedback}
-                />
-              </label>
-              {feedbackRequired(selected.kind, conclusion || '') && (
-                <p className="muted">建议调整、需补充、驳回必须填写反馈。</p>
-              )}
-              <div className="actions">
-                <button
-                  disabled={!conclusion || submitting}
-                  onClick={submitFeedback}
-                  type="button"
-                >
-                  提交 Review 反馈
-                </button>
-              </div>
-              <h3>反馈历史（只读）</h3>
-              {history.length === 0 ? (
-                <p className="muted">暂无已闭环的反馈记录。</p>
-              ) : (
-                <ul className="compact-list">
-                  {history.map((item) => (
-                    <li key={item.id}>
-                      <strong>{item.conclusion ?? item.status}</strong>
-                      <span>
-                        {item.feedback || '未填写反馈'} ·{' '}
-                        {formatDateTime(item.reviewed_at)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
           ) : !workspace ? (
             <p className="muted">正在加载自评复核工作区…</p>
           ) : (
@@ -937,7 +775,7 @@ export function BuddyReviewCenter() {
                   value={feedback}
                 />
               </label>
-              {feedbackRequired(selected.kind, conclusion || '') && (
+              {feedbackRequired(conclusion || '') && (
                 <p className="muted">建议调整必须填写反馈。</p>
               )}
               <div className="actions">
