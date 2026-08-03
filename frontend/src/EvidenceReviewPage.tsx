@@ -116,13 +116,21 @@ export function EvidenceReviewPage() {
     setError('')
     setMessage('')
     setSubmitting(true)
-    const fp = `${conclusion}|${feedback}`
-    let idem = idemRef.current
-    if (!idem || idem.fp !== fp) {
-      idem = { key: crypto.randomUUID(), fp }
-      idemRef.current = idem
-    }
     try {
+      const fp = `${conclusion}|${feedback}`
+      let idem = idemRef.current
+      if (!idem || idem.fp !== fp) {
+        // crypto.randomUUID exists only on secure origins; plain-http LAN
+        // deployments must fall back or the submit freezes silently.
+        idem = {
+          key:
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          fp,
+        }
+        idemRef.current = idem
+      }
       await submitEvidenceReview(
         selected.id,
         conclusion,

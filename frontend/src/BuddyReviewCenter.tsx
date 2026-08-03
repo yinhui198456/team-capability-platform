@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   getAssessmentHistory,
+  newIdempotencyKey,
   type AssessmentDetail,
   type AssessmentReview,
 } from './assessment'
@@ -373,7 +374,9 @@ export function BuddyReviewCenter() {
       const fingerprint = `${value}|${feedback || ''}`
       let idem = idemRef.current
       if (!idem || idem.fingerprint !== fingerprint) {
-        idem = { key: crypto.randomUUID(), fingerprint }
+        // crypto.randomUUID is undefined on plain-http LAN origins; the
+        // shared helper falls back to getRandomValues for those deploys.
+        idem = { key: newIdempotencyKey(), fingerprint }
         idemRef.current = idem
       }
       const result = await submitReview(

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { newIdempotencyKey } from './assessment'
 import {
   formatEstimatedHours,
   formatEstimatedHoursSummary,
@@ -141,7 +142,9 @@ export function AnnualPlanTaskPage() {
   function keyFor(scope: string, fp: string): { key: string } {
     const existing = idemRef.current.get(scope)
     if (existing && existing.fp === fp) return { key: existing.key }
-    const key = crypto.randomUUID()
+    // crypto.randomUUID is undefined on plain-http LAN origins; the shared
+    // helper falls back to getRandomValues for those deploys.
+    const key = newIdempotencyKey()
     idemRef.current.set(scope, { fp, key })
     return { key }
   }

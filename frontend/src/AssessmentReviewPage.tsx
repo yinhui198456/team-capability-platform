@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { newIdempotencyKey } from './assessment'
 import {
   getBuddyReviewWorkspace,
   listPendingReviews,
@@ -62,7 +63,7 @@ export function AssessmentReviewPage() {
     try {
       let idemKey = idemKeyRef.current
       if (!idemKey) {
-        idemKey = crypto.randomUUID()
+        idemKey = newIdempotencyKey()
         idemKeyRef.current = idemKey
       }
       const result = await submitReview(
