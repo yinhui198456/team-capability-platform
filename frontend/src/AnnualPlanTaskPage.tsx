@@ -364,7 +364,7 @@ export function AnnualPlanTaskPage() {
     evidence: Evidence | null,
     fields: { content: string; description: string; link: string },
     superseded: Evidence | null,
-  ) {
+  ): Promise<'saved' | 'conflict' | 'error'> {
     try {
       if (evidence) {
         const updated = await updateEvidence(
@@ -391,13 +391,21 @@ export function AnnualPlanTaskPage() {
             : `Evidence v${created.version_number} 草稿已创建。`,
         )
       }
+      return 'saved'
     } catch (err) {
       const mapped = parseApiErrorDetail(err)
       if (mapped.isConflict) {
-        setError('Evidence 已被其他会话更新，请刷新后重试。')
-      } else {
-        setError(mapped.message)
+        // Keep the typed input and the form open; the server revision moved
+        // under us. Refresh so the retry uses ONLY the latest revision, and
+        // require the user to confirm before resending.
+        await refreshTask(taskId).catch(() => undefined)
+        setError('Evidence 已被其他会话更新，请确认后重新保存。')
+        return 'conflict'
       }
+      // 422/403 and terminal errors: keep the form and the exact input; a
+      // later edit must not silently overwrite what the user typed.
+      setError(mapped.message)
+      return 'error'
     }
   }
 
@@ -609,7 +617,7 @@ export function AnnualPlanTaskPage() {
                   }
                   onVoidLog={(log) => void handleVoidLog(td.task.id, log)}
                   onSaveEvidence={(evidence, fields, superseded) =>
-                    void handleSaveEvidenceDraft(
+                    handleSaveEvidenceDraft(
                       td.task.id,
                       evidence,
                       fields,
@@ -658,7 +666,7 @@ type PanelProps = {
     evidence: Evidence | null,
     fields: { content: string; description: string; link: string },
     superseded: Evidence | null,
-  ) => void
+  ) => Promise<'saved' | 'conflict' | 'error'>
   onSubmitEvidence: (evidence: Evidence) => void
 }
 
@@ -691,6 +699,7 @@ function TaskExecutionPanel({
   const [evidenceLink, setEvidenceLink] = useState('')
   const [newVersionOf, setNewVersionOf] = useState<Evidence | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [panelError, setPanelError] = useState('')
 
   const draft = evidences.find((e) => e.status === '草稿') ?? null
@@ -1097,6 +1106,8 @@ function TaskExecutionPanel({
             className={s.actionForm}
             onSubmit={(event) => {
               event.preventDefault()
+              if (submitting) return
+              setSubmitting(true)
               onSaveEvidence(
                 draft && !newVersionOf ? draft : null,
                 {
@@ -1106,7 +1117,12 @@ function TaskExecutionPanel({
                 },
                 newVersionOf,
               )
-              setCreatingDraft(false)
+                .then((result) => {
+                  // Only a confirmed save closes the form; conflicts and
+                  // validation errors keep it open with the typed input.
+                  if (result === 'saved') setCreatingDraft(false)
+                })
+                .finally(() => setSubmitting(false))
             }}
           >
             {newVersionOf && (
@@ -1141,7 +1157,9 @@ function TaskExecutionPanel({
               />
             </label>
             <div className={s.actions}>
-              <button type="submit">保存草稿</button>
+              <button disabled={submitting} type="submit">
+                保存草稿
+              </button>
               <button
                 type="button"
                 onClick={() => {

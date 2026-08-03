@@ -713,6 +713,243 @@ describe('learning task execution (v0010)', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledWith(10))
   })
 
+  it('keeps the draft form on a save 409, refreshes the evidence revision and retries only after confirm', async () => {
+    const draft = makeEvidence({
+      id: 10,
+      version_number: 2,
+      status: '草稿',
+      supersedes_evidence_id: 9,
+    })
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+      { evidences: [draft] },
+    )
+    const conflict: unknown = Object.assign(
+      new Error('evidence revision conflict'),
+      {
+        status: 409,
+        detail: {
+          code: 'evidence_revision_conflict',
+          entity_type: 'evidence',
+          entity_id: 10,
+          field: 'revision',
+          reason: 'evidence_revision_conflict',
+          message: 'evidence revision conflict',
+        },
+      },
+    )
+    const update = vi
+      .spyOn(planningApi, 'updateEvidence')
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ ...draft, content: '修改后', revision: 1 })
+    // The refresh after the conflict observes the newer evidence revision.
+    vi.mocked(planningApi.listEvidences).mockResolvedValueOnce([
+      { ...draft, revision: 1 },
+    ])
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '编辑草稿' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+      target: { value: '修改后' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('alert').textContent?.includes('请确认后重新保存'),
+      ).toBeTruthy()
+    })
+    // The typed input survives, the form stays open, nothing was re-sent.
+    expect(
+      (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+    ).toBe('修改后')
+    expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update.mock.calls[0][2]).toBe(0)
+    // Confirm retry uses ONLY the refreshed revision.
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls[1][2]).toBe(1)
+    // The form closes only after the save actually succeeds.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: '保存草稿' })).toBeNull(),
+    )
+  })
+
+  it('keeps the new-version form on a create 409 and retries only after confirm', async () => {
+    const evidenceV1 = makeEvidence({
+      status: '需补充',
+      submitted_at: '2026-05-01T00:00:00Z',
+      revision: 1,
+    })
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+      { evidences: [evidenceV1], reviews: [makeReview({})] },
+    )
+    const conflict: unknown = Object.assign(new Error('draft already exists'), {
+      status: 409,
+      detail: {
+        code: 'evidence_conflict',
+        entity_type: 'evidence',
+        entity_id: 9,
+        field: 'status',
+        reason: 'evidence_conflict',
+        message: 'draft already exists',
+      },
+    })
+    const createEv = vi
+      .spyOn(planningApi, 'createEvidence')
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(
+        makeEvidence({
+          id: 10,
+          version_number: 2,
+          status: '草稿',
+          supersedes_evidence_id: 9,
+        }),
+      )
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '创建新版本' }))
+    fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+      target: { value: '补充口径说明后的实现' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('alert').textContent?.includes('请确认后重新保存'),
+      ).toBeTruthy()
+    })
+    // Input preserved, form open, nothing re-sent without confirm.
+    expect(
+      (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+    ).toBe('补充口径说明后的实现')
+    expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
+    expect(createEv).toHaveBeenCalledTimes(1)
+    // Confirm retry re-submits the same intent with the same supersede link.
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(createEv).toHaveBeenCalledTimes(2))
+    expect(createEv.mock.calls[1][1]).toMatchObject({
+      content: '补充口径说明后的实现',
+      supersedes_evidence_id: 9,
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: '保存草稿' })).toBeNull(),
+    )
+  })
+
+  it.each([
+    ['422', 'content is required'],
+    ['403', 'not your evidence'],
+  ] as [string, string][])(
+    'a %s keeps the draft form and inputs without pretending success',
+    async (status, message) => {
+      const draft = makeEvidence({ id: 10, version_number: 2, status: '草稿' })
+      await renderMember(
+        [makeItem({})],
+        [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+        { evidences: [draft] },
+      )
+      const error: unknown = Object.assign(new Error(message), {
+        status: Number(status),
+        ...(status === '422'
+          ? {
+              detail: {
+                code: 'validation_error',
+                entity_type: 'evidence',
+                entity_id: 10,
+                field: 'content',
+                reason: 'validation_error',
+                message,
+              },
+            }
+          : {}),
+      })
+      vi.spyOn(planningApi, 'updateEvidence').mockRejectedValue(error)
+      expandItem(1)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: '编辑草稿' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy(),
+      )
+      fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+        target: { value: '修改后' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain(message)
+      })
+      // The form and the typed input stay; no success is claimed.
+      expect(
+        (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+      ).toBe('修改后')
+      expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
+      expect(screen.queryByText(/草稿已保存/)).toBeNull()
+    },
+  )
+
+  it.each([
+    ['422', 'content is required'],
+    ['403', 'cannot create evidence here'],
+  ] as [string, string][])(
+    'a %s keeps the new-version form and inputs without pretending success',
+    async (status, message) => {
+      const evidenceV1 = makeEvidence({
+        status: '需补充',
+        submitted_at: '2026-05-01T00:00:00Z',
+        revision: 1,
+      })
+      await renderMember(
+        [makeItem({})],
+        [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+        { evidences: [evidenceV1], reviews: [makeReview({})] },
+      )
+      const error: unknown = Object.assign(new Error(message), {
+        status: Number(status),
+        ...(status === '422'
+          ? {
+              detail: {
+                code: 'validation_error',
+                entity_type: 'evidence',
+                entity_id: 9,
+                field: 'content',
+                reason: 'validation_error',
+                message,
+              },
+            }
+          : {}),
+      })
+      vi.spyOn(planningApi, 'createEvidence').mockRejectedValue(error)
+      expandItem(1)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: '创建新版本' }))
+      fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+        target: { value: '补充口径说明后的实现' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain(message)
+      })
+      expect(
+        (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+      ).toBe('补充口径说明后的实现')
+      expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
+      expect(screen.queryByText(/草稿已保存/)).toBeNull()
+    },
+  )
+
   it('filters plan items by status', async () => {
     await renderMember(
       [

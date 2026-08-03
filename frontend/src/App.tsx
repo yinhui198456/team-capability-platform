@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './AuthContext'
 import { useMe } from './catalog'
@@ -49,6 +49,16 @@ function AuthenticatedShell() {
   )
 }
 
+// Only valid inside AuthenticatedShell, which guarantees an authenticated
+// user; this guard enforces the Buddy-only boundary of the evidence page.
+function RequireBuddy({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  if (!user?.roles.includes('Buddy')) {
+    return <Navigate to={defaultRouteFor(user?.roles ?? [])} replace />
+  }
+  return children
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -64,10 +74,6 @@ export function App() {
         <Route
           path="/mentoring/assessment-review"
           element={<Navigate to="/mentoring/dashboard" replace />}
-        />
-        <Route
-          path="/mentoring/evidence-review"
-          element={<EvidenceReviewPage />}
         />
         <Route
           path="/capability/gap"
@@ -101,6 +107,14 @@ export function App() {
             element={<MonthlyReviewPage />}
           />
           <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          <Route
+            path="/mentoring/evidence-review"
+            element={
+              <RequireBuddy>
+                <EvidenceReviewPage />
+              </RequireBuddy>
+            }
+          />
           <Route
             path="/operations/resources"
             element={<LearningResourcesPage />}

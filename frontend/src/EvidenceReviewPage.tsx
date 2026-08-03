@@ -44,7 +44,11 @@ export function EvidenceReviewPage() {
   // unchanged retry replays server-side, a changed payload gets a new key.
   const idemRef = useRef<{ key: string; fp: string } | null>(null)
 
-  const selected = queue.find((ev) => ev.id === selectedId) ?? queue[0] ?? null
+  // Strict binding: the workspace always follows the user's selection id.
+  // The initial load auto-selects the first item, but a selection is never
+  // silently retargeted to whatever happens to be first afterwards — a
+  // conflict that removes the item must end the form, not re-target it.
+  const selected = queue.find((ev) => ev.id === selectedId) ?? null
 
   async function loadQueue() {
     const list = await listPendingEvidenceReviews()
@@ -57,7 +61,12 @@ export function EvidenceReviewPage() {
     async function load() {
       try {
         const list = await listPendingEvidenceReviews()
-        if (!cancelled) setQueue(list)
+        if (!cancelled) {
+          setQueue(list)
+          // First load picks the first item; later refreshes (e.g. after a
+          // conflict) never re-target a selection the user already made.
+          setSelectedId((prev) => prev ?? list[0]?.id ?? null)
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : '加载失败')
@@ -77,17 +86,20 @@ export function EvidenceReviewPage() {
       setHistory([])
       return
     }
+    // Capture before the closure so the narrowed non-null value stays typed.
+    const taskId = selected.learning_task_id
     let cancelled = false
     async function loadHistory() {
       try {
-        const reviews = await listEvidenceReviewsForTask(
-          selected.learning_task_id,
-        )
+        const reviews = await listEvidenceReviewsForTask(taskId)
         if (!cancelled) {
           setHistory(reviews.filter((r) => r.conclusion !== null))
         }
       } catch (err) {
         if (!cancelled) {
+          // The current item's history failed: never leave the previous
+          // item's records on screen under this one.
+          setHistory([])
           setError(err instanceof Error ? err.message : '加载复核历史失败')
         }
       }
@@ -100,6 +112,9 @@ export function EvidenceReviewPage() {
 
   function selectItem(id: number) {
     setSelectedId(id)
+    // Clear the previous item's history before the new one loads, so a slow
+    // or failing response can never show stale records under the new item.
+    setHistory([])
     setConclusion('')
     setFeedback('')
     setMessage('')
@@ -155,11 +170,25 @@ export function EvidenceReviewPage() {
         // failure, and the item stays for review once access is restored.
         setError('当前有效辅导关系不存在或已失效，无法评审该成果。')
       } else if (mapped.isConflict) {
-        // Already reviewed or key collision: reload the queue so the
-        // immutable result replaces the stale pending item.
-        setError('该 Evidence 已被评审或重复提交，队列已刷新。')
+        // The conflict result is bound to the submitted evidence id: reload
+        // the queue, then keep that id selected if it still exists. If the
+        // conflict removed it, clear the form and require an explicit
+        // re-selection — never retarget the conclusion to another item.
         idemRef.current = null
-        void loadQueue().catch(() => undefined)
+        const submittedId = selected.id
+        try {
+          const refreshed = await loadQueue()
+          if (!refreshed.some((ev) => ev.id === submittedId)) {
+            setSelectedId(null)
+            setConclusion('')
+            setFeedback('')
+            setError('该 Evidence 已被评审，队列已刷新；请重新选择待验收项。')
+          } else {
+            setError('提交冲突，队列已刷新；请确认后重新提交。')
+          }
+        } catch {
+          setError('提交冲突，队列刷新失败，请稍后重试。')
+        }
       } else if (
         mapped.code === 'invalid_review' &&
         mapped.field === 'feedback'

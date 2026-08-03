@@ -313,6 +313,7 @@ describe('authenticated route guard', () => {
     ['/system/users'],
     ['/growth/annual-plan?year=2025'],
     ['/capability/model'],
+    ['/mentoring/evidence-review'],
   ])('redirects unauthenticated user from %s to /login', async (path) => {
     const getAvailableYears = vi
       .spyOn(planningApi, 'getAvailableYears')
@@ -419,6 +420,93 @@ describe('authenticated route guard', () => {
       })
     })
   })
+})
+
+describe('evidence review route boundary', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function stubFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
+  }
+
+  it('renders inside the authenticated shell for Buddy with layout, identity and Buddy navigation', async () => {
+    stubFetch()
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 2,
+      username: 'buddy',
+      full_name: 'Buddy',
+      roles: ['Buddy'],
+    })
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026],
+      active_year: 2026,
+    })
+    vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+    render(
+      <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: '待验收成果' })).toBeTruthy(),
+    )
+    // Inside the auth shell: brand, identity, sign-out and Buddy nav all render.
+    expect(
+      screen.getByRole('link', { name: 'Team Capability Platform' }),
+    ).toBeTruthy()
+    expect(screen.getByText('Buddy')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Buddy 复核中心' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '待验收成果' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/mentoring/evidence-review',
+    )
+  })
+
+  it.each([
+    [['Member'], '/dashboard/member'],
+    [['Leader'], '/operations/analytics'],
+    [['Admin'], '/system/users'],
+  ] as [string[], string][])(
+    'redirects a logged-in %s away from the Buddy evidence page to %s',
+    async (roles, expected) => {
+      stubFetch()
+      vi.spyOn(accessApi, 'me').mockResolvedValue({
+        id: 1,
+        username: roles[0].toLowerCase(),
+        full_name: roles[0],
+        roles,
+      })
+      vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+        available_years: [2026],
+        active_year: 2026,
+      })
+      if (roles[0] === 'Member') {
+        vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(
+          emptyDashboard,
+        )
+      }
+      render(
+        <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
+          <App />
+          <LocationDisplay />
+        </MemoryRouter>,
+      )
+      await waitFor(() => {
+        expect(screen.getByTestId('location').textContent).toBe(expected)
+      })
+      // No operable Evidence page for non-Buddy roles.
+      expect(screen.queryByRole('heading', { name: '待验收成果' })).toBeNull()
+    },
+  )
 })
 
 describe('year parameter persistence', () => {
