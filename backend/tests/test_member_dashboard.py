@@ -71,7 +71,8 @@ def test_member_dashboard_aggregates_only_current_member_data(
         "current_month_planned_hours_has_values": False,
         "current_month_planned_hours_has_unparsed": False,
         "completed_task_count": 0,
-        "pending_evidence_count": 0,
+        "pending_evidence_to_submit": 0,
+        "pending_evidence_to_review": 0,
     }
     assert body["plan_progress"] == {
         "total": 1,
@@ -108,3 +109,94 @@ def test_member_dashboard_rejects_non_members(
         cookies=_login(profile_schema, "dashboard_buddy"),
     )
     assert status == 403
+
+
+def _create_evidence(
+    connection: psycopg.Connection, mc: dict[str, str], task_id: int, **extra: object
+) -> tuple[int, dict[str, object] | None]:
+    body: dict[str, object] = {
+        "content": "成果",
+        "evidence_link": "http://example.com/out",
+    }
+    body.update(extra)
+    status, payload, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        body,
+        cookies=mc,
+    )
+    return status, payload
+
+
+def _evidence_todos(
+    connection: psycopg.Connection, mc: dict[str, str]
+) -> tuple[int, int]:
+    status, body, _ = _request(
+        "GET", "/api/planning/member-dashboard?year=2026", cookies=mc
+    )
+    assert status == 200 and body is not None
+    summary = body["summary"]
+    return (
+        int(summary["pending_evidence_to_submit"]),
+        int(summary["pending_evidence_to_review"]),
+    )
+
+
+def test_member_dashboard_evidence_todos_exclude_superseded(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """Issue #63: evidence todos are per-role and never count superseded
+    versions (each supersedes chain contributes at most one pending item)."""
+    from tests.test_capability_profile import _login
+
+    _, member_cookies = _build_full_profile(profile_schema)
+    status, tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks", cookies=member_cookies
+    )
+    assert status == 200
+    task_id = next(t["id"] for t in tasks if t["plan_item_id"] is not None)
+
+    # Baseline after the approved chain in _build_full_profile: no todos.
+    assert _evidence_todos(profile_schema, member_cookies) == (0, 0)
+
+    # Draft v1: only the member todo.
+    status, first = _create_evidence(profile_schema, member_cookies, task_id)
+    assert status == 200
+    first_id = int(first["id"])
+    assert _evidence_todos(profile_schema, member_cookies) == (1, 0)
+
+    # Submitted v1: only the buddy todo.
+    status, _, _ = _request(
+        "POST", f"/api/planning/evidences/{first_id}/submit", {}, cookies=member_cookies
+    )
+    assert status == 200
+    assert _evidence_todos(profile_schema, member_cookies) == (0, 1)
+
+    # Buddy asks for more: v1 returns to the member todo.
+    buddy_cookies = _login(profile_schema, "buddy_profile")
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{first_id}/review",
+        {"conclusion": "需补充", "feedback": "请补充截图"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert _evidence_todos(profile_schema, member_cookies) == (1, 0)
+
+    # v2 supersedes v1: the superseded v1 must not be counted a second time.
+    status, second = _create_evidence(
+        profile_schema, member_cookies, task_id, supersedes_evidence_id=first_id
+    )
+    assert status == 200
+    second_id = int(second["id"])
+    assert _evidence_todos(profile_schema, member_cookies) == (1, 0)
+
+    # Submitted v2: only the buddy todo, superseded v1 still excluded.
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{second_id}/submit",
+        {},
+        cookies=member_cookies,
+    )
+    assert status == 200
+    assert _evidence_todos(profile_schema, member_cookies) == (0, 1)

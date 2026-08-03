@@ -44,6 +44,7 @@ def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
         "plan_end_date": row[12],
         "target_month": row[13],
         "status": row[14],
+        "revision": row[15],
     }
     item["estimated_hours_parsed"] = parse_estimated_hours(
         row[10] if isinstance(row[10], str) else None
@@ -185,6 +186,16 @@ class PlanItemDateError(PlanningDomainError):
 class PlanItemRevisionConflict(PlanningDomainError):
     code = "plan_revision_conflict"
     entity_type = "plan_item"
+
+
+class PlanItemValidationError(PlanningDomainError):
+    code = "invalid_plan_item"
+    entity_type = "plan_item"
+
+
+class TaskValidationError(PlanningDomainError):
+    code = "invalid_task"
+    entity_type = "learning_task"
 
 
 class SourceFieldLocked(PlanningDomainError):
@@ -400,7 +411,7 @@ def get_annual_plan_with_items(
                pi.standard_job_level_snapshot, pi.member_current_level_snapshot,
                pi.member_target_level_snapshot, pi.plan_quarter, pi.plan_month,
                pi.planning_source_type, pi.assessment_revision, pi.gap_value,
-               pi.include_in_plan
+               pi.include_in_plan, pi.revision
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
@@ -436,6 +447,7 @@ def get_annual_plan_with_items(
                 "assessment_revision": item[35],
                 "gap_value": item[36],
                 "include_in_plan": item[37],
+                "revision": item[38],
             }
         )
         plan_items.append(payload)
@@ -500,7 +512,8 @@ def list_plan_items(
         SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
                pi.current_level, pi.target_level, pi.priority, pi.learning_material,
                pi.learning_task_content, pi.expected_output, pi.estimated_hours,
-               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status,
+               pi.revision
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s
@@ -657,6 +670,9 @@ def update_plan_item(
     fields: dict[str, object],
     expected_revision: int | None = None,
 ) -> dict[str, object]:
+    expected_revision = _validate_expected_revision(
+        expected_revision, PlanItemValidationError
+    )
     owned = connection.execute(
         """
         SELECT pi.id, pi.revision
@@ -708,7 +724,7 @@ def update_plan_item(
             (plan_item_id,),
         ).fetchone()
         assert locked is not None
-        if expected_revision is not None and int(locked[0]) != expected_revision:
+        if int(locked[0]) != expected_revision:
             raise PlanItemRevisionConflict(
                 "plan item revision conflict",
                 entity_id=plan_item_id,
@@ -743,7 +759,8 @@ def update_plan_item(
             RETURNING id, annual_growth_plan_id, growth_goal_id, l3_code,
                       current_level, target_level, priority, learning_material,
                       learning_task_content, expected_output, estimated_hours,
-                      plan_start_date, plan_end_date, target_month, status
+                      plan_start_date, plan_end_date, target_month, status,
+                      revision
             """,
             values,
         ).fetchone()
@@ -851,6 +868,9 @@ def update_learning_task(
     expected_revision: int | None = None,
 ) -> dict[str, object]:
     """Member-editable task fields only; status/dates/hours are machine-owned."""
+    expected_revision = _validate_expected_revision(
+        expected_revision, TaskValidationError
+    )
     updates: dict[str, object] = {}
     for key, value in fields.items():
         if key not in _UPDATABLE_TASK_FIELDS:
@@ -908,7 +928,7 @@ def update_learning_task(
             "SELECT revision FROM learning_task WHERE id = %s", (task_id,)
         ).fetchone()
         assert revision_row is not None
-        if expected_revision is not None and int(revision_row[0]) != expected_revision:
+        if int(revision_row[0]) != expected_revision:
             raise TaskRevisionConflict(
                 "learning task revision conflict",
                 entity_id=task_id,
@@ -1620,13 +1640,25 @@ def get_member_dashboard(
     ).fetchone()
     pending_evidence_row = connection.execute(
         """
-        SELECT COUNT(*)
+        SELECT COUNT(*) FILTER (
+                   WHERE e.status IN ('草稿', '需补充')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM evidence superseding
+                         WHERE superseding.supersedes_evidence_id = e.id
+                     )
+               ),
+               COUNT(*) FILTER (
+                   WHERE e.status = '待 Review'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM evidence superseding
+                         WHERE superseding.supersedes_evidence_id = e.id
+                     )
+               )
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
-          AND e.status IN ('草稿', '待 Review', '需补充')
         """,
         (member_id, year),
     ).fetchone()
@@ -1722,8 +1754,13 @@ def get_member_dashboard(
                 "has_unparsed"
             ],
             "completed_task_count": int(completed_row[0]) if completed_row else 0,
-            "pending_evidence_count": (
+            # Two semantically distinct todos; superseded evidence versions are
+            # never counted (each chain contributes at most one pending item).
+            "pending_evidence_to_submit": (
                 int(pending_evidence_row[0]) if pending_evidence_row else 0
+            ),
+            "pending_evidence_to_review": (
+                int(pending_evidence_row[1]) if pending_evidence_row else 0
             ),
         },
         "plan_progress": {
@@ -1974,11 +2011,13 @@ def create_evidence_draft(
     return _attach_l3_contexts(connection, [_evidence_row(row)])[0]
 
 
-def _validate_expected_revision(value: object) -> int:
-    """P1: any draft-updating PUT must carry a non-negative integer
-    expected_revision — bool, non-integer, negative or missing is a 422."""
+def _validate_expected_revision(
+    value: object, error_cls: type[PlanningDomainError] = EvidenceValidationError
+) -> int:
+    """P1: any Member PUT must carry a non-negative integer expected_revision —
+    bool, non-integer, negative or missing is a 422 at every layer."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise EvidenceValidationError(
+        raise error_cls(
             "expected_revision must be a non-negative integer",
             field="expected_revision",
         )
@@ -2541,7 +2580,8 @@ def _annual_plan_with_items_for_member(
         SELECT pi.id, pi.annual_growth_plan_id, pi.growth_goal_id, pi.l3_code,
                pi.current_level, pi.target_level, pi.priority, pi.learning_material,
                pi.learning_task_content, pi.expected_output, pi.estimated_hours,
-               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status
+               pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status,
+               pi.revision
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s

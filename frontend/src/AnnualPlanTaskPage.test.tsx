@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
   fireEvent,
+  within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -38,6 +39,7 @@ function makeItem(overrides: Partial<PlanItem>): PlanItem {
     plan_end_date: '2026-04-30',
     target_month: 3,
     status: '进行中',
+    revision: 0,
     ...overrides,
   }
 }
@@ -966,5 +968,464 @@ describe('learning task execution (v0010)', () => {
     })
     const headers = screen.getAllByTestId('plan-header')
     expect(headers[0].textContent).toContain('已完成')
+  })
+})
+
+describe('plan item source summary (issue #63)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('renders learning material, task content, expected output and source summary read-only', async () => {
+    await renderMember(
+      [
+        makeItem({
+          learning_material: '数据管道教材',
+          learning_task_content: '完成管道设计',
+          expected_output: '设计文档与评审记录',
+          source_assessment_id: 1,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+          planning_source_type: 'assessment_approval',
+          assessment_revision: 2,
+          include_in_plan: true,
+        }),
+      ],
+      [makeTask({ id: 1, plan_item_id: 1 })],
+    )
+    expandItem(1)
+    await waitFor(() => expect(screen.getByText('学习材料')).toBeTruthy())
+    expect(screen.getByText('数据管道教材')).toBeTruthy()
+    expect(screen.getByText('任务内容')).toBeTruthy()
+    expect(screen.getByText('完成管道设计')).toBeTruthy()
+    expect(screen.getByText('预期输出')).toBeTruthy()
+    expect(screen.getByText('设计文档与评审记录')).toBeTruthy()
+    // #62 frozen source snapshot, read-only.
+    expect(screen.getByText('来源评估')).toBeTruthy()
+    expect(screen.getByText('评估 #1')).toBeTruthy()
+    expect(screen.getByText('计划季度')).toBeTruthy()
+    expect(screen.getByText('Q2')).toBeTruthy()
+    expect(screen.getByText('计划月份')).toBeTruthy()
+    // Scoped: the month timeline also renders a "6 月" button.
+    expect(
+      within(screen.getByTestId('task-detail-panel')).getByText('6 月'),
+    ).toBeTruthy()
+    expect(screen.getByText('来源类型')).toBeTruthy()
+    expect(screen.getByText('评估认可生成')).toBeTruthy()
+    expect(screen.getByText('评估版本')).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText('纳入计划')).toBeTruthy()
+    expect(screen.getByText('是')).toBeTruthy()
+    // None of the snapshot fields are editable.
+    expect(screen.queryByLabelText('来源评估')).toBeNull()
+    expect(screen.queryByLabelText('学习材料')).toBeNull()
+  })
+})
+
+describe('plan item schedule editing (issue #63)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('lets the member edit only the two schedule dates with a CAS payload', async () => {
+    const item = makeItem({ revision: 2, plan_quarter: 'Q2', plan_month: 6 })
+    await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
+    const update = vi.spyOn(planningApi, 'updatePlanItem').mockResolvedValue({
+      ...item,
+      plan_start_date: '2026-04-15',
+      revision: 3,
+    })
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-04-15' },
+    })
+    fireEvent.change(screen.getByLabelText('计划结束日期'), {
+      target: { value: '2026-06-30' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][0]).toBe(1)
+    // The payload carries ONLY the two editable dates + the revision —
+    // no target_month, status or #62 source snapshot fields.
+    expect(update.mock.calls[0][1]).toEqual({
+      plan_start_date: '2026-04-15',
+      plan_end_date: '2026-06-30',
+    })
+    expect(update.mock.calls[0][2]).toBe(2)
+    // Non-schedule fields stay read-only.
+    expect(screen.queryByLabelText('优先级')).toBeNull()
+    expect(screen.queryByLabelText('状态')).toBeNull()
+  })
+
+  it('rejects a start later than the end locally without calling the API', async () => {
+    await renderMember(
+      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: 6 })],
+      [makeTask({ id: 1, plan_item_id: 1 })],
+    )
+    const update = vi
+      .spyOn(planningApi, 'updatePlanItem')
+      .mockResolvedValue(makeItem({ revision: 2 }))
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-06-30' },
+    })
+    fireEvent.change(screen.getByLabelText('计划结束日期'), {
+      target: { value: '2026-06-01' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('不得晚于')
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('rejects an end date outside the source plan month', async () => {
+    await renderMember(
+      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: 6 })],
+      [makeTask({ id: 1, plan_item_id: 1 })],
+    )
+    const update = vi
+      .spyOn(planningApi, 'updatePlanItem')
+      .mockResolvedValue(makeItem({ revision: 2 }))
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('计划结束日期'), {
+      target: { value: '2026-07-01' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('来源计划月')
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('rejects a start date outside the source quarter', async () => {
+    await renderMember(
+      [
+        makeItem({
+          revision: 1,
+          plan_start_date: '2026-04-01',
+          plan_end_date: '2026-06-30',
+          plan_quarter: 'Q2',
+          plan_month: 6,
+        }),
+      ],
+      [makeTask({ id: 1, plan_item_id: 1 })],
+    )
+    const update = vi
+      .spyOn(planningApi, 'updatePlanItem')
+      .mockResolvedValue(makeItem({ revision: 2 }))
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-03-31' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('来源季度')
+    })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('keeps the edited dates on a 409, refreshes the plan and retries only after confirm', async () => {
+    const item = makeItem({
+      revision: 1,
+      plan_start_date: '2026-04-01',
+      plan_end_date: '2026-06-30',
+      plan_quarter: 'Q2',
+      plan_month: 6,
+    })
+    await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
+    const conflict: unknown = Object.assign(
+      new Error('plan item revision conflict'),
+      {
+        status: 409,
+        detail: {
+          code: 'plan_revision_conflict',
+          entity_type: 'plan_item',
+          entity_id: 1,
+          field: 'revision',
+          reason: 'plan_revision_conflict',
+          message: 'plan item revision conflict',
+        },
+      },
+    )
+    const update = vi
+      .spyOn(planningApi, 'updatePlanItem')
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        ...item,
+        plan_start_date: '2026-04-15',
+        revision: 2,
+      })
+    // The plan refresh after the conflict observes the bumped revision.
+    vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+      makePlan([{ ...item, revision: 2 }]),
+    )
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+    )
+    fireEvent.change(screen.getByLabelText('计划开始日期'), {
+      target: { value: '2026-04-15' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('alert').textContent?.includes('请确认后重新保存'),
+      ).toBeTruthy()
+    })
+    // The typed input survives and nothing was re-sent.
+    expect(
+      (screen.getByLabelText('计划开始日期') as HTMLInputElement).value,
+    ).toBe('2026-04-15')
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update.mock.calls[0][2]).toBe(1)
+    // Confirm retry uses ONLY the refreshed revision.
+    fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls[1][2]).toBe(2)
+  })
+
+  it.each([
+    ['422', 'invalid plan item date'],
+    ['403', 'not your plan item'],
+  ] as [string, string][])(
+    'a %s keeps the edited dates without pretending success',
+    async (status, message) => {
+      const item = makeItem({
+        revision: 1,
+        plan_start_date: '2026-04-01',
+        plan_end_date: '2026-06-30',
+        plan_quarter: 'Q2',
+        plan_month: 6,
+      })
+      await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
+      const error: unknown = Object.assign(new Error(message), {
+        status: Number(status),
+        ...(status === '422'
+          ? {
+              detail: {
+                code: 'invalid_plan_item',
+                entity_type: 'plan_item',
+                entity_id: 1,
+                field: 'plan_start_date',
+                reason: 'invalid_plan_item',
+                message,
+              },
+            }
+          : {}),
+      })
+      vi.spyOn(planningApi, 'updatePlanItem').mockRejectedValue(error)
+      expandItem(1)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),
+      )
+      fireEvent.change(screen.getByLabelText('计划开始日期'), {
+        target: { value: '2026-04-15' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: '保存日期' }))
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain(message)
+      })
+      // The form and the typed input stay; no success is claimed.
+      expect(
+        (screen.getByLabelText('计划开始日期') as HTMLInputElement).value,
+      ).toBe('2026-04-15')
+      expect(screen.queryByText(/日期已保存/)).toBeNull()
+    },
+  )
+})
+
+describe('plan item filters (issue #63)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('filters by priority and resets on 全部优先级', async () => {
+    await renderMember([
+      makeItem({ id: 1, priority: '高' }),
+      makeItem({ id: 2, l3_code: 'P02.01.01', priority: '中' }),
+    ])
+    fireEvent.change(screen.getByLabelText('优先级筛选'), {
+      target: { value: '高' },
+    })
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
+    })
+    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
+      'P01.01.01',
+    )
+    fireEvent.change(screen.getByLabelText('优先级筛选'), {
+      target: { value: '全部优先级' },
+    })
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plan-header')).toHaveLength(2)
+    })
+  })
+
+  it('filters by capability domain and shows an empty state', async () => {
+    await renderMember([
+      makeItem({ id: 1, l1_code: 'P01' }),
+      makeItem({ id: 2, l3_code: 'C01.01.01', l1_code: 'C01' }),
+    ])
+    fireEvent.change(screen.getByLabelText('能力域筛选'), {
+      target: { value: 'C01' },
+    })
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
+    })
+    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
+      'C01.01.01',
+    )
+    // A domain with no items shows an empty result.
+    fireEvent.change(screen.getByLabelText('能力域筛选'), {
+      target: { value: 'C02' },
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('plan-header')).toBeNull()
+    })
+    expect(screen.getByText(/暂无计划项/)).toBeTruthy()
+  })
+
+  it('combines month, status, priority and domain filters', async () => {
+    await renderMember([
+      makeItem({
+        id: 1,
+        target_month: 3,
+        status: '进行中',
+        priority: '高',
+        l1_code: 'P01',
+      }),
+      makeItem({
+        id: 2,
+        l3_code: 'P02.01.01',
+        target_month: 3,
+        status: '进行中',
+        priority: '中',
+        l1_code: 'P01',
+      }),
+      makeItem({
+        id: 3,
+        l3_code: 'P03.01.01',
+        target_month: 4,
+        status: '进行中',
+        priority: '高',
+        l1_code: 'P01',
+      }),
+      makeItem({
+        id: 4,
+        l3_code: 'P04.01.01',
+        target_month: 3,
+        status: '已完成',
+        priority: '高',
+        l1_code: 'P01',
+      }),
+    ])
+    const monthBtns = screen.getAllByRole('button', { name: /3 月/ })
+    fireEvent.click(
+      monthBtns.find((b) => b.textContent?.startsWith('3 月')) || monthBtns[0],
+    )
+    fireEvent.change(screen.getByLabelText('状态筛选'), {
+      target: { value: '进行中' },
+    })
+    fireEvent.change(screen.getByLabelText('优先级筛选'), {
+      target: { value: '高' },
+    })
+    fireEvent.change(screen.getByLabelText('能力域筛选'), {
+      target: { value: 'P01' },
+    })
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
+    })
+    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
+      'P01.01.01',
+    )
+  })
+})
+
+describe('evidence draft link persistence (issue #63)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('sends the edited link when updating a draft', async () => {
+    const draft = makeEvidence({
+      id: 10,
+      version_number: 2,
+      status: '草稿',
+      evidence_link: 'http://example.com/old',
+    })
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+      { evidences: [draft] },
+    )
+    const update = vi.spyOn(planningApi, 'updateEvidence').mockResolvedValue({
+      ...draft,
+      evidence_link: 'http://example.com/new',
+      revision: 1,
+    })
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '编辑草稿' }))
+    fireEvent.change(screen.getByLabelText('证据链接'), {
+      target: { value: 'http://example.com/new' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][0]).toBe(10)
+    expect(update.mock.calls[0][1]).toMatchObject({
+      evidence_link: 'http://example.com/new',
+    })
+    expect(update.mock.calls[0][2]).toBe(0)
+  })
+
+  it('clears a previously saved link by sending evidence_link null', async () => {
+    const draft = makeEvidence({
+      id: 10,
+      version_number: 2,
+      status: '草稿',
+      evidence_link: 'http://example.com/old',
+    })
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+      { evidences: [draft] },
+    )
+    const update = vi
+      .spyOn(planningApi, 'updateEvidence')
+      .mockResolvedValue({ ...draft, evidence_link: null, revision: 1 })
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '编辑草稿' }))
+    fireEvent.change(screen.getByLabelText('证据链接'), {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][1]).toMatchObject({
+      content: '实现说明',
+      description: null,
+      evidence_link: null,
+    })
   })
 })

@@ -30,15 +30,17 @@ const baseDashboard: planningApi.MemberDashboard = {
     current_month_actual_hours: 2,
     current_month_planned_hours: 8,
     completed_task_count: 1,
-    pending_evidence_count: 2,
+    pending_evidence_to_submit: 2,
+    pending_evidence_to_review: 1,
   },
   plan_progress: {
     total: 4,
     未开始: 1,
     进行中: 1,
-    '待 Evidence Review': 1,
     已完成: 0,
     延期: 1,
+    暂停: 0,
+    取消: 0,
   },
   domain_radar: [
     { domain_code: 'P01', score: 2 },
@@ -160,15 +162,17 @@ describe('MemberDashboardPage', () => {
         current_month_actual_hours: 0,
         current_month_planned_hours: 0,
         completed_task_count: 0,
-        pending_evidence_count: 0,
+        pending_evidence_to_submit: 0,
+        pending_evidence_to_review: 0,
       },
       plan_progress: {
         total: 0,
         未开始: 0,
         进行中: 0,
-        '待 Evidence Review': 0,
         已完成: 0,
         延期: 0,
+        暂停: 0,
+        取消: 0,
       },
       current_tasks: [],
       gaps: [
@@ -227,9 +231,10 @@ describe('MemberDashboardPage', () => {
         total: 0,
         未开始: 0,
         进行中: 0,
-        '待 Evidence Review': 0,
         已完成: 0,
         延期: 0,
+        暂停: 0,
+        取消: 0,
       },
       current_tasks: [],
       gaps: [],
@@ -274,9 +279,10 @@ describe('MemberDashboardPage', () => {
         total: 0,
         未开始: 0,
         进行中: 0,
-        '待 Evidence Review': 0,
         已完成: 0,
         延期: 0,
+        暂停: 0,
+        取消: 0,
       },
       current_tasks: [],
       gaps: [
@@ -325,9 +331,10 @@ describe('MemberDashboardPage', () => {
         total: 0,
         未开始: 0,
         进行中: 0,
-        '待 Evidence Review': 0,
         已完成: 0,
         延期: 0,
+        暂停: 0,
+        取消: 0,
       },
       current_tasks: [],
       gaps: [],
@@ -346,6 +353,48 @@ describe('MemberDashboardPage', () => {
     ).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('年度计划进度')).toBeNull()
     expect(screen.queryByTestId('current-tasks-table')).toBeNull()
+  })
+
+  it('shows all six plan states and the split evidence todos', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      plan_progress: {
+        total: 6,
+        未开始: 1,
+        进行中: 1,
+        已完成: 1,
+        延期: 1,
+        暂停: 1,
+        取消: 1,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(screen.getByText('待提交 Evidence')).toBeTruthy()
+    })
+    // 暂停 / 取消 are part of the six-state progress card.
+    expect(screen.getByText('暂停')).toBeTruthy()
+    expect(screen.getByText('取消')).toBeTruthy()
+    // Member-to-submit and buddy-to-review are displayed separately.
+    const submitCard = screen
+      .getByText('待提交 Evidence')
+      .closest('[class*="todoItem"]')
+    expect(submitCard?.textContent).toContain('2')
+    const reviewCard = screen
+      .getByText('待 Buddy 复核')
+      .closest('[class*="todoItem"]')
+    expect(reviewCard?.textContent).toContain('1')
+    // No legacy key anywhere.
+    expect(screen.queryByText('待 Evidence Review')).toBeNull()
   })
 
   it('shows no danger style when overdue count is zero', async () => {

@@ -32,6 +32,12 @@ def _get_tasks(cookies: dict[str, str]) -> list[dict[str, object]]:
     return tasks
 
 
+def _task_revision(cookies: dict[str, str], task_id: int) -> int:
+    """Current task revision for the PUT CAS token (read right before the PUT)."""
+    current = _get_tasks(cookies)
+    return int(next(t for t in current if t["id"] == task_id)["revision"])
+
+
 def _transition(
     cookies: dict[str, str],
     task_id: int,
@@ -126,6 +132,7 @@ def _make_completable(
             "completion_quality": "达到预期",
             "review_conclusion": "整体达标，符合预期",
             "next_action": "下一步深入 P5 场景",
+            "expected_revision": _task_revision(member_cookies, task_id),
         },
         cookies=member_cookies,
     )
@@ -261,7 +268,11 @@ def test_completion_gate_fields_are_located(seeded: dict[str, object]) -> None:
     _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"review_conclusion": "复盘", "next_action": "继续"},
+        {
+            "review_conclusion": "复盘",
+            "next_action": "继续",
+            "expected_revision": _task_revision(mc, task_id),
+        },
         cookies=mc,
     )
     status, body = _transition(mc, task_id, "已完成")
@@ -272,7 +283,10 @@ def test_completion_gate_fields_are_located(seeded: dict[str, object]) -> None:
     _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"completion_quality": "随便写"},
+        {
+            "completion_quality": "随便写",
+            "expected_revision": _task_revision(mc, task_id),
+        },
         cookies=mc,
     )
     status, body = _transition(mc, task_id, "已完成")
@@ -283,7 +297,11 @@ def test_completion_gate_fields_are_located(seeded: dict[str, object]) -> None:
     _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"completion_quality": "达到预期", "next_action": ""},
+        {
+            "completion_quality": "达到预期",
+            "next_action": "",
+            "expected_revision": _task_revision(mc, task_id),
+        },
         cookies=mc,
     )
     status, body = _transition(mc, task_id, "已完成")
@@ -306,6 +324,7 @@ def test_completion_gate_requires_positive_aggregated_hours(
             "completion_quality": "达到预期",
             "review_conclusion": "复盘",
             "next_action": "继续",
+            "expected_revision": _task_revision(mc, task_id),
         },
         cookies=mc,
     )
@@ -372,7 +391,10 @@ def test_source_fields_and_machine_fields_are_locked(
 ) -> None:
     mc = seeded["member_cookies"]
     task_id = int(seeded["task_id"])
-    # Task status / actual dates / actual_hours are machine-owned.
+    # Task status / actual dates / actual_hours are machine-owned.  Every PUT
+    # carries the current CAS token so the lock check (not the token check)
+    # is what rejects the request.
+    revision = _task_revision(mc, task_id)
     for field, value in (
         ("status", "进行中"),
         ("actual_start_date", "2026-05-01"),
@@ -382,19 +404,24 @@ def test_source_fields_and_machine_fields_are_locked(
         status, body, _ = _request(
             "PUT",
             f"/api/planning/learning-tasks/{task_id}",
-            {field: value},
+            {field: value, "expected_revision": revision},
             cookies=mc,
         )
         assert status == 422, f"{field} should be locked"
         assert body["detail"]["code"] == "source_field_locked"
         assert body["detail"]["field"] == field
     # Plan item source snapshot columns are frozen.
-    item_id = int(seeded["plan"]["items"][0]["id"])
+    item = seeded["plan"]["items"][0]
+    item_id = int(item["id"])
+    item_revision = int(item["revision"])
     for field in ("target_month", "status", "plan_quarter", "l3_code"):
         status, body, _ = _request(
             "PUT",
             f"/api/planning/plan-items/{item_id}",
-            {field: "5" if field == "target_month" else "取消"},
+            {
+                field: "5" if field == "target_month" else "取消",
+                "expected_revision": item_revision,
+            },
             cookies=mc,
         )
         assert status == 422
@@ -403,12 +430,17 @@ def test_source_fields_and_machine_fields_are_locked(
 
 def test_plan_date_rules_are_enforced(seeded: dict[str, object]) -> None:
     mc = seeded["member_cookies"]
-    item_id = int(seeded["plan"]["items"][0]["id"])
+    item = seeded["plan"]["items"][0]
+    item_id = int(item["id"])
     # Source plan month is May 2026 (Q2).  due must be inside May; start inside Q2.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/plan-items/{item_id}",
-        {"plan_start_date": "2026-06-01", "plan_end_date": "2026-06-30"},
+        {
+            "plan_start_date": "2026-06-01",
+            "plan_end_date": "2026-06-30",
+            "expected_revision": int(item["revision"]),
+        },
         cookies=mc,
     )
     assert status == 422
@@ -417,7 +449,11 @@ def test_plan_date_rules_are_enforced(seeded: dict[str, object]) -> None:
     status, body, _ = _request(
         "PUT",
         f"/api/planning/plan-items/{item_id}",
-        {"plan_start_date": "2026-05-10", "plan_end_date": "2026-05-01"},
+        {
+            "plan_start_date": "2026-05-10",
+            "plan_end_date": "2026-05-01",
+            "expected_revision": int(item["revision"]),
+        },
         cookies=mc,
     )
     assert status == 422
@@ -425,7 +461,11 @@ def test_plan_date_rules_are_enforced(seeded: dict[str, object]) -> None:
     status, body, _ = _request(
         "PUT",
         f"/api/planning/plan-items/{item_id}",
-        {"plan_start_date": "2026-05-10", "plan_end_date": "2026-05-31"},
+        {
+            "plan_start_date": "2026-05-10",
+            "plan_end_date": "2026-05-31",
+            "expected_revision": int(item["revision"]),
+        },
         cookies=mc,
     )
     assert status == 200

@@ -7,7 +7,9 @@ from .gate import check_annual_plan_gate
 from .repository import (
     EvidenceValidationError,
     LegacyPlanningWriteDisabled,
+    PlanItemValidationError,
     PlanningDomainError,
+    TaskValidationError,
     archive_team_annual_plan,
     create_evidence_draft,
     create_or_publish_team_annual_plan,
@@ -268,12 +270,27 @@ def put_plan_item(
     _require_member(user)
     try:
         expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise PlanItemValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="plan_item",
+                entity_id=plan_item_id,
+                field="expected_revision",
+            )
+        # Business fields only; the revision token is CAS metadata, never a
+        # writable field (the repository whitelist must not see it).
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
         return update_plan_item(
             connection,
             int(user["id"]),
             plan_item_id,
-            body,
-            expected_revision=int(expected) if expected is not None else None,
+            fields,
+            expected_revision=expected,
         )
     except PermissionError as exc:
         raise HTTPException(
@@ -329,12 +346,27 @@ def put_learning_task(
     _require_member(user)
     try:
         expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise TaskValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="learning_task",
+                entity_id=task_id,
+                field="expected_revision",
+            )
+        # Business fields only; the revision token is CAS metadata, never a
+        # writable field (the repository whitelist must not see it).
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
         return update_learning_task(
             connection,
             int(user["id"]),
             task_id,
-            body,
-            expected_revision=int(expected) if expected is not None else None,
+            fields,
+            expected_revision=expected,
         )
     except PermissionError as exc:
         raise HTTPException(

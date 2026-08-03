@@ -117,6 +117,8 @@ export type PlanItem = CapabilityContext & {
   plan_end_date: string | null
   target_month: number | null
   status: PlanItemStatus
+  // CAS: every plan-item PUT must carry the item's current revision.
+  revision: number
   // #62 frozen source snapshot (assessment-approval items)
   source_assessment_id?: number | null
   source_assessment_detail_id?: number | null
@@ -207,15 +209,19 @@ export type MemberDashboard = {
     current_month_planned_hours_has_values?: boolean
     current_month_planned_hours_has_unparsed?: boolean
     completed_task_count: number
-    pending_evidence_count: number
+    // Split evidence todos: what the member must submit vs what the buddy
+    // must review — superseded evidence versions are never counted.
+    pending_evidence_to_submit: number
+    pending_evidence_to_review: number
   }
   plan_progress: {
     total: number
     未开始: number
     进行中: number
-    '待 Evidence Review': number
     已完成: number
     延期: number
+    暂停: number
+    取消: number
   }
   domain_radar: { domain_code: string; score: number }[]
   gaps: EligibleGap[]
@@ -407,11 +413,11 @@ export async function listPlanItems(): Promise<PlanItem[]> {
   return request<PlanItem[]>('/api/planning/plan-items', { method: 'GET' })
 }
 
+// Members may edit ONLY the two schedule dates of a plan item; everything
+// else (target_month, status, the #62 source snapshot) is frozen server-side.
 export type PlanItemUpdate = Partial<{
   plan_start_date: string | null
   plan_end_date: string | null
-  target_month: number | null
-  status: '进行中' | '暂停' | '取消'
 }>
 
 export function formatL3Name(
@@ -422,14 +428,17 @@ export function formatL3Name(
   return name ? `${name}（${l3Code}）` : l3Code
 }
 
+// CAS contract: every plan-item PUT carries the item's current revision;
+// a stale client gets a 409 plan_revision_conflict.
 export async function updatePlanItem(
   plan_item_id: number,
   fields: PlanItemUpdate,
+  expected_revision: number,
 ): Promise<PlanItem> {
   return request<PlanItem>(
     `/api/planning/plan-items/${plan_item_id}`,
     { method: 'PUT' },
-    fields,
+    { ...fields, expected_revision },
   )
 }
 
@@ -480,15 +489,16 @@ export type LearningTaskUpdate = Partial<{
   next_action: string | null
 }>
 
+// CAS contract: the revision is mandatory — a PUT without it is a 422.
 export async function updateLearningTask(
   task_id: number,
   fields: LearningTaskUpdate,
-  expected_revision?: number,
+  expected_revision: number,
 ): Promise<LearningTask> {
   return request<LearningTask>(
     `/api/planning/learning-tasks/${task_id}`,
     { method: 'PUT' },
-    expected_revision === undefined ? fields : { ...fields, expected_revision },
+    { ...fields, expected_revision },
   )
 }
 

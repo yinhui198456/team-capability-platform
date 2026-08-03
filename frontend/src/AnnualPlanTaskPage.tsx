@@ -26,6 +26,7 @@ import {
   transitionLearningTask,
   updateEvidence,
   updateLearningTask,
+  updatePlanItem,
   type AnnualPlan,
   type Evidence,
   type EvidenceReviewRecord,
@@ -38,6 +39,8 @@ import {
 } from './planning'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
+// Capability-model L1 domains, fixed (matches dashboard domain radar).
+const DOMAIN_OPTIONS = ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']
 const STATUS_LABELS: Record<string, string> = {
   未开始: '未开始',
   进行中: '进行中',
@@ -131,6 +134,10 @@ export function AnnualPlanTaskPage() {
   const [statusFilter, setStatusFilter] = useState<PlanItemStatus | '全部状态'>(
     '全部状态',
   )
+  const [priorityFilter, setPriorityFilter] = useState<
+    '全部优先级' | '高' | '中' | '低'
+  >('全部优先级')
+  const [domainFilter, setDomainFilter] = useState<string>('全部能力域')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [conflictTask, setConflictTask] = useState<number | null>(null)
 
@@ -170,6 +177,37 @@ export function AnnualPlanTaskPage() {
     return detail
   }
 
+  async function reloadPlan() {
+    const p = await getAnnualPlan(year)
+    setPlan(p)
+    return p
+  }
+
+  // Plan-item schedule CAS: only the two dates are editable; a stale item
+  // revision is a 409 that keeps the typed input and demands explicit
+  // confirmation before resending with the refreshed revision.
+  async function handleSaveDates(
+    item: PlanItem,
+    fields: { plan_start_date: string | null; plan_end_date: string | null },
+  ): Promise<'saved' | 'conflict' | 'error'> {
+    try {
+      await updatePlanItem(item.id, fields, item.revision)
+      await reloadPlan()
+      setNotice('计划日期已保存。')
+      return 'saved'
+    } catch (err) {
+      const mapped = parseApiErrorDetail(err)
+      if (mapped.isConflict) {
+        await reloadPlan().catch(() => undefined)
+        setError('计划数据已被其他会话更新，请确认后重新保存。')
+        return 'conflict'
+      }
+      // 422/403 and terminal errors: keep the exact typed input.
+      setError(mapped.message)
+      return 'error'
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -206,6 +244,14 @@ export function AnnualPlanTaskPage() {
   const visibleItems = items
     .filter((i) => !selectedMonth || i.target_month === selectedMonth)
     .filter((i) => statusFilter === '全部状态' || i.status === statusFilter)
+    .filter(
+      (i) => priorityFilter === '全部优先级' || i.priority === priorityFilter,
+    )
+    .filter((i) => domainFilter === '全部能力域' || i.l1_code === domainFilter)
+  const hasActiveFilters =
+    statusFilter !== '全部状态' ||
+    priorityFilter !== '全部优先级' ||
+    domainFilter !== '全部能力域'
   const totalEstimated = formatEstimatedHoursSummary(
     plan?.estimated_hours_summary,
   )
@@ -372,6 +418,9 @@ export function AnnualPlanTaskPage() {
           {
             content: fields.content || null,
             description: fields.description || null,
+            // The edited link travels with the draft; a cleared input must
+            // explicitly null the stored link.
+            evidence_link: fields.link || null,
           },
           evidence.revision,
         )
@@ -519,7 +568,7 @@ export function AnnualPlanTaskPage() {
         })}
       </div>
 
-      {/* Status filter */}
+      {/* Filters: month timeline + status / priority / domain, combinable */}
       <div className={s.filterRow}>
         <label htmlFor="status-filter">状态筛选</label>
         <select
@@ -534,6 +583,36 @@ export function AnnualPlanTaskPage() {
           {Object.keys(STATUS_LABELS).map((st) => (
             <option key={st} value={st}>
               {st}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="priority-filter">优先级筛选</label>
+        <select
+          id="priority-filter"
+          aria-label="优先级筛选"
+          value={priorityFilter}
+          onChange={(event) =>
+            setPriorityFilter(
+              event.target.value as '全部优先级' | '高' | '中' | '低',
+            )
+          }
+        >
+          <option value="全部优先级">全部优先级</option>
+          <option value="高">高</option>
+          <option value="中">中</option>
+          <option value="低">低</option>
+        </select>
+        <label htmlFor="domain-filter">能力域筛选</label>
+        <select
+          id="domain-filter"
+          aria-label="能力域筛选"
+          value={domainFilter}
+          onChange={(event) => setDomainFilter(event.target.value)}
+        >
+          <option value="全部能力域">全部能力域</option>
+          {DOMAIN_OPTIONS.map((d) => (
+            <option key={d} value={d}>
+              {d}
             </option>
           ))}
         </select>
@@ -560,8 +639,8 @@ export function AnnualPlanTaskPage() {
           <p className="muted">
             {selectedMonth
               ? `${selectedMonth} 月暂无计划项`
-              : statusFilter !== '全部状态'
-                ? '该状态暂无计划项'
+              : hasActiveFilters
+                ? '该筛选条件下暂无计划项'
                 : '暂无计划项，请先生成年度计划。'}
           </p>
         )}
@@ -607,6 +686,7 @@ export function AnnualPlanTaskPage() {
               {isExpanded && td && (
                 <TaskExecutionPanel
                   item={item}
+                  year={year}
                   detail={td}
                   onTransition={(to, reason, date) =>
                     void handleTransition(td.task, to, reason, date)
@@ -624,6 +704,7 @@ export function AnnualPlanTaskPage() {
                       superseded,
                     )
                   }
+                  onSaveDates={(fields) => handleSaveDates(item, fields)}
                   onSubmitEvidence={(evidence) =>
                     void handleSubmitEvidence(td.task.id, evidence)
                   }
@@ -644,6 +725,7 @@ export function AnnualPlanTaskPage() {
 
 type PanelProps = {
   item: PlanItem
+  year: number
   detail: TaskDetail
   onTransition: (
     to: LearningTaskStatus,
@@ -668,10 +750,15 @@ type PanelProps = {
     superseded: Evidence | null,
   ) => Promise<'saved' | 'conflict' | 'error'>
   onSubmitEvidence: (evidence: Evidence) => void
+  onSaveDates: (fields: {
+    plan_start_date: string | null
+    plan_end_date: string | null
+  }) => Promise<'saved' | 'conflict' | 'error'>
 }
 
 function TaskExecutionPanel({
   item,
+  year,
   detail,
   onTransition,
   onComplete,
@@ -679,6 +766,7 @@ function TaskExecutionPanel({
   onVoidLog,
   onSaveEvidence,
   onSubmitEvidence,
+  onSaveDates,
 }: PanelProps) {
   const { task, logs, evidences, reviews } = detail
   const [actionTo, setActionTo] = useState<LearningTaskStatus | null>(null)
@@ -701,6 +789,11 @@ function TaskExecutionPanel({
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [panelError, setPanelError] = useState('')
+  // Plan-item schedule editing: only these two dates are editable, seeded
+  // once from the item so a refresh (e.g. after a 409) never wipes input.
+  const [startDate, setStartDate] = useState(item.plan_start_date ?? '')
+  const [endDate, setEndDate] = useState(item.plan_end_date ?? '')
+  const [savingDates, setSavingDates] = useState(false)
 
   const draft = evidences.find((e) => e.status === '草稿') ?? null
   const needMore = evidences.filter((e) => e.status === '需补充')
@@ -742,6 +835,50 @@ function TaskExecutionPanel({
     })
   }
 
+  // Mirrors the server rules: start <= due; due inside the source plan
+  // month; start inside the source quarter. ISO strings compare lexically.
+  function validateDates(start: string, end: string): string | null {
+    if (start && end && start > end) {
+      return '计划开始日期不得晚于计划结束日期。'
+    }
+    const month = item.plan_month ?? item.target_month
+    if (month != null) {
+      const pad = (n: number) => String(n).padStart(2, '0')
+      if (
+        end &&
+        !(
+          end >= `${year}-${pad(month)}-01` &&
+          end <=
+            `${year}-${pad(month)}-${pad(new Date(year, month, 0).getDate())}`
+        )
+      ) {
+        return '计划结束日期需保持在来源计划月内。'
+      }
+      const qStart = Math.floor((month - 1) / 3) * 3 + 1
+      const qFirst = `${year}-${pad(qStart)}-01`
+      const qLast = `${year}-${pad(qStart + 2)}-${pad(new Date(year, qStart + 2, 0).getDate())}`
+      if (start && !(start >= qFirst && start <= qLast)) {
+        return '计划开始日期需保持在来源季度内。'
+      }
+    }
+    return null
+  }
+
+  async function saveDates() {
+    const validationError = validateDates(startDate, endDate)
+    if (validationError) {
+      setPanelError(validationError)
+      return
+    }
+    setPanelError('')
+    setSavingDates(true)
+    await onSaveDates({
+      plan_start_date: startDate || null,
+      plan_end_date: endDate || null,
+    })
+    setSavingDates(false)
+  }
+
   return (
     <div className={s.taskPanel} data-testid="task-detail-panel">
       <div className={s.taskGrid}>
@@ -755,11 +892,85 @@ function TaskExecutionPanel({
         </div>
         <div className={s.taskField}>
           <span>计划开始日期</span>
-          <strong>{item.plan_start_date ?? '—'}</strong>
+          <input
+            aria-label="计划开始日期"
+            type="date"
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
+          />
         </div>
         <div className={s.taskField}>
           <span>计划结束日期</span>
-          <strong>{item.plan_end_date ?? '—'}</strong>
+          <input
+            aria-label="计划结束日期"
+            type="date"
+            value={endDate}
+            onChange={(event) => setEndDate(event.target.value)}
+          />
+        </div>
+        <div className={s.taskField}>
+          <span />
+          <button
+            type="button"
+            onClick={() => void saveDates()}
+            disabled={savingDates}
+          >
+            保存日期
+          </button>
+        </div>
+        <div className={s.taskField}>
+          <span>学习材料</span>
+          <strong>{item.learning_material ?? '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>任务内容</span>
+          <strong>{item.learning_task_content ?? '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>预期输出</span>
+          <strong>{item.expected_output ?? '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>优先级</span>
+          <strong>{item.priority}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>来源评估</span>
+          <strong>
+            {item.source_assessment_id != null
+              ? `评估 #${item.source_assessment_id}`
+              : '—'}
+          </strong>
+        </div>
+        <div className={s.taskField}>
+          <span>计划季度</span>
+          <strong>{item.plan_quarter ?? '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>计划月份</span>
+          <strong>{item.plan_month ? `${item.plan_month} 月` : '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>来源类型</span>
+          <strong>
+            {item.planning_source_type === 'assessment_approval'
+              ? '评估认可生成'
+              : '—'}
+          </strong>
+        </div>
+        <div className={s.taskField}>
+          <span>评估版本</span>
+          <strong>{item.assessment_revision ?? '—'}</strong>
+        </div>
+        <div className={s.taskField}>
+          <span>纳入计划</span>
+          <strong>
+            {item.include_in_plan == null
+              ? '—'
+              : item.include_in_plan
+                ? '是'
+                : '否'}
+          </strong>
         </div>
         <div className={s.taskField}>
           <span>实际开始时间</span>

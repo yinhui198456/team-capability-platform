@@ -456,17 +456,23 @@ def test_update_learning_task_success(
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
     status, updated, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"completion_quality": "达到预期", "next_action": "继续学习"},
+        {
+            "completion_quality": "达到预期",
+            "next_action": "继续学习",
+            "expected_revision": revision,
+        },
         cookies=cookies,
     )
     assert status == 200
     assert updated["completion_quality"] == "达到预期"
     assert updated["next_action"] == "继续学习"
     assert updated["status"] == "未开始"  # status untouched by PATCH
+    assert int(updated["revision"]) == revision + 1
 
 
 def test_update_learning_task_forbidden_for_other_member(
@@ -480,6 +486,7 @@ def test_update_learning_task_forbidden_for_other_member(
     )
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
     _create_test_user(learning_task_schema, "other_member_task", ["Member"])
     learning_task_schema.commit()
@@ -488,7 +495,7 @@ def test_update_learning_task_forbidden_for_other_member(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"next_action": "继续学习"},
+        {"next_action": "继续学习", "expected_revision": revision},
         cookies=other_cookies,
     )
     assert status == 403
@@ -504,12 +511,13 @@ def test_update_learning_task_invalid_status_or_hours(
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
     # Status / machine-owned fields are locked on the PATCH endpoint.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "进行中"},
+        {"status": "进行中", "expected_revision": revision},
         cookies=cookies,
     )
     assert status == 422
@@ -519,7 +527,7 @@ def test_update_learning_task_invalid_status_or_hours(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"completion_quality": "随便写"},
+        {"completion_quality": "随便写", "expected_revision": revision},
         cookies=cookies,
     )
     assert status == 422

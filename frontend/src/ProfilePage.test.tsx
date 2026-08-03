@@ -62,6 +62,7 @@ const baseProfile: planningApi.CapabilityProfile = {
     items: [
       {
         id: 30,
+        revision: 0,
         annual_growth_plan_id: 20,
         growth_goal_id: 40,
         l3_code: 'P01-L2A-L3A',

@@ -561,6 +561,14 @@ function PlanDashboard({
                   {dashboard.plan_progress.延期}
                 </dd>
               </div>
+              <div className={styles.statusItem}>
+                <dt>暂停</dt>
+                <dd>{dashboard.plan_progress.暂停}</dd>
+              </div>
+              <div className={styles.statusItem}>
+                <dt>取消</dt>
+                <dd>{dashboard.plan_progress.取消}</dd>
+              </div>
             </dl>
           </div>
           <a href={`/growth/annual-plan?year=${dashboard.year}`}>
@@ -619,11 +627,11 @@ function PlanDashboard({
           <div className={styles.todoGrid}>
             <TodoItem
               label="待提交 Evidence"
-              value={dashboard.summary.pending_evidence_count}
+              value={dashboard.summary.pending_evidence_to_submit}
             />
             <TodoItem
               label="待 Buddy 复核"
-              value={dashboard.plan_progress['待 Evidence Review']}
+              value={dashboard.summary.pending_evidence_to_review}
             />
             <TodoItem
               label="计划到期"
