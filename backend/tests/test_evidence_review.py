@@ -684,6 +684,61 @@ def test_member_cannot_view_other_member_task_review_history(
     assert status in (403, 404)
 
 
+def test_dual_role_buddy_can_view_assigned_member_task_review_history(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    """Production seeds assign BOTH Buddy and Member roles to buddy accounts;
+    the history endpoint must resolve the buddy relationship, not 403 on the
+    member-only path."""
+    _, buddy_cookies, task_id, evidence_id = _seed_submitted_evidence(
+        evidence_review_schema, "member_dual_role", "buddy_dual_role"
+    )
+    buddy_id = evidence_review_schema.execute(
+        "SELECT id FROM tcp_user WHERE username = %s", ("buddy_dual_role",)
+    ).fetchone()[0]
+    assign_role(evidence_review_schema, buddy_id, "Member")
+    evidence_review_schema.commit()
+    buddy_cookies = _login(evidence_review_schema, "buddy_dual_role")
+
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/review",
+        {"conclusion": "通过", "feedback": "符合预期"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+
+    status, history, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}/evidence-reviews",
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert len(history) == 1
+    assert history[0]["conclusion"] == "通过"
+
+
+def test_dual_role_buddy_cannot_view_unassigned_member_task_review_history(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    """The dual-role fallback must not widen access: a buddy with the Member
+    role still cannot read another member's task history."""
+    _, _, other_task_id, _ = _seed_submitted_evidence(
+        evidence_review_schema, "member_unassigned", "buddy_unassigned"
+    )
+
+    _create_test_user(evidence_review_schema, "stranger_dual_role", ["Buddy", "Member"])
+    evidence_review_schema.commit()
+    stranger_cookies = _login(evidence_review_schema, "stranger_dual_role")
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{other_task_id}/evidence-reviews",
+        cookies=stranger_cookies,
+    )
+    assert status in (403, 404)
+
+
 def _summary(
     connection: psycopg.Connection, username: str, year: int
 ) -> tuple[int, dict[str, int] | None]:

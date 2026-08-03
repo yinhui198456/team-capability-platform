@@ -734,8 +734,17 @@ def get_task_evidence_reviews(
     user: CurrentUser, connection: Connection, task_id: int
 ) -> list[dict[str, object]]:
     try:
+        # Dual-role accounts (production seeds give buddies the Member role
+        # too): the member path 403s on other members' tasks, so fall through
+        # to the buddy path instead of rejecting outright.
         if "Member" in user["roles"]:
-            return list_evidence_reviews_for_task(connection, int(user["id"]), task_id)
+            try:
+                return list_evidence_reviews_for_task(
+                    connection, int(user["id"]), task_id
+                )
+            except PermissionError:
+                if "Buddy" not in user["roles"]:
+                    raise
         if "Buddy" in user["roles"]:
             return list_evidence_reviews_for_buddy_task(
                 connection, int(user["id"]), task_id
