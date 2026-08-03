@@ -22,6 +22,7 @@ from tests.test_migration_v0009_upgrade import (
 )
 
 V0010_VERSION = "0010_learning_execution"
+LATEST_VERSION = "0011_monthly_review"
 
 
 def _run_until_v0009(connection: psycopg.Connection) -> None:
@@ -375,7 +376,7 @@ def test_v0010_rerun_is_idempotent(
             "SELECT version FROM schema_migration ORDER BY version"
         ).fetchall()
     ]
-    assert versions[-1] == V0010_VERSION
+    assert versions[-1] == LATEST_VERSION
     assert len(versions) == len(set(versions))
     assert _status_check_exists(connection)
 
@@ -402,7 +403,7 @@ def test_v0010_fresh_install_reaches_all_versions(
             "SELECT version FROM schema_migration ORDER BY version"
         ).fetchall()
     ]
-    assert versions[-1] == V0010_VERSION
-    assert len(versions) == 10
+    assert versions[-1] == LATEST_VERSION
+    assert len(versions) == 11
     # Helper schema and migration agree on the tightened status dictionary.
     assert _status_check_exists(connection)

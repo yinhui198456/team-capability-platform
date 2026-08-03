@@ -10,6 +10,7 @@ from .repository import (
     PlanItemValidationError,
     PlanningDomainError,
     TaskValidationError,
+    _assert_monthly_review_read_permission,
     archive_team_annual_plan,
     create_evidence_draft,
     create_or_publish_team_annual_plan,
@@ -21,6 +22,7 @@ from .repository import (
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
+    get_monthly_review,
     get_team_analytics,
     get_team_annual_plan_by_year,
     invalidate_progress_log,
@@ -43,6 +45,7 @@ from .repository import (
     update_learning_task,
     update_plan_item,
     update_team_annual_plan,
+    upsert_monthly_review,
     validate_team_analytics_domain_filter,
 )
 
@@ -54,6 +57,7 @@ _CONFLICT_CODES = {
     "log_idempotency_conflict",
     "review_idempotency_conflict",
     "review_already_submitted",
+    "monthly_review_revision_conflict",
 }
 
 
@@ -148,6 +152,79 @@ def get_member_dashboard_view(
 ) -> dict[str, object]:
     _require_member(user)
     return get_member_dashboard(connection, int(user["id"]), year)
+
+
+def _monthly_review_scope(roles: list[str], viewer_id: int, member_id: int) -> str:
+    if viewer_id == member_id:
+        return "本人"
+    if "Buddy" in roles:
+        return "buddy_assigned"
+    if "Leader" in roles:
+        return "leader_team"
+    return "本人"
+
+
+@planning_router.get("/monthly-reviews")
+def get_monthly_review_view(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    month: int,
+    member_id: int | None = None,
+) -> dict[str, object]:
+    target_member_id = int(member_id) if member_id is not None else int(user["id"])
+    try:
+        _assert_monthly_review_read_permission(
+            connection, int(user["id"]), user["roles"], target_member_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return get_monthly_review(
+        connection,
+        target_member_id,
+        year,
+        month,
+        scope=_monthly_review_scope(user["roles"], int(user["id"]), target_member_id),
+    )
+
+
+@planning_router.put("/monthly-reviews")
+def put_monthly_review_view(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    month: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise PlanningDomainError(
+                "expected_revision is required and must be a non-negative integer",
+                code="monthly_review_validation_error",
+                entity_type="monthly_review",
+                field="expected_revision",
+            )
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return upsert_monthly_review(
+            connection,
+            int(user["id"]),
+            year,
+            month,
+            fields,
+            expected_revision=expected,
+        )
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @planning_router.get("/annual-plan-eligibility")

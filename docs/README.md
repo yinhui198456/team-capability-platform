@@ -20,6 +20,7 @@
 | 查看当前进度、门禁和下一步 | `06_Roadmap.md`、`HANDOFF.md` |
 | 查看已执行技术验收 | `acceptance/ITERATION_3A_TECHNICAL_ACCEPTANCE.md` 至 `ITERATION_6_TECHNICAL_ACCEPTANCE.md`、`acceptance/ISSUE_63_ENGINEERING_CLOSEOUT.md`、`07_AcceptanceMapping.md` |
 | 查看能力模型与学习计划原始参考 | `reference/CapabilityModel.md`、`reference/LearningPlan.md` |
+| 查看指标字典（#64 阶段 1 聚合口径） | `reference/metric-dictionary.md` |
 
 ## 验收口径
 

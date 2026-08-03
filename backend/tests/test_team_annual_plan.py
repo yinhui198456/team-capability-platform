@@ -21,6 +21,8 @@ def _reset_team_annual_plan_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan_domain")
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan")
+        connection.execute("DROP TABLE IF EXISTS monthly_review_history")
+        connection.execute("DROP TABLE IF EXISTS monthly_review")
         connection.execute("DROP TABLE IF EXISTS capability_profile")
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")

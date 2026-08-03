@@ -167,6 +167,7 @@ _EXPECTED_VERSIONS = [
     "0008_plan_null_constraint",
     "0009_review_plan_atomic",
     "0010_learning_execution",
+    "0011_monthly_review",
 ]
 
 # Pre-v0007 planning DDL snapshot (v0006 era): plan_item.growth_goal_id is

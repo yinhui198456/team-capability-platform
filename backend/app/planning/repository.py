@@ -11,6 +11,11 @@ from ..access.repository import (
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 from .hours import parse_estimated_hours, summarize_estimated_hours
+from .metrics import (
+    grade_to_level,
+    plan_items_in_month,
+    valid_hours_by_task,
+)
 
 
 def _now(connection: psycopg.Connection) -> Any:
@@ -1557,11 +1562,277 @@ def get_monthly_hours(
     ]
 
 
+_MONTHLY_REVIEW_FIELDS = ("main_output", "problems", "next_month_focus", "notes")
+_MAX_MONTHLY_REVIEW_FIELD_LENGTH = 3000
+
+
+def _monthly_review_row(row: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "id": row[0],
+        "member_id": row[1],
+        "year": row[2],
+        "month": row[3],
+        "revision": row[4],
+        "main_output": row[5],
+        "problems": row[6],
+        "next_month_focus": row[7],
+        "notes": row[8],
+        "created_at": row[9],
+        "updated_at": row[10],
+    }
+
+
+def _monthly_review_history_rows(
+    connection: psycopg.Connection, monthly_review_id: int
+) -> list[dict[str, object]]:
+    rows = connection.execute(
+        """
+        SELECT revision, main_output, problems, next_month_focus, notes,
+               changed_by, changed_at
+        FROM monthly_review_history
+        WHERE monthly_review_id = %s
+        ORDER BY revision
+        """,
+        (monthly_review_id,),
+    ).fetchall()
+    return [
+        {
+            "revision": row[0],
+            "main_output": row[1],
+            "problems": row[2],
+            "next_month_focus": row[3],
+            "notes": row[4],
+            "changed_by": row[5],
+            "changed_at": row[6],
+        }
+        for row in rows
+    ]
+
+
+def get_monthly_review(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    month: int,
+    scope: str = "本人",
+) -> dict[str, object]:
+    """Monthly Review for one (member, year, month).
+
+    Summary values are computed from the detail rows inside the same
+    transaction, so summary and details reconcile exactly.  ``scope`` is
+    the permission scope/source resolved by the API layer (Member self,
+    assigned Buddy, team Leader).
+    """
+    now = _now(connection)
+    items = plan_items_in_month(connection, member_id, year, month)
+    task_ids = [int(d["task_id"]) for d in items if d["task_id"] is not None]
+    hours_by_task = valid_hours_by_task(connection, task_ids, year, month)
+    details = [
+        {
+            "plan_item_id": d["plan_item_id"],
+            "task_id": d["task_id"],
+            "l3_code": d["l3_code"],
+            "status": d["status"],
+            "actual_hours": hours_by_task.get(int(d["task_id"]), 0)
+            if d["task_id"] is not None
+            else 0,
+        }
+        for d in items
+    ]
+    planned = len(details)
+    completed = sum(1 for d in details if d["status"] == "已完成")
+    summary = {
+        "planned_count": planned,
+        "completed_count": completed,
+        "in_progress_count": sum(1 for d in details if d["status"] == "进行中"),
+        "delayed_count": sum(1 for d in details if d["status"] == "延期"),
+        "paused_count": sum(1 for d in details if d["status"] == "暂停"),
+        "cancelled_count": sum(1 for d in details if d["status"] == "取消"),
+        "completion_rate": completed / planned if planned else 0,
+        "actual_hours": sum(int(d["actual_hours"]) for d in details),
+    }
+
+    written: dict[str, object] | None = None
+    history: list[dict[str, object]] = []
+    written_row = connection.execute(
+        """
+        SELECT id, member_id, year, month, revision, main_output, problems,
+               next_month_focus, notes, created_at, updated_at
+        FROM monthly_review
+        WHERE member_id = %s AND year = %s AND month = %s
+        """,
+        (member_id, year, month),
+    ).fetchone()
+    if written_row is not None:
+        written = _monthly_review_row(written_row)
+        history = _monthly_review_history_rows(connection, int(written_row[0]))
+
+    return {
+        "summary": summary,
+        "details": details,
+        "written": written,
+        "history": history,
+        "meta": {
+            "year": year,
+            "scope": scope,
+            "as_of": _serialize_datetime(now),
+            "source": "monthly_review.v1",
+        },
+    }
+
+
+def upsert_monthly_review(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    month: int,
+    fields: dict[str, object],
+    *,
+    expected_revision: int,
+) -> dict[str, object]:
+    """Create or CAS-update the Member's monthly review.
+
+    Every successful write appends an immutable history row (revision 1 on
+    create, N+1 on update).  Stale revisions and validation failures raise
+    before any write; the request-scoped transaction rolls back anything
+    touched, so failures are zero partial writes.
+    """
+    if month < 1 or month > 12:
+        raise PlanningDomainError(
+            "month must be between 1 and 12",
+            code="monthly_review_validation_error",
+            entity_type="monthly_review",
+            field="month",
+        )
+    clean: dict[str, str | None] = {}
+    for name in _MONTHLY_REVIEW_FIELDS:
+        value = fields.get(name)
+        if value is not None and (
+            not isinstance(value, str) or len(value) > _MAX_MONTHLY_REVIEW_FIELD_LENGTH
+        ):
+            raise PlanningDomainError(
+                f"{name} must be a string of at most "
+                f"{_MAX_MONTHLY_REVIEW_FIELD_LENGTH} characters",
+                code="monthly_review_validation_error",
+                entity_type="monthly_review",
+                field=name,
+            )
+        clean[name] = value
+
+    row = connection.execute(
+        """
+        SELECT id, revision
+        FROM monthly_review
+        WHERE member_id = %s AND year = %s AND month = %s
+        FOR UPDATE
+        """,
+        (member_id, year, month),
+    ).fetchone()
+
+    def _conflict(current: int) -> PlanningDomainError:
+        return PlanningDomainError(
+            "monthly review revision mismatch: "
+            f"expected {expected_revision}, current {current}",
+            code="monthly_review_revision_conflict",
+            entity_type="monthly_review",
+            entity_id=row[0] if row is not None else None,
+            field="revision",
+        )
+
+    if row is None:
+        if expected_revision != 0:
+            raise _conflict(0)
+        written_row = connection.execute(
+            """
+            INSERT INTO monthly_review
+                (member_id, year, month, revision, main_output, problems,
+                 next_month_focus, notes)
+            VALUES (%s, %s, %s, 1, %s, %s, %s, %s)
+            RETURNING id, member_id, year, month, revision, main_output,
+                      problems, next_month_focus, notes, created_at, updated_at
+            """,
+            (
+                member_id,
+                year,
+                month,
+                clean["main_output"],
+                clean["problems"],
+                clean["next_month_focus"],
+                clean["notes"],
+            ),
+        ).fetchone()
+        assert written_row is not None
+        connection.execute(
+            """
+            INSERT INTO monthly_review_history
+                (monthly_review_id, revision, main_output, problems,
+                 next_month_focus, notes, changed_by)
+            VALUES (%s, 1, %s, %s, %s, %s, %s)
+            """,
+            (
+                written_row[0],
+                clean["main_output"],
+                clean["problems"],
+                clean["next_month_focus"],
+                clean["notes"],
+                member_id,
+            ),
+        )
+    else:
+        current_revision = int(row[1])
+        if current_revision != expected_revision:
+            raise _conflict(current_revision)
+        new_revision = current_revision + 1
+        connection.execute(
+            """
+            INSERT INTO monthly_review_history
+                (monthly_review_id, revision, main_output, problems,
+                 next_month_focus, notes, changed_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                row[0],
+                new_revision,
+                clean["main_output"],
+                clean["problems"],
+                clean["next_month_focus"],
+                clean["notes"],
+                member_id,
+            ),
+        )
+        written_row = connection.execute(
+            """
+            UPDATE monthly_review
+            SET revision = %s, main_output = %s, problems = %s,
+                next_month_focus = %s, notes = %s, updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, member_id, year, month, revision, main_output,
+                      problems, next_month_focus, notes, created_at, updated_at
+            """,
+            (
+                new_revision,
+                clean["main_output"],
+                clean["problems"],
+                clean["next_month_focus"],
+                clean["notes"],
+                row[0],
+            ),
+        ).fetchone()
+        assert written_row is not None
+
+    written = _monthly_review_row(written_row)
+    return {
+        "written": written,
+        "history": _monthly_review_history_rows(connection, int(written_row[0])),
+    }
+
+
 def get_member_dashboard(
     connection: psycopg.Connection, member_id: int, year: int
 ) -> dict[str, object]:
     """Return the Member-only, read-only aggregation used by UI-01."""
-    current_month = _now(connection).month
+    now = _now(connection)
+    current_month = now.month
 
     # Latest assessment of the year (including draft) drives the dashboard stage.
     latest_assessment_row = connection.execute(
@@ -1619,6 +1890,36 @@ def get_member_dashboard(
         if review_row is not None:
             review_status = review_row[0]
             review_conclusion = review_row[1]
+
+    # Applicable completion of the current (latest) assessment: of the
+    # detail rows it carries, how many already reach their effective target.
+    applicable_completion: dict[str, object] = {
+        "total": 0,
+        "completed": 0,
+        "ratio": 0,
+    }
+    if latest_assessment is not None:
+        completion_row = connection.execute(
+            """
+            SELECT COUNT(*),
+                   COUNT(*) FILTER (
+                       WHERE current_level >= COALESCE(
+                           adjusted_target_level, standard_target_level, target_level
+                       )
+                   )
+            FROM assessment_detail
+            WHERE assessment_id = %s
+            """,
+            (latest_assessment["id"],),
+        ).fetchone()
+        if completion_row is not None:
+            total = int(completion_row[0])
+            completed = int(completion_row[1])
+            applicable_completion = {
+                "total": total,
+                "completed": completed,
+                "ratio": completed / total if total else 0,
+            }
 
     # Annual plan status for the year.
     annual_plan_status_row = connection.execute(
@@ -1738,31 +2039,63 @@ def get_member_dashboard(
     ]
 
     # Gaps come from the latest submitted assessment, not limited to plan_candidate.
+    # Each gap carries its scope split (current_required vs target_progressive):
+    # scope-v1 snapshots store scope_type on the assessment detail; legacy
+    # details (NULL scope_type) fall back to the grade mapping of the gap's
+    # target against the member's current grade.
     gaps: list[dict[str, object]] = []
+    legacy_gap_scope = False
     if submitted_assessment_id is not None:
         gap_rows = connection.execute(
             """
             SELECT g.id, g.assessment_id, g.l3_code, g.current_level,
-                   g.target_level, g.gap_value, g.priority
+                   g.target_level, g.gap_value, g.priority, ad.scope_type
             FROM gap g
+            LEFT JOIN assessment_detail ad
+              ON ad.assessment_id = g.assessment_id AND ad.l3_code = g.l3_code
             WHERE g.assessment_id = %s
             ORDER BY g.l3_code
             """,
             (submitted_assessment_id,),
         ).fetchall()
-        gaps = [
-            {
-                "id": row[0],
-                "assessment_id": row[1],
-                "l3_code": row[2],
-                "current_level": row[3],
-                "target_level": row[4],
-                "gap_value": row[5],
-                "priority": row[6],
-                "plan_candidate": False,
-            }
-            for row in gap_rows
-        ]
+        member_grade_level = grade_to_level(
+            latest_assessment.get("member_current_level_snapshot")
+            if latest_assessment is not None
+            else None
+        )
+        if member_grade_level is None:
+            member_level_row = connection.execute(
+                "SELECT current_level FROM tcp_user WHERE id = %s",
+                (member_id,),
+            ).fetchone()
+            member_grade_level = (
+                grade_to_level(member_level_row[0])
+                if member_level_row is not None
+                else None
+            )
+        for row in gap_rows:
+            scope_type = row[7]
+            if scope_type is None:
+                legacy_gap_scope = True
+                scope_type = (
+                    "target_progressive"
+                    if member_grade_level is not None
+                    and int(row[4]) > member_grade_level
+                    else "current_required"
+                )
+            gaps.append(
+                {
+                    "id": row[0],
+                    "assessment_id": row[1],
+                    "l3_code": row[2],
+                    "current_level": row[3],
+                    "target_level": row[4],
+                    "gap_value": row[5],
+                    "priority": row[6],
+                    "plan_candidate": False,
+                    "scope_type": scope_type,
+                }
+            )
 
     contexts = get_l3_contexts(
         connection,
@@ -1777,9 +2110,121 @@ def get_member_dashboard(
             **latest_assessment,
             "review_status": review_status,
             "review_conclusion": review_conclusion,
+            "applicable_completion": applicable_completion,
         }
 
+    # Current-month block: shared aggregation layer over plan_month, the six
+    # states, latest-version pending evidence, and valid logs of the month.
+    month_items = plan_items_in_month(connection, member_id, year, current_month)
+    month_task_ids = [
+        int(d["task_id"]) for d in month_items if d["task_id"] is not None
+    ]
+    month_hours = valid_hours_by_task(connection, month_task_ids, year, current_month)
+    month_plan_item_ids = [int(d["plan_item_id"]) for d in month_items]
+    pending_evidence_plan_item_ids: set[int] = set()
+    if month_plan_item_ids:
+        pending_evidence_rows = connection.execute(
+            """
+            SELECT DISTINCT lt.plan_item_id
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            WHERE lt.plan_item_id = ANY(%s)
+              AND e.status IN ('草稿', '需补充')
+              AND NOT EXISTS (
+                  SELECT 1 FROM evidence superseding
+                  WHERE superseding.supersedes_evidence_id = e.id
+              )
+            """,
+            (month_plan_item_ids,),
+        ).fetchall()
+        pending_evidence_plan_item_ids = {int(row[0]) for row in pending_evidence_rows}
+    current_month_out = {
+        "planned_count": len(month_plan_item_ids),
+        "planned_ids": month_plan_item_ids,
+        "in_progress_count": sum(1 for d in month_items if d["status"] == "进行中"),
+        "delayed_count": sum(1 for d in month_items if d["status"] == "延期"),
+        "pending_evidence_count": len(
+            pending_evidence_plan_item_ids & set(month_plan_item_ids)
+        ),
+        "actual_hours": sum(
+            month_hours.get(int(d["task_id"]), 0)
+            for d in month_items
+            if d["task_id"] is not None
+        ),
+    }
+
+    # Fixed decision chain — the next action is never derived from invented
+    # priorities (gaps keep exactly the Member's own priority input).
+    next_action: dict[str, object] = {
+        "action_key": "none",
+        "message": "当前没有需要处理的事项",
+        "count": 0,
+    }
+    if latest_assessment is not None and latest_assessment["status"] == "草稿":
+        next_action = {
+            "action_key": "complete_assessment",
+            "message": "完成并提交当前年度的能力评估",
+            "count": 1,
+        }
+    elif review_status == "待复核":
+        next_action = {
+            "action_key": "await_buddy_review",
+            "message": "等待 Buddy 复核当前评估",
+            "count": 1,
+        }
+    elif (
+        latest_assessment is not None and latest_assessment["status"] == "建议调整"
+    ) or review_conclusion == "建议调整":
+        next_action = {
+            "action_key": "revise_assessment",
+            "message": "按复核意见调整当前评估",
+            "count": 1,
+        }
+    elif (
+        pending_evidence_to_submit := (
+            int(pending_evidence_row[0]) if pending_evidence_row else 0
+        )
+    ) > 0:
+        next_action = {
+            "action_key": "submit_evidence",
+            "message": "提交待提交的学习证据",
+            "count": pending_evidence_to_submit,
+        }
+    elif progress.get("延期", 0) > 0:
+        next_action = {
+            "action_key": "handle_delayed",
+            "message": "处理延期的计划项",
+            "count": progress.get("延期", 0),
+        }
+    elif any(g.get("priority") is None for g in gaps):
+        next_action = {
+            "action_key": "set_priorities",
+            "message": "为差距项设置优先级",
+            "count": sum(1 for g in gaps if g.get("priority") is None),
+        }
+
+    gap_summary = {
+        "current_required": sum(
+            1 for g in gaps if g["scope_type"] == "current_required"
+        ),
+        "target_progressive": sum(
+            1 for g in gaps if g["scope_type"] == "target_progressive"
+        ),
+        "derivation": "legacy_fallback" if legacy_gap_scope else "scope_v1",
+    }
+
     return {
+        "meta": {
+            "year": year,
+            "scope": "本人",
+            "as_of": _serialize_datetime(now),
+            "source": "member_dashboard.v1",
+            "denominator_source": (
+                "assessment_details"
+                if submitted_assessment_id is not None
+                else "planned_items"
+            ),
+        },
         "year": year,
         "assessment": assessment_out,
         "annual_plan_status": annual_plan_status,
@@ -1824,6 +2269,9 @@ def get_member_dashboard(
             for code in ("P01", "P02", "P03", "C01", "C02", "C03")
         ],
         "gaps": gaps,
+        "gap_summary": gap_summary,
+        "current_month": current_month_out,
+        "next_action": next_action,
         "current_tasks": current_tasks,
     }
 
@@ -2585,6 +3033,29 @@ def _assert_profile_view_permission(
     raise PermissionError("insufficient permissions to view capability profile")
 
 
+def _assert_monthly_review_read_permission(
+    connection: psycopg.Connection,
+    viewer_id: int,
+    viewer_roles: list[str],
+    member_id: int,
+) -> None:
+    """Read scope for Monthly Reviews: Member self; assigned Buddy; team
+    Leader; Admin never bypasses business isolation (self only)."""
+    if "Leader" in viewer_roles:
+        return
+    if "Admin" in viewer_roles:
+        if viewer_id != member_id:
+            raise PermissionError("admin may only view their own monthly review")
+        return
+    if viewer_id == member_id and "Member" in viewer_roles:
+        return
+    if "Buddy" in viewer_roles and is_member_assigned_to_buddy(
+        connection, member_id, viewer_id
+    ):
+        return
+    raise PermissionError("insufficient permissions to view monthly review")
+
+
 def _profile_row(row: tuple[Any, ...]) -> dict[str, object]:
     return {
         "id": row[0],
@@ -2609,12 +3080,43 @@ def _assessment_review_row(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
+# Provenance columns appended after the 16 _plan_item_row columns: the
+# assessment → snapshot → plan item chain (scope_type, assessment_revision,
+# planning_source_type, source assessment/detail ids, snapshot ids and the
+# frozen job-grade/level snapshots).
+_PLAN_ITEM_PROVENANCE_KEYS = (
+    "source_assessment_id",
+    "source_assessment_detail_id",
+    "planning_snapshot_id",
+    "l3_node_id",
+    "l1_code",
+    "l1_name",
+    "l2_code",
+    "l2_name",
+    "l3_name",
+    "scope_type",
+    "standard_target_level",
+    "adjusted_target_level",
+    "effective_target_level",
+    "standard_job_level_snapshot",
+    "member_current_level_snapshot",
+    "member_target_level_snapshot",
+    "plan_quarter",
+    "plan_month",
+    "planning_source_type",
+    "assessment_revision",
+    "gap_value",
+    "include_in_plan",
+)
+
+
 def _annual_plan_with_items_for_member(
     connection: psycopg.Connection, member_id: int, year: int
 ) -> dict[str, object] | None:
     row = connection.execute(
         """
-        SELECT id, member_id, year, plan_cycle, status, start_date, end_date, created_at
+        SELECT id, member_id, year, plan_cycle, status, start_date, end_date,
+               created_at, source_assessment_id
         FROM annual_growth_plan
         WHERE member_id = %s AND year = %s
         """,
@@ -2628,7 +3130,15 @@ def _annual_plan_with_items_for_member(
                pi.current_level, pi.target_level, pi.priority, pi.learning_material,
                pi.learning_task_content, pi.expected_output, pi.estimated_hours,
                pi.plan_start_date, pi.plan_end_date, pi.target_month, pi.status,
-               pi.revision
+               pi.revision,
+               pi.source_assessment_id, pi.source_assessment_detail_id,
+               pi.planning_snapshot_id, pi.l3_node_id, pi.l1_code, pi.l1_name,
+               pi.l2_code, pi.l2_name, pi.l3_name, pi.scope_type,
+               pi.standard_target_level, pi.adjusted_target_level,
+               pi.effective_target_level, pi.standard_job_level_snapshot,
+               pi.member_current_level_snapshot, pi.member_target_level_snapshot,
+               pi.plan_quarter, pi.plan_month, pi.planning_source_type,
+               pi.assessment_revision, pi.gap_value, pi.include_in_plan
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s AND agp.year = %s
@@ -2636,7 +3146,12 @@ def _annual_plan_with_items_for_member(
         """,
         (member_id, year),
     ).fetchall()
-    plan_items = [_plan_item_row(item) for item in items]
+    plan_items = []
+    for item in items:
+        plan_item = _plan_item_row(item)
+        for index, key in enumerate(_PLAN_ITEM_PROVENANCE_KEYS, start=16):
+            plan_item[key] = item[index]
+        plan_items.append(plan_item)
     return {
         "id": row[0],
         "member_id": row[1],
@@ -2646,66 +3161,77 @@ def _annual_plan_with_items_for_member(
         "start_date": row[5],
         "end_date": row[6],
         "created_at": row[7],
+        "source_assessment_id": row[8],
         "items": plan_items,
         "estimated_hours_summary": _estimated_hours_summary(plan_items),
     }
 
 
-def _learning_task_with_logs_and_evidences(
-    connection: psycopg.Connection, plan_item_id: int
-) -> dict[str, object] | None:
-    row = connection.execute(
+def _learning_tasks_with_logs_and_evidences(
+    connection: psycopg.Connection, plan_item_ids: list[int]
+) -> dict[int, dict[str, object]]:
+    """Tasks of many plan items with their logs and evidences — 3 queries
+    total (tasks, logs, evidences), never one burst per plan item."""
+    if not plan_item_ids:
+        return {}
+    task_rows = connection.execute(
         f"""
         SELECT {_prefixed(_TASK_COLUMNS, "lt")}
         FROM learning_task lt
-        WHERE lt.plan_item_id = %s
+        WHERE lt.plan_item_id = ANY(%s)
         """,
-        (plan_item_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    task_id = row[0]
-    logs = connection.execute(
-        f"""
-        SELECT {_LOG_COLUMNS}
-        FROM learning_progress_log
-        WHERE task_id = %s
-        ORDER BY record_date DESC
-        """,
-        (task_id,),
+        (list(plan_item_ids),),
     ).fetchall()
-    evidences = connection.execute(
-        f"""
-        SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
-               er.id, er.status, er.conclusion, er.feedback, er.reviewed_at
-        FROM evidence e
-        LEFT JOIN evidence_review er ON er.evidence_id = e.id
-        WHERE e.learning_task_id = %s
-        ORDER BY e.version_number DESC
-        """,
-        (task_id,),
-    ).fetchall()
-    return {
-        **_learning_task_row(row),
-        "progress_logs": [_progress_log_row(log) for log in logs],
-        "evidences": [
-            {
-                **_evidence_row(evidence[:19]),
+    tasks: dict[int, dict[str, object]] = {}
+    plan_item_by_task: dict[int, int] = {}
+    for row in task_rows:
+        task = _learning_task_row(row)
+        task["progress_logs"] = []
+        task["evidences"] = []
+        tasks[int(task["id"])] = task
+        plan_item_by_task[int(task["id"])] = int(task["plan_item_id"])
+    task_ids = list(tasks)
+    if task_ids:
+        log_rows = connection.execute(
+            f"""
+            SELECT {_LOG_COLUMNS}
+            FROM learning_progress_log
+            WHERE task_id = ANY(%s)
+            ORDER BY record_date DESC
+            """,
+            (task_ids,),
+        ).fetchall()
+        for log_row in log_rows:
+            log = _progress_log_row(log_row)
+            tasks[int(log["task_id"])]["progress_logs"].append(log)
+        evidence_rows = connection.execute(
+            f"""
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
+                   er.id, er.status, er.conclusion, er.feedback, er.reviewed_at
+            FROM evidence e
+            LEFT JOIN evidence_review er ON er.evidence_id = e.id
+            WHERE e.learning_task_id = ANY(%s)
+            ORDER BY e.version_number DESC
+            """,
+            (task_ids,),
+        ).fetchall()
+        for evidence_row in evidence_rows:
+            evidence = {
+                **_evidence_row(evidence_row[:19]),
                 "review": (
                     {
-                        "id": evidence[19],
-                        "status": evidence[20],
-                        "conclusion": evidence[21],
-                        "feedback": evidence[22],
-                        "reviewed_at": evidence[23],
+                        "id": evidence_row[19],
+                        "status": evidence_row[20],
+                        "conclusion": evidence_row[21],
+                        "feedback": evidence_row[22],
+                        "reviewed_at": evidence_row[23],
                     }
-                    if evidence[19] is not None
+                    if evidence_row[19] is not None
                     else None
                 ),
             }
-            for evidence in evidences
-        ],
-    }
+            tasks[int(evidence_row[1])]["evidences"].append(evidence)
+    return {plan_item_by_task[task_id]: task for task_id, task in tasks.items()}
 
 
 def get_capability_profile(
@@ -2748,7 +3274,7 @@ def get_capability_profile(
     assessment_rows = connection.execute(
         """
         SELECT id, member_id, year, version, assessment_type, status,
-               created_at, submitted_at, archived_at
+               created_at, submitted_at, archived_at, assessment_scope_version
         FROM assessment
         WHERE member_id = %s AND year = %s
         ORDER BY created_at DESC
@@ -2779,6 +3305,7 @@ def get_capability_profile(
                 "created_at": assessment_row[6],
                 "submitted_at": assessment_row[7],
                 "archived_at": assessment_row[8],
+                "scope_version": assessment_row[9],
                 "reviews": [
                     _assessment_review_row(review_row) for review_row in review_rows
                 ],
@@ -2787,16 +3314,26 @@ def get_capability_profile(
 
     annual_plan = _annual_plan_with_items_for_member(connection, member_id, year)
     if annual_plan is not None:
-        enriched_items = []
-        for item in annual_plan["items"]:
-            task = _learning_task_with_logs_and_evidences(connection, int(item["id"]))
-            enriched_items.append({**item, "learning_task": task})
+        tasks_by_plan_item = _learning_tasks_with_logs_and_evidences(
+            connection, [int(item["id"]) for item in annual_plan["items"]]
+        )
+        enriched_items = [
+            {
+                **item,
+                "learning_task": tasks_by_plan_item.get(int(item["id"])),
+            }
+            for item in annual_plan["items"]
+        ]
         contexts = get_l3_contexts(
             connection, [str(item["l3_code"]) for item in enriched_items]
         )
         for item in enriched_items:
-            context = contexts[str(item["l3_code"])]
-            item.update(context)
+            # Frozen provenance keys (l1/l2/l3 codes, names) win over live
+            # catalog context; context only fills keys still missing.
+            context = contexts.get(str(item["l3_code"]), {})
+            for key, value in context.items():
+                if key not in item or item[key] is None:
+                    item[key] = value
             task = item["learning_task"]
             if isinstance(task, dict):
                 task.update(context)
@@ -2850,8 +3387,64 @@ def get_capability_profile(
         str(status_row[0]): int(status_row[1]) for status_row in evidence_status_rows
     }
 
+    # Member-written monthly reviews with their immutable history.
+    monthly_reviews: list[dict[str, object]] = []
+    review_rows = connection.execute(
+        """
+        SELECT id, member_id, year, month, revision, main_output, problems,
+               next_month_focus, notes, created_at, updated_at
+        FROM monthly_review
+        WHERE member_id = %s AND year = %s
+        ORDER BY month, id
+        """,
+        (member_id, year),
+    ).fetchall()
+    if review_rows:
+        history_rows = connection.execute(
+            """
+            SELECT monthly_review_id, revision, main_output, problems,
+                   next_month_focus, notes, changed_by, changed_at
+            FROM monthly_review_history
+            WHERE monthly_review_id = ANY(%s)
+            ORDER BY monthly_review_id, revision
+            """,
+            ([int(row[0]) for row in review_rows],),
+        ).fetchall()
+        history_by_review: dict[int, list[dict[str, object]]] = {}
+        for history_row in history_rows:
+            history_by_review.setdefault(int(history_row[0]), []).append(
+                {
+                    "revision": history_row[1],
+                    "main_output": history_row[2],
+                    "problems": history_row[3],
+                    "next_month_focus": history_row[4],
+                    "notes": history_row[5],
+                    "changed_by": history_row[6],
+                    "changed_at": history_row[7],
+                }
+            )
+        for review_row in review_rows:
+            review = _monthly_review_row(review_row)
+            review["history"] = history_by_review.get(int(review_row[0]), [])
+            monthly_reviews.append(review)
+
+    if viewer_id == member_id:
+        view_scope = "本人"
+    elif "Buddy" in viewer_roles:
+        view_scope = "buddy_assigned"
+    elif "Leader" in viewer_roles:
+        view_scope = "leader_team"
+    else:
+        view_scope = "本人"
+
     return {
         **profile,
+        "meta": {
+            "year": year,
+            "scope": view_scope,
+            "as_of": _serialize_datetime(_now(connection)),
+            "source": "capability_profile.v1",
+        },
         "member": {
             "id": member_row[0],
             "username": member_row[1],
@@ -2861,6 +3454,7 @@ def get_capability_profile(
         },
         "assessments": assessments,
         "annual_plan": annual_plan,
+        "monthly_reviews": monthly_reviews,
         "statistics": {
             "total_learning_hours": total_learning_hours,
             "total_planned_hours": planned_hours["min_hours"] or 0,

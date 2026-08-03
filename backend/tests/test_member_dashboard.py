@@ -3,6 +3,7 @@ import pytest
 
 from tests.test_capability_profile import (
     _build_full_profile,
+    _login,
     _request,
 )
 from tests.test_capability_profile import (
@@ -101,7 +102,6 @@ def test_member_dashboard_rejects_non_members(
     profile_schema: psycopg.Connection,
 ) -> None:
     _build_full_profile(profile_schema, "dashboard_member", "dashboard_buddy")
-    from tests.test_capability_profile import _login
 
     status, _, _ = _request(
         "GET",
@@ -147,7 +147,6 @@ def test_member_dashboard_evidence_todos_exclude_superseded(
 ) -> None:
     """Issue #63: evidence todos are per-role and never count superseded
     versions (each supersedes chain contributes at most one pending item)."""
-    from tests.test_capability_profile import _login
 
     _, member_cookies = _build_full_profile(profile_schema)
     status, tasks, _ = _request(
@@ -200,3 +199,221 @@ def test_member_dashboard_evidence_todos_exclude_superseded(
     )
     assert status == 200
     assert _evidence_todos(profile_schema, member_cookies) == (0, 1)
+
+
+# ── Issue #64 phase 1: dashboard semantic alignment ────────────────────────
+
+
+def _dashboard(profile_schema, member_cookies: dict[str, str], year: int = 2026):
+    status, body, _ = _request(
+        "GET", f"/api/planning/member-dashboard?year={year}", cookies=member_cookies
+    )
+    assert status == 200
+    assert body is not None
+    return body
+
+
+def test_dashboard_meta_identifies_scope_and_as_of(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+    body = _dashboard(profile_schema, member_cookies)
+
+    meta = body["meta"]
+    assert meta["year"] == 2026
+    assert meta["scope"] == "本人"
+    assert meta["as_of"] is not None
+    assert isinstance(meta["source"], str) and meta["source"]
+    # The Member denominator is the member's own assessment/plan data,
+    # never the whole 310-node standard library.
+    assert meta["denominator_source"] in ("assessment_details", "planned_items")
+    assert meta["denominator_source"] != "standard_catalog"
+
+
+def test_dashboard_gap_split_current_vs_target(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+    body = _dashboard(profile_schema, member_cookies)
+
+    gap_summary = body["gap_summary"]
+    assert set(gap_summary) == {
+        "current_required",
+        "target_progressive",
+        "derivation",
+    }
+    assert gap_summary["derivation"] in ("scope_v1", "legacy_fallback")
+    # Counts reconcile with the traceable gap rows.
+    assert gap_summary["current_required"] + gap_summary["target_progressive"] == len(
+        body["gaps"]
+    )
+    assert all(
+        g["scope_type"] in ("current_required", "target_progressive")
+        for g in body["gaps"]
+    )
+
+
+def test_dashboard_applicable_completion_of_open_assessment(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+    body = _dashboard(profile_schema, member_cookies)
+
+    assessment = body["assessment"]
+    completion = assessment["applicable_completion"]
+    assert set(completion) == {"total", "completed", "ratio"}
+    total = completion["total"]
+    expected_ratio = completion["completed"] / total if total else 0
+    assert abs(completion["ratio"] - expected_ratio) < 1e-9
+    assert total <= len(body["gaps"])
+
+
+def test_dashboard_current_month_counts_reconcilable(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id, member_cookies = _build_full_profile(profile_schema)
+    # Move the sole plan item into the current month (2026-08, Q3), 进行中.
+    profile_schema.execute(
+        """
+        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3'
+        WHERE annual_growth_plan_id IN (
+            SELECT id FROM annual_growth_plan WHERE member_id = %s
+        )
+        """,
+        (member_id,),
+    )
+    profile_schema.commit()
+
+    body = _dashboard(profile_schema, member_cookies)
+    current_month = body["current_month"]
+    assert current_month["planned_count"] == 1
+    assert current_month["in_progress_count"] == 1
+    assert current_month["delayed_count"] == 0
+    assert current_month["pending_evidence_count"] == 0
+    assert len(current_month["planned_ids"]) == 1
+    # Reconciles with the traceable detail identifiers.
+    assert current_month["planned_count"] == len(current_month["planned_ids"])
+    assert current_month["in_progress_count"] == sum(
+        1
+        for pi_id in current_month["planned_ids"]
+        if any(t["plan_item_id"] == pi_id for t in body["current_tasks"])
+    )
+    assert current_month["actual_hours"] == 0  # March log is not an August log
+
+
+def test_dashboard_current_month_delayed_and_pending_evidence(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id, member_cookies = _build_full_profile(profile_schema)
+    profile_schema.execute(
+        """
+        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3', status = '延期'
+        WHERE annual_growth_plan_id IN (
+            SELECT id FROM annual_growth_plan WHERE member_id = %s
+        )
+        """,
+        (member_id,),
+    )
+    profile_schema.execute(
+        """
+        UPDATE learning_task SET status = '延期'
+        WHERE plan_item_id IN (
+            SELECT pi.id FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s
+        )
+        """,
+        (member_id,),
+    )
+    # Draft evidence v2 (member pending) superseding the approved v1.
+    profile_schema.execute(
+        """
+        UPDATE evidence
+        SET status = '草稿', version_number = 2,
+            supersedes_evidence_id = NULL
+        WHERE learning_task_id IN (
+            SELECT lt.id FROM learning_task lt
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s
+        )
+        """,
+        (member_id,),
+    )
+    profile_schema.commit()
+
+    body = _dashboard(profile_schema, member_cookies)
+    current_month = body["current_month"]
+    assert current_month["delayed_count"] == 1
+    assert current_month["in_progress_count"] == 0
+    assert current_month["pending_evidence_count"] == 1
+    assert current_month["planned_count"] == 1
+
+
+def test_dashboard_next_action_deterministic_no_auto_priority(
+    profile_schema: psycopg.Connection,
+) -> None:
+    member_id, member_cookies = _build_full_profile(profile_schema)
+
+    # Seed state (assessment archived, task 进行中, evidence approved): the
+    # next action falls out of a fixed decision chain, never from derived
+    # priorities.
+    body = _dashboard(profile_schema, member_cookies)
+    assert set(body["next_action"]) == {"action_key", "message", "count"}
+    assert body["next_action"]["action_key"] in (
+        "complete_assessment",
+        "await_buddy_review",
+        "revise_assessment",
+        "submit_evidence",
+        "handle_delayed",
+        "set_priorities",
+        "none",
+    )
+
+    # Delayed item → handle_delayed, traceable to the delayed plan item.
+    profile_schema.execute(
+        """
+        UPDATE plan_item SET status = '延期'
+        WHERE annual_growth_plan_id IN (
+            SELECT id FROM annual_growth_plan WHERE member_id = %s
+        )
+        """,
+        (member_id,),
+    )
+    profile_schema.commit()
+    body = _dashboard(profile_schema, member_cookies)
+    assert body["next_action"]["action_key"] == "handle_delayed"
+    assert body["next_action"]["count"] == 1
+
+    # Priorities remain exactly the Member's own input.
+    assert body["gaps"][0]["priority"] == "高"
+
+
+def test_dashboard_no_310_denominator(
+    profile_schema: psycopg.Connection,
+) -> None:
+    _, member_cookies = _build_full_profile(profile_schema)
+    body = _dashboard(profile_schema, member_cookies)
+
+    # 1 assessment detail / 1 plan item — never 310 standards.
+    assert len(body["gaps"]) == 1
+    assert body["plan_progress"]["total"] == 1
+    assert body["summary"]["annual_planned_hours"] == 10
+
+
+def test_dashboard_query_count_bounded(
+    profile_schema: psycopg.Connection,
+) -> None:
+    from app.planning.repository import get_member_dashboard
+    from tests.test_monthly_review import _CountingConnection
+
+    member_id, _ = _build_full_profile(profile_schema)
+    profile_schema.commit()
+
+    counted = _CountingConnection(profile_schema)
+    result = get_member_dashboard(counted, member_id, 2026)
+    assert result is not None
+    assert counted.statement_count < 30, (
+        f"member dashboard read issued {counted.statement_count} statements; "
+        "shared aggregation must stay bounded for team-sized data"
+    )
