@@ -80,6 +80,9 @@ const baseProfile: planningApi.CapabilityProfile = {
         plan_end_date: null,
         target_month: null,
         status: '进行中',
+        scope_type: 'current_required',
+        source_assessment_id: 10,
+        planning_source_type: 'assessment_approval',
         learning_task: {
           id: 50,
           plan_item_id: 30,
@@ -160,6 +163,47 @@ const baseProfile: planningApi.CapabilityProfile = {
       },
     ],
   },
+  monthly_reviews: [
+    {
+      id: 9,
+      member_id: 1,
+      year: 2026,
+      month: 5,
+      revision: 2,
+      main_output: '完成数据建模规范初稿',
+      problems: '排期紧张',
+      next_month_focus: '推进 C01 任务',
+      notes: '备注文本',
+      created_at: '2026-05-31T10:00:00Z',
+      updated_at: '2026-06-02T09:00:00Z',
+      history: [
+        {
+          revision: 1,
+          main_output: '完成数据建模规范初稿',
+          problems: null,
+          next_month_focus: null,
+          notes: null,
+          changed_by: 1,
+          changed_at: '2026-05-31T10:00:00Z',
+        },
+        {
+          revision: 2,
+          main_output: '完成数据建模规范初稿',
+          problems: '排期紧张',
+          next_month_focus: '推进 C01 任务',
+          notes: '备注文本',
+          changed_by: 1,
+          changed_at: '2026-06-02T09:00:00Z',
+        },
+      ],
+    },
+  ],
+  meta: {
+    year: 2026,
+    scope: '本人',
+    as_of: '2026-06-02T09:00:00Z',
+    source: 'capability_profile.v1',
+  },
   statistics: {
     total_learning_hours: 5,
     total_planned_hours: 10,
@@ -217,6 +261,39 @@ describe('ProfilePage', () => {
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()
     expect(screen.getByText(/Review 结论：通过/)).toBeTruthy()
+  })
+
+  it('shows plan-item provenance scope and monthly review history', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('region', { name: '年度成长闭环摘要' }),
+      ).toBeTruthy()
+    })
+
+    // 计划项展示 assessment 快照推导的 scope（必备/进阶），不暗示任务完成即晋级。
+    const item = screen.getByRole('article', { name: '计划项：P01-L2A-L3A' })
+    expect(item.textContent).toContain('必备')
+    expect(item.textContent).toContain('来源自评')
+
+    // 月度复盘记录区展示不可变修订历史。
+    const reviews = screen.getByRole('region', { name: '月度复盘记录' })
+    expect(reviews.textContent).toContain('5 月')
+    expect(reviews.textContent).toContain('完成数据建模规范初稿')
+    expect(reviews.textContent).toContain('v1')
+    expect(reviews.textContent).toContain('v2')
   })
 
   it('shows the redesigned landmarks in the capability profile', async () => {
@@ -380,6 +457,13 @@ describe('ProfilePage', () => {
       },
       assessments: [],
       annual_plan: null,
+      monthly_reviews: [],
+      meta: {
+        year: 2026,
+        scope: '负责成员',
+        as_of: null,
+        source: 'capability_profile.v1',
+      },
       statistics: {
         total_learning_hours: 0,
         total_planned_hours: 0,
@@ -444,6 +528,13 @@ describe('ProfilePage', () => {
       },
       assessments: [],
       annual_plan: null,
+      monthly_reviews: [],
+      meta: {
+        year: 2026,
+        scope: '负责成员',
+        as_of: null,
+        source: 'capability_profile.v1',
+      },
       statistics: {
         total_learning_hours: 0,
         total_planned_hours: 0,

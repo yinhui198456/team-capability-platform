@@ -305,6 +305,121 @@ def test_monthly_review_summary_reconciles_with_details(
     assert {d["plan_item_id"] for d in details} >= {base_item, delayed}
 
 
+def test_monthly_review_details_and_summary_carry_estimated_hours(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """P1-2: details expose the raw estimated hours plus a parseable
+    interpretation; the summary estimated-hours block reconciles exactly
+    from the detail rows (single value / range / unparsable / null)."""
+    member_id, member_cookies = _build_full_profile(profile_schema)
+    base_item = _plan_item_id(profile_schema, member_id)
+    # Make every plan-item value explicit so the expected parse is exact.
+    profile_schema.execute(
+        "UPDATE plan_item SET estimated_hours = '10' WHERE id = %s", (base_item,)
+    )
+    _set_plan_item_status(profile_schema, base_item, "已完成")
+    _clone_plan_item(
+        profile_schema,
+        base_item,
+        "P01-L2A-L3B",
+        status="进行中",
+        estimated_hours="6-8",
+        plan_month=5,
+    )
+    _clone_plan_item(
+        profile_schema,
+        base_item,
+        "P01-L2A-L3C",
+        status="延期",
+        estimated_hours="随时",
+        plan_month=5,
+    )
+    _clone_plan_item(
+        profile_schema,
+        base_item,
+        "P01-L2A-L3D",
+        status="暂停",
+        estimated_hours=None,
+        plan_month=5,
+    )
+    for l3_code in ("P01-L2A-L3B", "P01-L2A-L3C", "P01-L2A-L3D"):
+        _ensure_l3_node(profile_schema, l3_code)
+    profile_schema.commit()
+
+    status, body, _ = _get_review(profile_schema, member_cookies, month=5)
+    assert status == 200
+    assert body is not None
+    details = body["details"]
+    summary = body["summary"]
+
+    # Every detail row carries the raw value and a parseable interpretation.
+    for detail in details:
+        assert "estimated_hours" in detail, detail
+        assert "estimated_hours_parsed" in detail, detail
+    by_code = {d["l3_code"]: d for d in details}
+    assert by_code["P01-L2A-L3A"]["estimated_hours"] == "10"
+    assert by_code["P01-L2A-L3A"]["estimated_hours_parsed"] == {
+        "raw": "10",
+        "min_hours": 10.0,
+        "max_hours": 10.0,
+        "is_valid": True,
+        "is_range": False,
+    }
+    assert by_code["P01-L2A-L3B"]["estimated_hours"] == "6-8"
+    assert by_code["P01-L2A-L3B"]["estimated_hours_parsed"] == {
+        "raw": "6-8",
+        "min_hours": 6.0,
+        "max_hours": 8.0,
+        "is_valid": True,
+        "is_range": True,
+    }
+    assert by_code["P01-L2A-L3C"]["estimated_hours"] == "随时"
+    assert by_code["P01-L2A-L3C"]["estimated_hours_parsed"] == {
+        "raw": "随时",
+        "min_hours": None,
+        "max_hours": None,
+        "is_valid": False,
+        "is_range": False,
+    }
+    assert by_code["P01-L2A-L3D"]["estimated_hours"] is None
+    assert by_code["P01-L2A-L3D"]["estimated_hours_parsed"] == {
+        "raw": None,
+        "min_hours": None,
+        "max_hours": None,
+        "is_valid": False,
+        "is_range": False,
+    }
+
+    # Summary estimated hours are exactly the shared summarize semantics over
+    # the detail raw values — no separate aggregation path to drift.
+    from app.planning.hours import summarize_estimated_hours
+
+    expected_summary = summarize_estimated_hours(
+        [d["estimated_hours"] for d in details]
+    )
+    assert (
+        summary["estimated_hours_summary"]
+        == expected_summary
+        == {
+            "min_hours": 16.0,
+            "max_hours": 18.0,
+            "has_values": True,
+            "has_unparsed": True,
+        }
+    )
+
+    # An empty month reports the zeroed summary block, not a missing key.
+    status, body, _ = _get_review(profile_schema, member_cookies, month=2)
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["estimated_hours_summary"] == {
+        "min_hours": 0,
+        "max_hours": 0,
+        "has_values": False,
+        "has_unparsed": False,
+    }
+
+
 def test_monthly_review_details_are_month_scoped(
     profile_schema: psycopg.Connection,
 ) -> None:

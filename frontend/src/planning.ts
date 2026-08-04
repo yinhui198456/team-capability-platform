@@ -189,6 +189,11 @@ export type MemberDashboardAssessment = {
   review_conclusion: '认可' | '建议调整' | null
   member_current_level_snapshot?: string | null
   member_target_level_snapshot?: string | null
+  applicable_completion?: {
+    total: number
+    completed: number
+    ratio: number
+  }
 }
 
 export type MemberDashboard = {
@@ -225,6 +230,31 @@ export type MemberDashboard = {
   }
   domain_radar: { domain_code: string; score: number }[]
   gaps: EligibleGap[]
+  gap_summary: {
+    current_required: number
+    target_progressive: number
+    derivation: 'scope_v1' | 'legacy_fallback'
+  }
+  current_month: {
+    planned_count: number
+    planned_ids: number[]
+    in_progress_count: number
+    delayed_count: number
+    pending_evidence_count: number
+    actual_hours: number
+  }
+  next_action: {
+    action_key: string
+    message: string
+    count: number
+  }
+  meta: {
+    year: number
+    scope: string
+    as_of: string | null
+    source: string
+    denominator_source?: string | null
+  }
   current_tasks: LearningTask[]
 }
 
@@ -478,10 +508,72 @@ export type ProgressLogCreate = {
   correction_of_log_id?: number
 }
 
-export type MonthlyHours = {
-  month: number
-  total_hours: number
+export type MonthlyReviewDetail = {
+  plan_item_id: number
+  task_id: number | null
+  l3_code: string
+  status: string
+  estimated_hours: string | null
+  estimated_hours_parsed: EstimatedHours
+  actual_hours: number
 }
+
+export type MonthlyReviewSummary = {
+  planned_count: number
+  completed_count: number
+  in_progress_count: number
+  delayed_count: number
+  paused_count: number
+  cancelled_count: number
+  completion_rate: number
+  actual_hours: number
+  estimated_hours_summary: EstimatedHoursSummary
+}
+
+export type MonthlyReviewWritten = {
+  id: number
+  member_id: number
+  year: number
+  month: number
+  revision: number
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type MonthlyReviewHistoryEntry = {
+  revision: number
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+  changed_by: number
+  changed_at: string | null
+}
+
+export type MonthlyReview = {
+  summary: MonthlyReviewSummary
+  details: MonthlyReviewDetail[]
+  written: MonthlyReviewWritten | null
+  history: MonthlyReviewHistoryEntry[]
+  meta: {
+    year: number
+    month: number
+    scope: string
+    as_of: string | null
+    source: string
+  }
+}
+
+export type MonthlyReviewWriteFields = Partial<{
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+}>
 
 export type LearningTaskUpdate = Partial<{
   completion_quality: string | null
@@ -572,10 +664,39 @@ export async function invalidateProgressLog(
   )
 }
 
-export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
-  return request<MonthlyHours[]>(
-    `/api/planning/progress-logs/monthly?year=${year}`,
+export async function getMonthlyReview(
+  year: number,
+  month: number,
+  memberId?: number,
+): Promise<MonthlyReview> {
+  const query = new URLSearchParams({
+    year: String(year),
+    month: String(month),
+  })
+  if (memberId !== undefined) query.set('member_id', String(memberId))
+  return request<MonthlyReview>(
+    `/api/planning/monthly-reviews?${query.toString()}`,
     { method: 'GET' },
+  )
+}
+
+// CAS contract: the revision is mandatory — a PUT without it is a 422.
+export async function upsertMonthlyReview(
+  year: number,
+  month: number,
+  fields: MonthlyReviewWriteFields,
+  expected_revision: number,
+): Promise<{
+  written: MonthlyReviewWritten
+  history: MonthlyReviewHistoryEntry[]
+}> {
+  return request<{
+    written: MonthlyReviewWritten
+    history: MonthlyReviewHistoryEntry[]
+  }>(
+    `/api/planning/monthly-reviews?year=${year}&month=${month}`,
+    { method: 'PUT' },
+    { ...fields, expected_revision },
   )
 }
 
@@ -724,6 +845,15 @@ export type CapabilityProfile = {
   }
   assessments: CapabilityProfileAssessment[]
   annual_plan: CapabilityProfileAnnualPlan | null
+  monthly_reviews: (MonthlyReviewWritten & {
+    history: MonthlyReviewHistoryEntry[]
+  })[]
+  meta: {
+    year: number
+    scope: string
+    as_of: string | null
+    source: string
+  }
   statistics: CapabilityProfileStatistics
 }
 

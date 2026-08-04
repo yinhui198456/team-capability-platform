@@ -80,10 +80,13 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
         "definition": (
             "planned_count / completed_count / in_progress_count / "
             "delayed_count / paused_count / cancelled_count / "
-            "completion_rate / actual_hours for one (member, year, month); "
-            "computed from the detail rows so summary and details "
-            "reconcile exactly.  States are the six plan-item states; "
-            "actual_hours aggregates valid logs only."
+            "completion_rate / actual_hours / estimated_hours_summary "
+            "(min_hours / max_hours / has_values / has_unparsed over the "
+            "detail rows' estimated_hours, shared estimated-hours parse "
+            "semantics) for one (member, year, month); computed from the "
+            "detail rows so summary and details reconcile exactly.  States "
+            "are the six plan-item states; actual_hours aggregates valid "
+            "logs only."
         ),
         "scope": "本人 / buddy_assigned / leader_team",
         "phase": 1,
@@ -91,8 +94,10 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
     "monthly_review.details": {
         "definition": (
             "One row per plan_item with plan_month = month, carrying "
-            "plan_item_id / task_id / l3_code / status / actual_hours "
-            "(valid logs of that task recorded in that month)."
+            "plan_item_id / task_id / l3_code / status / estimated_hours "
+            "(raw value) / estimated_hours_parsed (raw / min_hours / "
+            "max_hours / is_valid / is_range) / actual_hours (valid logs "
+            "of that task recorded in that month)."
         ),
         "scope": "本人 / buddy_assigned / leader_team",
         "phase": 1,
@@ -142,7 +147,7 @@ def plan_items_in_month(
     """
     rows = connection.execute(
         """
-        SELECT pi.id, pi.status, pi.l3_code, lt.id
+        SELECT pi.id, pi.status, pi.l3_code, pi.estimated_hours, lt.id
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id
@@ -156,7 +161,8 @@ def plan_items_in_month(
             "plan_item_id": row[0],
             "status": row[1],
             "l3_code": row[2],
-            "task_id": row[3],
+            "estimated_hours": row[3],
+            "task_id": row[4],
         }
         for row in rows
     ]

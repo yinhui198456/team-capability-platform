@@ -22,6 +22,7 @@ const baseDashboard: planningApi.MemberDashboard = {
     archived_at: '2026-01-03T00:00:00Z',
     review_status: '已闭环' as const,
     review_conclusion: '认可' as const,
+    applicable_completion: { total: 3, completed: 1, ratio: 1 / 3 },
   },
   annual_plan_status: '执行中' as const,
   summary: {
@@ -67,6 +68,31 @@ const baseDashboard: planningApi.MemberDashboard = {
       plan_candidate: true,
     },
   ],
+  gap_summary: {
+    current_required: 1,
+    target_progressive: 2,
+    derivation: 'scope_v1',
+  },
+  current_month: {
+    planned_count: 4,
+    planned_ids: [1, 2, 3, 4],
+    in_progress_count: 1,
+    delayed_count: 1,
+    pending_evidence_count: 2,
+    actual_hours: 2,
+  },
+  next_action: {
+    action_key: 'submit_evidence',
+    message: '提交 2 份 Evidence 待 Buddy 复核',
+    count: 2,
+  },
+  meta: {
+    year: 2026,
+    scope: '本人',
+    as_of: '2026-06-01T00:00:00Z',
+    source: 'member_dashboard.v1',
+    denominator_source: 'assessment_details',
+  },
   current_tasks: [
     {
       id: 1,
@@ -353,6 +379,38 @@ describe('MemberDashboardPage', () => {
     ).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('年度计划进度')).toBeNull()
     expect(screen.queryByTestId('current-tasks-table')).toBeNull()
+  })
+
+  it('shows gap split, applicable completion, current-month states and next action', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    // 必备 / 进阶 Gap 拆分来自 assessment 快照 scope（scope-v1）。
+    const gapSummary = screen.getByTestId('gap-summary')
+    expect(gapSummary.textContent).toContain('必备 Gap')
+    expect(gapSummary.textContent).toContain('1')
+    expect(gapSummary.textContent).toContain('进阶 Gap')
+    expect(gapSummary.textContent).toContain('2')
+    // 适用完成度 = 当前自评 applicable 明细中已达有效目标的占比。
+    const completion = screen.getByTestId('applicable-completion')
+    expect(completion.textContent).toContain('适用完成度')
+    expect(completion.textContent).toContain('1/3')
+    // 本月六态与下一步动作来自 current_month / next_action 合同块。
+    const month = screen.getByTestId('current-month-card')
+    expect(month.textContent).toContain('本月计划')
+    expect(month.textContent).toContain('4')
+    expect(month.textContent).toContain('本月进行中')
+    expect(month.textContent).toContain('本月延期')
+    expect(month.textContent).toContain('本月待验收')
+    expect(month.textContent).toContain('提交 2 份 Evidence 待 Buddy 复核')
   })
 
   it('shows all six plan states and the split evidence todos', async () => {

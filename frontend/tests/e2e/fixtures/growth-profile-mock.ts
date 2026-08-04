@@ -222,6 +222,8 @@ export function buildGrowthProfileResponse(
         '待 Review': 1,
       },
     },
+    // Contract field since issue-64: monthly review trail after the plan.
+    monthly_reviews: [],
   }
 }
 
@@ -284,6 +286,7 @@ export async function mockGrowthProfileEmptyData(page: Page): Promise<void> {
           total_planned_hours: 0,
           evidence_count_by_status: {},
         },
+        monthly_reviews: [],
       }),
     })
   })

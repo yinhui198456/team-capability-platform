@@ -457,6 +457,21 @@ function AbilitySection({
         </article>
         <article>
           <h3>Gap 概览</h3>
+          <div className={styles.gapSummary} data-testid="gap-summary">
+            <span>
+              必备 Gap <strong>{dashboard.gap_summary.current_required}</strong>
+            </span>
+            <span>
+              进阶 Gap{' '}
+              <strong>{dashboard.gap_summary.target_progressive}</strong>
+            </span>
+          </div>
+          {dashboard.assessment?.applicable_completion && (
+            <p className="muted" data-testid="applicable-completion">
+              适用完成度 {dashboard.assessment.applicable_completion.completed}/
+              {dashboard.assessment.applicable_completion.total}
+            </p>
+          )}
           {filteredGaps.length === 0 ? (
             <p className="muted">当前范围暂无 Gap。</p>
           ) : (
@@ -620,6 +635,34 @@ function PlanDashboard({
           </div>
           <a href={`/growth/review/monthly?year=${dashboard.year}`}>
             查看月度复盘
+          </a>
+        </article>
+        <article
+          className={`card ${styles.hoursCard}`}
+          data-testid="current-month-card"
+        >
+          <h2>本月概览</h2>
+          <div className={styles.metricGrid}>
+            <div className={styles.metric}>
+              <span>本月计划</span>
+              <strong>{dashboard.current_month.planned_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月进行中</span>
+              <strong>{dashboard.current_month.in_progress_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月延期</span>
+              <strong>{dashboard.current_month.delayed_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月待验收</span>
+              <strong>{dashboard.current_month.pending_evidence_count}</strong>
+            </div>
+          </div>
+          <p className="muted">下一步：{dashboard.next_action.message}</p>
+          <a href={`/growth/review/monthly?year=${dashboard.year}`}>
+            进入月度复盘
           </a>
         </article>
         <article className={`card ${styles.todoCard}`} data-testid="todo-card">

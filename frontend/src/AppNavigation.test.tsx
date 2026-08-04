@@ -27,6 +27,31 @@ function response(payload: unknown) {
 
 const emptyDashboard: planningApi.MemberDashboard = {
   year: 2026,
+  meta: {
+    year: 2026,
+    scope: '本人',
+    as_of: '2026-07-01T00:00:00Z',
+    source: 'member_dashboard.v1',
+    denominator_source: 'assessment_details',
+  },
+  gap_summary: {
+    current_required: 0,
+    target_progressive: 0,
+    derivation: 'scope_v1',
+  },
+  current_month: {
+    planned_count: 0,
+    planned_ids: [],
+    in_progress_count: 0,
+    delayed_count: 0,
+    pending_evidence_count: 0,
+    actual_hours: 0,
+  },
+  next_action: {
+    action_key: 'none',
+    message: '当前没有需要处理的事项',
+    count: 0,
+  },
   assessment: {
     id: 1,
     status: '已归档',

@@ -64,6 +64,31 @@ test.describe('Issue #52 P1 regressions', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             year: 2026,
+            meta: {
+              year: 2026,
+              scope: '本人',
+              as_of: '2026-07-01T00:00:00Z',
+              source: 'member_dashboard.v1',
+              denominator_source: 'assessment_details',
+            },
+            gap_summary: {
+              current_required: 0,
+              target_progressive: 0,
+              derivation: 'scope_v1',
+            },
+            current_month: {
+              planned_count: 1,
+              planned_ids: [1],
+              in_progress_count: 1,
+              delayed_count: 0,
+              pending_evidence_count: 0,
+              actual_hours: 0,
+            },
+            next_action: {
+              action_key: 'none',
+              message: '当前没有需要处理的事项',
+              count: 0,
+            },
             assessment: {
               id: 1,
               status: '已归档',
@@ -87,7 +112,8 @@ test.describe('Issue #52 P1 regressions', () => {
               current_month_planned_hours_has_values: true,
               current_month_planned_hours_has_unparsed: false,
               completed_task_count: 0,
-              pending_evidence_count: 0,
+              pending_evidence_to_submit: 0,
+              pending_evidence_to_review: 0,
             },
             plan_progress: {
               total: 1,

@@ -1633,6 +1633,10 @@ def get_monthly_review(
             "task_id": d["task_id"],
             "l3_code": d["l3_code"],
             "status": d["status"],
+            "estimated_hours": d["estimated_hours"],
+            "estimated_hours_parsed": parse_estimated_hours(
+                d["estimated_hours"]
+            ).as_dict(),
             "actual_hours": (
                 hours_by_task.get(int(d["task_id"]), 0)
                 if d["task_id"] is not None
@@ -1652,6 +1656,9 @@ def get_monthly_review(
         "cancelled_count": sum(1 for d in details if d["status"] == "取消"),
         "completion_rate": completed / planned if planned else 0,
         "actual_hours": sum(int(d["actual_hours"]) for d in details),
+        "estimated_hours_summary": summarize_estimated_hours(
+            [d["estimated_hours"] for d in details]
+        ),
     }
 
     written: dict[str, object] | None = None
@@ -1697,7 +1704,10 @@ def upsert_monthly_review(
     Every successful write appends an immutable history row (revision 1 on
     create, N+1 on update).  Stale revisions and validation failures raise
     before any write; the request-scoped transaction rolls back anything
-    touched, so failures are zero partial writes.
+    touched, so failures are zero partial writes.  Concurrent first creates
+    are arbitrated by the unique index: the losing INSERT ... ON CONFLICT
+    DO NOTHING re-locks the winning row and raises the revision-conflict
+    contract instead of a bare UNIQUE violation.
     """
     if month < 1 or month > 12:
         raise PlanningDomainError(
@@ -1750,6 +1760,7 @@ def upsert_monthly_review(
                 (member_id, year, month, revision, main_output, problems,
                  next_month_focus, notes)
             VALUES (%s, %s, %s, 1, %s, %s, %s, %s)
+            ON CONFLICT (member_id, year, month) DO NOTHING
             RETURNING id, member_id, year, month, revision, main_output,
                       problems, next_month_focus, notes, created_at, updated_at
             """,
@@ -1763,7 +1774,22 @@ def upsert_monthly_review(
                 clean["notes"],
             ),
         ).fetchone()
-        assert written_row is not None
+        if written_row is None:
+            # A concurrent first create committed between our SELECT and
+            # INSERT (the SELECT ... FOR UPDATE above locks only existing
+            # rows).  The unique index arbitration is the write barrier:
+            # re-lock the winning row and surface the CAS contract instead
+            # of letting the UNIQUE violation escape as a 500.
+            row = connection.execute(
+                """
+                SELECT id, revision
+                FROM monthly_review
+                WHERE member_id = %s AND year = %s AND month = %s
+                FOR UPDATE
+                """,
+                (member_id, year, month),
+            ).fetchone()
+            raise _conflict(int(row[1]) if row is not None else 0)
         connection.execute(
             """
             INSERT INTO monthly_review_history

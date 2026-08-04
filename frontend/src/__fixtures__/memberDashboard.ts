@@ -5,6 +5,31 @@ import type { MemberDashboard } from '../planning'
 
 export const mockMemberDashboard: MemberDashboard = {
   year: 2026,
+  meta: {
+    year: 2026,
+    scope: '本人',
+    as_of: '2026-07-01T00:00:00Z',
+    source: 'member_dashboard.v1',
+    denominator_source: 'assessment_details',
+  },
+  gap_summary: {
+    current_required: 5,
+    target_progressive: 3,
+    derivation: 'scope_v1',
+  },
+  current_month: {
+    planned_count: 4,
+    planned_ids: [1, 2, 3, 4],
+    in_progress_count: 1,
+    delayed_count: 2,
+    pending_evidence_count: 1,
+    actual_hours: 12,
+  },
+  next_action: {
+    action_key: 'submit_evidence',
+    message: '提交待提交的学习证据',
+    count: 2,
+  },
   assessment: {
     id: 1,
     status: '已归档',
