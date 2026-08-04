@@ -3962,7 +3962,58 @@ def list_team_annual_plan_items(
             row[10] if isinstance(row[10], str) else None
         ).as_dict()
         items.append(item)
+
+    # Bulk-load valid actual hours for the page (one query, no N+1).
+    if items:
+        item_ids = [int(item["id"]) for item in items]
+        actual_hours_rows = connection.execute(
+            """
+            SELECT pi.id, COALESCE(SUM(lpl.actual_hours), 0)
+            FROM plan_item pi
+            LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id
+            LEFT JOIN learning_progress_log lpl
+              ON lpl.task_id = lt.id AND lpl.invalidated_at IS NULL
+            WHERE pi.id = ANY(%s)
+            GROUP BY pi.id
+            """,
+            (item_ids,),
+        ).fetchall()
+        actual_hours_by_item = {int(row[0]): int(row[1]) for row in actual_hours_rows}
+        for item in items:
+            item["actual_hours"] = actual_hours_by_item.get(int(item["id"]), 0)
+    else:
+        actual_hours_by_item: dict[int, int] = {}
+
     items = _attach_l3_contexts(connection, items)
+
+    summary = {
+        "total_count": total_count,
+        "planned_hours_min": None,
+        "planned_hours_max": None,
+        "actual_hours": sum(actual_hours_by_item.values()),
+        "status_breakdown": {
+            "未开始": 0,
+            "进行中": 0,
+            "已完成": 0,
+            "延期": 0,
+            "暂停": 0,
+            "取消": 0,
+            "total": 0,
+        },
+    }
+    if items:
+        estimated_summary = summarize_estimated_hours(
+            [item["estimated_hours"] for item in items]
+        )
+        summary["planned_hours_min"] = estimated_summary["min_hours"]
+        summary["planned_hours_max"] = estimated_summary["max_hours"]
+        for item in items:
+            status = str(item["status"])
+            if status in summary["status_breakdown"]:
+                summary["status_breakdown"][status] += 1
+            summary["status_breakdown"]["total"] += 1
+
+    members = _team_analytics_members(connection, member_ids)
 
     return {
         "meta": {
@@ -3986,6 +4037,8 @@ def list_team_annual_plan_items(
             "total_pages": total_pages,
             "total_count": total_count,
         },
+        "summary": summary,
+        "members": members,
         "items": items,
     }
 
@@ -4301,6 +4354,131 @@ def _team_analytics_member_attainment(
     return attainment
 
 
+def _team_analytics_distributions(
+    connection: psycopg.Connection,
+    year: int,
+    member_ids: list[int],
+    domain_code: str | None,
+) -> dict[str, object]:
+    """Team-level breakdowns required by the Phase 2 analytics contract.
+
+    Covers priority, formal inclusion ratio, quarterly split, the six plan-item
+    states, and evidence pending acceptance (status = '待 Review' and not
+    superseded).  All counts respect the same scope/domain filter as the rest
+    of the aggregate.
+    """
+    empty = {
+        "priority": {"高": 0, "中": 0, "低": 0, "total": 0},
+        "formal_inclusion_ratio": {
+            "included_count": 0,
+            "total_count": 0,
+            "ratio": 0.0,
+        },
+        "quarterly": {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0, "total": 0},
+        "plan_status": {
+            "未开始": 0,
+            "进行中": 0,
+            "已完成": 0,
+            "延期": 0,
+            "暂停": 0,
+            "取消": 0,
+            "total": 0,
+        },
+        "pending_acceptance": {"count": 0},
+    }
+    if not member_ids:
+        return empty
+
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE pi.priority = '高') AS high,
+            COUNT(*) FILTER (WHERE pi.priority = '中') AS medium,
+            COUNT(*) FILTER (WHERE pi.priority = '低') AS low,
+            COUNT(*) FILTER (
+                WHERE pi.include_in_plan = TRUE AND pi.status != '取消'
+            ) AS included,
+            COUNT(*) FILTER (WHERE pi.status != '取消') AS non_cancelled,
+            COUNT(*) FILTER (WHERE pi.plan_quarter = 'Q1') AS q1,
+            COUNT(*) FILTER (WHERE pi.plan_quarter = 'Q2') AS q2,
+            COUNT(*) FILTER (WHERE pi.plan_quarter = 'Q3') AS q3,
+            COUNT(*) FILTER (WHERE pi.plan_quarter = 'Q4') AS q4,
+            COUNT(*) FILTER (WHERE pi.status = '未开始') AS not_started,
+            COUNT(*) FILTER (WHERE pi.status = '进行中') AS in_progress,
+            COUNT(*) FILTER (WHERE pi.status = '已完成') AS completed,
+            COUNT(*) FILTER (WHERE pi.status = '延期') AS delayed,
+            COUNT(*) FILTER (WHERE pi.status = '暂停') AS paused,
+            COUNT(*) FILTER (WHERE pi.status = '取消') AS cancelled,
+            COUNT(*) AS total
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s
+          AND agp.member_id = ANY(%s)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        """,
+        (year, member_ids, domain_code, domain_code),
+    ).fetchone()
+    if row is None:
+        return empty
+
+    included_count = int(row[3] or 0)
+    non_cancelled_count = int(row[4] or 0)
+    pending_row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.year = %s
+          AND agp.member_id = ANY(%s)
+          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+          AND e.status = '待 Review'
+          AND NOT EXISTS (
+              SELECT 1 FROM evidence superseding
+              WHERE superseding.supersedes_evidence_id = e.id
+          )
+        """,
+        (year, member_ids, domain_code, domain_code),
+    ).fetchone()
+    pending_count = int(pending_row[0] if pending_row else 0)
+
+    return {
+        "priority": {
+            "高": int(row[0] or 0),
+            "中": int(row[1] or 0),
+            "低": int(row[2] or 0),
+            "total": int(row[15] or 0),
+        },
+        "formal_inclusion_ratio": {
+            "included_count": included_count,
+            "total_count": non_cancelled_count,
+            "ratio": (
+                round(included_count / non_cancelled_count, 4)
+                if non_cancelled_count
+                else 0.0
+            ),
+        },
+        "quarterly": {
+            "Q1": int(row[5] or 0),
+            "Q2": int(row[6] or 0),
+            "Q3": int(row[7] or 0),
+            "Q4": int(row[8] or 0),
+            "total": int(row[15] or 0),
+        },
+        "plan_status": {
+            "未开始": int(row[9] or 0),
+            "进行中": int(row[10] or 0),
+            "已完成": int(row[11] or 0),
+            "延期": int(row[12] or 0),
+            "暂停": int(row[13] or 0),
+            "取消": int(row[14] or 0),
+            "total": int(row[15] or 0),
+        },
+        "pending_acceptance": {"count": pending_count},
+    }
+
+
 def _team_analytics_monthly_trends(
     connection: psycopg.Connection,
     year: int,
@@ -4330,11 +4508,7 @@ def _team_analytics_monthly_trends(
         ]
     planned_rows = connection.execute(
         """
-        SELECT CASE
-                   WHEN pi.target_month IS NOT NULL THEN pi.target_month
-                   WHEN pi.plan_end_date IS NOT NULL THEN
-                       EXTRACT(MONTH FROM pi.plan_end_date)::INT
-               END AS month,
+        SELECT pi.plan_month AS month,
                pi.estimated_hours
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -4381,6 +4555,7 @@ def _team_analytics_monthly_trends(
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE EXTRACT(YEAR FROM lpl.record_date) = %s
+          AND lpl.invalidated_at IS NULL
           AND agp.member_id = ANY(%s)
           AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
         GROUP BY month
@@ -4573,6 +4748,9 @@ def _empty_team_analytics(
         "monthly_trends": _team_analytics_monthly_trends(
             connection=None, year=year, member_ids=[], domain_code=domain_code
         ),
+        "distributions": _team_analytics_distributions(
+            connection=None, year=year, member_ids=[], domain_code=domain_code
+        ),
         "overdue_items": [],
     }
 
@@ -4651,6 +4829,9 @@ def get_team_analytics(
             connection, year, member_ids, domain_codes
         ),
         "monthly_trends": _team_analytics_monthly_trends(
+            connection, year, member_ids, domain_code
+        ),
+        "distributions": _team_analytics_distributions(
             connection, year, member_ids, domain_code
         ),
         "overdue_items": overdue_items,

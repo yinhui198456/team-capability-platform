@@ -618,6 +618,15 @@ def test_team_annual_plan_items_read_scope(
     assert body["meta"]["source"] == "team_annual_plan.items.v1"
     assert body["pagination"]["total_count"] == 2
     assert len(body["items"]) == 2
+    assert body["summary"]["total_count"] == 2
+    assert body["summary"]["planned_hours_min"] == 18
+    assert body["summary"]["planned_hours_max"] == 18
+    assert body["summary"]["actual_hours"] == 0
+    assert body["summary"]["status_breakdown"]["进行中"] == 1
+    assert body["summary"]["status_breakdown"]["未开始"] == 1
+    assert body["summary"]["status_breakdown"]["total"] == 2
+    assert {m["member_id"] for m in body["members"]} == {member_a_id, member_b_id}
+    assert all("actual_hours" in item for item in body["items"])
 
     member_a_cookies = _login(team_annual_plan_schema, "member_a_items")
     status, body, _ = _request(
@@ -629,6 +638,10 @@ def test_team_annual_plan_items_read_scope(
     assert body["meta"]["scope"] == "本人"
     assert body["pagination"]["total_count"] == 1
     assert body["items"][0]["member_id"] == member_a_id
+    assert body["summary"]["total_count"] == 1
+    assert body["summary"]["planned_hours_min"] == 10
+    assert body["summary"]["planned_hours_max"] == 10
+    assert [m["member_id"] for m in body["members"]] == [member_a_id]
 
     status, _, _ = _request(
         "GET",

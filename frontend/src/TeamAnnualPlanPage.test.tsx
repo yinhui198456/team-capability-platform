@@ -120,6 +120,22 @@ function emptyItemList(): planningApi.TeamAnnualPlanItemList {
       total_pages: 0,
       total_count: 0,
     },
+    summary: {
+      total_count: 0,
+      planned_hours_min: null,
+      planned_hours_max: null,
+      actual_hours: 0,
+      status_breakdown: {
+        未开始: 0,
+        进行中: 0,
+        已完成: 0,
+        延期: 0,
+        暂停: 0,
+        取消: 0,
+        total: 0,
+      },
+    },
+    members: [],
     items: [],
   }
 }

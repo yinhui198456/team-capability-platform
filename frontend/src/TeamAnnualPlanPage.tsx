@@ -18,8 +18,14 @@ import {
   type TeamAnnualCapabilityPlan,
   type TeamAnnualPlanItem,
   type TeamAnnualPlanItemList,
+  type TeamAnnualPlanItemSummary,
+  type TeamAnnualPlanMember,
   type TeamAnnualPlanSave,
 } from './planning'
+import {
+  formatEstimatedHours,
+  formatEstimatedHoursSummary,
+} from './estimatedHours'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50]
 
@@ -75,6 +81,9 @@ export function TeamAnnualPlanPage() {
   const [itemsPagination, setItemsPagination] = useState<
     TeamAnnualPlanItemList['pagination'] | null
   >(null)
+  const [itemsSummary, setItemsSummary] =
+    useState<TeamAnnualPlanItemSummary | null>(null)
+  const [itemsMembers, setItemsMembers] = useState<TeamAnnualPlanMember[]>([])
   const [itemsLoading, setItemsLoading] = useState(false)
   const [itemsError, setItemsError] = useState('')
 
@@ -157,6 +166,8 @@ export function TeamAnnualPlanPage() {
         setItems(result.items)
         setItemsMeta(result.meta)
         setItemsPagination(result.pagination)
+        setItemsSummary(result.summary)
+        setItemsMembers(result.members ?? [])
       })
       .catch((reason) => {
         if (cancelled) return
@@ -184,9 +195,12 @@ export function TeamAnnualPlanPage() {
     canView,
   ])
 
-  const membersInScope = Array.from(
-    new Map(items.map((item) => [item.member_id, item.full_name])),
-  )
+  const membersInScope =
+    itemsMembers.length > 0
+      ? itemsMembers
+      : Array.from(
+          new Map(items.map((item) => [item.member_id, item.full_name])),
+        ).map(([id, full_name]) => ({ member_id: id, username: '', full_name }))
 
   function toggleDomain(code: string) {
     if (!isLeader || plan?.status === '已归档') return
@@ -428,9 +442,9 @@ export function TeamAnnualPlanPage() {
                 }}
               >
                 <option value="">全部</option>
-                {membersInScope.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
+                {membersInScope.map((member) => (
+                  <option key={member.member_id} value={member.member_id}>
+                    {member.full_name}
                   </option>
                 ))}
               </select>
@@ -502,6 +516,39 @@ export function TeamAnnualPlanPage() {
             </label>
           </div>
 
+          {itemsSummary && (
+            <div className="analytics-kpis" aria-label="年度计划项汇总">
+              <div className="kpi-card">
+                <span className="kpi-value">{itemsSummary.total_count}</span>
+                <span className="kpi-label">计划项数</span>
+              </div>
+              <div className="kpi-card">
+                <span className="kpi-value">
+                  {formatEstimatedHoursSummary({
+                    min_hours: itemsSummary.planned_hours_min,
+                    max_hours: itemsSummary.planned_hours_max,
+                    has_values:
+                      itemsSummary.planned_hours_min !== null ||
+                      itemsSummary.planned_hours_max !== null,
+                    has_unparsed: false,
+                  })}
+                </span>
+                <span className="kpi-label">预计时长</span>
+              </div>
+              <div className="kpi-card">
+                <span className="kpi-value">{itemsSummary.actual_hours}</span>
+                <span className="kpi-label">实际时长</span>
+              </div>
+              <div className="kpi-card">
+                <span className="kpi-value">
+                  {itemsSummary.status_breakdown.已完成}/
+                  {itemsSummary.status_breakdown.total}
+                </span>
+                <span className="kpi-label">已完成/总数</span>
+              </div>
+            </div>
+          )}
+
           {itemsLoading && items.length === 0 && (
             <p className="muted">正在加载年度计划项…</p>
           )}
@@ -523,6 +570,7 @@ export function TeamAnnualPlanPage() {
                     <th>状态</th>
                     <th>当前 → 目标</th>
                     <th>预计时长</th>
+                    <th>实际时长</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -545,7 +593,13 @@ export function TeamAnnualPlanPage() {
                       <td>
                         {item.current_level} → {item.target_level}
                       </td>
-                      <td>{item.estimated_hours ?? '-'}</td>
+                      <td>
+                        {formatEstimatedHours(
+                          item.estimated_hours,
+                          item.estimated_hours_parsed,
+                        )}
+                      </td>
+                      <td>{item.actual_hours ?? 0}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -1040,6 +1040,26 @@ export async function archiveTeamAnnualPlan(
   )
 }
 
+export type TeamAnalyticsDistributions = {
+  priority: { 高: number; 中: number; 低: number; total: number }
+  formal_inclusion_ratio: {
+    included_count: number
+    total_count: number
+    ratio: number
+  }
+  quarterly: { Q1: number; Q2: number; Q3: number; Q4: number; total: number }
+  plan_status: {
+    未开始: number
+    进行中: number
+    已完成: number
+    延期: number
+    暂停: number
+    取消: number
+    total: number
+  }
+  pending_acceptance: { count: number }
+}
+
 export type TeamAnalytics = {
   year: number
   meta: {
@@ -1114,6 +1134,7 @@ export type TeamAnalytics = {
     overdue_days: number
     status: string
   }>
+  distributions: TeamAnalyticsDistributions
 }
 
 export async function getTeamAnalytics(query: {
@@ -1132,6 +1153,31 @@ export async function getTeamAnalytics(query: {
 }
 
 export type TeamAnnualPlanItem = PlanItem & {
+  member_id: number
+  username: string
+  full_name: string
+  actual_hours?: number
+}
+
+export type TeamAnnualPlanItemStatusBreakdown = {
+  未开始: number
+  进行中: number
+  已完成: number
+  延期: number
+  暂停: number
+  取消: number
+  total: number
+}
+
+export type TeamAnnualPlanItemSummary = {
+  total_count: number
+  planned_hours_min: number | null
+  planned_hours_max: number | null
+  actual_hours: number
+  status_breakdown: TeamAnnualPlanItemStatusBreakdown
+}
+
+export type TeamAnnualPlanMember = {
   member_id: number
   username: string
   full_name: string
@@ -1159,6 +1205,8 @@ export type TeamAnnualPlanItemList = {
     total_pages: number
     total_count: number
   }
+  summary: TeamAnnualPlanItemSummary
+  members: TeamAnnualPlanMember[]
   items: TeamAnnualPlanItem[]
 }
 

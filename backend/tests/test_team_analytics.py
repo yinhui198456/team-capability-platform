@@ -589,6 +589,25 @@ def test_team_analytics_empty_data_returns_zero_aggregates(
     assert body["member_attainment"] == []
     assert len(body["monthly_trends"]) == 12
     assert body["overdue_items"] == []
+    assert body["distributions"] == {
+        "priority": {"高": 0, "中": 0, "低": 0, "total": 0},
+        "formal_inclusion_ratio": {
+            "included_count": 0,
+            "total_count": 0,
+            "ratio": 0.0,
+        },
+        "quarterly": {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0, "total": 0},
+        "plan_status": {
+            "未开始": 0,
+            "进行中": 0,
+            "已完成": 0,
+            "延期": 0,
+            "暂停": 0,
+            "取消": 0,
+            "total": 0,
+        },
+        "pending_acceptance": {"count": 0},
+    }
 
 
 def test_team_analytics_aggregates_match_data(
@@ -653,13 +672,14 @@ def test_team_analytics_aggregates_match_data(
     )
 
     trends = {row["month"]: row for row in body["monthly_trends"]}
-    assert trends[3]["planned_count"] == 2
+    assert trends[3]["planned_count"] == 0
     assert trends[3]["actual_count"] == 1
-    assert trends[3]["planned_hours"] == 20
+    assert trends[3]["planned_hours"] == 0
     assert trends[3]["actual_hours"] == 5
-    assert trends[3]["cumulative_planned_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert trends[3]["cumulative_planned_rate"] == 0.0
     assert trends[3]["cumulative_actual_rate"] == pytest.approx(1 / 3, rel=1e-3)
-    assert trends[5]["planned_count"] == 1
+    assert trends[5]["planned_count"] == 3
+    assert trends[5]["planned_hours"] == 30
     assert trends[5]["cumulative_planned_rate"] == 1.0
     assert trends[5]["cumulative_actual_rate"] == pytest.approx(1 / 3, rel=1e-3)
 
@@ -669,6 +689,31 @@ def test_team_analytics_aggregates_match_data(
     assert overdue_members == {member_a_id, member_b_id}
     assert all(item["l2_code"] is not None for item in overdue)
     assert all(item["l3_name"] is not None for item in overdue)
+
+    distributions = body["distributions"]
+    assert distributions["priority"] == {"高": 3, "中": 0, "低": 0, "total": 3}
+    assert distributions["formal_inclusion_ratio"] == {
+        "included_count": 3,
+        "total_count": 3,
+        "ratio": 1.0,
+    }
+    assert distributions["quarterly"] == {
+        "Q1": 0,
+        "Q2": 3,
+        "Q3": 0,
+        "Q4": 0,
+        "total": 3,
+    }
+    assert distributions["plan_status"] == {
+        "未开始": 2,
+        "进行中": 0,
+        "已完成": 1,
+        "延期": 0,
+        "暂停": 0,
+        "取消": 0,
+        "total": 3,
+    }
+    assert distributions["pending_acceptance"] == {"count": 0}
 
 
 def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
@@ -689,11 +734,11 @@ def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
     )
     assert status == 200
     assert body is not None
-    march = next(row for row in body["monthly_trends"] if row["month"] == 3)
-    assert march["planned_hours_min"] == 8
-    assert march["planned_hours_max"] == 12
-    assert march["planned_hours"] == 8
-    assert march["planned_hours_max"] != 46
+    may = next(row for row in body["monthly_trends"] if row["month"] == 5)
+    assert may["planned_hours_min"] == 18
+    assert may["planned_hours_max"] == 22
+    assert may["planned_hours"] == 18
+    assert may["planned_hours_max"] != 46
 
 
 def test_team_analytics_domain_filter_restricts_aggregates(

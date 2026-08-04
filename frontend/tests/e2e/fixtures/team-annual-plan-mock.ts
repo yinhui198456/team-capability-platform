@@ -23,6 +23,7 @@ const allItems = [
     plan_quarter: 'Q1',
     plan_month: 2,
     estimated_hours: '16',
+    actual_hours: 8,
     learning_material: null,
     learning_task_content: null,
     expected_output: null,
@@ -51,6 +52,7 @@ const allItems = [
     plan_quarter: 'Q1',
     plan_month: 3,
     estimated_hours: '24',
+    actual_hours: 0,
     learning_material: null,
     learning_task_content: null,
     expected_output: null,
@@ -79,6 +81,7 @@ const allItems = [
     plan_quarter: 'Q2',
     plan_month: 5,
     estimated_hours: '8',
+    actual_hours: 6,
     learning_material: null,
     learning_task_content: null,
     expected_output: null,
@@ -88,6 +91,44 @@ const allItems = [
     revision: 1,
   },
 ]
+
+const members = [
+  { member_id: 3, username: 'member', full_name: '张三' },
+  { member_id: 5, username: 'member2', full_name: '李四' },
+]
+
+function buildSummary(filteredItems: typeof allItems) {
+  const total = filteredItems.length
+  const statusBreakdown = {
+    未开始: 0,
+    进行中: 0,
+    已完成: 0,
+    延期: 0,
+    暂停: 0,
+    取消: 0,
+    total,
+  }
+  let minHours: number | null = null
+  let maxHours: number | null = null
+  let actualHours = 0
+  for (const item of filteredItems) {
+    const status = item.status as keyof typeof statusBreakdown
+    if (status in statusBreakdown) statusBreakdown[status]++
+    const hours = Number(item.estimated_hours)
+    if (!Number.isNaN(hours)) {
+      minHours = minHours === null ? hours : Math.min(minHours, hours)
+      maxHours = maxHours === null ? hours : Math.max(maxHours, hours)
+    }
+    actualHours += (item as { actual_hours?: number }).actual_hours ?? 0
+  }
+  return {
+    total_count: total,
+    planned_hours_min: minHours,
+    planned_hours_max: maxHours,
+    actual_hours: actualHours,
+    status_breakdown: statusBreakdown,
+  }
+}
 
 const publishedPlan = {
   id: 1,
@@ -229,6 +270,8 @@ export async function mockTeamAnnualPlanData(page: Page): Promise<void> {
             total_pages: totalPages,
             total_count: totalCount,
           },
+          summary: buildSummary(filtered),
+          members,
           items: paginated,
         }),
       })
