@@ -757,7 +757,18 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
   const panelAfter = page.locator('[data-testid="task-detail-panel"]')
   await panelAfter.getByLabel('计划开始日期').fill(`${year}-04-10`)
   await panelAfter.getByLabel('计划结束日期').fill(`${year}-05-20`)
+  // Wait for the real retry PUT to finish before reading back: the alert
+  // hides synchronously, so polling the API immediately can race the
+  // in-flight save and read the concurrent-writer value.
+  const savePromise = page.waitForResponse(
+    (resp) =>
+      resp.url().includes(`/api/planning/plan-items/${seed.itemId}`) &&
+      resp.request().method() === 'PUT' &&
+      resp.status() === 200,
+  )
   await panelAfter.getByRole('button', { name: '保存日期' }).click()
+  const saveResp = await savePromise
+  expect(saveResp.ok()).toBeTruthy()
   await expect(panelAfter.getByRole('alert')).toBeHidden()
   const planRow = await (
     await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)

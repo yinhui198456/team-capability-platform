@@ -6,6 +6,11 @@ import {
   mockGrowthProfileEmptyData,
 } from '../fixtures/growth-profile-mock'
 
+test.use({
+  locale: 'zh-CN',
+  timezoneId: 'Asia/Shanghai',
+})
+
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1280x800', width: 1280, height: 800 },
