@@ -721,3 +721,159 @@ def test_team_annual_plan_items_filters_and_pagination(
     assert status == 200
     assert len(body["items"]) == 1
     assert body["pagination"]["total_pages"] == 2
+
+
+def test_team_annual_plan_summary_is_pagination_invariant_and_excludes_invalidated_logs(
+    team_annual_plan_schema: psycopg.Connection,
+) -> None:
+    """Summary must be computed over the full filtered set, not the page."""
+    _create_test_user(team_annual_plan_schema, "leader_summary", ["Leader"])
+    member_id = _create_test_user(team_annual_plan_schema, "member_summary", ["Member"])
+
+    _insert_plan_items(
+        team_annual_plan_schema,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 2,
+                "target_level": 4,
+                "priority": "高",
+                "estimated_hours": "10",
+                "plan_month": 3,
+                "plan_quarter": "Q1",
+                "status": "进行中",
+                "l1_code": "P01",
+                "l1_name": "Data Infra",
+                "l2_code": "P01-L2A",
+                "l2_name": "Data basics",
+                "l3_name": "Data modeling",
+            },
+            {
+                "l3_code": "P02-L2B-L3A",
+                "current_level": 1,
+                "target_level": 3,
+                "priority": "中",
+                "estimated_hours": "8",
+                "plan_month": 5,
+                "plan_quarter": "Q2",
+                "status": "未开始",
+                "l1_code": "P02",
+                "l1_name": "AI Infra",
+                "l2_code": "P02-L2B",
+                "l2_name": "AI basics",
+                "l3_name": "Agent design",
+            },
+            {
+                "l3_code": "C03-L2A-L3A",
+                "current_level": 2,
+                "target_level": 3,
+                "priority": "低",
+                "estimated_hours": "6",
+                "plan_month": 7,
+                "plan_quarter": "Q3",
+                "status": "已完成",
+                "l1_code": "C03",
+                "l1_name": "学习创新",
+                "l2_code": "C03-L2A",
+                "l2_name": "创新实践",
+                "l3_name": "技术创新提案",
+            },
+        ],
+    )
+
+    plan_item_ids = [
+        row[0]
+        for row in team_annual_plan_schema.execute(
+            """
+            SELECT pi.id
+            FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s AND agp.year = %s
+            ORDER BY pi.plan_month
+            """,
+            (member_id, 2026),
+        ).fetchall()
+    ]
+
+    for plan_item_id in plan_item_ids:
+        team_annual_plan_schema.execute(
+            """
+            INSERT INTO learning_task (plan_item_id, l3_code, status)
+            VALUES (%s, 'X', '已完成')
+            """,
+            (plan_item_id,),
+        )
+    task_ids = [
+        row[0]
+        for row in team_annual_plan_schema.execute(
+            "SELECT id FROM learning_task WHERE plan_item_id = ANY(%s) ORDER BY id",
+            (plan_item_ids,),
+        ).fetchall()
+    ]
+
+    # Valid logs for tasks 1 and 3; invalidated log for task 2.
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id)
+        VALUES (%s, '2026-03-15', 4, %s)
+        """,
+        (task_ids[0], member_id),
+    )
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id, invalidated_at)
+        VALUES (%s, '2026-05-15', 5, %s, NOW())
+        """,
+        (task_ids[1], member_id),
+    )
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id)
+        VALUES (%s, '2026-07-15', 2, %s)
+        """,
+        (task_ids[2], member_id),
+    )
+    team_annual_plan_schema.commit()
+
+    leader_cookies = _login(team_annual_plan_schema, "leader_summary")
+
+    def load_summary(page: int, page_size: int, extra: str = "") -> dict[str, object]:
+        status, body, _ = _request(
+            "GET",
+            (
+                f"/api/planning/team-annual-plan/items?year=2026"
+                f"&page_size={page_size}&page={page}{extra}"
+            ),
+            cookies=leader_cookies,
+        )
+        assert status == 200, body
+        return body["summary"]
+
+    full_summary = load_summary(1, 20)
+    assert full_summary["total_count"] == 3
+    assert full_summary["planned_hours_min"] == 24
+    assert full_summary["planned_hours_max"] == 24
+    assert full_summary["actual_hours"] == 6
+    assert full_summary["has_values"] is True
+    assert full_summary["has_unparsed"] is False
+    assert full_summary["status_breakdown"]["进行中"] == 1
+    assert full_summary["status_breakdown"]["未开始"] == 1
+    assert full_summary["status_breakdown"]["已完成"] == 1
+    assert full_summary["status_breakdown"]["total"] == 3
+
+    page1 = load_summary(1, 1)
+    page2 = load_summary(2, 1)
+    page3 = load_summary(3, 1)
+    assert page1 == page2 == page3
+
+    # Filtered summary recomputes over the matching subset.
+    p01_summary = load_summary(1, 20, "&domain_code=P01")
+    assert p01_summary["total_count"] == 1
+    assert p01_summary["planned_hours_min"] == 10
+    assert p01_summary["planned_hours_max"] == 10
+    assert p01_summary["actual_hours"] == 4

@@ -124,6 +124,8 @@ function emptyItemList(): planningApi.TeamAnnualPlanItemList {
       total_count: 0,
       planned_hours_min: null,
       planned_hours_max: null,
+      has_values: false,
+      has_unparsed: false,
       actual_hours: 0,
       status_breakdown: {
         未开始: 0,

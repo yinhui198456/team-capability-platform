@@ -524,14 +524,17 @@ export function TeamAnnualPlanPage() {
               </div>
               <div className="kpi-card">
                 <span className="kpi-value">
-                  {formatEstimatedHoursSummary({
-                    min_hours: itemsSummary.planned_hours_min,
-                    max_hours: itemsSummary.planned_hours_max,
-                    has_values:
-                      itemsSummary.planned_hours_min !== null ||
-                      itemsSummary.planned_hours_max !== null,
-                    has_unparsed: false,
-                  })}
+                  {(() => {
+                    const value = formatEstimatedHoursSummary({
+                      min_hours: itemsSummary.planned_hours_min,
+                      max_hours: itemsSummary.planned_hours_max,
+                      has_values: itemsSummary.has_values,
+                      has_unparsed: itemsSummary.has_unparsed,
+                    })
+                    return itemsSummary.has_unparsed
+                      ? `${value}（部分文本未计入）`
+                      : value
+                  })()}
                 </span>
                 <span className="kpi-label">预计时长</span>
               </div>

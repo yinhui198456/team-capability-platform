@@ -3889,17 +3889,67 @@ def list_team_annual_plan_items(
 
     where_sql = " AND ".join(where_clauses)
 
-    count_row = connection.execute(
+    # Pagination-invariant aggregates over the full filtered set, using valid
+    # progress logs only.  A single set-based query avoids per-page drift and
+    # per-member loops.
+    aggregate_row = connection.execute(
         f"""
-        SELECT COUNT(*)
+        SELECT
+            COUNT(*),
+            COALESCE(
+                SUM(lpl.actual_hours) FILTER (WHERE lpl.invalidated_at IS NULL), 0
+            ),
+            COUNT(*) FILTER (WHERE pi.status = '未开始'),
+            COUNT(*) FILTER (WHERE pi.status = '进行中'),
+            COUNT(*) FILTER (WHERE pi.status = '已完成'),
+            COUNT(*) FILTER (WHERE pi.status = '延期'),
+            COUNT(*) FILTER (WHERE pi.status = '暂停'),
+            COUNT(*) FILTER (WHERE pi.status = '取消')
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         JOIN tcp_user u ON u.id = agp.member_id
+        LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id
+        LEFT JOIN learning_progress_log lpl
+          ON lpl.task_id = lt.id AND lpl.invalidated_at IS NULL
         WHERE {where_sql}
         """,
         params,
     ).fetchone()
-    total_count = int(count_row[0]) if count_row else 0
+    total_count = int(aggregate_row[0]) if aggregate_row else 0
+
+    estimated_summary = summarize_estimated_hours(
+        [
+            row[0] if isinstance(row[0], str) else None
+            for row in connection.execute(
+                f"""
+                SELECT pi.estimated_hours
+                FROM plan_item pi
+                JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+                JOIN tcp_user u ON u.id = agp.member_id
+                WHERE {where_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+    )
+
+    summary = {
+        "total_count": total_count,
+        "planned_hours_min": estimated_summary["min_hours"],
+        "planned_hours_max": estimated_summary["max_hours"],
+        "has_values": estimated_summary["has_values"],
+        "has_unparsed": estimated_summary["has_unparsed"],
+        "actual_hours": int(aggregate_row[1]) if aggregate_row else 0,
+        "status_breakdown": {
+            "未开始": int(aggregate_row[2]) if aggregate_row else 0,
+            "进行中": int(aggregate_row[3]) if aggregate_row else 0,
+            "已完成": int(aggregate_row[4]) if aggregate_row else 0,
+            "延期": int(aggregate_row[5]) if aggregate_row else 0,
+            "暂停": int(aggregate_row[6]) if aggregate_row else 0,
+            "取消": int(aggregate_row[7]) if aggregate_row else 0,
+            "total": total_count,
+        },
+    }
 
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
@@ -3985,33 +4035,6 @@ def list_team_annual_plan_items(
         actual_hours_by_item: dict[int, int] = {}
 
     items = _attach_l3_contexts(connection, items)
-
-    summary = {
-        "total_count": total_count,
-        "planned_hours_min": None,
-        "planned_hours_max": None,
-        "actual_hours": sum(actual_hours_by_item.values()),
-        "status_breakdown": {
-            "未开始": 0,
-            "进行中": 0,
-            "已完成": 0,
-            "延期": 0,
-            "暂停": 0,
-            "取消": 0,
-            "total": 0,
-        },
-    }
-    if items:
-        estimated_summary = summarize_estimated_hours(
-            [item["estimated_hours"] for item in items]
-        )
-        summary["planned_hours_min"] = estimated_summary["min_hours"]
-        summary["planned_hours_max"] = estimated_summary["max_hours"]
-        for item in items:
-            status = str(item["status"])
-            if status in summary["status_breakdown"]:
-                summary["status_breakdown"][status] += 1
-            summary["status_breakdown"]["total"] += 1
 
     members = _team_analytics_members(connection, member_ids)
 

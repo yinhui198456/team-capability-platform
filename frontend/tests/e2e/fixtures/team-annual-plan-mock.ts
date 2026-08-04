@@ -108,16 +108,24 @@ function buildSummary(filteredItems: typeof allItems) {
     取消: 0,
     total,
   }
+  let hasValues = false
+  let hasUnparsed = false
   let minHours: number | null = null
   let maxHours: number | null = null
   let actualHours = 0
   for (const item of filteredItems) {
     const status = item.status as keyof typeof statusBreakdown
     if (status in statusBreakdown) statusBreakdown[status]++
-    const hours = Number(item.estimated_hours)
-    if (!Number.isNaN(hours)) {
-      minHours = minHours === null ? hours : Math.min(minHours, hours)
-      maxHours = maxHours === null ? hours : Math.max(maxHours, hours)
+    const raw = item.estimated_hours
+    if (typeof raw === 'string' && raw.trim()) {
+      const hours = Number(raw)
+      if (!Number.isNaN(hours)) {
+        hasValues = true
+        minHours = minHours === null ? hours : Math.min(minHours, hours)
+        maxHours = maxHours === null ? hours : Math.max(maxHours, hours)
+      } else {
+        hasUnparsed = true
+      }
     }
     actualHours += (item as { actual_hours?: number }).actual_hours ?? 0
   }
@@ -125,6 +133,8 @@ function buildSummary(filteredItems: typeof allItems) {
     total_count: total,
     planned_hours_min: minHours,
     planned_hours_max: maxHours,
+    has_values: hasValues,
+    has_unparsed: hasUnparsed,
     actual_hours: actualHours,
     status_breakdown: statusBreakdown,
   }

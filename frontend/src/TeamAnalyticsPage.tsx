@@ -380,6 +380,119 @@ export function TeamAnalyticsPage() {
           </div>
           <div className="dashboard-grid">
             <article className="dashboard-card">
+              <h2>计划项分布</h2>
+              <div className="dashboard-grid">
+                <section aria-labelledby="priority-distribution">
+                  <h3 id="priority-distribution">优先级分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>高</th>
+                        <th>中</th>
+                        <th>低</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.priority.高}</td>
+                        <td>{analytics.distributions.priority.中}</td>
+                        <td>{analytics.distributions.priority.低}</td>
+                        <td>{analytics.distributions.priority.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="quarterly-distribution">
+                  <h3 id="quarterly-distribution">季度分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>Q1</th>
+                        <th>Q2</th>
+                        <th>Q3</th>
+                        <th>Q4</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.quarterly.Q1}</td>
+                        <td>{analytics.distributions.quarterly.Q2}</td>
+                        <td>{analytics.distributions.quarterly.Q3}</td>
+                        <td>{analytics.distributions.quarterly.Q4}</td>
+                        <td>{analytics.distributions.quarterly.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="plan-status-distribution">
+                  <h3 id="plan-status-distribution">计划状态分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>未开始</th>
+                        <th>进行中</th>
+                        <th>已完成</th>
+                        <th>延期</th>
+                        <th>暂停</th>
+                        <th>取消</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.plan_status.未开始}</td>
+                        <td>{analytics.distributions.plan_status.进行中}</td>
+                        <td>{analytics.distributions.plan_status.已完成}</td>
+                        <td>{analytics.distributions.plan_status.延期}</td>
+                        <td>{analytics.distributions.plan_status.暂停}</td>
+                        <td>{analytics.distributions.plan_status.取消}</td>
+                        <td>{analytics.distributions.plan_status.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="other-distribution">
+                  <h3 id="other-distribution">其他</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>纳入正式计划占比</th>
+                        <th>待确认计划项</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>
+                          {percent(
+                            analytics.distributions.formal_inclusion_ratio
+                              .ratio,
+                          )}
+                          （
+                          {
+                            analytics.distributions.formal_inclusion_ratio
+                              .included_count
+                          }
+                          /
+                          {
+                            analytics.distributions.formal_inclusion_ratio
+                              .total_count
+                          }
+                          ）
+                        </td>
+                        <td>
+                          {analytics.distributions.pending_acceptance.count}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
+            </article>
+          </div>
+          <div className="dashboard-grid">
+            <article className="dashboard-card">
               <h2>L3 掌握度实际 vs 目标</h2>
               <p className="muted">
                 以上指标基于三级达成路径的当前掌握度与目标掌握度聚合，不代表二级能力标准

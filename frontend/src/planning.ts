@@ -1173,6 +1173,8 @@ export type TeamAnnualPlanItemSummary = {
   total_count: number
   planned_hours_min: number | null
   planned_hours_max: number | null
+  has_values: boolean
+  has_unparsed: boolean
   actual_hours: number
   status_breakdown: TeamAnnualPlanItemStatusBreakdown
 }
