@@ -127,6 +127,9 @@
 
 ### 5.2 测试数据组合（Issue #65「测试数据矩阵」18 项）
 
+> 可执行 fixture 基础已落盘：`backend/tests/issue65_support.py`（18 维度命名案例目录 + 单团队合成身份与 Buddy 指派 + `materialize_identities` 构建器）与契约测试 `backend/tests/test_issue65_catalog.py`。
+> 该目录仅证明覆盖性、唯一性、确定性与字段不变量；**目录构建不等于任何业务场景已执行或通过**，下表所有行仍为 NOT RUN。
+
 | ID | 范围 | 操作 | 预期结果 | 状态 | 证据 |
 |---|---|---|---|---|---|
 | DATA-65-01 | P4→P4 / P4→P5 / P4→P6 / P5→P6 职级组合 | 准备并执行各组合全链路 | 各组合行为符合能力模型 | NOT RUN | |
