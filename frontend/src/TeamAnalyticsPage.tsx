@@ -270,7 +270,9 @@ export function TeamAnalyticsPage() {
   if (!canView) {
     return (
       <section className="page">
-        <p className="muted">无权限，需要 Member、Buddy、Leader 或 Admin 角色。</p>
+        <p className="muted">
+          无权限，需要 Member、Buddy、Leader 或 Admin 角色。
+        </p>
       </section>
     )
   }

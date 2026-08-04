@@ -14,7 +14,14 @@ async function assertPlanItemTable(page: Page) {
     'section[aria-label="团队年度计划正式项列表"] .analytics-table',
   )
   await expect(table).toBeVisible()
-  for (const heading of ['成员', '能力路径', '优先级', '月份', '季度', '状态']) {
+  for (const heading of [
+    '成员',
+    '能力路径',
+    '优先级',
+    '月份',
+    '季度',
+    '状态',
+  ]) {
     await expect(table).toContainText(heading)
   }
   await expect(table).toContainText('张三')

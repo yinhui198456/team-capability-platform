@@ -127,7 +127,8 @@ function matchesFilters(
   }
   if (filters.q) {
     const term = filters.q.toLowerCase()
-    const text = `${item.full_name} ${item.l3_code} ${item.l3_name} ${item.l2_name}`.toLowerCase()
+    const text =
+      `${item.full_name} ${item.l3_code} ${item.l3_name} ${item.l2_name}`.toLowerCase()
     if (!text.includes(term)) return false
   }
   return true
@@ -165,7 +166,10 @@ export async function mockTeamAnnualPlanData(page: Page): Promise<void> {
     const url = new URL(request.url())
     const path = url.pathname
 
-    if (path === '/api/planning/team-annual-plan' && request.method() === 'GET') {
+    if (
+      path === '/api/planning/team-annual-plan' &&
+      request.method() === 'GET'
+    ) {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -201,9 +205,7 @@ export async function mockTeamAnnualPlanData(page: Page): Promise<void> {
         q: url.searchParams.get('q') || null,
       }
 
-      const filtered = allItems.filter((item) =>
-        matchesFilters(item, filters),
-      )
+      const filtered = allItems.filter((item) => matchesFilters(item, filters))
       const sorted = applySorting(filtered, sortBy, sortOrder)
       const totalCount = sorted.length
       const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))

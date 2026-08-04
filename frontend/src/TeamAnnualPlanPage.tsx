@@ -272,7 +272,9 @@ export function TeamAnnualPlanPage() {
 
       {!user && <p className="muted">正在加载用户信息…</p>}
       {user && !canView && (
-        <p className="muted">无权限，需要 Member、Buddy、Leader 或 Admin 角色。</p>
+        <p className="muted">
+          无权限，需要 Member、Buddy、Leader 或 Admin 角色。
+        </p>
       )}
 
       {isLeader && error && (
@@ -292,10 +294,7 @@ export function TeamAnnualPlanPage() {
       )}
 
       {canView && (
-        <section
-          className="plan-overview"
-          aria-label="团队年度计划正式项列表"
-        >
+        <section className="plan-overview" aria-label="团队年度计划正式项列表">
           <h2>团队年度计划正式项</h2>
           {itemsMeta && (
             <p className="muted">
@@ -559,7 +558,9 @@ export function TeamAnnualPlanPage() {
               >
                 <button
                   type="button"
-                  onClick={() => setPage((previous) => Math.max(1, previous - 1))}
+                  onClick={() =>
+                    setPage((previous) => Math.max(1, previous - 1))
+                  }
                   disabled={page <= 1 || itemsLoading}
                 >
                   上一页
