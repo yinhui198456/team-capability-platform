@@ -17,6 +17,18 @@ import { MemoryRouter } from 'react-router-dom'
 
 const analytics: planningApi.TeamAnalytics = {
   year: 2026,
+  meta: {
+    year: 2026,
+    as_of: '2026-01-01T00:00:00Z',
+    scope: 'leader_team',
+    source: 'team_analytics.v2',
+    denominator_source: 'assessment_details',
+  },
+  gap_summary: {
+    current_required: 2,
+    target_progressive: 1,
+    derivation: 'scope_v1',
+  },
   filters: { member_id: null, domain_code: null },
   kpis: {
     assessment_completion_rate: 0.5,
@@ -163,12 +175,12 @@ describe('TeamAnalyticsPage', () => {
     )
   })
 
-  it('does not request team data for a non-Leader', async () => {
+  it('does not request team data for a user without any role', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 2,
-      username: 'member',
-      full_name: 'Member',
-      roles: ['Member'],
+      username: 'guest',
+      full_name: 'Guest',
+      roles: [],
     })
     const getTeamAnalytics = vi.spyOn(planningApi, 'getTeamAnalytics')
     render(

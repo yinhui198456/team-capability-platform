@@ -194,7 +194,7 @@ function TrendTable({
 
 export function TeamAnalyticsPage() {
   const year = useYear()
-  const { user, isLeader } = useMe()
+  const { user, isLeader, isAdmin, isBuddy, isMember } = useMe()
   const [memberId, setMemberId] = useState('')
   const [domainCode, setDomainCode] = useState('')
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null)
@@ -206,8 +206,10 @@ export function TeamAnalyticsPage() {
   const lastFocusedRow = useRef<HTMLTableRowElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
 
+  const canView = isMember || isBuddy || isLeader || isAdmin
+
   useEffect(() => {
-    if (!isLeader) return
+    if (!canView) return
     setLoading(true)
     setError('')
     getTeamAnalytics({
@@ -221,7 +223,7 @@ export function TeamAnalyticsPage() {
           setError(reason instanceof Error ? reason.message : '加载失败'),
       )
       .finally(() => setLoading(false))
-  }, [year, memberId, domainCode, isLeader])
+  }, [year, memberId, domainCode, canView])
 
   useEffect(() => {
     if (!drawerItem) return
@@ -265,10 +267,10 @@ export function TeamAnalyticsPage() {
         <p className="muted">正在加载用户信息…</p>
       </section>
     )
-  if (!isLeader) {
+  if (!canView) {
     return (
       <section className="page">
-        <p className="muted">无权限，仅 Leader 可查看团队能力分析。</p>
+        <p className="muted">无权限，需要 Member、Buddy、Leader 或 Admin 角色。</p>
       </section>
     )
   }
@@ -289,6 +291,7 @@ export function TeamAnalyticsPage() {
             aria-label="成员"
             value={memberId}
             onChange={(event) => setMemberId(event.target.value)}
+            disabled={!isLeader && !isAdmin && !isBuddy}
           >
             <option value="">全部</option>
             {members.map(([id, name]) => (
@@ -322,6 +325,12 @@ export function TeamAnalyticsPage() {
       {loading && !analytics && <p className="muted">正在加载团队数据…</p>}
       {analytics && (
         <>
+          <p className="muted">
+            数据范围：{analytics.meta.scope} · 统计时间：
+            {analytics.meta.as_of
+              ? new Date(analytics.meta.as_of).toLocaleString('zh-CN')
+              : '-'}
+          </p>
           <div className="metric-grid" aria-label="团队关键指标">
             <article>
               <span>计划完成率</span>
@@ -343,6 +352,28 @@ export function TeamAnalyticsPage() {
               <span>延期计划项</span>
               <strong>{analytics.kpis.overdue_plan_item_count}</strong>
               <small>待跟进</small>
+            </article>
+          </div>
+          <div className="metric-grid" aria-label="差距分布">
+            <article>
+              <span>当前必修差距</span>
+              <strong>{analytics.gap_summary.current_required}</strong>
+              <small>
+                来源：
+                {analytics.gap_summary.derivation === 'scope_v1'
+                  ? 'scope-v1 快照'
+                  : 'legacy 回退'}
+              </small>
+            </article>
+            <article>
+              <span>进阶目标差距</span>
+              <strong>{analytics.gap_summary.target_progressive}</strong>
+              <small>
+                来源：
+                {analytics.gap_summary.derivation === 'scope_v1'
+                  ? 'scope-v1 快照'
+                  : 'legacy 回退'}
+              </small>
             </article>
           </div>
           <div className="dashboard-grid">

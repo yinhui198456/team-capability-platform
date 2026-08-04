@@ -294,6 +294,18 @@ export async function mockTeamAnalyticsData(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         year: 2026,
+        meta: {
+          year: 2026,
+          as_of: '2026-08-04T00:00:00.000Z',
+          scope: 'leader_team',
+          source: 'team_analytics.v2',
+          denominator_source: 'assessment_details',
+        },
+        gap_summary: {
+          current_required: filteredOverdue.length,
+          target_progressive: 2,
+          derivation: 'scope_v1',
+        },
         filters: { member_id: memberId, domain_code: domainCode },
         kpis: {
           assessment_completion_rate: 0.67,
@@ -323,6 +335,18 @@ export async function mockTeamAnalyticsEmptyData(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         year: 2026,
+        meta: {
+          year: 2026,
+          as_of: '2026-08-04T00:00:00.000Z',
+          scope: 'leader_team',
+          source: 'team_analytics.v2',
+          denominator_source: 'assessment_details',
+        },
+        gap_summary: {
+          current_required: 0,
+          target_progressive: 0,
+          derivation: 'scope_v1',
+        },
         filters: { member_id: null, domain_code: null },
         kpis: {
           assessment_completion_rate: 0,

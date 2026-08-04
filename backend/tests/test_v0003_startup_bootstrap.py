@@ -52,6 +52,7 @@ _V0001_V0009 = (
     "0009_review_plan_atomic",
     "0010_learning_execution",
     "0011_monthly_review",
+    "0012_team_analytics_indexes",
 )
 
 

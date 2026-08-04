@@ -97,6 +97,33 @@ function publishedPlan(): planningApi.TeamAnnualCapabilityPlan {
   }
 }
 
+function emptyItemList(): planningApi.TeamAnnualPlanItemList {
+  return {
+    meta: {
+      year: 2026,
+      as_of: '2026-01-01T00:00:00Z',
+      scope: 'leader_team',
+      source: 'team_annual_plan.items.v1',
+    },
+    filters: {
+      domain_code: null,
+      priority: null,
+      status: null,
+      quarter: null,
+      month: null,
+      member_id: null,
+      q: null,
+    },
+    pagination: {
+      page: 1,
+      page_size: 20,
+      total_pages: 0,
+      total_count: 0,
+    },
+    items: [],
+  }
+}
+
 describe('TeamAnnualPlanPage', () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -116,6 +143,9 @@ describe('TeamAnnualPlanPage', () => {
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
       }),
+    )
+    vi.spyOn(planningApi, 'getTeamAnnualPlanItems').mockResolvedValue(
+      emptyItemList(),
     )
   })
 
@@ -280,7 +310,7 @@ describe('TeamAnnualPlanPage', () => {
     expect(screen.queryByText('归档')).toBeNull()
   })
 
-  it('does not expose controls or call management APIs for non-leader users', async () => {
+  it('shows the read-only PlanItem list but hides management controls for Member users', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 2,
       username: 'member',
@@ -288,6 +318,10 @@ describe('TeamAnnualPlanPage', () => {
       roles: ['Member'],
     })
     const getTeamAnnualPlan = vi.spyOn(planningApi, 'getTeamAnnualPlan')
+    const getTeamAnnualPlanItems = vi.spyOn(
+      planningApi,
+      'getTeamAnnualPlanItems',
+    )
 
     render(
       <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
@@ -295,10 +329,13 @@ describe('TeamAnnualPlanPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByText(/无权限/)).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '团队年度计划正式项' }),
+      ).toBeTruthy()
     })
 
     expect(getTeamAnnualPlan).not.toHaveBeenCalled()
+    expect(getTeamAnnualPlanItems).toHaveBeenCalled()
     expect(screen.queryByText('发布')).toBeNull()
     expect(screen.queryByText('更新')).toBeNull()
     expect(screen.queryByText('归档')).toBeNull()

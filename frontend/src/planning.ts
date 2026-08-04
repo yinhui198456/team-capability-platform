@@ -1042,6 +1042,18 @@ export async function archiveTeamAnnualPlan(
 
 export type TeamAnalytics = {
   year: number
+  meta: {
+    year: number
+    as_of: string | null
+    scope: string
+    source: string
+    denominator_source?: string | null
+  }
+  gap_summary: {
+    current_required: number
+    target_progressive: number
+    derivation: 'scope_v1' | 'legacy_fallback'
+  }
   filters: { member_id: number | null; domain_code: string | null }
   kpis: {
     assessment_completion_rate: number
@@ -1117,6 +1129,71 @@ export async function getTeamAnalytics(query: {
   return request<TeamAnalytics>(`/api/planning/team-analytics?${parameters}`, {
     method: 'GET',
   })
+}
+
+export type TeamAnnualPlanItem = PlanItem & {
+  member_id: number
+  username: string
+  full_name: string
+}
+
+export type TeamAnnualPlanItemList = {
+  meta: {
+    year: number
+    as_of: string | null
+    scope: string
+    source: string
+  }
+  filters: {
+    domain_code: string | null
+    priority: string | null
+    status: string | null
+    quarter: string | null
+    month: number | null
+    member_id: number | null
+    q: string | null
+  }
+  pagination: {
+    page: number
+    page_size: number
+    total_pages: number
+    total_count: number
+  }
+  items: TeamAnnualPlanItem[]
+}
+
+export async function getTeamAnnualPlanItems(query: {
+  year: number
+  page?: number
+  page_size?: number
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+  member_id?: number
+  domain_code?: string
+  priority?: string
+  status?: string
+  quarter?: string
+  month?: number
+  q?: string
+}): Promise<TeamAnnualPlanItemList> {
+  const parameters = new URLSearchParams({ year: String(query.year) })
+  if (query.page !== undefined) parameters.set('page', String(query.page))
+  if (query.page_size !== undefined)
+    parameters.set('page_size', String(query.page_size))
+  if (query.sort_by) parameters.set('sort_by', query.sort_by)
+  if (query.sort_order) parameters.set('sort_order', query.sort_order)
+  if (query.member_id !== undefined)
+    parameters.set('member_id', String(query.member_id))
+  if (query.domain_code) parameters.set('domain_code', query.domain_code)
+  if (query.priority) parameters.set('priority', query.priority)
+  if (query.status) parameters.set('status', query.status)
+  if (query.quarter) parameters.set('quarter', query.quarter)
+  if (query.month !== undefined) parameters.set('month', String(query.month))
+  if (query.q) parameters.set('q', query.q)
+  return request<TeamAnnualPlanItemList>(
+    `/api/planning/team-annual-plan/items?${parameters}`,
+    { method: 'GET' },
+  )
 }
 
 export async function createLearningTask(

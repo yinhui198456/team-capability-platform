@@ -120,7 +120,7 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
         "scope": "本人 / buddy_assigned / leader_team",
         "phase": 1,
     },
-    # ── Phase 2: Team consumers (designed, not implemented) ─────────────
+    # ── Phase 2: Team consumers (implemented) ─────────────────────────────
     "team_analytics.gap_summary": {
         "definition": (
             "Team-level split of gap rows (same split rule as "
@@ -129,8 +129,26 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
         "scope": "团队",
         "phase": 2,
     },
+    "team_analytics.meta": {
+        "definition": (
+            "as_of / year / scope / source / denominator_source for the "
+            "Team Analytics view. source = team_analytics.v2."
+        ),
+        "scope": "团队",
+        "phase": 2,
+    },
     "team_annual_plan.meta": {
         "definition": "as_of / year / scope / source for the Team Annual Plan.",
+        "scope": "团队",
+        "phase": 2,
+    },
+    "team_annual_plan.items": {
+        "definition": (
+            "Paginated, sortable, filterable list of formal PlanItems for a "
+            "team year. Formal means include_in_plan = TRUE and the owning "
+            "annual_growth_plan is for the requested year. Includes member "
+            "identity and L3 context."
+        ),
         "scope": "团队",
         "phase": 2,
     },

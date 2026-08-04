@@ -1,8 +1,9 @@
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ..access.policies import Connection, CurrentUser
+from ..access.repository import get_assigned_members
 from .gate import check_annual_plan_gate
 from .repository import (
     EvidenceValidationError,
@@ -38,6 +39,7 @@ from .repository import (
     list_progress_logs,
     list_selectable_members_for_profile,
     list_task_transition_history,
+    list_team_annual_plan_items,
     submit_evidence,
     submit_evidence_review,
     transition_learning_task,
@@ -105,6 +107,60 @@ def _require_leader(user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+
+
+def _member_ids_with_role(
+    connection: Connection,
+    role_code: str,
+) -> list[int]:
+    rows = connection.execute(
+        """
+        SELECT u.id
+        FROM tcp_user u
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE r.code = %s
+        ORDER BY u.id
+        """,
+        (role_code,),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _resolve_team_read_scope(
+    connection: Connection,
+    user: CurrentUser,
+    requested_member_id: int | None = None,
+) -> tuple[list[int], str]:
+    """Return the member IDs a caller may read in team views and a scope label."""
+    roles = set(user["roles"])
+    viewer_id = int(user["id"])
+    if not roles & {"Member", "Buddy", "Leader", "Admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+    if "Leader" in roles or "Admin" in roles:
+        member_ids = _member_ids_with_role(connection, "Member")
+        scope_label = "leader_team"
+    elif "Buddy" in roles:
+        assigned = get_assigned_members(connection, viewer_id)
+        member_ids = [int(m["id"]) for m in assigned]
+        scope_label = "buddy_assigned"
+    else:
+        member_ids = [viewer_id]
+        scope_label = "本人"
+
+    if requested_member_id is not None:
+        if requested_member_id not in member_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="member out of scope",
+            )
+        member_ids = [requested_member_id]
+
+    return member_ids, scope_label
 
 
 def _legacy_write_disabled() -> HTTPException:
@@ -889,11 +945,18 @@ def get_team_analytics_view(
     member_id: int | None = None,
     domain_code: str | None = None,
 ) -> dict[str, object]:
-    _require_leader(user)
+    member_ids, scope_label = _resolve_team_read_scope(connection, user, member_id)
     target_year = year if year is not None else date.today().year
     try:
         validate_team_analytics_domain_filter(connection, domain_code)
-        return get_team_analytics(connection, target_year, member_id, domain_code)
+        return get_team_analytics(
+            connection,
+            target_year,
+            member_ids,
+            domain_code,
+            scope_label,
+            requested_member_id=member_id,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -913,6 +976,54 @@ def get_team_annual_plan(
             detail="team annual plan not found",
         )
     return result
+
+
+@planning_router.get("/team-annual-plan/items")
+def get_team_annual_plan_items(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    member_id: int | None = None,
+    domain_code: str | None = None,
+    priority: str | None = None,
+    status: str | None = Query(default=None, alias="status"),
+    quarter: str | None = None,
+    month: int | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str = "plan_month",
+    sort_order: str = "asc",
+) -> dict[str, object]:
+    member_ids, scope_label = _resolve_team_read_scope(connection, user, member_id)
+    try:
+        return list_team_annual_plan_items(
+            connection,
+            year,
+            member_ids,
+            scope_label=scope_label,
+            domain_code=domain_code,
+            priority=priority,
+            status=status,
+            quarter=quarter,
+            month=month,
+            member_id=member_id,
+            q=q,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @planning_router.post("/team-annual-plan")

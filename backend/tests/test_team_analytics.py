@@ -492,7 +492,7 @@ def _build_two_member_team(
     return member_a_id, member_b_id, _login(connection, "team_leader")
 
 
-def test_team_analytics_requires_leader(
+def test_team_analytics_read_scope(
     team_analytics_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(team_analytics_schema, "member_only", ["Member"])
@@ -505,12 +505,15 @@ def test_team_analytics_requires_leader(
     status, _, _ = _request("GET", "/api/planning/team-analytics?year=2026")
     assert status == 401
 
+    # Member, Buddy and Admin now have read access to their scoped data.
     for username in ("member_only", "buddy_only", "admin_only"):
         cookies = _login(team_analytics_schema, username)
-        status, _, _ = _request(
+        status, body, _ = _request(
             "GET", "/api/planning/team-analytics?year=2026", cookies=cookies
         )
-        assert status == 403, f"{username} should not access team analytics"
+        assert status == 200, f"{username} should access scoped team analytics"
+        assert body is not None
+        assert body["meta"]["source"] == "team_analytics.v2"
 
     for username in ("leader_user", "admin_leader"):
         cookies = _login(team_analytics_schema, username)
@@ -519,6 +522,7 @@ def test_team_analytics_requires_leader(
         )
         assert status == 200, f"{username} should access team analytics"
         assert body is not None
+        assert body["meta"]["scope"] == "leader_team"
 
 
 def test_team_analytics_rejects_invalid_domain(
@@ -568,6 +572,14 @@ def test_team_analytics_empty_data_returns_zero_aggregates(
     assert status == 200
     assert body is not None
     assert body["year"] == 2026
+    assert body["meta"]["year"] == 2026
+    assert body["meta"]["scope"] == "leader_team"
+    assert body["meta"]["source"] == "team_analytics.v2"
+    assert body["gap_summary"] == {
+        "current_required": 0,
+        "target_progressive": 0,
+        "derivation": "scope_v1",
+    }
     assert body["kpis"]["assessment_completion_rate"] == 0.0
     assert body["kpis"]["plan_completion_rate"] == 0.0
     assert body["kpis"]["evidence_pass_rate"] == 0.0
@@ -604,6 +616,21 @@ def test_team_analytics_aggregates_match_data(
     assert kpis["evidence_total_count"] == 2
     assert kpis["evidence_pass_rate"] == 0.5
     assert kpis["overdue_plan_item_count"] == 2
+
+    gap_summary = body["gap_summary"]
+    gap_count = team_analytics_schema.execute(
+        """
+        SELECT COUNT(*)
+        FROM gap g
+        JOIN assessment a ON a.id = g.assessment_id
+        WHERE a.year = %s AND a.status != '草稿'
+        """,
+        (2026,),
+    ).fetchone()[0]
+    assert (
+        gap_summary["current_required"] + gap_summary["target_progressive"] == gap_count
+    )
+    assert gap_summary["derivation"] in {"scope_v1", "legacy_fallback"}
 
     averages = {row["domain_code"]: row for row in body["domain_averages"]}
     assert len(averages) == 6
@@ -791,3 +818,58 @@ def test_team_analytics_preserves_personal_plan_endpoints(
     assert status == 200
     assert body is not None
     assert body["kpis"]["plan_total_count"] == 1
+
+
+def test_team_analytics_member_scope_isolation(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    member_a_id, member_b_id, leader_cookies = _build_two_member_team(
+        team_analytics_schema
+    )
+
+    member_a_cookies = _login(team_analytics_schema, "member_a")
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=member_a_cookies
+    )
+    assert status == 200
+    assert body["filters"]["member_id"] is None
+    assert body["meta"]["scope"] == "本人"
+    assert body["kpis"]["plan_total_count"] == 2
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_b_id}",
+        cookies=member_a_cookies,
+    )
+    assert status == 403
+
+
+def test_team_analytics_buddy_scope_isolation(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    member_a_id, member_b_id, _ = _build_two_member_team(team_analytics_schema)
+    buddy_cookies = _login(team_analytics_schema, "team_buddy")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert body["meta"]["scope"] == "buddy_assigned"
+    assert body["kpis"]["plan_total_count"] == 3
+
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_a_id}",
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert body["kpis"]["plan_total_count"] == 2
+
+    extra_id = _create_test_user(team_analytics_schema, "extra_member", ["Member"])
+    team_analytics_schema.commit()
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={extra_id}",
+        cookies=buddy_cookies,
+    )
+    assert status == 403

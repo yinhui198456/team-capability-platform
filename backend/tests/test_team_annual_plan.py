@@ -1,7 +1,7 @@
 import asyncio
 import json
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import psycopg
 import pytest
@@ -499,3 +499,212 @@ def test_no_interference_with_member_annual_plan(
     assert int(member_plan["member_id"]) == member_id
     assert int(member_plan["year"]) == 2028
     assert member_plan["status"] == "制定中"
+
+
+def _insert_plan_items(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    items: list[dict[str, object]],
+) -> None:
+    plan = get_or_create_annual_plan(connection, member_id, year)
+    plan_id = int(plan["id"])
+    for item in items:
+        connection.execute(
+            """
+            INSERT INTO plan_item (
+                annual_growth_plan_id, l3_code, current_level, target_level,
+                priority, learning_material, learning_task_content, expected_output,
+                estimated_hours, plan_start_date, plan_end_date, target_month,
+                status, include_in_plan, plan_quarter, plan_month,
+                l1_code, l1_name, l2_code, l2_name, l3_name
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                plan_id,
+                item["l3_code"],
+                item["current_level"],
+                item["target_level"],
+                item["priority"],
+                item.get("learning_material"),
+                item.get("learning_task_content"),
+                item.get("expected_output"),
+                item.get("estimated_hours"),
+                item.get("plan_start_date"),
+                item.get("plan_end_date"),
+                item.get("target_month"),
+                item.get("status", "未开始"),
+                item.get("include_in_plan", True),
+                item.get("plan_quarter"),
+                item.get("plan_month"),
+                item.get("l1_code"),
+                item.get("l1_name"),
+                item.get("l2_code"),
+                item.get("l2_name"),
+                item.get("l3_name"),
+            ),
+        )
+    connection.commit()
+
+
+def test_team_annual_plan_items_read_scope(
+    team_annual_plan_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(team_annual_plan_schema, "leader_items", ["Leader"])
+    _create_test_user(team_annual_plan_schema, "admin_items", ["Admin"])
+    member_a_id = _create_test_user(
+        team_annual_plan_schema, "member_a_items", ["Member"]
+    )
+    member_b_id = _create_test_user(
+        team_annual_plan_schema, "member_b_items", ["Member"]
+    )
+
+    _insert_plan_items(
+        team_annual_plan_schema,
+        member_a_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 2,
+                "target_level": 4,
+                "priority": "高",
+                "estimated_hours": "10",
+                "plan_month": 3,
+                "plan_quarter": "Q1",
+                "status": "进行中",
+                "l1_code": "P01",
+                "l1_name": "Data Infra",
+                "l2_code": "P01-L2A",
+                "l2_name": "Data basics",
+                "l3_name": "Data modeling",
+            }
+        ],
+    )
+    _insert_plan_items(
+        team_annual_plan_schema,
+        member_b_id,
+        2026,
+        [
+            {
+                "l3_code": "P02-L2B-L3A",
+                "current_level": 1,
+                "target_level": 3,
+                "priority": "中",
+                "estimated_hours": "8",
+                "plan_month": 5,
+                "plan_quarter": "Q2",
+                "status": "未开始",
+                "l1_code": "P02",
+                "l1_name": "AI Infra",
+                "l2_code": "P02-L2B",
+                "l2_name": "AI basics",
+                "l3_name": "Agent design",
+            }
+        ],
+    )
+
+    admin_cookies = _login(team_annual_plan_schema, "admin_items")
+    status, body, _ = _request(
+        "GET",
+        "/api/planning/team-annual-plan/items?year=2026",
+        cookies=admin_cookies,
+    )
+    assert status == 200
+    assert body["meta"]["source"] == "team_annual_plan.items.v1"
+    assert body["pagination"]["total_count"] == 2
+    assert len(body["items"]) == 2
+
+    member_a_cookies = _login(team_annual_plan_schema, "member_a_items")
+    status, body, _ = _request(
+        "GET",
+        "/api/planning/team-annual-plan/items?year=2026",
+        cookies=member_a_cookies,
+    )
+    assert status == 200
+    assert body["meta"]["scope"] == "本人"
+    assert body["pagination"]["total_count"] == 1
+    assert body["items"][0]["member_id"] == member_a_id
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/team-annual-plan/items?year=2026&member_id={member_b_id}",
+        cookies=member_a_cookies,
+    )
+    assert status == 403
+
+
+def test_team_annual_plan_items_filters_and_pagination(
+    team_annual_plan_schema: psycopg.Connection,
+) -> None:
+    _create_test_user(team_annual_plan_schema, "leader_filter", ["Leader"])
+    member_id = _create_test_user(team_annual_plan_schema, "member_filter", ["Member"])
+    _insert_plan_items(
+        team_annual_plan_schema,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 2,
+                "target_level": 4,
+                "priority": "高",
+                "estimated_hours": "10",
+                "plan_month": 3,
+                "plan_quarter": "Q1",
+                "status": "进行中",
+                "l1_code": "P01",
+                "l1_name": "Data Infra",
+                "l2_code": "P01-L2A",
+                "l2_name": "Data basics",
+                "l3_name": "Data modeling",
+            },
+            {
+                "l3_code": "P02-L2B-L3A",
+                "current_level": 1,
+                "target_level": 3,
+                "priority": "中",
+                "estimated_hours": "8",
+                "plan_month": 5,
+                "plan_quarter": "Q2",
+                "status": "未开始",
+                "l1_code": "P02",
+                "l1_name": "AI Infra",
+                "l2_code": "P02-L2B",
+                "l2_name": "AI basics",
+                "l3_name": "Agent design",
+            },
+        ],
+    )
+
+    leader_cookies = _login(team_annual_plan_schema, "leader_filter")
+    status, body, _ = _request(
+        "GET",
+        "/api/planning/team-annual-plan/items?year=2026&domain_code=P01",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    assert body["pagination"]["total_count"] == 1
+    assert body["items"][0]["l3_code"] == "P01-L2A-L3A"
+
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/team-annual-plan/items?year=2026&priority={quote('高')}",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    assert body["pagination"]["total_count"] == 1
+    assert body["items"][0]["priority"] == "高"
+
+    status, body, _ = _request(
+        "GET",
+        "/api/planning/team-annual-plan/items?year=2026&page_size=1&page=1",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    assert len(body["items"]) == 1
+    assert body["pagination"]["total_pages"] == 2

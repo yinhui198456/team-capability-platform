@@ -8,21 +8,52 @@ import {
 } from './catalog'
 import {
   archiveTeamAnnualPlan,
+  formatCapabilityPath,
   getTeamAnnualPlan,
+  getTeamAnnualPlanItems,
   listChangeProposals,
   publishTeamAnnualPlan,
   updateTeamAnnualPlan,
   type ChangeProposal,
   type TeamAnnualCapabilityPlan,
+  type TeamAnnualPlanItem,
+  type TeamAnnualPlanItemList,
   type TeamAnnualPlanSave,
 } from './planning'
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50]
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'plan_month', label: '计划月份' },
+  { value: 'priority', label: '优先级' },
+  { value: 'status', label: '状态' },
+  { value: 'l3_code', label: '三级路径编码' },
+  { value: 'member_id', label: '成员' },
+]
+
+function priorityClass(priority: string) {
+  if (priority === '高') return 'priority-high'
+  if (priority === '中') return 'priority-medium'
+  return 'priority-low'
+}
+
+function statusClass(status: string) {
+  if (status === '已完成') return 'status-completed'
+  if (status === '进行中') return 'status-in-progress'
+  if (status === '延期') return 'status-delayed'
+  if (status === '暂停') return 'status-paused'
+  if (status === '取消') return 'status-cancelled'
+  return 'status-not-started'
+}
 
 export function TeamAnnualPlanPage() {
   const currentYear = new Date().getFullYear()
   const [year, setYear] = useState(currentYear)
-  const { user, isLeader } = useMe()
+  const { user, isLeader, isAdmin, isBuddy, isMember } = useMe()
   const { data: model } = useCatalog<CapabilityModel>('/api/capability-model')
   const domains = enabledDomains(model)
+
+  const canView = isMember || isBuddy || isLeader || isAdmin
 
   const [plan, setPlan] = useState<TeamAnnualCapabilityPlan | null>(null)
   const [focusDomains, setFocusDomains] = useState<Set<string>>(new Set())
@@ -33,10 +64,32 @@ export function TeamAnnualPlanPage() {
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  // #62 read-only aggregate: pending change proposals (the team plan entity
-  // itself is never written with assessment sources).
   const [proposals, setProposals] = useState<ChangeProposal[]>([])
   const [sourceLoading, setSourceLoading] = useState(false)
+
+  // #64 Phase 2: read-only formal PlanItem list for all authorized roles.
+  const [items, setItems] = useState<TeamAnnualPlanItem[]>([])
+  const [itemsMeta, setItemsMeta] = useState<
+    TeamAnnualPlanItemList['meta'] | null
+  >(null)
+  const [itemsPagination, setItemsPagination] = useState<
+    TeamAnnualPlanItemList['pagination'] | null
+  >(null)
+  const [itemsLoading, setItemsLoading] = useState(false)
+  const [itemsError, setItemsError] = useState('')
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [sortBy, setSortBy] = useState('plan_month')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
+  const [filterDomain, setFilterDomain] = useState('')
+  const [filterPriority, setFilterPriority] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterQuarter, setFilterQuarter] = useState('')
+  const [filterMonth, setFilterMonth] = useState('')
+  const [filterMemberId, setFilterMemberId] = useState('')
+  const [filterQ, setFilterQ] = useState('')
 
   async function load() {
     if (!isLeader) return
@@ -61,9 +114,6 @@ export function TeamAnnualPlanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, isLeader])
 
-  // #62: read-only aggregate of pending change proposals for the selected
-  // year.  The team plan entity itself is never written with assessment
-  // sources; member plan sources stay on the member annual-plan pages.
   useEffect(() => {
     if (!isLeader) return
     let cancelled = false
@@ -82,6 +132,61 @@ export function TeamAnnualPlanPage() {
       cancelled = true
     }
   }, [year, isLeader])
+
+  useEffect(() => {
+    if (!canView) return
+    let cancelled = false
+    setItemsLoading(true)
+    setItemsError('')
+    getTeamAnnualPlanItems({
+      year,
+      page,
+      page_size: pageSize,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+      ...(filterDomain ? { domain_code: filterDomain } : {}),
+      ...(filterPriority ? { priority: filterPriority } : {}),
+      ...(filterStatus ? { status: filterStatus } : {}),
+      ...(filterQuarter ? { quarter: filterQuarter } : {}),
+      ...(filterMonth ? { month: Number(filterMonth) } : {}),
+      ...(filterMemberId ? { member_id: Number(filterMemberId) } : {}),
+      ...(filterQ ? { q: filterQ } : {}),
+    })
+      .then((result) => {
+        if (cancelled) return
+        setItems(result.items)
+        setItemsMeta(result.meta)
+        setItemsPagination(result.pagination)
+      })
+      .catch((reason) => {
+        if (cancelled) return
+        setItemsError(reason instanceof Error ? reason.message : '加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setItemsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    year,
+    page,
+    pageSize,
+    sortBy,
+    sortOrder,
+    filterDomain,
+    filterPriority,
+    filterStatus,
+    filterQuarter,
+    filterMonth,
+    filterMemberId,
+    filterQ,
+    canView,
+  ])
+
+  const membersInScope = Array.from(
+    new Map(items.map((item) => [item.member_id, item.full_name])),
+  )
 
   function toggleDomain(code: string) {
     if (!isLeader || plan?.status === '已归档') return
@@ -166,8 +271,8 @@ export function TeamAnnualPlanPage() {
       </header>
 
       {!user && <p className="muted">正在加载用户信息…</p>}
-      {user && !isLeader && (
-        <p className="muted">无权限，仅 Leader 可管理团队年度能力规划。</p>
+      {user && !canView && (
+        <p className="muted">无权限，需要 Member、Buddy、Leader 或 Admin 角色。</p>
       )}
 
       {isLeader && error && (
@@ -180,13 +285,314 @@ export function TeamAnnualPlanPage() {
           {success}
         </p>
       )}
+      {itemsError && (
+        <p className="error" role="alert">
+          {itemsError}
+        </p>
+      )}
 
-      {isLeader && loading && !plan && (
-        <p className="muted">正在加载团队年度能力规划…</p>
+      {canView && (
+        <section
+          className="plan-overview"
+          aria-label="团队年度计划正式项列表"
+        >
+          <h2>团队年度计划正式项</h2>
+          {itemsMeta && (
+            <p className="muted">
+              数据范围：{itemsMeta.scope} · 统计时间：
+              {itemsMeta.as_of
+                ? new Date(itemsMeta.as_of).toLocaleString('zh-CN')
+                : '-'}
+            </p>
+          )}
+
+          <div className="analytics-filters" aria-label="年度计划项筛选与排序">
+            <label>
+              年度
+              <input
+                type="number"
+                aria-label="年度计划项年度"
+                value={year}
+                onChange={(event) => {
+                  const value = parseInt(event.target.value, 10)
+                  if (!Number.isNaN(value)) {
+                    setYear(value)
+                    setPage(1)
+                  }
+                }}
+              />
+            </label>
+
+            <label>
+              能力域
+              <select
+                aria-label="能力域筛选"
+                value={filterDomain}
+                onChange={(event) => {
+                  setFilterDomain(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                {domains.map((domain) => (
+                  <option key={domain.code} value={domain.code}>
+                    {domain.code} · {domain.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              优先级
+              <select
+                aria-label="优先级筛选"
+                value={filterPriority}
+                onChange={(event) => {
+                  setFilterPriority(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                <option value="高">高</option>
+                <option value="中">中</option>
+                <option value="低">低</option>
+              </select>
+            </label>
+
+            <label>
+              状态
+              <select
+                aria-label="状态筛选"
+                value={filterStatus}
+                onChange={(event) => {
+                  setFilterStatus(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                <option value="未开始">未开始</option>
+                <option value="进行中">进行中</option>
+                <option value="已完成">已完成</option>
+                <option value="延期">延期</option>
+                <option value="暂停">暂停</option>
+                <option value="取消">取消</option>
+              </select>
+            </label>
+
+            <label>
+              季度
+              <select
+                aria-label="季度筛选"
+                value={filterQuarter}
+                onChange={(event) => {
+                  setFilterQuarter(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                <option value="Q1">Q1</option>
+                <option value="Q2">Q2</option>
+                <option value="Q3">Q3</option>
+                <option value="Q4">Q4</option>
+              </select>
+            </label>
+
+            <label>
+              月份
+              <select
+                aria-label="月份筛选"
+                value={filterMonth}
+                onChange={(event) => {
+                  setFilterMonth(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                {Array.from({ length: 12 }, (_, index) => index + 1).map(
+                  (month) => (
+                    <option key={month} value={month}>
+                      {month}月
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              成员
+              <select
+                aria-label="成员筛选"
+                value={filterMemberId}
+                onChange={(event) => {
+                  setFilterMemberId(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="">全部</option>
+                {membersInScope.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              搜索
+              <input
+                type="search"
+                aria-label="搜索计划项"
+                placeholder="路径、能力项或成员"
+                value={filterQ}
+                onChange={(event) => {
+                  setFilterQ(event.target.value)
+                  setPage(1)
+                }}
+              />
+            </label>
+
+            <label>
+              排序
+              <select
+                aria-label="排序字段"
+                value={sortBy}
+                onChange={(event) => {
+                  setSortBy(event.target.value)
+                  setPage(1)
+                }}
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              顺序
+              <select
+                aria-label="排序顺序"
+                value={sortOrder}
+                onChange={(event) => {
+                  setSortOrder(event.target.value as 'asc' | 'desc')
+                  setPage(1)
+                }}
+              >
+                <option value="asc">升序</option>
+                <option value="desc">降序</option>
+              </select>
+            </label>
+
+            <label>
+              每页
+              <select
+                aria-label="每页条数"
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value))
+                  setPage(1)
+                }}
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {itemsLoading && items.length === 0 && (
+            <p className="muted">正在加载年度计划项…</p>
+          )}
+
+          {!itemsLoading && items.length === 0 && (
+            <p className="muted">当前筛选条件下无正式年度计划项。</p>
+          )}
+
+          {items.length > 0 && (
+            <>
+              <table className="analytics-table">
+                <thead>
+                  <tr>
+                    <th>成员</th>
+                    <th>能力路径</th>
+                    <th>优先级</th>
+                    <th>月份</th>
+                    <th>季度</th>
+                    <th>状态</th>
+                    <th>当前 → 目标</th>
+                    <th>预计时长</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.full_name}</td>
+                      <td>{formatCapabilityPath(item)}</td>
+                      <td>
+                        <span className={priorityClass(item.priority)}>
+                          {item.priority}
+                        </span>
+                      </td>
+                      <td>{item.plan_month ? `${item.plan_month}月` : '-'}</td>
+                      <td>{item.plan_quarter ?? '-'}</td>
+                      <td>
+                        <span className={statusClass(item.status)}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td>
+                        {item.current_level} → {item.target_level}
+                      </td>
+                      <td>{item.estimated_hours ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div
+                className="form-actions"
+                aria-label="分页"
+                style={{ justifyContent: 'center', marginTop: '1rem' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPage((previous) => Math.max(1, previous - 1))}
+                  disabled={page <= 1 || itemsLoading}
+                >
+                  上一页
+                </button>
+                <span className="muted">
+                  第 {page} / {itemsPagination?.total_pages ?? 1} 页，共{' '}
+                  {itemsPagination?.total_count ?? 0} 条
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPage((previous) =>
+                      previous < (itemsPagination?.total_pages ?? 1)
+                        ? previous + 1
+                        : previous,
+                    )
+                  }
+                  disabled={
+                    page >= (itemsPagination?.total_pages ?? 1) || itemsLoading
+                  }
+                >
+                  下一页
+                </button>
+              </div>
+            </>
+          )}
+        </section>
       )}
 
       {isLeader && (
         <form className="plan-overview" onSubmit={handlePublish}>
+          <h2>团队年度能力规划管理</h2>
+
           <label>
             年度
             <input

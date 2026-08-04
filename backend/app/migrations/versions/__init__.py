@@ -23,6 +23,9 @@ from .v0008_plan_null_constraint import (
 from .v0009_review_plan_atomic import upgrade as upgrade_review_plan_atomic
 from .v0010_learning_execution import upgrade as upgrade_learning_execution
 from .v0011_monthly_review import upgrade as upgrade_monthly_review
+from .v0012_team_analytics_indexes import (
+    upgrade as upgrade_team_analytics_indexes,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -39,6 +42,7 @@ MIGRATIONS = [
     ("0009_review_plan_atomic", upgrade_review_plan_atomic),
     ("0010_learning_execution", upgrade_learning_execution),
     ("0011_monthly_review", upgrade_monthly_review),
+    ("0012_team_analytics_indexes", upgrade_team_analytics_indexes),
 ]
 
 __all__ = ["MIGRATIONS"]
