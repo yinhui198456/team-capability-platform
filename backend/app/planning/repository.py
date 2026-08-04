@@ -3890,27 +3890,30 @@ def list_team_annual_plan_items(
     where_sql = " AND ".join(where_clauses)
 
     # Pagination-invariant aggregates over the full filtered set, using valid
-    # progress logs only.  A single set-based query avoids per-page drift and
-    # per-member loops.
+    # progress logs only.  Pre-aggregate actual hours per PlanItem so that
+    # multiple progress-log rows do not inflate counts or status buckets.
     aggregate_row = connection.execute(
         f"""
         SELECT
-            COUNT(*),
-            COALESCE(
-                SUM(lpl.actual_hours) FILTER (WHERE lpl.invalidated_at IS NULL), 0
-            ),
-            COUNT(*) FILTER (WHERE pi.status = '未开始'),
-            COUNT(*) FILTER (WHERE pi.status = '进行中'),
-            COUNT(*) FILTER (WHERE pi.status = '已完成'),
-            COUNT(*) FILTER (WHERE pi.status = '延期'),
-            COUNT(*) FILTER (WHERE pi.status = '暂停'),
-            COUNT(*) FILTER (WHERE pi.status = '取消')
+            COUNT(DISTINCT pi.id),
+            COALESCE(SUM(lpl_agg.actual_hours), 0),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '未开始'),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '进行中'),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '已完成'),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '延期'),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '暂停'),
+            COUNT(DISTINCT pi.id) FILTER (WHERE pi.status = '取消')
         FROM plan_item pi
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         JOIN tcp_user u ON u.id = agp.member_id
-        LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id
-        LEFT JOIN learning_progress_log lpl
-          ON lpl.task_id = lt.id AND lpl.invalidated_at IS NULL
+        LEFT JOIN (
+            SELECT lt.plan_item_id,
+                   COALESCE(SUM(lpl.actual_hours), 0) AS actual_hours
+            FROM learning_task lt
+            JOIN learning_progress_log lpl
+              ON lpl.task_id = lt.id AND lpl.invalidated_at IS NULL
+            GROUP BY lt.plan_item_id
+        ) lpl_agg ON lpl_agg.plan_item_id = pi.id
         WHERE {where_sql}
         """,
         params,

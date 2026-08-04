@@ -877,3 +877,131 @@ def test_team_annual_plan_summary_is_pagination_invariant_and_excludes_invalidat
     assert p01_summary["planned_hours_min"] == 10
     assert p01_summary["planned_hours_max"] == 10
     assert p01_summary["actual_hours"] == 4
+
+
+def test_team_annual_plan_summary_counts_each_plan_item_once_with_multiple_logs(
+    team_annual_plan_schema: psycopg.Connection,
+) -> None:
+    """Multiple progress logs must not multiply PlanItem counts or status buckets."""
+    _create_test_user(team_annual_plan_schema, "leader_card", ["Leader"])
+    member_id = _create_test_user(team_annual_plan_schema, "member_card", ["Member"])
+
+    _insert_plan_items(
+        team_annual_plan_schema,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 2,
+                "target_level": 4,
+                "priority": "高",
+                "estimated_hours": "10",
+                "plan_month": 3,
+                "plan_quarter": "Q1",
+                "status": "进行中",
+                "l1_code": "P01",
+                "l1_name": "Data Infra",
+                "l2_code": "P01-L2A",
+                "l2_name": "Data basics",
+                "l3_name": "Data modeling",
+            },
+            {
+                "l3_code": "P02-L2B-L3A",
+                "current_level": 1,
+                "target_level": 3,
+                "priority": "中",
+                "estimated_hours": "8",
+                "plan_month": 5,
+                "plan_quarter": "Q2",
+                "status": "已完成",
+                "l1_code": "P02",
+                "l1_name": "AI Infra",
+                "l2_code": "P02-L2B",
+                "l2_name": "AI basics",
+                "l3_name": "Agent design",
+            },
+        ],
+    )
+
+    plan_item_ids = [
+        row[0]
+        for row in team_annual_plan_schema.execute(
+            """
+            SELECT pi.id
+            FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s AND agp.year = %s
+            ORDER BY pi.plan_month
+            """,
+            (member_id, 2026),
+        ).fetchall()
+    ]
+
+    for plan_item_id in plan_item_ids:
+        team_annual_plan_schema.execute(
+            """
+            INSERT INTO learning_task (plan_item_id, l3_code, status)
+            VALUES (%s, 'X', '已完成')
+            """,
+            (plan_item_id,),
+        )
+    task_ids = [
+        row[0]
+        for row in team_annual_plan_schema.execute(
+            "SELECT id FROM learning_task WHERE plan_item_id = ANY(%s) ORDER BY id",
+            (plan_item_ids,),
+        ).fetchall()
+    ]
+
+    # Item 1: two valid logs plus one invalidated log.
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id)
+        VALUES (%s, '2026-03-10', 3, %s)
+        """,
+        (task_ids[0], member_id),
+    )
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id)
+        VALUES (%s, '2026-03-20', 4, %s)
+        """,
+        (task_ids[0], member_id),
+    )
+    team_annual_plan_schema.execute(
+        """
+        INSERT INTO learning_progress_log
+            (task_id, record_date, actual_hours, recorder_id, invalidated_at)
+        VALUES (%s, '2026-03-25', 99, %s, NOW())
+        """,
+        (task_ids[0], member_id),
+    )
+    team_annual_plan_schema.commit()
+
+    leader_cookies = _login(team_annual_plan_schema, "leader_card")
+
+    def load_summary(page: int, page_size: int) -> dict[str, object]:
+        status, body, _ = _request(
+            "GET",
+            (
+                f"/api/planning/team-annual-plan/items?year=2026"
+                f"&page_size={page_size}&page={page}"
+            ),
+            cookies=leader_cookies,
+        )
+        assert status == 200, body
+        return body["summary"]
+
+    full_summary = load_summary(1, 20)
+    assert full_summary["total_count"] == 2
+    assert full_summary["status_breakdown"]["进行中"] == 1
+    assert full_summary["status_breakdown"]["已完成"] == 1
+    assert full_summary["status_breakdown"]["total"] == 2
+    assert full_summary["actual_hours"] == 7
+
+    page1 = load_summary(1, 1)
+    page2 = load_summary(2, 1)
+    assert page1 == page2 == full_summary
