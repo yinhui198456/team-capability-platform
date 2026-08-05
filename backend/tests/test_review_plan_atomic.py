@@ -567,11 +567,13 @@ class TestApproveLegacyNullNodeDetail(ReviewTestBase):
         self._assert_no_partial_writes(review_schema, assessment_id)
 
 
-class TestApproveLegacyNullScopeType(ReviewTestBase):
-    """Issue #65: legacy (pre-scope) drafts never froze scope_type and the
-    member UI has no control for it, so Buddy final approval of a legitimate
-    legacy assessment is blocked with planning_snapshot_incomplete (observed
-    in UAT on three included repair-lineage details).
+class _LegacyNullScopeBase(ReviewTestBase):
+    """Shared fixtures for Issue #65 legacy (pre-scope) approval simulations.
+
+    Legacy (pre-scope) drafts never froze scope_type and the member UI has no
+    control for it, so Buddy final approval of a legitimate legacy assessment
+    is blocked with planning_snapshot_incomplete (observed in UAT on three
+    included repair-lineage details).
 
     Legacy drafts are canonically measured against the member's frozen TARGET
     job level (the compat repair flow resolves applicability and the standard
@@ -649,6 +651,11 @@ class TestApproveLegacyNullScopeType(ReviewTestBase):
             assert (
                 connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
             ), table
+
+
+class TestApproveLegacyNullScopeType(_LegacyNullScopeBase):
+    """Legacy included details with NULL scope_type derive from the frozen
+    target-level matrix row; missing or conflicting evidence stays a 422."""
 
     def test_approve_null_scope_type_derives_from_target_level_matrix(
         self, review_schema: psycopg.Connection
@@ -823,3 +830,163 @@ class TestApproveLegacyNullScopeType(ReviewTestBase):
         assert excinfo.value.code == "planning_snapshot_incomplete"
         assert excinfo.value.status_code == 422
         self._assert_no_partial_writes(review_schema, assessment_id)
+
+
+class TestApproveLegacyNullFrozenLineage(_LegacyNullScopeBase):
+    """Issue #65: compat-repaired legacy details may also lack the frozen
+    lineage columns (l1_code/l1_name/l2_code/l2_name/l3_name); only l3_code
+    survives.  On the change-proposal path the NOT NULL contract of
+    annual_plan_change_proposal_detail then surfaced as an uncontrolled 500
+    NotNullViolation (observed in UAT on the F3 retry).  The approval path
+    must derive the missing lineage from the resolved node's canonical
+    ancestry (l3_name from the immutable version-bound planning snapshot),
+    stamp it inside the same atomic transaction, keep populated frozen values
+    untouched, and return a controlled 422 when the lineage cannot be
+    resolved.
+    """
+
+    # Fixture node ancestry (ensure_capability_nodes uses code as name):
+    # L1 P01 / L2 P01-L2A / L3 P01-L2A-L3A.
+    _LINEAGE = ("P01", "P01", "P01-L2A", "P01-L2A", "P01-L2A-L3A")
+
+    def _simulate_legacy_null_lineage(
+        self, connection: psycopg.Connection, assessment_id: int
+    ) -> int:
+        """Full #65 UAT shape: legacy scope fields plus every frozen lineage
+        column NULL.  Returns the original node id."""
+        original_node = self._simulate_legacy_null_scope(connection, assessment_id)
+        connection.execute(
+            """
+            UPDATE assessment_detail
+            SET l1_code=NULL, l1_name=NULL, l2_code=NULL, l2_name=NULL,
+                l3_name=NULL
+            WHERE assessment_id=%s
+            """,
+            (assessment_id,),
+        )
+        connection.commit()
+        return original_node
+
+    def test_approve_null_frozen_lineage_proposal_path_derives(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """The exact UAT F3-retry shape: the member already has a formal
+        plan, so approval takes the proposal path; baseline crashed with an
+        uncontrolled 500 NotNullViolation on l1_code."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        first = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        self.approve(review_schema, first, buddy_id)
+
+        second = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        self._simulate_legacy_null_lineage(review_schema, second)
+
+        result = self.approve(review_schema, second, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["proposal"] is not None
+        assert result["proposal"]["created"] is True
+        proposals = list_change_proposals(review_schema, member_id, 2026)
+        assert len(proposals) == 1
+        assert len(proposals[0]["details"]) == 1
+        detail = proposals[0]["details"][0]
+        assert detail["l1_code"] == self._LINEAGE[0]
+        assert detail["l1_name"] == self._LINEAGE[1]
+        assert detail["l2_code"] == self._LINEAGE[2]
+        assert detail["l2_name"] == self._LINEAGE[3]
+        assert detail["l3_name"] == self._LINEAGE[4]
+        assert detail["scope_type"] == "target_progressive"
+        stamped = review_schema.execute(
+            "SELECT l1_code, l1_name, l2_code, l2_name, l3_name "
+            "FROM assessment_detail WHERE assessment_id=%s",
+            (second,),
+        ).fetchone()
+        assert tuple(stamped) == self._LINEAGE
+
+    def test_approve_null_frozen_lineage_plan_path_derives(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """First-approval plan path: plan_item tolerates NULL lineage, but
+        the frozen contract must stay coherent — derived, not left NULL."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        self._simulate_legacy_null_lineage(review_schema, assessment_id)
+
+        result = self.approve(review_schema, assessment_id, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["plan"]["items_created"] == 1
+        item = get_annual_plan_with_items(review_schema, member_id, 2026)["items"][0]
+        assert item["l1_code"] == self._LINEAGE[0]
+        assert item["l1_name"] == self._LINEAGE[1]
+        assert item["l2_code"] == self._LINEAGE[2]
+        assert item["l2_name"] == self._LINEAGE[3]
+        assert item["l3_name"] == self._LINEAGE[4]
+
+    def test_approve_null_lineage_broken_ancestry_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        original_node = self._simulate_legacy_null_lineage(review_schema, assessment_id)
+        # Break the canonical ancestry after the fact: the L3 node loses its
+        # L2 parent, so the lineage cannot be derived.  The hierarchy CHECK
+        # and trigger normally forbid this (contained per-test schema, so
+        # dropping them here is safe) — simulate corrupt catalog data.
+        review_schema.execute(
+            "ALTER TABLE capability_node DROP CONSTRAINT capability_node_check"
+        )
+        review_schema.execute("SET session_replication_role = replica")
+        review_schema.execute(
+            "UPDATE capability_node SET parent_node_id=NULL WHERE id=%s",
+            (original_node,),
+        )
+        review_schema.execute("SET session_replication_role = origin")
+        review_schema.commit()
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_incomplete"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
+
+    def test_approve_populated_lineage_preserved_after_rename(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """Populated frozen lineage is never re-derived: renaming the live
+        catalog after submit must not leak into the frozen plan item."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        node_id = review_schema.execute(
+            "SELECT l3_node_id FROM assessment_detail WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()[0]
+        review_schema.execute(
+            "UPDATE capability_node SET name='renamed-l3' WHERE id=%s", (node_id,)
+        )
+        review_schema.execute(
+            "UPDATE capability_node SET name='renamed-l2' "
+            "WHERE id=(SELECT parent_node_id FROM capability_node WHERE id=%s)",
+            (node_id,),
+        )
+        review_schema.execute(
+            "UPDATE capability_node SET name='renamed-l1' "
+            "WHERE id=(SELECT parent_node_id FROM capability_node WHERE id=("
+            "SELECT parent_node_id FROM capability_node WHERE id=%s))",
+            (node_id,),
+        )
+        review_schema.commit()
+
+        result = self.approve(review_schema, assessment_id, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        item = get_annual_plan_with_items(review_schema, member_id, 2026)["items"][0]
+        assert item["l1_name"] == self._LINEAGE[1]
+        assert item["l2_name"] == self._LINEAGE[3]
+        assert item["l3_name"] == self._LINEAGE[4]

@@ -2868,6 +2868,76 @@ def _derive_legacy_included_scope(
         )
 
 
+def _resolve_detail_frozen_lineage(
+    connection: psycopg.Connection,
+    detail: tuple[Any, ...],
+    node_id: int,
+    snapshot: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Issue #65: derive missing frozen lineage for legacy approval details.
+
+    Compat-repaired legacy details may carry NULL l1/l2/l3 name/code columns
+    (only l3_code survives); the proposal-detail NOT NULL contract and the
+    plan_item approval-completeness CHECK then surfaced as an uncontrolled
+    500 (observed in UAT on the F3 retry).  Fresh drafts freeze these columns
+    from the node's catalog ancestry at creation; legacy rows derive them at
+    approval time from the same canonical source: l1/l2 from the resolved
+    node's ancestry (node codes are stable identity; the hierarchy is
+    enforced by CHECK + trigger) and l3_name from the immutable version-bound
+    planning snapshot.  Only NULL columns are stamped — populated frozen
+    values are never re-derived (frozen-after-rename semantics) — and the
+    stamp shares the caller's atomic approval transaction, so any later
+    failure rolls it back with everything else.  A node whose ancestry
+    cannot be resolved stays a controlled 422, never a 500.
+    """
+    if all(detail[i] is not None for i in (3, 4, 5, 6, 7)):
+        return detail
+    lineage = connection.execute(
+        """
+        SELECT l1.code, l1.name, l2.code, l2.name
+        FROM capability_node AS n
+        JOIN capability_node AS l2
+          ON l2.id = n.parent_node_id AND l2.node_type = 'L2'
+        JOIN capability_node AS l1
+          ON l1.id = l2.parent_node_id AND l1.node_type = 'L1'
+        WHERE n.id = %s AND n.node_type = 'L3'
+        """,
+        (node_id,),
+    ).fetchone()
+    if lineage is None:
+        raise ReviewError(
+            "planning_snapshot_incomplete",
+            "canonical node lineage is incomplete for legacy detail",
+            status_code=422,
+            l3_node_id=node_id,
+            l3_code=str(detail[2]),
+        )
+    derived = (
+        str(snapshot[4]),
+        str(lineage[0]),
+        str(lineage[1]),
+        str(lineage[2]),
+        str(lineage[3]),
+    )
+    connection.execute(
+        """
+        UPDATE assessment_detail
+        SET l3_name = COALESCE(l3_name, %s),
+            l1_code = COALESCE(l1_code, %s),
+            l1_name = COALESCE(l1_name, %s),
+            l2_code = COALESCE(l2_code, %s),
+            l2_name = COALESCE(l2_name, %s)
+        WHERE id = %s
+        """,
+        (*derived, int(detail[0])),
+    )
+    patched = list(detail)
+    for index, value in zip((3, 4, 5, 6, 7), derived, strict=True):
+        if patched[index] is None:
+            patched[index] = value
+    return tuple(patched)
+
+
 def _insert_plan_item_and_task(
     connection: psycopg.Connection,
     plan_id: int,
@@ -3007,6 +3077,7 @@ def _approve_first_assessment(
                 l3_code=str(detail[2]),
             )
         detail = (detail[0], node_id) + tuple(detail[2:])
+        detail = _resolve_detail_frozen_lineage(connection, detail, node_id, snapshot)
         item_id, task_id = _insert_plan_item_and_task(
             connection, plan_id, assessment, detail, snapshot
         )
@@ -3077,6 +3148,7 @@ def _approve_with_proposal(
                 l3_node_id=node_id,
                 l3_code=str(detail[2]),
             )
+        detail = _resolve_detail_frozen_lineage(connection, detail, node_id, snapshot)
         (
             detail_id,
             _detail_node_id,
