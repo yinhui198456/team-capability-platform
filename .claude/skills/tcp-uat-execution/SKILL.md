@@ -52,9 +52,9 @@ One designated owner performs all shared writes (records, evidence artifacts); e
 
 Use only OBSERVED_PASS / FAIL / BLOCKED / NOT_RUN, each with evidence. Never claim final user acceptance — that belongs to the accountable human.
 
-## 10. Stall recovery
+## 10. Stall recovery (read-only only)
 
-Bounded retries with increasing waits. On repeated stall: produce a checkpoint and escalate to the user. Never silently "fix" the flow by skipping steps.
+Repeated waits/checks may apply only to read-only observation of an external state or handoff — never to a mutable action. A page/API/deploy/migration/business write action follows section 6 exactly: read-only reconcile first; retry once only after proving zero execution and zero write; never use increasing retries for a mutable action. If an executor is idle or exits before executing, recover and submit the already-authorized task once — queued/thinking/shell count is not progress. Isolate a failed lane and keep safe independent work moving. Escalate to the user only after safe recovery paths are exhausted. Never silently "fix" the flow by skipping steps.
 
 ## Self-check (static assertions)
 
@@ -64,7 +64,12 @@ Run read-only; needs nothing beyond this file. Fails if the dangerous auto-clean
 python3 - <<'EOF'
 import pathlib, re
 text = pathlib.Path(".claude/skills/tcp-uat-execution/SKILL.md").read_text()
-assert not re.search(r"clean\s*up\s*every\s*record", text, re.I), "auto-cleanup sentence must not exist"
+forbidden = [
+    r"clean\s*up\s*every\s*record",
+    r"bounded\s+retries\s+with\s+increasing\s+waits",
+]
+for pat in forbidden:
+    assert not re.search(pat, text, re.I), f"forbidden phrase present: {pat}"
 required = [
     "Admission", "deployed full SHA", "migration ledger", "test identities",
     "access probes", "isolated browser contexts", "shared-write owner",
@@ -72,6 +77,8 @@ required = [
     "never a UAT pass", "read-only first", "Retry at most once",
     "zero execution and zero write", "isolates the lane", "pauses all writes",
     "OBSERVED_PASS", "Never auto-clean", "explicitly authorized operation",
+    "read-only observation", "mutable action",
+    "never use increasing retries for a mutable action",
 ]
 missing = [m for m in required if m not in text]
 assert not missing, f"missing markers: {missing}"

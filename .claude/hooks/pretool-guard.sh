@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# TCP PreToolUse guard — deterministic allow/deny/ask for Bash commands.
+# TCP PreToolUse guard — deterministic allow/deny/ask for Bash commands and
+# the file-writing tools (Edit/Write/MultiEdit/NotebookEdit).
 #
 # Protocol (Claude Code PreToolUse hook):
-#   stdin  : JSON {hook_event_name, tool_name, tool_input:{command}, cwd, ...}
+#   stdin  : JSON {hook_event_name, tool_name, tool_input:{command|file_path|...}, cwd, ...}
 #   stdout : optional {"hookSpecificOutput":{"hookEventName":"PreToolUse",
 #            "permissionDecision":"allow|deny|ask","permissionDecisionReason":"..."}}
 #   exit 0 = allow (or ask via stdout decision), exit 2 = deny
 #
-# Model: REPO_ROOT is the only ordinary write root. Reads may cross the
-# workspace; writes/destructive actions to sibling worktrees or other
-# repositories ask/deny — the worktrees parent is never a blanket write root.
-# The canonical runtime checkout is not a write root either: runtime/container/
-# DB/migration mutations ask. /tmp stays narrowly allowed for non-destructive
-# temporary output; broad delete/wildcard ambiguity asks. Unparseable Bash
-# input never fails open. Command content is never echoed; all reasons are
-# static strings; decision tables are explicit.
+# Model: REPO_ROOT is the only ordinary write root — for Bash writes and for
+# file-tool paths alike. Reads may cross the workspace; writes/destructive
+# actions to sibling worktrees or other repositories ask/deny — the worktrees
+# parent is never a blanket write root. The canonical runtime checkout is not
+# implementation source for this session: code/config edits there deny,
+# runtime/output artifact writes ask. /tmp stays narrowly allowed for
+# non-destructive Bash temporary output; broad delete/wildcard ambiguity asks.
+# Unparseable payloads for any matched tool never fail open. Command and path
+# contents are never echoed; all reasons are static strings; decision tables
+# are explicit.
 set -u
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -36,10 +39,12 @@ try:
 except Exception:
     data = None
 
+MATCHED_TOOLS = {"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
+
 if data is not None:
     event = data.get("hook_event_name")
     tool = data.get("tool_name")
-    if event != "PreToolUse" or tool != "Bash":
+    if event != "PreToolUse" or tool not in MATCHED_TOOLS:
         sys.exit(0)
     tool_input = data.get("tool_input") or {}
     cmd = tool_input.get("command")
@@ -86,9 +91,29 @@ def under(path, root):
     return p.startswith(root.rstrip("/") + "/")
 
 
-# Unparseable PreToolUse/Bash input -> supported ask result, static reason.
+# Unparseable PreToolUse input for a matched tool -> supported ask result,
+# static reason. Never fail open.
 if data is None:
     ask("unable to parse PreToolUse hook input")
+
+# ------------------------------------------------- file-writing tools
+if tool != "Bash":
+    if tool in ("Edit", "Write", "MultiEdit"):
+        path = tool_input.get("file_path")
+    else:  # NotebookEdit
+        path = tool_input.get("notebook_path")
+    if not isinstance(path, str) or not path.strip():
+        ask("file-write tool input without a resolvable path — confirm the target")
+    resolved = os.path.normpath(os.path.expanduser(path))
+    if not resolved.startswith("/"):
+        resolved = os.path.normpath(os.path.join(session_cwd if session_cwd else REPO_ROOT, resolved))
+    if under(resolved, REPO_ROOT):
+        sys.exit(0)  # ordinary in-repo edit/write
+    if CANONICAL_RUNTIME != REPO_ROOT and under(resolved, CANONICAL_RUNTIME):
+        if re.search(r"(^|/)(runtime|output|artifacts|logs|evidence)(/|$)", resolved):
+            ask("canonical runtime artifact write — confirm explicit task-level authorization")
+        deny("refusing code/config edit in the canonical runtime checkout")
+    deny("refusing file write/edit outside the repository")
 
 if not cmd:
     sys.exit(0)
@@ -98,7 +123,28 @@ try:
 except Exception:
     tokens = cmd.split()
 low = cmd.lower()
-first = tokens[0] if tokens else ""
+
+# Normalized executable tokens: strip standard wrappers (command/env/time/
+# nohup/exec/…) plus env assignments, and map absolute executable paths
+# (e.g. /bin/rm) to their basename so destructive-command checks cannot be
+# bypassed by spelling. Used for the rm and write-command branches only.
+toks = list(tokens)
+while toks and toks[0] in ("command", "env", "time", "nohup", "exec", "nice", "ionice", "taskset", "stdbuf"):
+    toks.pop(0)
+    while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
+        toks.pop(0)
+
+# A token names a command when it starts the line or follows a control/executor
+# token (pipeline, &&, ;, xargs, …) — not when it is a plain argument.
+CTRL = {"|", "||", "&&", ";", "&", "xargs", "env", "command", "time", "nohup", "exec", "nice", "ionice", "taskset", "stdbuf"}
+
+
+def command_index(names):
+    for i, t in enumerate(toks):
+        base = os.path.basename(t) if "/" in t else t
+        if base in names and (i == 0 or toks[i - 1] in CTRL):
+            return i
+    return None
 
 # Effective working directory after any cd/pushd in a compound command.
 def effective_cwd():
@@ -129,9 +175,9 @@ def in_repo(cwd):
 
 
 # ---------------------------------------------------------------- rm (any)
-if "rm" in tokens:
-    i = tokens.index("rm")
-    rest = tokens[i + 1 :]
+rm_idx = command_index({"rm"})
+if rm_idx is not None:
+    rest = toks[rm_idx + 1 :]
     flags = [t for t in rest if t.startswith("-")]
     targets = [t for t in rest if not t.startswith("-")]
     has_r = any(re.fullmatch(r"-{1,2}[A-Za-z]+", f) and "r" in f.lower() for f in flags)
@@ -259,17 +305,19 @@ if re.search(r"\bdocker\s+(exec|run|rm)\b", low) or re.search(
     ask("container/runtime mutation — confirm explicit task-level authorization")
 
 # ---------------------------------------- writes outside the repository
-# cp/mv/install/tee destinations
-if first in ("cp", "mv", "install", "tee"):
+# cp/mv/install/tee destinations (wrapper/absolute-path/piped aware via toks)
+w_idx = command_index({"cp", "mv", "install", "tee"})
+if w_idx is not None:
+    w_args = toks[w_idx + 1 :]
     dest = None
-    if "-t" in tokens:
+    if "-t" in w_args:
         try:
-            dest = tokens[tokens.index("-t") + 1]
+            dest = w_args[w_args.index("-t") + 1]
         except IndexError:
             dest = None
     else:
-        positionals = [t for t in tokens[1:] if not t.startswith("-")]
-        dest = (positionals[0] if positionals else None) if first == "tee" else (positionals[-1] if positionals else None)
+        positionals = [t for t in w_args if not t.startswith("-")]
+        dest = (positionals[0] if positionals else None) if toks[w_idx] == "tee" else (positionals[-1] if positionals else None)
     if dest:
         expanded = os.path.expanduser(dest)
         if expanded.startswith("/"):
