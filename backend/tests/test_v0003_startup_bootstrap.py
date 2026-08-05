@@ -53,6 +53,7 @@ _V0001_V0009 = (
     "0010_learning_execution",
     "0011_monthly_review",
     "0012_team_analytics_indexes",
+    "0013_plan_item_growth_goal_nullable",
 )
 
 
