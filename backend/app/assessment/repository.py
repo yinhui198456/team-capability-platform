@@ -132,7 +132,8 @@ def _draft_repair_profile(
     target_source = (
         "assessment_snapshot"
         if _is_job_level(snapshot_target)
-        else "repair_time_user_profile" if target is not None else None
+        else "repair_time_user_profile" if target is not None
+        else None
     )
     if current is None or target is None or int(current[1:]) > int(target[1:]):
         return None, None, current_source, target_source
@@ -2783,6 +2784,91 @@ def _resolve_detail_l3_node_id(
     )
 
 
+def _derive_legacy_included_scope(
+    connection: psycopg.Connection,
+    assessment: dict[str, object],
+    unscoped: list[tuple[Any, ...]],
+) -> None:
+    """Issue #65: derive the missing frozen scope of legacy included details.
+
+    Legacy (pre-scope) drafts never froze scope_type and the member UI has no
+    control for it, so Buddy final approval of a legitimate legacy assessment
+    was blocked with planning_snapshot_incomplete (observed in UAT on three
+    included repair-lineage details).
+
+    Legacy drafts are canonically measured against the member's annual TARGET
+    job level: the compat repair flow (_baseline_item_for_detail) resolves
+    applicability and the standard target from the bound version's matrix row
+    at the frozen target job level only, and treats a detail whose target-level
+    row is not applicable as not plannable.  Under that same immutable contract
+    the only scope a legacy included detail can carry is "target_progressive"
+    with the target job level snapshot.  It is derived only when the
+    target-level matrix row exists (UNIQUE(version_id, l3_node_id, job_level)
+    makes it unique), is applicable and agrees with every other frozen
+    canonical field; a populated scope_type is never touched, and missing or
+    conflicting evidence stays a controlled 422 instead of manufacturing a
+    scope.  The stamp runs inside the caller's atomic approval transaction, so
+    any later failure rolls it back together with everything else.
+    """
+    version_id = int(assessment["capability_standard_version_id"])
+    target_job = str(assessment["member_target_level_snapshot"])
+    for detail_id, node_id, code, frozen_target, frozen_job in unscoped:
+        resolved_node = _resolve_detail_l3_node_id(
+            connection, version_id, detail_id, node_id, code
+        )
+        row = connection.execute(
+            """
+            SELECT applicable, target_level
+            FROM capability_standard_item
+            WHERE version_id = %s AND l3_node_id = %s AND job_level = %s
+            """,
+            (version_id, resolved_node, target_job),
+        ).fetchone()
+        if row is None:
+            raise ReviewError(
+                "planning_snapshot_incomplete",
+                "published standard matrix is incomplete for legacy detail",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if not bool(row[0]) or row[1] is None:
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "canonical standard marks the included legacy detail not "
+                "applicable at the member target level",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if frozen_target is not None and int(frozen_target) != int(row[1]):
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "frozen standard target conflicts with the canonical standard "
+                "for the resolved scope",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if frozen_job is not None and str(frozen_job) != target_job:
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "frozen standard job level conflicts with the resolved scope",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        connection.execute(
+            """
+            UPDATE assessment_detail
+            SET scope_type = 'target_progressive',
+                standard_job_level_snapshot = %s
+            WHERE id = %s
+            """,
+            (target_job, int(detail_id)),
+        )
+
+
 def _insert_plan_item_and_task(
     connection: psycopg.Connection,
     plan_id: int,
@@ -3133,7 +3219,8 @@ def validate_assessment_canonical(
         )
     unscoped = connection.execute(
         """
-        SELECT l3_node_id, l3_code
+        SELECT id, l3_node_id, l3_code, standard_target_level,
+               standard_job_level_snapshot
         FROM assessment_detail
         WHERE assessment_id = %s AND include_in_plan = TRUE
           AND scope_type IS NULL
@@ -3141,7 +3228,13 @@ def validate_assessment_canonical(
         """,
         (assessment_id,),
     ).fetchall()
-    for node_id, code in unscoped:
+    if unscoped and assessment.get("assessment_scope_version") is None:
+        # Legacy drafts never froze scope_type; derive it from the immutable
+        # target-level matrix row when the canonical evidence is unique and
+        # consistent, otherwise raise a controlled 422 (never a 500).
+        _derive_legacy_included_scope(connection, assessment, unscoped)
+        unscoped = []
+    for _detail_id, node_id, code, _frozen_target, _frozen_job in unscoped:
         raise ReviewError(
             "planning_snapshot_incomplete",
             "included detail requires a frozen scope_type",

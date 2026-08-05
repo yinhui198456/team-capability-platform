@@ -565,3 +565,261 @@ class TestApproveLegacyNullNodeDetail(ReviewTestBase):
         assert excinfo.value.code == "planning_snapshot_ambiguous"
         assert excinfo.value.status_code == 422
         self._assert_no_partial_writes(review_schema, assessment_id)
+
+
+class TestApproveLegacyNullScopeType(ReviewTestBase):
+    """Issue #65: legacy (pre-scope) drafts never froze scope_type and the
+    member UI has no control for it, so Buddy final approval of a legitimate
+    legacy assessment is blocked with planning_snapshot_incomplete (observed
+    in UAT on three included repair-lineage details).
+
+    Legacy drafts are canonically measured against the member's frozen TARGET
+    job level (the compat repair flow resolves applicability and the standard
+    target from the bound version's target-level matrix row only), so the
+    immutable contract uniquely determines the missing scope when that row
+    exists, is applicable and agrees with every other frozen canonical field;
+    missing or conflicting evidence stays a controlled 422 with zero partial
+    writes.
+    """
+
+    _INCLUDED = {
+        "l3_code": _L3,
+        "current_level": 2,
+        "target_level": 4,
+        "member_priority": "高",
+        "include_in_plan": True,
+        "plan_quarter": "Q2",
+        "plan_month": 5,
+    }
+
+    # Fixture Legacy Baseline for _L3 (recommended_start_level P4):
+    # P4 row applicable target 2, P5 row applicable target 3 (DEFAULT_TARGETS).
+    _TARGET_JOB_TARGET = 3  # repair-lineage frozen standard target (P5 row)
+
+    @staticmethod
+    def _simulate_legacy_null_scope(
+        connection: psycopg.Connection,
+        assessment_id: int,
+        *,
+        standard_target: int | None = _TARGET_JOB_TARGET,
+        frozen_job: str | None = None,
+        null_node: bool = True,
+    ) -> int:
+        """Rebuild the #65 UAT legacy shape: a pre-scope draft (no scope
+        version) whose included detail carries the repair-lineage standard
+        target but no frozen scope fields.  Returns the original node id."""
+        row = connection.execute(
+            "SELECT l3_node_id FROM assessment_detail WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()
+        assert row is not None and row[0] is not None
+        connection.execute(
+            "UPDATE assessment SET assessment_scope_version=NULL WHERE id=%s",
+            (assessment_id,),
+        )
+        connection.execute(
+            """
+            UPDATE assessment_detail
+            SET scope_type=NULL,
+                standard_job_level_snapshot=%s,
+                standard_target_level=%s,
+                l3_node_id = CASE WHEN %s THEN NULL ELSE l3_node_id END
+            WHERE assessment_id=%s
+            """,
+            (frozen_job, standard_target, null_node, assessment_id),
+        )
+        connection.commit()
+        return int(row[0])
+
+    def _assert_no_partial_writes(
+        self, connection: psycopg.Connection, assessment_id: int
+    ) -> None:
+        assessment = get_assessment(connection, assessment_id)
+        assert assessment is not None
+        assert assessment["status"] == "待复核"
+        reviews = get_assessment_reviews(connection, assessment_id)
+        assert reviews[0]["status"] == "待复核"
+        for table in (
+            "annual_growth_plan",
+            "plan_item",
+            "learning_task",
+            "annual_plan_change_proposal",
+            "annual_plan_change_proposal_detail",
+        ):
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            ), table
+
+    def test_approve_null_scope_type_derives_from_target_level_matrix(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """The UAT shape: NULL l3_node_id AND NULL scope fields; the bound
+        version's P5 matrix row (applicable, target 3) uniquely determines
+        the missing scope and agrees with the frozen standard target."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        original_node = self._simulate_legacy_null_scope(review_schema, assessment_id)
+
+        result = self.approve(review_schema, assessment_id, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["plan"]["items_created"] == 1
+        plan = get_annual_plan_with_items(review_schema, member_id, 2026)
+        assert plan is not None
+        assert len(plan["items"]) == 1
+        item = plan["items"][0]
+        assert item["l3_node_id"] == original_node
+        assert item["scope_type"] == "target_progressive"
+        assert item["standard_job_level_snapshot"] == "P5"
+        assert item["standard_target_level"] == self._TARGET_JOB_TARGET
+        detail = review_schema.execute(
+            "SELECT scope_type, standard_job_level_snapshot, l3_node_id "
+            "FROM assessment_detail WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()
+        assert detail[0] == "target_progressive"
+        assert detail[1] == "P5"
+        assert int(detail[2]) == original_node
+
+    def test_approve_null_scope_type_proposal_path(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """The exact UAT F3 shape: the member already has a formal plan, so
+        approval of the legacy second assessment takes the change-proposal
+        path; a repeat approval is rejected without duplicating data."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        first = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        self.approve(review_schema, first, buddy_id)
+
+        second = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        self._simulate_legacy_null_scope(review_schema, second, null_node=False)
+
+        result = self.approve(review_schema, second, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["proposal"] is not None
+        assert result["proposal"]["created"] is True
+        proposals = list_change_proposals(review_schema, member_id, 2026)
+        assert len(proposals) == 1
+        assert len(proposals[0]["details"]) == 1
+        detail = proposals[0]["details"][0]
+        assert detail["scope_type"] == "target_progressive"
+        assert detail["standard_target_level"] == self._TARGET_JOB_TARGET
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, second, buddy_id)
+        assert excinfo.value.code == "assessment_already_reviewed"
+        assert len(list_change_proposals(review_schema, member_id, 2026)) == 1
+
+    def test_approve_populated_scope_type_preserved(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """An already-frozen scope_type is never silently overridden, even on
+        a legacy (no scope version) assessment."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        frozen = review_schema.execute(
+            "SELECT scope_type, standard_job_level_snapshot, "
+            "standard_target_level FROM assessment_detail WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()
+        assert frozen[0] == "current_required"  # scope-v1 current-wins freeze
+        review_schema.execute(
+            "UPDATE assessment SET assessment_scope_version=NULL WHERE id=%s",
+            (assessment_id,),
+        )
+        review_schema.commit()
+
+        result = self.approve(review_schema, assessment_id, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        item = get_annual_plan_with_items(review_schema, member_id, 2026)["items"][0]
+        assert item["scope_type"] == "current_required"
+        assert item["standard_job_level_snapshot"] == frozen[1]
+        assert item["standard_target_level"] == frozen[2]
+
+    def test_approve_null_scope_conflicting_frozen_target_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """Frozen standard target 2 belongs to the P4 matrix row while the
+        legacy target-level lineage resolves the P5 row (target 3): the
+        canonical evidence conflicts, so approval stays a controlled 422
+        instead of manufacturing a scope."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        self._simulate_legacy_null_scope(
+            review_schema, assessment_id, standard_target=2
+        )
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_conflict"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
+
+    def test_approve_null_scope_conflicting_frozen_job_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        self._simulate_legacy_null_scope(review_schema, assessment_id, frozen_job="P4")
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_conflict"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
+
+    def test_approve_null_scope_target_row_not_applicable_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        original_node = self._simulate_legacy_null_scope(review_schema, assessment_id)
+        review_schema.execute(
+            "UPDATE capability_standard_item SET applicable=FALSE, "
+            "target_level=NULL WHERE l3_node_id=%s AND job_level='P5'",
+            (original_node,),
+        )
+        review_schema.commit()
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_conflict"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
+
+    def test_approve_null_scope_missing_matrix_row_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        original_node = self._simulate_legacy_null_scope(review_schema, assessment_id)
+        review_schema.execute(
+            "DELETE FROM capability_standard_item "
+            "WHERE l3_node_id=%s AND job_level='P5'",
+            (original_node,),
+        )
+        review_schema.commit()
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_incomplete"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
