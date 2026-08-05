@@ -720,6 +720,7 @@ def test_submit_evidence_without_buddy_returns_422(
         {"conclusion": "通过"},
         cookies=buddy_cookies,
     )
+    assert status == 403  # relationship expired — buddy cannot review
 
 
 # ---------------------------------------------------------------------------
@@ -920,3 +921,225 @@ def test_update_rejects_archived_evidence(
     )
     assert status == 422
     assert body["detail"]["code"] == "invalid_evidence"
+
+
+# ---------------------------------------------------------------------------
+# Issue #65: evidence archival on task completion
+# ---------------------------------------------------------------------------
+
+
+def test_task_completion_archives_approved_evidence(
+    evidence_schema: psycopg.Connection,
+) -> None:
+    """When a task transitions to 已完成, all associated 通过 evidence
+    must be atomically transitioned to 已归档."""
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+
+    # Create, submit, and approve evidence.
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "done", "evidence_link": "http://example.com/done"},
+        cookies=cookies,
+    )
+    assert status == 200
+    evidence_id = int(evidence["id"])
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/submit",
+        {},
+        cookies=cookies,
+    )
+    assert status == 200
+    buddy_cookies = _login(evidence_schema, "buddy_evidence")
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/review",
+        {"conclusion": "通过"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+
+    # Evidence should be 通过, not 已归档 (not archived prematurely).
+    status, ev_check, _ = _request(
+        "GET",
+        f"/api/planning/evidences/{evidence_id}",
+        cookies=cookies,
+    )
+    assert status == 200
+    assert ev_check["status"] == "通过"
+
+    # Log hours and set completion fields.
+    from datetime import date
+
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/progress-logs",
+        {
+            "record_date": date.today().isoformat(),
+            "actual_hours": 10,
+            "note": "completed work",
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    status, task_latest, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}",
+        cookies=cookies,
+    )
+    assert status == 200
+    task_rev = int(task_latest["revision"])
+    status, _, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {
+            "review_conclusion": "项目完成，达到预期目标",
+            "next_action": "继续下一项任务",
+            "completion_quality": "达到预期",
+            "expected_revision": task_rev,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "已完成"},
+        cookies=cookies,
+    )
+    assert status == 200
+
+    # Evidence must now be 已归档.
+    status, ev_final, _ = _request(
+        "GET",
+        f"/api/planning/evidences/{evidence_id}",
+        cookies=cookies,
+    )
+    assert status == 200
+    assert ev_final["status"] == "已归档", f"expected 已归档, got {ev_final['status']}"
+
+
+def test_archived_evidence_rejects_update(
+    evidence_schema: psycopg.Connection,
+) -> None:
+    """Archived evidence is permanently read-only — PUT updates must fail."""
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+
+    # Create, submit, approve, complete task → evidence is 已归档.
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "x", "evidence_link": "http://example.com/x"},
+        cookies=cookies,
+    )
+    assert status == 200
+    evidence_id = int(evidence["id"])
+    _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/submit",
+        {},
+        cookies=cookies,
+    )
+    buddy_cookies = _login(evidence_schema, "buddy_evidence")
+    _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/review",
+        {"conclusion": "通过"},
+        cookies=buddy_cookies,
+    )
+    from datetime import date
+
+    _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/progress-logs",
+        {
+            "record_date": date.today().isoformat(),
+            "actual_hours": 5,
+            "note": "done",
+        },
+        cookies=cookies,
+    )
+    status, task_latest, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}",
+        cookies=cookies,
+    )
+    task_rev = int(task_latest["revision"])
+    _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {
+            "review_conclusion": "done",
+            "next_action": "next",
+            "completion_quality": "达到预期",
+            "expected_revision": task_rev,
+        },
+        cookies=cookies,
+    )
+    _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "已完成"},
+        cookies=cookies,
+    )
+
+    # Now evidence is 已归档 — PUT must be rejected.
+    status, ev_latest, _ = _request(
+        "GET",
+        f"/api/planning/evidences/{evidence_id}",
+        cookies=cookies,
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/evidences/{evidence_id}",
+        {
+            "content": "tampered",
+            "expected_revision": ev_latest["revision"],
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_evidence"
+
+
+def test_concurrent_evidence_creation_only_one_succeeds(
+    evidence_schema: psycopg.Connection,
+) -> None:
+    """Concurrent evidence creation for the same task must produce exactly
+    one draft — no 500, no duplicate version, no partial write."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+
+    def _create(_unused: int = 0) -> tuple[int, object]:
+        return _request(
+            "POST",
+            f"/api/planning/learning-tasks/{task_id}/evidences",
+            {"content": "concurrent", "evidence_link": "http://example.com/c"},
+            cookies=cookies,
+        )[:2]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(_create, range(2)))
+    statuses = sorted(r[0] for r in results)
+    # One 201, one 422 — no 500.
+    assert statuses == [200, 422], f"unexpected statuses: {statuses}"
+    ok = next(r for r in results if r[0] == 200)
+    assert ok[1]["status"] == "草稿"
+    fail = next(r for r in results if r[0] == 422)
+    assert fail[1]["detail"]["code"] == "invalid_evidence"
+
+    # Only one evidence record exists.
+    status, evidences, _ = _request(
+        "GET",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        cookies=cookies,
+    )
+    assert status == 200
+    assert len(evidences) == 1
+    assert evidences[0]["version_number"] == 1
