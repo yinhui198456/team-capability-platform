@@ -132,8 +132,7 @@ def _draft_repair_profile(
     target_source = (
         "assessment_snapshot"
         if _is_job_level(snapshot_target)
-        else "repair_time_user_profile" if target is not None
-        else None
+        else "repair_time_user_profile" if target is not None else None
     )
     if current is None or target is None or int(current[1:]) > int(target[1:]):
         return None, None, current_source, target_source
