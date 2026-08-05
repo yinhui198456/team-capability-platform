@@ -83,7 +83,7 @@ const baseDashboard: planningApi.MemberDashboard = {
   },
   next_action: {
     action_key: 'submit_evidence',
-    message: '提交 2 份 Evidence 待 Buddy 复核',
+    message: '提交 2 份任务成果证明待 Buddy 复核',
     count: 2,
   },
   meta: {
@@ -410,7 +410,7 @@ describe('MemberDashboardPage', () => {
     expect(month.textContent).toContain('本月进行中')
     expect(month.textContent).toContain('本月延期')
     expect(month.textContent).toContain('本月待验收')
-    expect(month.textContent).toContain('提交 2 份 Evidence 待 Buddy 复核')
+    expect(month.textContent).toContain('提交 2 份任务成果证明待 Buddy 复核')
   })
 
   it('shows all six plan states and the split evidence todos', async () => {
@@ -437,14 +437,14 @@ describe('MemberDashboardPage', () => {
       expect(screen.getByText('我的成长总览')).toBeTruthy()
     })
     await waitFor(() => {
-      expect(screen.getByText('待提交 Evidence')).toBeTruthy()
+      expect(screen.getByText('待提交任务成果证明')).toBeTruthy()
     })
     // 暂停 / 取消 are part of the six-state progress card.
     expect(screen.getByText('暂停')).toBeTruthy()
     expect(screen.getByText('取消')).toBeTruthy()
     // Member-to-submit and buddy-to-review are displayed separately.
     const submitCard = screen
-      .getByText('待提交 Evidence')
+      .getByText('待提交任务成果证明')
       .closest('[class*="todoItem"]')
     expect(submitCard?.textContent).toContain('2')
     const reviewCard = screen
@@ -452,7 +452,7 @@ describe('MemberDashboardPage', () => {
       .closest('[class*="todoItem"]')
     expect(reviewCard?.textContent).toContain('1')
     // No legacy key anywhere.
-    expect(screen.queryByText('待 Evidence Review')).toBeNull()
+    expect(screen.queryByText('待任务成果证明 Review')).toBeNull()
   })
 
   it('shows no danger style when overdue count is zero', async () => {

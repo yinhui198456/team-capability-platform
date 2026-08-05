@@ -29,6 +29,9 @@ from .v0012_team_analytics_indexes import (
 from .v0013_plan_item_growth_goal_nullable import (
     upgrade as upgrade_plan_item_growth_goal_nullable,
 )
+from .v0014_evidence_archive_backfill import (
+    upgrade as upgrade_evidence_archive_backfill,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -49,6 +52,10 @@ MIGRATIONS = [
     (
         "0013_plan_item_growth_goal_nullable",
         upgrade_plan_item_growth_goal_nullable,
+    ),
+    (
+        "0014_evidence_archive_backfill",
+        upgrade_evidence_archive_backfill,
     ),
 ]
 

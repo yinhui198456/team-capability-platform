@@ -343,7 +343,7 @@ export function TeamAnalyticsPage() {
               </small>
             </article>
             <article>
-              <span>Evidence 通过率</span>
+              <span>任务成果证明 通过率</span>
               <strong>{percent(analytics.kpis.evidence_pass_rate)}</strong>
               <small>
                 {analytics.kpis.evidence_passed_count} /{' '}

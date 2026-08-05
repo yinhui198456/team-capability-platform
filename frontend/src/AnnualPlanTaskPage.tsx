@@ -78,7 +78,7 @@ const REASON_LABELS: Record<string, string> = {
 }
 // Server completion-gate fields → member-facing labels for 422 mapping.
 const GATE_FIELD_LABELS: Record<string, string> = {
-  evidence: '至少一份通过评审的 Evidence',
+  evidence: '至少一份通过评审的任务成果证明',
   review_conclusion: '复盘结论',
   actual_hours: '有效日志聚合实际时长大于 0',
   completion_quality: '合法的完成质量（达到预期/部分达到/超出预期）',
@@ -425,7 +425,7 @@ export function AnnualPlanTaskPage() {
           evidence.revision,
         )
         await refreshTask(taskId)
-        setNotice(`Evidence v${updated.version_number} 草稿已保存。`)
+        setNotice(`任务成果证明 v${updated.version_number} 草稿已保存。`)
       } else {
         const created = await createEvidence(taskId, {
           content: fields.content || null,
@@ -437,7 +437,7 @@ export function AnnualPlanTaskPage() {
         setNotice(
           superseded
             ? `已创建 v${created.version_number} 新版本（基于需补充版本）。`
-            : `Evidence v${created.version_number} 草稿已创建。`,
+            : `任务成果证明 v${created.version_number} 草稿已创建。`,
         )
       }
       return 'saved'
@@ -448,7 +448,7 @@ export function AnnualPlanTaskPage() {
         // under us. Refresh so the retry uses ONLY the latest revision, and
         // require the user to confirm before resending.
         await refreshTask(taskId).catch(() => undefined)
-        setError('Evidence 已被其他会话更新，请确认后重新保存。')
+        setError('任务成果证明已被其他会话更新，请确认后重新保存。')
         return 'conflict'
       }
       // 422/403 and terminal errors: keep the form and the exact input; a
@@ -462,7 +462,7 @@ export function AnnualPlanTaskPage() {
     try {
       await submitEvidence(evidence.id)
       await refreshTask(taskId)
-      setNotice(`Evidence v${evidence.version_number} 已提交评审。`)
+      setNotice(`任务成果证明 v${evidence.version_number} 已提交评审。`)
     } catch (err) {
       setError(parseApiErrorDetail(err).message)
     }
@@ -1242,8 +1242,8 @@ function TaskExecutionPanel({
 
       {/* Evidence versions */}
       <div className={s.logSection}>
-        <h4>Evidence（版本链，历史只读）</h4>
-        {evidences.length === 0 && <p className="muted">暂无 Evidence。</p>}
+        <h4>任务成果证明（版本链，历史只读）</h4>
+        {evidences.length === 0 && <p className="muted">暂无任务成果证明。</p>}
         {evidences.map((ev) => {
           const review = reviewByVersion.get(ev.version_number)
           return (
@@ -1313,7 +1313,7 @@ function TaskExecutionPanel({
         })}
         {taskIsClosed && (
           <p className="muted">
-            任务已结束。如需继续提交 Evidence，请创建新任务或调整计划。
+            任务已结束。如需继续提交任务成果证明，请创建新任务或调整计划。
           </p>
         )}
         {!taskIsClosed && !draft && needMore.length === 0 && !hasPendingReview && (
@@ -1363,9 +1363,9 @@ function TaskExecutionPanel({
               </p>
             )}
             <label>
-              Evidence 内容
+              任务成果证明 内容
               <textarea
-                aria-label="Evidence 内容"
+                aria-label="任务成果证明 内容"
                 value={evidenceContent}
                 onChange={(event) => setEvidenceContent(event.target.value)}
                 placeholder="说明完成了什么、如何验证"

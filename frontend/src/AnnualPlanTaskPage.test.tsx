@@ -456,7 +456,7 @@ describe('learning task execution (v0010)', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
     await waitFor(() => {
       const alert = screen.getByRole('alert')
-      expect(alert.textContent).toContain('通过评审的 Evidence')
+      expect(alert.textContent).toContain('通过评审的任务成果证明')
     })
     // The unsubmitted inputs are preserved.
     const conclusion = screen.getByLabelText('复盘结论') as HTMLTextAreaElement
@@ -640,7 +640,7 @@ describe('learning task execution (v0010)', () => {
       expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
     )
     fireEvent.click(screen.getByRole('button', { name: '创建新版本' }))
-    fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+    fireEvent.change(screen.getByLabelText('任务成果证明 内容'), {
       target: { value: '补充口径说明后的实现' },
     })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -678,7 +678,7 @@ describe('learning task execution (v0010)', () => {
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy(),
     )
     const content = screen.getByLabelText(
-      'Evidence 内容',
+      '任务成果证明 内容',
     ) as HTMLTextAreaElement
     fireEvent.change(content, { target: { value: '修改后' } })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -757,7 +757,7 @@ describe('learning task execution (v0010)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy(),
     )
-    fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+    fireEvent.change(screen.getByLabelText('任务成果证明 内容'), {
       target: { value: '修改后' },
     })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -768,7 +768,7 @@ describe('learning task execution (v0010)', () => {
     })
     // The typed input survives, the form stays open, nothing was re-sent.
     expect(
-      (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+      (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
     ).toBe('修改后')
     expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
     expect(update).toHaveBeenCalledTimes(1)
@@ -821,7 +821,7 @@ describe('learning task execution (v0010)', () => {
       expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
     )
     fireEvent.click(screen.getByRole('button', { name: '创建新版本' }))
-    fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+    fireEvent.change(screen.getByLabelText('任务成果证明 内容'), {
       target: { value: '补充口径说明后的实现' },
     })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -832,7 +832,7 @@ describe('learning task execution (v0010)', () => {
     })
     // Input preserved, form open, nothing re-sent without confirm.
     expect(
-      (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+      (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
     ).toBe('补充口径说明后的实现')
     expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
     expect(createEv).toHaveBeenCalledTimes(1)
@@ -884,7 +884,7 @@ describe('learning task execution (v0010)', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy(),
       )
-      fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+      fireEvent.change(screen.getByLabelText('任务成果证明 内容'), {
         target: { value: '修改后' },
       })
       fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -893,7 +893,7 @@ describe('learning task execution (v0010)', () => {
       })
       // The form and the typed input stay; no success is claimed.
       expect(
-        (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
       ).toBe('修改后')
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
       expect(screen.queryByText(/草稿已保存/)).toBeNull()
@@ -937,7 +937,7 @@ describe('learning task execution (v0010)', () => {
         expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
       )
       fireEvent.click(screen.getByRole('button', { name: '创建新版本' }))
-      fireEvent.change(screen.getByLabelText('Evidence 内容'), {
+      fireEvent.change(screen.getByLabelText('任务成果证明 内容'), {
         target: { value: '补充口径说明后的实现' },
       })
       fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
@@ -945,7 +945,7 @@ describe('learning task execution (v0010)', () => {
         expect(screen.getByRole('alert').textContent).toContain(message)
       })
       expect(
-        (screen.getByLabelText('Evidence 内容') as HTMLTextAreaElement).value,
+        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
       ).toBe('补充口径说明后的实现')
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
       expect(screen.queryByText(/草稿已保存/)).toBeNull()

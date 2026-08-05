@@ -216,7 +216,7 @@ const stageMeta: Record<
   plan: {
     label: '计划执行中',
     title: '我的成长总览',
-    description: '将自评、Gap、年度计划与 Evidence 进展放在同一工作区。',
+    description: '将自评、Gap、年度计划与任务成果证明进展放在同一工作区。',
     cta: { label: '查看年度计划', href: '/growth/annual-plan' },
   },
   'plan-pending': {
@@ -669,7 +669,7 @@ function PlanDashboard({
           <h2>待办事项</h2>
           <div className={styles.todoGrid}>
             <TodoItem
-              label="待提交 Evidence"
+              label="待提交任务成果证明"
               value={dashboard.summary.pending_evidence_to_submit}
             />
             <TodoItem
@@ -698,7 +698,7 @@ function PlanDashboard({
         <div className={styles.tasksHead}>
           <h2>当前学习任务</h2>
           <a href={`/growth/annual-plan?year=${dashboard.year}`}>
-            进入任务与 Evidence
+            进入任务与任务成果证明
           </a>
         </div>
         {dashboard.current_tasks.length === 0 ? (
@@ -825,7 +825,7 @@ export function MemberDashboardPage() {
           <h1>{meta?.title ?? '我的成长总览'}</h1>
           <p className="muted">
             {meta?.description ??
-              '将自评、Gap、年度计划与 Evidence 进展放在同一工作区。'}
+              '将自评、Gap、年度计划与任务成果证明进展放在同一工作区。'}
           </p>
         </div>
         <div className={styles.headerActions}>

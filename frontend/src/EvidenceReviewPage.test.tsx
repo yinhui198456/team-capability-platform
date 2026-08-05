@@ -107,7 +107,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     await waitFor(() =>
       expect(screen.getByText('完成 P01 实践项目')).toBeTruthy(),
     )
-    expect(screen.getByText('查看 Evidence 链接')).toBeTruthy()
+    expect(screen.getByText('查看任务成果证明链接')).toBeTruthy()
     expect(listHistory).toHaveBeenCalledWith(100)
   })
 
