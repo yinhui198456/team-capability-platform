@@ -19,7 +19,7 @@ paths:
 - Every test claim carries the exact command, output excerpt, and the SHA of the code under test.
 - UI verification requires a visible-browser run (headless: false, via the playwright-skill capability) with screenshots; DOM-only assertions are not UI evidence.
 - Executor self-report is not final proof — a reproducible command with captured output is.
-- Evidence lands in the Issue comment, not only the chat.
+- Evidence lands in the task's declared authoritative location — the GitHub PR/Issue when applicable, plus versioned artifacts and check outputs — not only the chat.
 
 ## Red tests
 

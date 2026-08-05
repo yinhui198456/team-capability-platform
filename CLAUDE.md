@@ -63,18 +63,18 @@ Migrations: add `backend/app/migrations/versions/vNNNN_<name>.py` and register i
 Loaded automatically; read the relevant piece instead of duplicating it here:
 
 - Rules — `.claude/rules/`: `delivery-boundaries.md` (global: repository/host boundaries, one writer, evidence, stop conditions), `backend.md`, `frontend.md`, `migrations.md`, `testing-and-evidence.md` (path-scoped).
-- Skills — `.claude/skills/` (optional, invoked on demand): `tcp-uat-execution` (authorized UAT runs), `tcp-high-risk-gate` (pre-merge gate for high-risk families).
+- Skills — `.claude/skills/` (optional, invoked on demand): `tcp-uat-execution` (authorized UAT runs), `tcp-high-risk-gate` (gate before delivery/deployment for high-risk families).
 - Agents — `.claude/agents/` (read-only reviewers): `contract-reviewer`, `permission-concurrency-reviewer`, `test-gap-reviewer`.
 - Enforcement — `.claude/settings.json` + `.claude/hooks/pretool-guard.sh`: PreToolUse hook that deterministically blocks destructive/out-of-repo Bash commands; browser automation comes from the installed `playwright-skill` plugin capability.
 
 ## 8. Delivery Rules (summary — full text in `.claude/rules/delivery-boundaries.md`)
 
 - One writer per session/branch; never race writes on shared files or runtime data.
-- Commits and PRs reference the related Issue; evidence goes into Issue comments, not chat alone.
-- No automatic commit/push/merge/deploy; GitHub write operations follow the user-confirmed plan.
+- Durable governance never grants deployment, UAT, or merge authority. A verified live task instruction may authorize bounded edits, risk-proportionate tests, normal commit/push, Draft PR creation, UAT, or deployment within its explicit scope and stop conditions; routine steps covered by that authorization do not need re-confirmation. Without live authorization, stop before mutations.
+- Commits and PRs reference the related Issue where one exists. Evidence goes to the task's declared authoritative location — the GitHub PR/Issue when applicable, plus versioned artifacts and check outputs; an independent maintenance PR does not require Issue comments.
 - Never touch another Issue's branch/PR, runtime data, containers, or databases.
 - Never touch production; no force-push; no destructive DB or restore/rollback commands.
-- Stop and ask when: credentials/MFA unavailable, production detected, a destructive reset/restore is requested, or schema/protocol cannot be verified without guessing.
+- Always stop and ask when: credentials/MFA unavailable; production detected; destructive delete/reset/restore requested; ownership or target unknown; a business-rule choice is needed; scope would expand; or schema/protocol cannot be verified without guessing.
 
 ## 9. Review Checklist
 

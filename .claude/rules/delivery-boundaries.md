@@ -13,7 +13,8 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 ## Host constraints
 
 - The host is constrained (2 vCPU / 8 GB). Do not start browsers, Docker/Compose services, databases, migrations, application deployment, UAT, or full product test suites unless an authorized rule/skill (e.g. tcp-uat-execution) explicitly calls for it.
-- Heavy or long-running commands require prior user confirmation.
+- Heavy or long-running operations require live task-level authorization; without it, stop before running them.
+- The canonical runtime checkout (`/opt/personal-agent-workspace/team-capability-platform`) is not a write root for sessions in this worktree — runtime/container/DB/migration mutations there require explicit live-task authorization.
 
 ## One writer
 
@@ -22,9 +23,9 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 
 ## GitHub evidence
 
-- Commits and PRs reference the related Issue.
-- Verification results, failed attempts, and decision rationale are recorded in Issue comments; a self-report in chat is not final proof (see testing-and-evidence.md).
-- No automatic commit, push, merge, deploy, or release; GitHub write operations follow the user-confirmed plan.
+- Commits and PRs reference the related Issue where one exists.
+- Verification results, failed attempts, and decision rationale are recorded in the task's declared authoritative location — the GitHub PR/Issue when applicable, plus versioned artifacts and check outputs (see testing-and-evidence.md); a self-report in chat is not final proof. An independent maintenance PR does not require Issue comments.
+- Durable governance never grants deployment, UAT, or merge authority. A verified live task instruction may authorize bounded edits, risk-proportionate tests, normal commit/push, Draft PR creation, UAT, or deployment within its explicit scope and stop conditions; routine steps already covered by that authorization do not need re-confirmation. Without live authorization, stop before mutations. No automatic commit, push, merge, deploy, or release.
 
 ## No cross-contamination
 
@@ -38,5 +39,7 @@ Stop and ask the user when any of the following hold:
 - Authentication, credentials, or MFA are required and unavailable.
 - A production target is detected or suspected.
 - A destructive delete/reset/restore is requested.
-- The hook/plugin/settings schema cannot be verified without guessing.
+- Ownership of a file, branch, remote, or runtime object is unknown, or the target of a command is unclear.
+- A business-rule choice is required (the design is silent on which behavior is correct).
 - The task would expand beyond its declared file scope.
+- The hook/plugin/settings schema cannot be verified without guessing.
