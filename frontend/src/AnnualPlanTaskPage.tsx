@@ -797,6 +797,8 @@ function TaskExecutionPanel({
 
   const draft = evidences.find((e) => e.status === '草稿') ?? null
   const needMore = evidences.filter((e) => e.status === '需补充')
+  const hasPendingReview = evidences.some((e) => e.status === '待 Review')
+  const taskIsClosed = ['已完成', '暂停', '取消'].includes(task.status)
   const reviewByVersion = new Map(reviews.map((r) => [r.version_number, r]))
 
   function beginAction(to: LearningTaskStatus) {
@@ -1309,7 +1311,12 @@ function TaskExecutionPanel({
             </div>
           )
         })}
-        {!draft && needMore.length === 0 && evidences.length === 0 && (
+        {taskIsClosed && (
+          <p className="muted">
+            任务已结束。如需继续提交 Evidence，请创建新任务或调整计划。
+          </p>
+        )}
+        {!taskIsClosed && !draft && needMore.length === 0 && !hasPendingReview && (
           <div className={s.actions}>
             <button
               type="button"

@@ -2417,11 +2417,19 @@ def create_evidence_draft(
     _assert_task_ownership(connection, member_id, learning_task_id)
 
     task = connection.execute(
-        "SELECT l3_code FROM learning_task WHERE id = %s",
+        "SELECT l3_code, status FROM learning_task WHERE id = %s",
         (learning_task_id,),
     ).fetchone()
     assert task is not None
     l3_code = task[0]
+    task_status = str(task[1])
+    if task_status in ("已完成", "暂停", "取消"):
+        raise EvidenceValidationError(
+            "task is completed or closed — "
+            "create a new task or change the plan instead",
+            entity_id=learning_task_id,
+            field="status",
+        )
 
     with connection.transaction():
         draft = connection.execute(
@@ -2435,6 +2443,22 @@ def create_evidence_draft(
         if draft is not None:
             raise EvidenceValidationError(
                 "draft evidence already exists for this task",
+                entity_id=learning_task_id,
+                field="status",
+            )
+
+        pending = connection.execute(
+            """
+            SELECT 1 FROM evidence
+            WHERE learning_task_id = %s AND status = '待 Review'
+            LIMIT 1
+            """,
+            (learning_task_id,),
+        ).fetchone()
+        if pending is not None:
+            raise EvidenceValidationError(
+                "a pending review round already exists — "
+                "wait for the review to conclude",
                 entity_id=learning_task_id,
                 field="status",
             )
