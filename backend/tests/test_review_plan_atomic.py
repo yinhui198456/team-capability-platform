@@ -406,3 +406,162 @@ class TestReviewPlanAtomic(ReviewTestBase):
         )
         assert status == 422
         assert body["detail"]["code"] == "legacy_planning_write_disabled"
+
+
+class TestApproveLegacyNullNodeDetail(ReviewTestBase):
+    """Issue #65: compatibility-repaired legacy drafts may hold canonical
+    details whose l3_node_id is NULL while l3_code still identifies the
+    standard item.  Buddy final approval must resolve the node safely from
+    the immutable planning snapshot instead of crashing (observed 500
+    TypeError in UAT); insufficient/ambiguous identity stays a controlled
+    422 with zero partial writes.
+    """
+
+    _INCLUDED = {
+        "l3_code": _L3,
+        "current_level": 2,
+        "target_level": 4,
+        "member_priority": "高",
+        "include_in_plan": True,
+        "plan_quarter": "Q2",
+        "plan_month": 5,
+    }
+
+    @staticmethod
+    def _null_node_id(connection: psycopg.Connection, assessment_id: int) -> int:
+        """Simulate the compat-repair state; returns the original node id."""
+        row = connection.execute(
+            "SELECT l3_node_id FROM assessment_detail WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()
+        assert row is not None and row[0] is not None
+        connection.execute(
+            "UPDATE assessment_detail SET l3_node_id=NULL WHERE assessment_id=%s",
+            (assessment_id,),
+        )
+        connection.commit()
+        return int(row[0])
+
+    def _assert_no_partial_writes(
+        self, connection: psycopg.Connection, assessment_id: int
+    ) -> None:
+        assessment = get_assessment(connection, assessment_id)
+        assert assessment is not None
+        assert assessment["status"] == "待复核"
+        reviews = get_assessment_reviews(connection, assessment_id)
+        assert reviews[0]["status"] == "待复核"
+        for table in (
+            "annual_growth_plan",
+            "plan_item",
+            "learning_task",
+            "annual_plan_change_proposal",
+            "annual_plan_change_proposal_detail",
+        ):
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            ), table
+
+    def test_approve_null_node_detail_resolves_by_code(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        original_node = self._null_node_id(review_schema, assessment_id)
+
+        result = self.approve(review_schema, assessment_id, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["plan"]["items_created"] == 1
+        plan = get_annual_plan_with_items(review_schema, member_id, 2026)
+        assert plan is not None
+        assert len(plan["items"]) == 1
+        item = plan["items"][0]
+        assert item["l3_node_id"] == original_node
+        assert item["planning_snapshot_id"] is not None
+        assert item["capability_standard_version_id"] is not None
+
+    def test_approve_null_node_detail_proposal_path_resolves_by_code(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        """The UAT failure shape: member already has a formal plan, so the
+        approval takes the change-proposal path with a NULL-node detail."""
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        first = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        self.approve(review_schema, first, buddy_id)
+
+        second = self.submit(review_schema, member_id, 2026, [dict(self._INCLUDED)])
+        original_node = self._null_node_id(review_schema, second)
+
+        result = self.approve(review_schema, second, buddy_id)
+        assert result["assessment_status"] == "已归档"
+        assert result["proposal"] is not None
+        assert result["proposal"]["created"] is True
+        proposals = list_change_proposals(review_schema, member_id, 2026)
+        assert len(proposals) == 1
+        assert len(proposals[0]["details"]) == 1
+        assert proposals[0]["details"][0]["l3_node_id"] == original_node
+
+    def test_approve_null_node_unknown_code_controlled_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        self._null_node_id(review_schema, assessment_id)
+        review_schema.execute(
+            "UPDATE assessment_detail SET l3_code='P99-NOPE-L3Z' "
+            "WHERE assessment_id=%s",
+            (assessment_id,),
+        )
+        review_schema.commit()
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_missing"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)
+
+    def test_approve_null_node_ambiguous_code_controlled_422_atomic(
+        self, review_schema: psycopg.Connection
+    ) -> None:
+        member_id, buddy_id = self.setup_users(review_schema)
+        self.ensure_nodes(review_schema, [_L3])
+        assessment_id = self.submit(
+            review_schema, member_id, 2026, [dict(self._INCLUDED)]
+        )
+        self._null_node_id(review_schema, assessment_id)
+        # Corrupt duplicate: a second snapshot row for the same code but a
+        # different node, making code-based resolution ambiguous.  The extra
+        # node is created after submit so scope computation is unaffected.
+        self.ensure_nodes(review_schema, ["P01-L2A-L3B"])
+        dup_node = review_schema.execute(
+            "SELECT id FROM capability_node WHERE code='P01-L2A-L3B'"
+        ).fetchone()[0]
+        version_id = review_schema.execute(
+            "SELECT capability_standard_version_id FROM assessment WHERE id=%s",
+            (assessment_id,),
+        ).fetchone()[0]
+        review_schema.execute("SET session_replication_role = replica")
+        review_schema.execute(
+            """
+            INSERT INTO capability_standard_planning_snapshot (
+                capability_standard_version_id, l3_node_id, l3_code, l3_name,
+                source_type, source_hash
+            )
+            VALUES (%s, %s, %s, 'duplicate', 'version_publish', 'dup-hash')
+            """,
+            (version_id, dup_node, _L3),
+        )
+        review_schema.execute("SET session_replication_role = origin")
+        review_schema.commit()
+
+        with pytest.raises(ReviewError) as excinfo:
+            self.approve(review_schema, assessment_id, buddy_id)
+        assert excinfo.value.code == "planning_snapshot_ambiguous"
+        assert excinfo.value.status_code == 422
+        self._assert_no_partial_writes(review_schema, assessment_id)

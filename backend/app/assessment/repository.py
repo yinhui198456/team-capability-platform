@@ -2732,6 +2732,57 @@ def _planning_snapshot_for(
     ).fetchone()
 
 
+def _resolve_detail_l3_node_id(
+    connection: psycopg.Connection,
+    version_id: int,
+    detail_id: Any,
+    l3_node_id: Any,
+    l3_code: Any,
+) -> int:
+    """Canonical node id for an approval-path detail.
+
+    Compatibility-repaired legacy drafts may carry a NULL l3_node_id while
+    l3_code still identifies the standard item (observed in #65 UAT: Buddy
+    final approval crashed with a 500 TypeError on int(None)).  Resolve the
+    node through the immutable planning snapshot of the bound standard
+    version and, inside the same atomic approval transaction, stamp it back
+    onto the detail so downstream frozen rows satisfy the composite FK to
+    assessment_detail.  Insufficient or ambiguous identity stays a
+    controlled 422 — canonical validation is never skipped and exceptions
+    never swallowed.
+    """
+    if l3_node_id is not None:
+        return int(l3_node_id)
+    rows = connection.execute(
+        """
+        SELECT DISTINCT l3_node_id
+        FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id = %s AND l3_code = %s
+        """,
+        (version_id, str(l3_code)),
+    ).fetchall()
+    if len(rows) == 1:
+        resolved = int(rows[0][0])
+        connection.execute(
+            "UPDATE assessment_detail SET l3_node_id = %s WHERE id = %s",
+            (resolved, int(detail_id)),
+        )
+        return resolved
+    if not rows:
+        raise ReviewError(
+            "planning_snapshot_missing",
+            "missing immutable planning source snapshot",
+            status_code=422,
+            l3_code=str(l3_code),
+        )
+    raise ReviewError(
+        "planning_snapshot_ambiguous",
+        "legacy detail code does not resolve to a unique planning snapshot",
+        status_code=422,
+        l3_code=str(l3_code),
+    )
+
+
 def _insert_plan_item_and_task(
     connection: psycopg.Connection,
     plan_id: int,
@@ -2858,15 +2909,19 @@ def _approve_first_assessment(
     items_created = 0
     tasks_created = 0
     for detail in _frozen_detail_rows(connection, int(assessment["id"])):
-        snapshot = _planning_snapshot_for(connection, version_id, int(detail[1]))
+        node_id = _resolve_detail_l3_node_id(
+            connection, version_id, detail[0], detail[1], detail[2]
+        )
+        snapshot = _planning_snapshot_for(connection, version_id, node_id)
         if snapshot is None:
             raise ReviewError(
                 "planning_snapshot_missing",
                 "missing immutable planning source snapshot",
                 status_code=422,
-                l3_node_id=int(detail[1]),
+                l3_node_id=node_id,
                 l3_code=str(detail[2]),
             )
+        detail = (detail[0], node_id) + tuple(detail[2:])
         item_id, task_id = _insert_plan_item_and_task(
             connection, plan_id, assessment, detail, snapshot
         )
@@ -2925,18 +2980,21 @@ def _approve_with_proposal(
     proposal_id = int(proposal[0])
     version_id = int(assessment["capability_standard_version_id"])
     for detail in items:
-        snapshot = _planning_snapshot_for(connection, version_id, int(detail[1]))
+        node_id = _resolve_detail_l3_node_id(
+            connection, version_id, detail[0], detail[1], detail[2]
+        )
+        snapshot = _planning_snapshot_for(connection, version_id, node_id)
         if snapshot is None:
             raise ReviewError(
                 "planning_snapshot_missing",
                 "missing immutable planning source snapshot",
                 status_code=422,
-                l3_node_id=int(detail[1]),
+                l3_node_id=node_id,
                 l3_code=str(detail[2]),
             )
         (
             detail_id,
-            l3_node_id,
+            _detail_node_id,
             l3_code,
             l3_name,
             l1_code,
@@ -2979,7 +3037,7 @@ def _approve_with_proposal(
                 proposal_id,
                 detail_id,
                 int(assessment["id"]),
-                l3_node_id,
+                node_id,
                 l1_code,
                 l1_name,
                 l2_code,
@@ -3044,7 +3102,10 @@ def validate_assessment_canonical(
           AND NOT EXISTS (
               SELECT 1 FROM capability_standard_planning_snapshot sp
               WHERE sp.capability_standard_version_id = %s
-                AND sp.l3_node_id = ad.l3_node_id
+                AND (
+                    sp.l3_node_id = ad.l3_node_id
+                    OR (ad.l3_node_id IS NULL AND sp.l3_code = ad.l3_code)
+                )
           )
         ORDER BY ad.l3_code
         """,
@@ -3055,7 +3116,7 @@ def validate_assessment_canonical(
             "planning_snapshot_missing",
             "missing immutable planning source snapshot",
             status_code=422,
-            l3_node_id=int(node_id),
+            l3_node_id=int(node_id) if node_id is not None else None,
             l3_code=str(code),
         )
     # P1-2 (2nd review): the frozen plan-item/proposal-detail contract requires
@@ -3085,7 +3146,7 @@ def validate_assessment_canonical(
             "planning_snapshot_incomplete",
             "included detail requires a frozen scope_type",
             status_code=422,
-            l3_node_id=int(node_id),
+            l3_node_id=int(node_id) if node_id is not None else None,
             l3_code=str(code),
         )
     # P1-C (3rd review): the standard target is unconditionally frozen on
@@ -3106,7 +3167,7 @@ def validate_assessment_canonical(
             "planning_snapshot_incomplete",
             "included detail requires a frozen standard target level",
             status_code=422,
-            l3_node_id=int(node_id),
+            l3_node_id=int(node_id) if node_id is not None else None,
             l3_code=str(code),
         )
 
