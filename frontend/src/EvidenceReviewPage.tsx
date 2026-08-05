@@ -155,7 +155,7 @@ export function EvidenceReviewPage() {
       idemRef.current = null
       setMessage(
         conclusion === '通过'
-          ? '已通过，评审结论不可变更；任务成果证明已归档。'
+          ? '已通过，评审结论不可变更；任务成果证明已通过。'
           : '已要求补充，等待成员提交新版本。',
       )
       const list = queue.filter((ev) => ev.id !== selected.id)
