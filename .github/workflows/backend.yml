@@ -4,8 +4,12 @@ on:
   push:
     branches: [master, main]
   pull_request:
-    branches: [master, main]
+    branches: [master, main, 'feat/**']
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,6 +17,7 @@ permissions:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       POSTGRES_HOST: localhost
     services:
@@ -55,6 +60,7 @@ jobs:
 
   docker-test-stage:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16-alpine
