@@ -18,9 +18,10 @@ assert_json() {
 }
 
 json_body() {
-  # Proper JSON encoding: quotes, backslashes, whitespace, and Unicode in the
-  # password cannot alter the request body shape.
-  python3 -c 'import json, sys; print(json.dumps({"username": "member", "password": sys.argv[1]}))' "$1"
+  # Proper JSON encoding via json.dumps. The password travels on stdin, never
+  # in argv, so quotes, backslashes, whitespace, newlines, and Unicode cannot
+  # alter the payload and the value never appears in process listings.
+  printf '%s' "$1" | python3 -c 'import json, sys; print(json.dumps({"username": "member", "password": sys.stdin.read()}))'
 }
 
 wait_for_http() {
