@@ -4,12 +4,24 @@ set -euo pipefail
 base_url="${TCP_E2E_BASE_URL:-http://localhost:18081}"
 backend_url="${TCP_E2E_BACKEND_URL:-http://localhost:18001}"
 year="${TCP_E2E_YEAR:-$(date +%Y)}"
+demo_password="${TCP_E2E_DEMO_PASSWORD:-}"
+if [[ -z "$demo_password" ]]; then
+  echo "Set TCP_E2E_DEMO_PASSWORD to the DEMO_SEED_PASSWORD used when the stack was seeded" >&2
+  exit 1
+fi
 cookies="$(mktemp)"
 trap 'rm -f "$cookies"' EXIT
 
 assert_json() {
   local condition="$1"
   python3 -c "import json, sys; payload = json.load(sys.stdin); assert $condition"
+}
+
+json_body() {
+  # Proper JSON encoding via json.dumps. The password travels on stdin, never
+  # in argv, so quotes, backslashes, whitespace, newlines, and Unicode cannot
+  # alter the payload and the value never appears in process listings.
+  printf '%s' "$1" | python3 -c 'import json, sys; print(json.dumps({"username": "member", "password": sys.stdin.read()}))'
 }
 
 wait_for_http() {
@@ -33,9 +45,9 @@ wait_for_http "$base_url/api/capability-model"
 curl -fsS "$backend_url/ready" | assert_json "payload['status'] == 'ready'"
 curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']) == 6"
 
-curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
+json_body "$demo_password" | curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"member","password":"123456"}' | \
+  --data-binary @- | \
   assert_json "payload['username'] == 'member' and 'Member' in payload['roles']"
 curl -fsS -b "$cookies" "$base_url/api/auth/me" | \
   assert_json "payload['username'] == 'member'"

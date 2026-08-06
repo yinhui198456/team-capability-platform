@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { DEMO_PASSWORD } from '../fixtures/auth'
+
 // Seed data: full 310-L3 Legacy Baseline v1.
 // P4→P4: 143 required + 0 progressive = 143.
 // P4→P5: 143 required + 95 progressive = 238.
@@ -8,7 +10,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 async function adminCookie(page: Page): Promise<string> {
   const response = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: '123456' },
+    data: { username: 'admin', password: DEMO_PASSWORD },
   })
   expect(response.ok()).toBeTruthy()
   const setCookie = response.headers()['set-cookie'] ?? ''
@@ -32,7 +34,7 @@ async function createMember(
     data: {
       username,
       full_name: username,
-      password: '123456',
+      password: DEMO_PASSWORD,
       is_active: true,
       roles: ['Member'],
       current_level: current,
@@ -75,7 +77,7 @@ async function setLevels(
 async function loginUser(page: Page, username: string) {
   await page.goto('/login')
   await page.getByLabel('用户名').fill(username)
-  await page.getByLabel('密码').fill('123456')
+  await page.getByLabel('密码').fill(DEMO_PASSWORD)
   await page.getByRole('button', { name: '登录' }).click()
   await page.waitForURL('**/dashboard/member**')
 }

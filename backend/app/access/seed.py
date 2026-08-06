@@ -1,13 +1,20 @@
+import logging
 from datetime import date
 
 import psycopg
 
 from .repository import assign_role, create_buddy_relationship, create_user
 
-# Local UAT default password. This is strictly seed data for local UAT and is
-# not a production authentication design. The password is hashed before storage
-# and is never logged or returned by any API.
-_DEFAULT_DEMO_PASSWORD = "123456"
+logger = logging.getLogger(__name__)
+
+# Retired repository-known demo default. Seeding fails closed against it so a
+# value that ever appeared in this repository can never be reused as a runtime
+# credential. It is hashed-checked here, never logged or returned.
+_KNOWN_INSECURE_DEMO_PASSWORDS = frozenset({"123456"})
+
+# Minimum raw credential length for demo seeding. The check is on raw
+# characters, so a valid value is never normalized, trimmed, or rewritten.
+_MIN_DEMO_PASSWORD_LENGTH = 16
 
 _DEMO_ACCOUNTS = [
     {
@@ -53,18 +60,44 @@ _BUDDY_LINKS = [
 ]
 
 
+def _is_safe_demo_password(demo_password: str | None) -> bool:
+    """Fail closed: only a 16+ character, non-blank, non-retired password may seed."""
+    if not demo_password or not demo_password.strip():
+        return False
+    if demo_password in _KNOWN_INSECURE_DEMO_PASSWORDS:
+        return False
+    if len(demo_password) < _MIN_DEMO_PASSWORD_LENGTH:
+        return False
+    return True
+
+
 def _user_table_empty(connection: psycopg.Connection) -> bool:
     row = connection.execute("SELECT 1 FROM tcp_user LIMIT 1").fetchone()
     return row is None
 
 
-def seed_demo_accounts(connection: psycopg.Connection) -> None:
-    """Seed UAT demo accounts if tcp_user is empty.
+def seed_demo_accounts(
+    connection: psycopg.Connection, demo_password: str | None
+) -> None:
+    """Seed UAT demo accounts if tcp_user is empty and a password is supplied.
+
+    The password must come from an explicitly supplied environment value
+    (settings.demo_seed_password); there is no repository-known default and the
+    value is never logged or returned. Missing, blank, shorter than 16
+    characters, or known-insecure values fail closed: no accounts are created
+    and a controlled warning is logged.
 
     This function is idempotent: if any user already exists, it performs no
     inserts or updates. It relies on create_access_schema having already seeded
     the four fixed roles.
     """
+    if not _is_safe_demo_password(demo_password):
+        logger.warning(
+            "demo seeding skipped: DEMO_SEED_PASSWORD is missing, blank, "
+            "shorter than 16 characters, or a known-insecure value; no demo "
+            "accounts were created"
+        )
+        return
     if not _user_table_empty(connection):
         return
 
@@ -74,7 +107,7 @@ def seed_demo_accounts(connection: psycopg.Connection) -> None:
             connection,
             account["username"],
             account["full_name"],
-            _DEFAULT_DEMO_PASSWORD,
+            demo_password,
         )
         user_ids[account["username"]] = user_id
         for role_code in account["roles"]:

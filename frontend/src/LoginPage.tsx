@@ -33,7 +33,7 @@ export function LoginPage() {
     <main className="login-shell">
       <form className="login-form" onSubmit={handleSubmit}>
         <h1>UAT 登录</h1>
-        <p className="muted">演示账号：leader / 123456</p>
+        <p className="muted">演示账号：leader，密码由部署方配置</p>
         <label>
           用户名
           <input
