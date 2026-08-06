@@ -63,7 +63,7 @@ async function assertKpis(
   const kpis = page.getByLabel('团队关键指标')
   await expect(kpis).toContainText(`计划完成率${expected.planCompletionRate}`)
   await expect(kpis).toContainText(
-    `Evidence 通过率${expected.evidencePassRate}`,
+    `任务成果证明 通过率${expected.evidencePassRate}`,
   )
   await expect(kpis).toContainText(`延期计划项${expected.overdueCount}`)
 }
@@ -92,7 +92,7 @@ for (const viewport of VIEWPORTS) {
       await expect(filters.getByLabel('能力域')).toContainText('C03 · 学习创新')
 
       const kpis = page.getByLabel('团队关键指标')
-      for (const label of ['计划完成率', 'Evidence 通过率', '延期计划项']) {
+      for (const label of ['计划完成率', '任务成果证明 通过率', '延期计划项']) {
         await expect(kpis).toContainText(label)
       }
       const gaps = page.getByLabel('差距分布')
@@ -345,7 +345,7 @@ test.describe('UI-05 cross-viewport business value consistency', () => {
           kpis.locator('article:has-text("计划完成率") strong'),
         ).toHaveText(scenario.expected.planCompletionRate)
         await expect(
-          kpis.locator('article:has-text("Evidence 通过率") strong'),
+          kpis.locator('article:has-text("任务成果证明 通过率") strong'),
         ).toHaveText(scenario.expected.evidencePassRate)
         await expect(
           kpis.locator('article:has-text("延期计划项") strong'),

@@ -33,7 +33,7 @@ for (const viewport of VIEWPORTS) {
       const summary = page.getByLabel('Buddy 待办摘要')
       await expect(summary).toContainText('待复核自评')
       await expect(summary).toContainText('本年度已完成复核')
-      await expect(summary).not.toContainText('待 Review Evidence')
+      await expect(summary).not.toContainText('待验收成果')
       await expect(summary).not.toContainText('需跟进')
       await expect(summary).not.toContainText('辅导成员')
 
@@ -65,7 +65,7 @@ for (const viewport of VIEWPORTS) {
       // Isolation: the Evidence Review tab was removed from this page — it
       // lives only on the standalone /mentoring/evidence-review route.
       await expect(
-        queue.getByRole('tab', { name: 'Evidence Review' }),
+        queue.getByRole('tab', { name: '任务成果证明 Review' }),
       ).toHaveCount(0)
 
       const workspace = page.locator('.buddy-workspace')
@@ -224,10 +224,10 @@ for (const viewport of VIEWPORTS) {
       await expect(
         workspace.getByRole('heading', { name: '验收工作区' }),
       ).toBeVisible()
-      await expect(workspace).toContainText('Evidence 版本 1')
+      await expect(workspace).toContainText('任务成果证明 版本 1')
       await expect(workspace).toContainText('完成数据管道基础文档与示例代码。')
       await expect(
-        workspace.getByRole('link', { name: '查看 Evidence 链接' }),
+        workspace.getByRole('link', { name: '查看任务成果证明链接' }),
       ).toBeVisible()
       await expect(workspace.getByRole('radio', { name: '通过' })).toBeVisible()
       await expect(
@@ -507,7 +507,7 @@ test.describe('UI-04 Buddy review center permission boundary', () => {
     // The evidence pending feed is consumed only by the standalone page:
     // nothing from it renders here, no evidence metric or tab either.
     await expect(
-      page.locator('.buddy-summary button', { hasText: '待 Review Evidence' }),
+      page.locator('.buddy-summary button', { hasText: '待验收成果' }),
     ).toHaveCount(0)
     await expect(page.locator('text=不属于当前 Buddy 的 evidence')).toHaveCount(
       0,
