@@ -132,7 +132,7 @@ const baseProfile: planningApi.CapabilityProfile = {
               learning_task_id: 50,
               l3_code: 'P01-L2A-L3A',
               version_number: 1,
-              content: 'Evidence 内容',
+              content: '任务成果证明 内容',
               evidence_link: 'http://example.com',
               status: '已归档',
               submitted_at: '2026-03-20T00:00:00Z',
@@ -251,7 +251,7 @@ describe('ProfilePage', () => {
     const kpiRegion = screen.getByRole('region', { name: '年度成长闭环摘要' })
     expect(within(kpiRegion).getByText('已完成计划项')).toBeTruthy()
     expect(within(kpiRegion).getByText('实际学习时长')).toBeTruthy()
-    expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
+    expect(within(kpiRegion).getByText('已归档任务成果证明')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
     expect(
       screen.getAllByText(
@@ -324,7 +324,7 @@ describe('ProfilePage', () => {
     ).toBeTruthy()
     expect(
       screen.getByRole('article', {
-        name: 'Evidence 版本 1：P01-L2A-L3A',
+        name: '任务成果证明 版本 1：P01-L2A-L3A',
       }),
     ).toBeTruthy()
     expect(screen.getByRole('region', { name: '年度成长计划' })).toBeTruthy()

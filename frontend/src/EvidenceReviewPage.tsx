@@ -155,7 +155,7 @@ export function EvidenceReviewPage() {
       idemRef.current = null
       setMessage(
         conclusion === '通过'
-          ? '已通过，评审结论不可变更；Evidence 已归档。'
+          ? '已通过，评审结论不可变更；任务成果证明已通过。'
           : '已要求补充，等待成员提交新版本。',
       )
       const list = queue.filter((ev) => ev.id !== selected.id)
@@ -182,7 +182,7 @@ export function EvidenceReviewPage() {
             setSelectedId(null)
             setConclusion('')
             setFeedback('')
-            setError('该 Evidence 已被评审，队列已刷新；请重新选择待验收项。')
+            setError('该任务成果证明已被评审，队列已刷新；请重新选择待验收项。')
           } else {
             setError('提交冲突，队列已刷新；请确认后重新提交。')
           }
@@ -212,7 +212,7 @@ export function EvidenceReviewPage() {
           <p className="eyebrow">Buddy 工作台 / 验收</p>
           <h1>待验收成果</h1>
           <p className="muted">
-            仅展示当前有效辅导关系下的待评审 Evidence，与自评复核相互独立。
+            仅展示当前有效辅导关系下的待评审任务成果证明，与自评复核相互独立。
           </p>
         </div>
       </header>
@@ -257,7 +257,7 @@ export function EvidenceReviewPage() {
                   <strong>
                     {selected.username ?? `成员 ${selected.member_id}`}
                   </strong>{' '}
-                  · {capabilityPath(selected)} · Evidence 版本{' '}
+                  · {capabilityPath(selected)} · 任务成果证明 版本{' '}
                   {selected.version_number} · 提交于{' '}
                   {formatDateTime(selected.submitted_at)}
                 </p>
@@ -273,7 +273,7 @@ export function EvidenceReviewPage() {
                       rel="noreferrer"
                       target="_blank"
                     >
-                      查看 Evidence 链接
+                      查看任务成果证明链接
                     </a>
                   )}
                 </div>

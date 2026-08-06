@@ -530,7 +530,7 @@ describe('evidence review route boundary', () => {
       await waitFor(() => {
         expect(screen.getByTestId('location').textContent).toBe(expected)
       })
-      // No operable Evidence page for non-Buddy roles.
+      // No operable 任务成果证明 page for non-Buddy roles.
       expect(screen.queryByRole('heading', { name: '待验收成果' })).toBeNull()
     },
   )

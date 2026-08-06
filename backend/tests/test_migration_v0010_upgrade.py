@@ -22,7 +22,7 @@ from tests.test_migration_v0009_upgrade import (
 )
 
 V0010_VERSION = "0010_learning_execution"
-LATEST_VERSION = "0012_team_analytics_indexes"
+LATEST_VERSION = "0014_evidence_archive_backfill"
 
 
 def _run_until_v0009(connection: psycopg.Connection) -> None:
@@ -404,6 +404,6 @@ def test_v0010_fresh_install_reaches_all_versions(
         ).fetchall()
     ]
     assert versions[-1] == LATEST_VERSION
-    assert len(versions) == 12
+    assert len(versions) == 14
     # Helper schema and migration agree on the tightened status dictionary.
     assert _status_check_exists(connection)

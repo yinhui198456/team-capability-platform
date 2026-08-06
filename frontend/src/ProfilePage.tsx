@@ -220,10 +220,10 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
           </span>
         </div>
         <div className={styles.statRow}>
-          <span className={styles.statLabel}>Evidence 统计</span>
+          <span className={styles.statLabel}>任务成果证明 统计</span>
           <span className={styles.statValue}>
             {evidenceStats.length === 0
-              ? '无 Evidence'
+              ? '无 任务成果证明'
               : evidenceStats
                   .map(([status, count]) => `${status} ${count}`)
                   .join(' · ')}
@@ -294,15 +294,17 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                 )}
 
                 {task.evidences.length === 0 ? (
-                  <p className={styles.emptyState}>暂无 Evidence</p>
+                  <p className={styles.emptyState}>暂无 任务成果证明</p>
                 ) : (
                   <div className={styles.evidenceList}>
-                    <div className={styles.statLabel}>Evidence 审核结果</div>
+                    <div className={styles.statLabel}>
+                      任务成果证明 审核结果
+                    </div>
                     {task.evidences.map((evidence) => (
                       <article
                         key={evidence.id}
                         className={styles.evidenceItem}
-                        aria-label={`Evidence 版本 ${evidence.version_number}：${item.l3_code}`}
+                        aria-label={`任务成果证明 版本 ${evidence.version_number}：${item.l3_code}`}
                       >
                         <div className={styles.evidenceHeader}>
                           <strong>版本 {evidence.version_number}</strong>
@@ -548,10 +550,10 @@ export function ProfilePage() {
               unit="小时"
             />
             <KpiCard
-              label="已归档 Evidence"
+              label="已归档任务成果证明"
               value={kpi.archived}
               unit="个"
-              hint="仅通过 Review 的 Evidence"
+              hint="任务完成后归档的已通过记录"
             />
             <KpiCard
               label="能力评估"

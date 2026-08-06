@@ -192,7 +192,7 @@ for (const viewport of VIEWPORTS) {
 
       // 待办事项 4 个图标卡片文案
       const todoCard = page.getByTestId('todo-card')
-      await expect(todoCard.getByText('待提交 Evidence')).toBeVisible()
+      await expect(todoCard.getByText('待提交任务成果证明')).toBeVisible()
       await expect(todoCard.getByText('待 Buddy 复核')).toBeVisible()
       await expect(todoCard.getByText('计划到期')).toBeVisible()
       await expect(todoCard.getByText('学习任务延期')).toBeVisible()

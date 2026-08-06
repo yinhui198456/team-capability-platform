@@ -1165,6 +1165,15 @@ def transition_learning_task(
         if to_status == "已完成":
             _check_completion_gate(connection, task_id)
             side_effects["actual_completed_at"] = _now(connection)
+            # Atomically archive all approved evidence for this task.
+            connection.execute(
+                """
+                UPDATE evidence
+                SET status = '已归档'
+                WHERE learning_task_id = %s AND status = '通过'
+                """,
+                (task_id,),
+            )
         if to_status == "延期" and revised_due_date is not None:
             side_effects["revised_due_date"] = revised_due_date
         side_effects["status"] = to_status
@@ -2416,14 +2425,24 @@ def create_evidence_draft(
 ) -> dict[str, object]:
     _assert_task_ownership(connection, member_id, learning_task_id)
 
-    task = connection.execute(
-        "SELECT l3_code FROM learning_task WHERE id = %s",
-        (learning_task_id,),
-    ).fetchone()
-    assert task is not None
-    l3_code = task[0]
-
     with connection.transaction():
+        # Lock the task row to serialize concurrent evidence creation
+        # for the same task — prevents duplicate drafts, version-number
+        # races, and TOCTOU on the task status check.
+        task = connection.execute(
+            "SELECT l3_code, status FROM learning_task WHERE id = %s FOR UPDATE",
+            (learning_task_id,),
+        ).fetchone()
+        assert task is not None
+        l3_code = task[0]
+        task_status = str(task[1])
+        if task_status in ("已完成", "暂停", "取消"):
+            raise EvidenceValidationError(
+                "task is completed or closed — "
+                "create a new task or change the plan instead",
+                entity_id=learning_task_id,
+                field="status",
+            )
         draft = connection.execute(
             """
             SELECT 1 FROM evidence
@@ -2435,6 +2454,22 @@ def create_evidence_draft(
         if draft is not None:
             raise EvidenceValidationError(
                 "draft evidence already exists for this task",
+                entity_id=learning_task_id,
+                field="status",
+            )
+
+        pending = connection.execute(
+            """
+            SELECT 1 FROM evidence
+            WHERE learning_task_id = %s AND status = '待 Review'
+            LIMIT 1
+            """,
+            (learning_task_id,),
+        ).fetchone()
+        if pending is not None:
+            raise EvidenceValidationError(
+                "a pending review round already exists — "
+                "wait for the review to conclude",
                 entity_id=learning_task_id,
                 field="status",
             )

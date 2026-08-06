@@ -107,7 +107,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     await waitFor(() =>
       expect(screen.getByText('完成 P01 实践项目')).toBeTruthy(),
     )
-    expect(screen.getByText('查看 Evidence 链接')).toBeTruthy()
+    expect(screen.getByText('查看任务成果证明链接')).toBeTruthy()
     expect(listHistory).toHaveBeenCalledWith(100)
   })
 
@@ -157,7 +157,9 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '提交评审结论' }))
     await waitFor(() => {
-      expect(screen.getByText(/已通过/)).toBeTruthy()
+      const msg = screen.getByText(/已通过/)
+      expect(msg).toBeTruthy()
+      expect(msg.textContent).not.toContain('已归档')
     })
     expect(submit).toHaveBeenCalledTimes(1)
     const [evidenceId, conclusion, feedback, key] = submit.mock.calls[0]
@@ -340,7 +342,11 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
     expect(submit.mock.calls[1][0]).toBe(10)
     expect(submit.mock.calls[1][3]).not.toBe(submit.mock.calls[0][3])
-    await waitFor(() => expect(screen.getByText(/已通过/)).toBeTruthy())
+    await waitFor(() => {
+      const msg = screen.getByText(/已通过/)
+      expect(msg).toBeTruthy()
+      expect(msg.textContent).not.toContain('已归档')
+    })
   })
 
   it('switching items clears the previous item history immediately', async () => {

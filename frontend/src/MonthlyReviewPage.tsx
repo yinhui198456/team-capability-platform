@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
@@ -30,6 +30,13 @@ export function MonthlyReviewPage() {
   })
   const [data, setData] = useState<MonthlyReview | null>(null)
   const [draft, setDraft] = useState<MonthlyReviewWriteFields | null>(null)
+  // The submit reads the inputs' live values, not the render closure's
+  // draft: a fast fill→click can dispatch both events in one task, before
+  // React commits the draft update (E2E-64-02 CI race).
+  const mainOutputRef = useRef<HTMLTextAreaElement>(null)
+  const problemsRef = useRef<HTMLTextAreaElement>(null)
+  const nextMonthFocusRef = useRef<HTMLTextAreaElement>(null)
+  const notesRef = useRef<HTMLTextAreaElement>(null)
   const [error, setError] = useState('')
   const [conflict, setConflict] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -73,6 +80,15 @@ export function MonthlyReviewPage() {
 
   async function handleSave() {
     if (!data || !draft) return
+    // Read the inputs' current values; the draft state may lag one render
+    // behind a rapid fill→click (same-task input+click batch).
+    const current: MonthlyReviewWriteFields = {
+      main_output: mainOutputRef.current?.value ?? draft.main_output ?? '',
+      problems: problemsRef.current?.value ?? draft.problems ?? '',
+      next_month_focus:
+        nextMonthFocusRef.current?.value ?? draft.next_month_focus ?? '',
+      notes: notesRef.current?.value ?? draft.notes ?? '',
+    }
     setSaving(true)
     setError('')
     setConflict(false)
@@ -80,7 +96,7 @@ export function MonthlyReviewPage() {
       const result = await upsertMonthlyReview(
         year,
         month,
-        draft,
+        current,
         data.written?.revision ?? 0,
       )
       setData({ ...data, written: result.written, history: result.history })
@@ -246,6 +262,7 @@ export function MonthlyReviewPage() {
                 <label>
                   本月主要产出
                   <textarea
+                    ref={mainOutputRef}
                     rows={3}
                     value={draft.main_output ?? ''}
                     onChange={setDraftField('main_output')}
@@ -254,6 +271,7 @@ export function MonthlyReviewPage() {
                 <label>
                   遇到的问题
                   <textarea
+                    ref={problemsRef}
                     rows={3}
                     value={draft.problems ?? ''}
                     onChange={setDraftField('problems')}
@@ -262,6 +280,7 @@ export function MonthlyReviewPage() {
                 <label>
                   下月重点
                   <textarea
+                    ref={nextMonthFocusRef}
                     rows={2}
                     value={draft.next_month_focus ?? ''}
                     onChange={setDraftField('next_month_focus')}
@@ -270,6 +289,7 @@ export function MonthlyReviewPage() {
                 <label>
                   备注
                   <textarea
+                    ref={notesRef}
                     rows={2}
                     value={draft.notes ?? ''}
                     onChange={setDraftField('notes')}

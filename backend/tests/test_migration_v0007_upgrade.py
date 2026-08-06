@@ -169,6 +169,8 @@ _EXPECTED_VERSIONS = [
     "0010_learning_execution",
     "0011_monthly_review",
     "0012_team_analytics_indexes",
+    "0013_plan_item_growth_goal_nullable",
+    "0014_evidence_archive_backfill",
 ]
 
 # Pre-v0007 planning DDL snapshot (v0006 era): plan_item.growth_goal_id is
