@@ -21,7 +21,7 @@ Optional workflow for high-risk change families, run before delivery/deployment 
 1. **Red test** — a failing test that demonstrates the defect the change fixes exists (or is added); it must fail against the pre-change code and pass on the changed code.
 2. **Targeted checks** — run the directly affected tests with evidence.
 3. **Affected checks** — run dependent modules' tests (see `.claude/rules/testing-and-evidence.md`).
-4. **One clean gate** — run the designated gate exactly once after the final edit; no rerun-until-green. A flaky or failing gate is a finding, not a retry.
+4. **One clean gate** — run the designated gate exactly once after the final edit; no rerun-until-green. A flaky or failing gate is a finding, not a retry. Expensive gate stages document expected duration and monitoring thresholds before running; a retry is allowed only with proven zero execution and zero write.
 5. **Stop-after-push evidence** — after push, record in the task's declared authoritative location (PR/Issue when applicable): SHA, gate result, residual risks. Do not silently proceed to deploy, merge, or close.
 
 ## 3. Decision

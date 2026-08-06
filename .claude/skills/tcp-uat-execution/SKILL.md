@@ -9,8 +9,8 @@ Optional workflow for authorized end-to-end verification of a delivered TCP chan
 
 ## 1. Admission (all must hold)
 
-- **A — Deployment state**: the exact deployed full SHA matches the task pin; service/proxy URLs, ports, and health are confirmed; the expected migration ledger/schema is present; no runtime/version drift between what is deployed and what the task pins.
-- **B — Test setup**: exact test identities with roles/relationships; access probes confirm each identity reaches only what its role allows; business-data prerequisites are present.
+- **A — Deployment state**: the exact deployed full SHA matches the task pin; the deployment used the runtime documentation's canonical UAT deployment entry with its required protected config reference — never a partial raw Compose or ad-hoc deployment missing env/config; service/proxy URLs, ports, and health are confirmed; the expected migration ledger/schema is present; no runtime/version drift between what is deployed and what the task pins.
+- **B — Test setup**: before any write, record a non-sensitive reference (credential-rotation batch/version or controlled report reference) — never credential values; visible-UI login succeeds and read-only/me-identity/role/relationship probes pass; exact test identities with roles/relationships; access probes confirm each identity reaches only what its role allows; business-data prerequisites are present. Old credentials, login failure, role mismatch, or unknown identity source → judge B/C and stop before any write.
 - **C — Isolation**: isolated browser contexts; dedicated accounts/record prefixes/mutable records/artifact directories; one serialized shared-write owner; no other Issue/UAT stack contamination.
 
 Any admission failure → report BLOCKED; do not start business verification.
@@ -79,6 +79,9 @@ required = [
     "OBSERVED_PASS", "Never auto-clean", "explicitly authorized operation",
     "read-only observation", "mutable action",
     "never use increasing retries for a mutable action",
+    "canonical UAT deployment entry", "protected config",
+    "credential-rotation batch", "never credential values",
+    "visible-UI login", "stop before any write",
 ]
 missing = [m for m in required if m not in text]
 assert not missing, f"missing markers: {missing}"

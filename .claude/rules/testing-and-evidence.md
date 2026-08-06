@@ -10,9 +10,10 @@ paths:
 
 ## Risk-proportionate gates
 
-- **Targeted** — low-risk, isolated change: run the directly affected tests only.
-- **Affected** — change touches shared modules, contracts, or data: run the affected module's tests plus its direct dependents.
-- **Full** — high-risk or cross-cutting change (authorization, migrations, core loop): run the full unit suite (`pytest tests -q` / `npm test`) and, only when justified, the E2E gates.
+- **Tier 1 — cosmetic/test-only** (visual, selector, copy, formatting, tests): red test + targeted/affected checks + same-SHA CI. No local full E2E.
+- **Tier 2 — ordinary page state / event-timing fixes**: component-level red test + directly related checks + one real API E2E + same-SHA CI.
+- **Tier 3 — structural** (migration, authorization, concurrency, idempotency, test harness, cross-layer contract): one clean local full gate — the full unit suite (`pytest tests -q` / `npm test`) and, only when justified, the E2E gates — exactly once after the final edit; no rerun-until-green.
+- Expensive stages (Tier 3 gates or long CI) document expected duration and monitoring thresholds before running; any retry requires proven zero execution and zero write.
 
 ## Evidence standards
 

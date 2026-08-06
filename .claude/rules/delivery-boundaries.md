@@ -27,6 +27,24 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 - Verification results, failed attempts, and decision rationale are recorded in the task's declared authoritative location — the GitHub PR/Issue when applicable, plus versioned artifacts and check outputs (see testing-and-evidence.md); a self-report in chat is not final proof. An independent maintenance PR does not require Issue comments.
 - Durable governance never grants deployment, UAT, or merge authority. A verified live task instruction may authorize bounded edits, risk-proportionate tests, normal commit/push, Draft PR creation, UAT, or deployment within its explicit scope and stop conditions; routine steps already covered by that authorization do not need re-confirmation. Without live authorization, stop before mutations. No automatic commit, push, merge, deploy, or release.
 
+## CI zero-execution determination
+
+- A workflow with no run, or with steps/logs empty after an early failure, proves nothing about the change. Before any resume attempt, verify each: repository owner and billing entity; visibility and Actions budget; whether Actions is enabled; runner availability and concurrency limits; the workflow event and its base/path filters against the branch; and whether an attempt already exists at the exact SHA.
+- Switching the GitHub or connector account changes only permissions — it never transfers the repository's Actions billing. A different account is not a retry path.
+- Resume at most once per exact SHA per workflow, and only after an external condition has changed or a pure trigger gap is proven (e.g. an event/base/path filter mismatch). For stacked PRs, prefer a single exact-ref workflow_dispatch.
+- No empty commits, no guess-fixes, and no CI-only PR used as a routine bypass.
+
+## Delivery conclusions (four layers)
+
+State every delivery conclusion at its own layer and never conflate them:
+
+- business acceptance — human-accountable; no agent or UAT workflow may claim it;
+- exact-SHA CI/UAT results — what ran and passed at which SHA;
+- PR merge status — merged or not, and its target base branch;
+- default branch / production state — what is deployed.
+
+An integration-branch merge is not a master or production release: say which branch the PR merged into and what was not deployed. Evidence at one layer never implies another.
+
 ## No cross-contamination
 
 - Do not modify files, branches, or PRs owned by another Issue; do not ready or merge another PR.
