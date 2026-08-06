@@ -396,7 +396,9 @@ describe('BuddyReviewCenter', () => {
     )
     expect(screen.queryByText('成员 42')).toBeNull()
     // Evidence review lives in its own queue, not in the assessment center.
-    expect(screen.queryByRole('tab', { name: '任务成果证明 Review' })).toBeNull()
+    expect(
+      screen.queryByRole('tab', { name: '任务成果证明 Review' }),
+    ).toBeNull()
   })
 
   it('selects an assessment conclusion by clicking the label text', async () => {

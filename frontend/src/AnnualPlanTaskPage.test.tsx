@@ -893,7 +893,8 @@ describe('learning task execution (v0010)', () => {
       })
       // The form and the typed input stay; no success is claimed.
       expect(
-        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
+        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement)
+          .value,
       ).toBe('修改后')
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
       expect(screen.queryByText(/草稿已保存/)).toBeNull()
@@ -945,7 +946,8 @@ describe('learning task execution (v0010)', () => {
         expect(screen.getByRole('alert').textContent).toContain(message)
       })
       expect(
-        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement).value,
+        (screen.getByLabelText('任务成果证明 内容') as HTMLTextAreaElement)
+          .value,
       ).toBe('补充口径说明后的实现')
       expect(screen.getByRole('button', { name: '保存草稿' })).toBeTruthy()
       expect(screen.queryByText(/草稿已保存/)).toBeNull()

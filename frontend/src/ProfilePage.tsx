@@ -297,7 +297,9 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                   <p className={styles.emptyState}>暂无 任务成果证明</p>
                 ) : (
                   <div className={styles.evidenceList}>
-                    <div className={styles.statLabel}>任务成果证明 审核结果</div>
+                    <div className={styles.statLabel}>
+                      任务成果证明 审核结果
+                    </div>
                     {task.evidences.map((evidence) => (
                       <article
                         key={evidence.id}

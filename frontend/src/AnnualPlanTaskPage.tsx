@@ -1316,22 +1316,25 @@ function TaskExecutionPanel({
             任务已结束。如需继续提交任务成果证明，请创建新任务或调整计划。
           </p>
         )}
-        {!taskIsClosed && !draft && needMore.length === 0 && !hasPendingReview && (
-          <div className={s.actions}>
-            <button
-              type="button"
-              onClick={() => {
-                setEvidenceContent('')
-                setEvidenceDescription('')
-                setEvidenceLink('')
-                setNewVersionOf(null)
-                setCreatingDraft(true)
-              }}
-            >
-              新建草稿
-            </button>
-          </div>
-        )}
+        {!taskIsClosed &&
+          !draft &&
+          needMore.length === 0 &&
+          !hasPendingReview && (
+            <div className={s.actions}>
+              <button
+                type="button"
+                onClick={() => {
+                  setEvidenceContent('')
+                  setEvidenceDescription('')
+                  setEvidenceLink('')
+                  setNewVersionOf(null)
+                  setCreatingDraft(true)
+                }}
+              >
+                新建草稿
+              </button>
+            </div>
+          )}
         {creatingDraft && (
           <form
             className={s.actionForm}
