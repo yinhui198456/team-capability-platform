@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         create_assessment_schema(connection)
         create_planning_schema(connection)
         run_migrations(connection)
-        seed_demo_accounts(connection)
+        seed_demo_accounts(connection, settings.demo_seed_password)
         seed_demo_business_data(connection)
     yield
 

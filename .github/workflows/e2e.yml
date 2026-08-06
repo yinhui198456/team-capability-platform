@@ -7,6 +7,9 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
@@ -17,6 +20,29 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Generate per-run demo password
+        run: |
+          demo_pwd="$(openssl rand -hex 24)"
+          # Static guard: a repository-fixed demo password must never return.
+          # Refuse short values so future edits cannot restore a fixed
+          # credential. The compose stack is isolated per run
+          # (COMPOSE_PROJECT_NAME) and torn down afterwards.
+          if [[ ${#demo_pwd} -lt 32 ]]; then
+            echo "Generated demo password too short; refusing to continue" >&2
+            exit 1
+          fi
+          echo "::add-mask::$demo_pwd"
+          echo "DEMO_SEED_PASSWORD=$demo_pwd" >> "$GITHUB_ENV"
+
+      - name: Assert demo password is per-run generated
+        run: |
+          # Guards against a future edit restoring a fixed value: the demo
+          # password must be a per-run generated value, never hardcoded.
+          if [[ ${#DEMO_SEED_PASSWORD} -lt 32 ]]; then
+            echo "DEMO_SEED_PASSWORD is not per-run generated; hardcoded values are forbidden" >&2
+            exit 1
+          fi
 
       - name: Start Docker Compose stack
         run: |
@@ -73,6 +99,7 @@ jobs:
             -w /app \
             -e PLAYWRIGHT_NO_WEBSERVER=1 \
             -e TCP_E2E_ISOLATED=1 \
+            -e TCP_E2E_DEMO_PASSWORD="$DEMO_SEED_PASSWORD" \
             mcr.microsoft.com/playwright:v1.61.1-jammy \
             bash -c "apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test"
 

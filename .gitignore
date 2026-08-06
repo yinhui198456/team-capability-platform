@@ -27,3 +27,25 @@ playwright/.cache/
 e2e-snapshots-diff/
 
 output/
+
+# Generic database artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Private keys, certificates, and keystores
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+!*.pub
+
+# Local security scan outputs
+gitleaks-report*
+trivy-report*
+trivy-results*
+*.sarif
