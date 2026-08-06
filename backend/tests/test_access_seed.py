@@ -19,6 +19,10 @@ from app.planning.schema import create_planning_schema
 
 _DEMO_USERNAMES = ("admin", "leader", "buddy", "member", "member2")
 
+# Explicit test-only credential. It is used solely to exercise seeding inside
+# tests and is deliberately not a repository-known runtime default.
+_TEST_DEMO_PASSWORD = "test-only-demo-password"
+
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
@@ -49,7 +53,7 @@ def _row_counts(connection: psycopg.Connection) -> dict[str, int]:
 
 
 def test_seed_creates_all_demo_accounts(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     for username in _DEMO_USERNAMES:
         user = get_user_by_username(access_schema, username)
@@ -57,29 +61,79 @@ def test_seed_creates_all_demo_accounts(access_schema: psycopg.Connection) -> No
         assert user["username"] == username
 
 
-def test_seed_passwords_verify_with_default(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+def test_seed_passwords_verify_with_explicit_password(
+    access_schema: psycopg.Connection,
+) -> None:
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     for username in _DEMO_USERNAMES:
         user = get_user_by_username(access_schema, username)
         assert user is not None
-        assert verify_password("123456", user["password_hash"]) is True
+        assert verify_password(_TEST_DEMO_PASSWORD, user["password_hash"]) is True
+        # The retired repository-known default must never verify.
+        assert verify_password("123456", user["password_hash"]) is False
 
 
 def test_seed_passwords_are_not_stored_in_plaintext(
     access_schema: psycopg.Connection,
 ) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     for username in _DEMO_USERNAMES:
         user = get_user_by_username(access_schema, username)
         assert user is not None
-        assert "123456" not in user["password_hash"]
-        assert user["password_hash"] != "123456"
+        assert _TEST_DEMO_PASSWORD not in user["password_hash"]
+        assert user["password_hash"] != _TEST_DEMO_PASSWORD
+
+
+def test_seed_skips_when_password_missing(access_schema: psycopg.Connection) -> None:
+    seed_demo_accounts(access_schema, None)
+
+    assert _row_counts(access_schema) == {
+        "users": 0,
+        "user_roles": 0,
+        "buddy_relationships": 0,
+    }
+
+
+def test_seed_skips_when_password_blank(access_schema: psycopg.Connection) -> None:
+    for blank_value in ("", "   "):
+        _reset_access_schema(access_schema)
+        seed_demo_accounts(access_schema, blank_value)
+
+        assert _row_counts(access_schema) == {
+            "users": 0,
+            "user_roles": 0,
+            "buddy_relationships": 0,
+        }
+
+
+def test_seed_skips_when_password_is_known_insecure(
+    access_schema: psycopg.Connection,
+) -> None:
+    for insecure_value in seed._KNOWN_INSECURE_DEMO_PASSWORDS:
+        _reset_access_schema(access_schema)
+        seed_demo_accounts(access_schema, insecure_value)
+
+        assert _row_counts(access_schema) == {
+            "users": 0,
+            "user_roles": 0,
+            "buddy_relationships": 0,
+        }
+
+
+def test_seed_skip_warning_never_logs_the_password(
+    access_schema: psycopg.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    seed_demo_accounts(access_schema, None)
+
+    assert "demo seeding skipped" in caplog.text
+    assert _TEST_DEMO_PASSWORD not in caplog.text
+    assert "123456" not in caplog.text
 
 
 def test_seed_assigns_expected_roles(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     expected_roles = {
         "admin": {"Admin", "Leader", "Member"},
@@ -95,7 +149,7 @@ def test_seed_assigns_expected_roles(access_schema: psycopg.Connection) -> None:
 
 
 def test_seed_creates_primary_buddy_links(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     member = get_user_by_username(access_schema, "member")
     assert member is not None
@@ -111,7 +165,7 @@ def test_seed_creates_primary_buddy_links(access_schema: psycopg.Connection) -> 
 
 
 def test_seed_buddy_has_assigned_members(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     buddy = get_user_by_username(access_schema, "buddy")
     assert buddy is not None
@@ -121,10 +175,10 @@ def test_seed_buddy_has_assigned_members(access_schema: psycopg.Connection) -> N
 
 
 def test_seed_is_idempotent(access_schema: psycopg.Connection) -> None:
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
     first_counts = _row_counts(access_schema)
 
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
     second_counts = _row_counts(access_schema)
 
     assert first_counts == second_counts
@@ -137,7 +191,7 @@ def test_seed_skips_when_any_user_exists(access_schema: psycopg.Connection) -> N
     existing_id = create_user(access_schema, "existing", "Existing User", "secret")
     assign_role(access_schema, existing_id, "Member")
 
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     counts = _row_counts(access_schema)
     assert counts["users"] == 1
@@ -184,7 +238,7 @@ def test_seed_business_data_builds_repeatable_core_loop(
         (model_id, l2_id),
     )
     run_migrations(access_schema)
-    seed_demo_accounts(access_schema)
+    seed_demo_accounts(access_schema, _TEST_DEMO_PASSWORD)
 
     seed.seed_demo_business_data(access_schema)
 

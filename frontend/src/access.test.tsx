@@ -37,20 +37,20 @@ describe('access helpers', () => {
   })
 
   it('login posts to /api/auth/login with credentials include and json body', async () => {
-    const user = await login('leader', '123456')
+    const user = await login('leader', 'test-only')
 
     expect(fetch).toHaveBeenCalledWith('/api/auth/login', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'leader', password: '123456' }),
+      body: JSON.stringify({ username: 'leader', password: 'test-only' }),
     })
     expect(user.username).toBe('leader')
   })
 
   it('login does not write to localStorage', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
-    await login('leader', '123456')
+    await login('leader', 'test-only')
     expect(setItem).not.toHaveBeenCalled()
     setItem.mockRestore()
   })

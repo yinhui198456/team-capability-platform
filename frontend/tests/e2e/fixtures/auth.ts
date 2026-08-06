@@ -2,15 +2,20 @@ import type { Page } from '@playwright/test'
 
 export type Role = 'member' | 'buddy' | 'leader' | 'admin'
 
+// Demo-account password is supplied at runtime (TCP_E2E_DEMO_PASSWORD must
+// match the DEMO_SEED_PASSWORD the stack was seeded with). No repository-known
+// default; an empty value fails the login flow.
+export const DEMO_PASSWORD = process.env.TCP_E2E_DEMO_PASSWORD ?? ''
+
 const credentials: Record<
   Role | 'member2',
   { username: string; password: string }
 > = {
-  member: { username: 'member', password: '123456' },
-  member2: { username: 'member2', password: '123456' },
-  buddy: { username: 'buddy', password: '123456' },
-  leader: { username: 'leader', password: '123456' },
-  admin: { username: 'admin', password: '123456' },
+  member: { username: 'member', password: DEMO_PASSWORD },
+  member2: { username: 'member2', password: DEMO_PASSWORD },
+  buddy: { username: 'buddy', password: DEMO_PASSWORD },
+  leader: { username: 'leader', password: DEMO_PASSWORD },
+  admin: { username: 'admin', password: DEMO_PASSWORD },
 }
 
 export type ExtendedRole = Role | 'member2'

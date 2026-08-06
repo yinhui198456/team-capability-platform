@@ -651,7 +651,7 @@ docker compose up --build
 - FastAPI 数据库就绪检查：<http://localhost:18001/ready>
 - PostgreSQL：`localhost:5432`，数据库 `tcp`，用户 `tcp`，开发密码 `tcp_dev_only`
 
-本地 UAT 演示账号（密码均为 `123456`，仅在本地开发/UAT 环境有效）：
+本地 UAT 演示账号（仅在本地开发/UAT 环境有效；密码由部署方配置，仓库不提供默认值）：
 
 | 账号 | 角色 |
 |---|---|
@@ -661,7 +661,16 @@ docker compose up --build
 | `member` | Member |
 | `member2` | Member |
 
-说明：`member` 与 `member2` 的主 Buddy 均为 `buddy`。所有演示密码仅在 `tcp_user` 为空时由种子数据写入，且存储前已哈希；生产环境不应保留或使用这些账号。
+说明：`member` 与 `member2` 的主 Buddy 均为 `buddy`。演示账号仅在 `tcp_user` 为空且已设置 `DEMO_SEED_PASSWORD` 时由种子数据写入，存储前已哈希，不会被记录或返回；生产环境不应启用演示种子。
+
+启用演示种子数据（可选，无仓库默认密码）：
+
+```bash
+export DEMO_SEED_PASSWORD='<your strong local value>'
+docker compose up --build
+```
+
+`DEMO_SEED_PASSWORD` 未设置或留空时跳过种子写入，不创建任何演示账号。密码由部署方自行设定并定期轮换，请勿将真实密码提交到仓库（参考 `backend/.env.example`）。
 
 停止服务：
 
@@ -679,7 +688,7 @@ Compose 创建 PostgreSQL 命名卷；后端仅在 catalog 为空时导入镜像
 bash scripts/e2e-smoke.sh
 ```
 
-该检查验证就绪状态、匿名目录、Cookie 登录/登出及 member 的成长档案聚合。若要验证后端和前端容器重启后的数据保留与就绪状态：
+该检查验证就绪状态、匿名目录、Cookie 登录/登出及 member 的成长档案聚合。脚本要求 `TCP_E2E_DEMO_PASSWORD` 与启动时设置的 `DEMO_SEED_PASSWORD` 一致；未设置时脚本直接失败。若要验证后端和前端容器重启后的数据保留与就绪状态：
 
 ```bash
 TCP_E2E_RESTART=1 bash scripts/e2e-smoke.sh
@@ -733,7 +742,7 @@ pytest
 
 - 匿名只读页面 `/capability/model`、`/operations/resources` 与对应只读 API `GET /api/capability-model`、`GET /api/learning-resources`、`GET /api/learning-resources/{material_code}`。
 - 本地会话与认证：`/login` 页面、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`；使用 HttpOnly Cookie，无 localStorage/token。
-- 五个本地 UAT 演示账号（密码均为 `123456`）及其 N:M 角色、Buddy 关系，仅在本地开发/UAT 有效。
+- 五个本地 UAT 演示账号（密码由部署方通过 `DEMO_SEED_PASSWORD` 配置）及其 N:M 角色、Buddy 关系，仅在本地开发/UAT 有效。
 - 健康检查 `/health` 与 `/ready`。
 
 当前不含 Assessment、Assessment Review、Gap、Growth Goal、Annual Growth Plan、Plan Item、Learning Task、Evidence、Buddy Review、Capability Profile、Admin 管理页、SSO、注册、密码重置或任何其他业务写入功能。业务对象、权限、路由、状态和原型绑定以 `docs/01_Product.md` 至 `docs/05_Development.md` 为准，后续能力仍须按门禁实施。

@@ -23,6 +23,9 @@ services:
       DATABASE_URL: postgresql://tcp:tcp_dev_only@postgres:5432/tcp
       CORS_ORIGINS: http://localhost:5173,http://localhost:18081
       PORT: 8000
+      # Empty by default: demo-account seeding is disabled unless the operator
+      # supplies DEMO_SEED_PASSWORD in the shell/compose environment.
+      DEMO_SEED_PASSWORD: ${DEMO_SEED_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy

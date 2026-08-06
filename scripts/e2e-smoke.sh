@@ -4,6 +4,11 @@ set -euo pipefail
 base_url="${TCP_E2E_BASE_URL:-http://localhost:18081}"
 backend_url="${TCP_E2E_BACKEND_URL:-http://localhost:18001}"
 year="${TCP_E2E_YEAR:-$(date +%Y)}"
+demo_password="${TCP_E2E_DEMO_PASSWORD:-}"
+if [[ -z "$demo_password" ]]; then
+  echo "Set TCP_E2E_DEMO_PASSWORD to the DEMO_SEED_PASSWORD used when the stack was seeded" >&2
+  exit 1
+fi
 cookies="$(mktemp)"
 trap 'rm -f "$cookies"' EXIT
 
@@ -35,7 +40,7 @@ curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']
 
 curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"member","password":"123456"}' | \
+  -d "{\"username\":\"member\",\"password\":\"$demo_password\"}" | \
   assert_json "payload['username'] == 'member' and 'Member' in payload['roles']"
 curl -fsS -b "$cookies" "$base_url/api/auth/me" | \
   assert_json "payload['username'] == 'member'"

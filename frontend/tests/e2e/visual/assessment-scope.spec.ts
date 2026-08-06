@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { DEMO_PASSWORD } from '../fixtures/auth'
+
 test.setTimeout(90000)
 
 const viewports = [
@@ -10,7 +12,7 @@ const viewports = [
 
 async function adminCookie(page: Page): Promise<string> {
   const response = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: '123456' },
+    data: { username: 'admin', password: DEMO_PASSWORD },
   })
   const setCookie = response.headers()['set-cookie'] ?? ''
   const match = setCookie.match(/tcp_session=([^;]+)/)
@@ -29,7 +31,7 @@ async function ensureMember(
     data: {
       username,
       full_name: 'Scope Visual Member',
-      password: '123456',
+      password: DEMO_PASSWORD,
       is_active: true,
       roles: ['Member'],
       current_level: current,
@@ -43,7 +45,7 @@ async function ensureMember(
 async function loginUser(page: Page, username: string) {
   await page.goto('/login')
   await page.getByLabel('用户名').fill(username)
-  await page.getByLabel('密码').fill('123456')
+  await page.getByLabel('密码').fill(DEMO_PASSWORD)
   await page.getByRole('button', { name: '登录' }).click()
   await page.waitForURL('**/dashboard/member**')
 }

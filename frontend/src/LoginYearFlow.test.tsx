@@ -99,7 +99,7 @@ describe('login year initialization flow', () => {
     const usernameInput = screen.getByLabelText('用户名') as HTMLInputElement
     const passwordInput = screen.getByLabelText('密码') as HTMLInputElement
     fireEvent.change(usernameInput, { target: { value: 'member' } })
-    fireEvent.change(passwordInput, { target: { value: '123456' } })
+    fireEvent.change(passwordInput, { target: { value: 'test-only' } })
 
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
 
@@ -178,7 +178,7 @@ describe('login year initialization flow', () => {
     const usernameInput = screen.getByLabelText('用户名') as HTMLInputElement
     const passwordInput = screen.getByLabelText('密码') as HTMLInputElement
     fireEvent.change(usernameInput, { target: { value: 'member' } })
-    fireEvent.change(passwordInput, { target: { value: '123456' } })
+    fireEvent.change(passwordInput, { target: { value: 'test-only' } })
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
 
     await waitFor(() => {
