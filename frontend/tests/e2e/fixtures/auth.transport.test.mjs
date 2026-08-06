@@ -17,7 +17,11 @@ const moduleUrl = new URL('./auth.ts', import.meta.url).href
 
 function runWith(envValue) {
   const env = { ...process.env }
-  if (envValue !== undefined) env.TCP_E2E_DEMO_PASSWORD = envValue
+  if (envValue === undefined) {
+    delete env.TCP_E2E_DEMO_PASSWORD
+  } else {
+    env.TCP_E2E_DEMO_PASSWORD = envValue
+  }
   const code = `
     import(${JSON.stringify(moduleUrl)})
       .then((m) => process.stdout.write(JSON.stringify(m.DEMO_PASSWORD)))
