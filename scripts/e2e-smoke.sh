@@ -17,6 +17,12 @@ assert_json() {
   python3 -c "import json, sys; payload = json.load(sys.stdin); assert $condition"
 }
 
+json_body() {
+  # Proper JSON encoding: quotes, backslashes, whitespace, and Unicode in the
+  # password cannot alter the request body shape.
+  python3 -c 'import json, sys; print(json.dumps({"username": "member", "password": sys.argv[1]}))' "$1"
+}
+
 wait_for_http() {
   local url="$1"
   for _ in {1..30}; do
@@ -40,7 +46,7 @@ curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']
 
 curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
   -H 'Content-Type: application/json' \
-  -d "{\"username\":\"member\",\"password\":\"$demo_password\"}" | \
+  -d "$(json_body "$demo_password")" | \
   assert_json "payload['username'] == 'member' and 'Member' in payload['roles']"
 curl -fsS -b "$cookies" "$base_url/api/auth/me" | \
   assert_json "payload['username'] == 'member'"

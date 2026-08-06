@@ -4,8 +4,15 @@ export type Role = 'member' | 'buddy' | 'leader' | 'admin'
 
 // Demo-account password is supplied at runtime (TCP_E2E_DEMO_PASSWORD must
 // match the DEMO_SEED_PASSWORD the stack was seeded with). No repository-known
-// default; an empty value fails the login flow.
-export const DEMO_PASSWORD = process.env.TCP_E2E_DEMO_PASSWORD ?? ''
+// default; fail immediately when missing/blank so tests never attempt
+// empty-password logins.
+export const DEMO_PASSWORD = process.env.TCP_E2E_DEMO_PASSWORD?.trim() ?? ''
+
+if (!DEMO_PASSWORD) {
+  throw new Error(
+    'TCP_E2E_DEMO_PASSWORD is required for E2E demo logins; set it to the DEMO_SEED_PASSWORD used when seeding the stack',
+  )
+}
 
 const credentials: Record<
   Role | 'member2',
