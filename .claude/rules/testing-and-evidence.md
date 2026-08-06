@@ -10,7 +10,7 @@ paths:
 
 ## Risk-proportionate gates
 
-- **Tier 1 — cosmetic/test-only** (visual, selector, copy, formatting, tests): red test + targeted/affected checks + same-SHA CI. No local full E2E.
+- **Tier 1 — cosmetic/test-only**: a behavior/test-contract defect (visual, selector, copy, test expectation) needs a related check or regression that fails on the old version; a pure docs/formatting change needs only the exact checker plus diff review. Both run targeted/affected checks with same-SHA CI as the full gate — no local full E2E.
 - **Tier 2 — ordinary page state / event-timing fixes**: component-level red test + directly related checks + one real API E2E + same-SHA CI.
 - **Tier 3 — structural** (migration, authorization, concurrency, idempotency, test harness, cross-layer contract): one clean local full gate — the full unit suite (`pytest tests -q` / `npm test`) and, only when justified, the E2E gates — exactly once after the final edit; no rerun-until-green.
 - Expensive stages (Tier 3 gates or long CI) document expected duration and monitoring thresholds before running; any retry requires proven zero execution and zero write.

@@ -29,9 +29,9 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 
 ## CI zero-execution determination
 
-- A workflow with no run, or with steps/logs empty after an early failure, proves nothing about the change. Before any resume attempt, verify each: repository owner and billing entity; visibility and Actions budget; whether Actions is enabled; runner availability and concurrency limits; the workflow event and its base/path filters against the branch; and whether an attempt already exists at the exact SHA.
+- A workflow with no run, or with steps/logs empty after an early failure, proves nothing about the change. Before any retry or dispatch attempt, verify each: repository owner and billing entity; visibility and Actions budget; whether Actions is enabled; runner availability and concurrency limits; the workflow event and its base/path filters against the branch; and whether an attempt already exists at the exact SHA.
 - Switching the GitHub or connector account changes only permissions — it never transfers the repository's Actions billing. A different account is not a retry path.
-- Resume at most once per exact SHA per workflow, and only after an external condition has changed or a pure trigger gap is proven (e.g. an event/base/path filter mismatch). For stacked PRs, prefer a single exact-ref workflow_dispatch.
+- Retry or dispatch at most once per exact SHA per workflow, and only after an external condition has changed or a pure trigger gap is proven (e.g. an event/base/path filter mismatch). For stacked PRs, prefer a single exact-ref workflow_dispatch.
 - No empty commits, no guess-fixes, and no CI-only PR used as a routine bypass.
 
 ## Delivery conclusions (four layers)
