@@ -1,6 +1,7 @@
 /// @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -373,6 +374,51 @@ describe('MonthlyReviewPage', () => {
     })
     expect((screen.getByLabelText('备注') as HTMLTextAreaElement).value).toBe(
       '422 草稿',
+    )
+  })
+
+  it('submits the current input values when the save click lands in the same batching window as the last input event', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMonthlyReview').mockResolvedValue(
+      reviewFixture({ written: null, history: [] }),
+    )
+    const upsert = vi
+      .spyOn(planningApi, 'upsertMonthlyReview')
+      .mockResolvedValue({
+        written: { ...reviewFixture().written!, revision: 1 },
+        history: [],
+      })
+    renderPage()
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '月度复盘', level: 1 }),
+      ).toBeTruthy()
+    })
+    expect(screen.getByTestId('current-revision').textContent).toContain(
+      '未创建',
+    )
+
+    const notes = screen.getByLabelText('备注') as HTMLTextAreaElement
+    const save = screen.getByRole('button', { name: '保存月度复盘' })
+    const tooLong = 'a'.repeat(3001)
+
+    // Browser race: a fast fill→click can dispatch the input event and the
+    // click in the same task, before React commits the draft update.  The
+    // click then runs against the previous render's draft closure — the
+    // submit must still use the input's current value (E2E-64-02 CI fail).
+    await act(async () => {
+      notes.value = tooLong
+      notes.dispatchEvent(new Event('input', { bubbles: true }))
+      save.click()
+    })
+
+    expect(upsert).toHaveBeenCalledTimes(1)
+    expect(upsert).toHaveBeenCalledWith(
+      2026,
+      5,
+      expect.objectContaining({ notes: tooLong }),
+      0,
     )
   })
 
