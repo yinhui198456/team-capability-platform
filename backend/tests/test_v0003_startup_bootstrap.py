@@ -19,7 +19,7 @@ passed before the crash at planning/schema.py:298-303.
 
 The tests then run the production startup order of app.main.lifespan
 (create_access_schema → create_assessment_schema → create_planning_schema →
-run_migrations) and verify the full upgrade: a complete 0001–0009 ledger,
+run_migrations) and verify the full upgrade: a complete 0001–0014 ledger,
 the v0009 columns/indexes/constraints/triggers, preserved legacy business
 data and an idempotent second start.
 """
@@ -40,7 +40,7 @@ _SCHEMA_SQL = (Path(__file__).resolve().parent / "pre_v0003_schema.sql").read_te
     encoding="utf-8"
 )
 
-_V0001_V0009 = (
+_EXPECTED_VERSIONS = (
     "0001_standard_targets",
     "0002_assessment_inheritance_revision",
     "0003_assessment_explicit_clear",
@@ -54,6 +54,7 @@ _V0001_V0009 = (
     "0011_monthly_review",
     "0012_team_analytics_indexes",
     "0013_plan_item_growth_goal_nullable",
+    "0014_evidence_archive_backfill",
 )
 
 
@@ -79,7 +80,7 @@ def _drop_everything(connection: psycopg.Connection) -> None:
 def _seed_ledger_v0001_v0003(connection: psycopg.Connection) -> None:
     """The dump carries an empty schema_migration table; record exactly the
     ledger a real v0003-era UAT database has."""
-    for version in _V0001_V0009[:3]:
+    for version in _EXPECTED_VERSIONS[:3]:
         connection.execute(
             "INSERT INTO schema_migration (version) VALUES (%s)", (version,)
         )
@@ -362,11 +363,11 @@ def test_v0003_database_boots_through_full_startup_order(
         )
     }
     _full_startup_order(connection)
-    # Ledger: exactly 0001–0009, once each, in order.
+    # Ledger: exactly 0001–0014, once each, in order.
     rows = connection.execute(
         "SELECT version FROM schema_migration ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in rows] == list(_V0001_V0009)
+    assert [row[0] for row in rows] == list(_EXPECTED_VERSIONS)
     # v0009 columns, indexes and guards exist after the upgrade.
     _assert_v0009_objects(connection)
     # Legacy business data preserved, values intact, old plan stays legacy.
@@ -396,7 +397,7 @@ def test_v0003_database_boots_through_full_startup_order(
     rows = connection.execute(
         "SELECT version FROM schema_migration ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in rows] == list(_V0001_V0009)
+    assert [row[0] for row in rows] == list(_EXPECTED_VERSIONS)
     for table, expected in counts_before.items():
         actual = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
         assert actual == expected, table
@@ -414,10 +415,10 @@ def test_fresh_database_full_startup_order_idempotent(
     rows = connection.execute(
         "SELECT version FROM schema_migration ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in rows] == list(_V0001_V0009)
+    assert [row[0] for row in rows] == list(_EXPECTED_VERSIONS)
     _assert_v0009_objects(connection)
     _full_startup_order(connection)
     rows = connection.execute(
         "SELECT version FROM schema_migration ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in rows] == list(_V0001_V0009)
+    assert [row[0] for row in rows] == list(_EXPECTED_VERSIONS)
