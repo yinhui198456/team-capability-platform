@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # credential. It is hashed-checked here, never logged or returned.
 _KNOWN_INSECURE_DEMO_PASSWORDS = frozenset({"123456"})
 
+# Minimum raw credential length for demo seeding. The check is on raw
+# characters, so a valid value is never normalized, trimmed, or rewritten.
+_MIN_DEMO_PASSWORD_LENGTH = 16
+
 _DEMO_ACCOUNTS = [
     {
         "username": "admin",
@@ -57,10 +61,12 @@ _BUDDY_LINKS = [
 
 
 def _is_safe_demo_password(demo_password: str | None) -> bool:
-    """Fail closed: only a non-blank, non-retired password may seed accounts."""
+    """Fail closed: only a 16+ character, non-blank, non-retired password may seed."""
     if not demo_password or not demo_password.strip():
         return False
     if demo_password in _KNOWN_INSECURE_DEMO_PASSWORDS:
+        return False
+    if len(demo_password) < _MIN_DEMO_PASSWORD_LENGTH:
         return False
     return True
 
@@ -77,8 +83,9 @@ def seed_demo_accounts(
 
     The password must come from an explicitly supplied environment value
     (settings.demo_seed_password); there is no repository-known default and the
-    value is never logged or returned. Missing, blank, or known-insecure values
-    fail closed: no accounts are created and a controlled warning is logged.
+    value is never logged or returned. Missing, blank, shorter than 16
+    characters, or known-insecure values fail closed: no accounts are created
+    and a controlled warning is logged.
 
     This function is idempotent: if any user already exists, it performs no
     inserts or updates. It relies on create_access_schema having already seeded
@@ -87,7 +94,8 @@ def seed_demo_accounts(
     if not _is_safe_demo_password(demo_password):
         logger.warning(
             "demo seeding skipped: DEMO_SEED_PASSWORD is missing, blank, "
-            "or a known-insecure value; no demo accounts were created"
+            "shorter than 16 characters, or a known-insecure value; no demo "
+            "accounts were created"
         )
         return
     if not _user_table_empty(connection):

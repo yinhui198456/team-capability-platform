@@ -45,9 +45,9 @@ wait_for_http "$base_url/api/capability-model"
 curl -fsS "$backend_url/ready" | assert_json "payload['status'] == 'ready'"
 curl -fsS "$base_url/api/capability-model" | assert_json "len(payload['domains']) == 6"
 
-curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
+json_body "$demo_password" | curl -fsS -c "$cookies" -X POST "$base_url/api/auth/login" \
   -H 'Content-Type: application/json' \
-  -d "$(json_body "$demo_password")" | \
+  --data-binary @- | \
   assert_json "payload['username'] == 'member' and 'Member' in payload['roles']"
 curl -fsS -b "$cookies" "$base_url/api/auth/me" | \
   assert_json "payload['username'] == 'member'"

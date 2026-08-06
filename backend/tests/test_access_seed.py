@@ -122,6 +122,58 @@ def test_seed_skips_when_password_is_known_insecure(
         }
 
 
+def test_seed_skips_when_password_shorter_than_minimum(
+    access_schema: psycopg.Connection,
+) -> None:
+    for short_value in ("short", "123456789012345"):
+        _reset_access_schema(access_schema)
+        seed_demo_accounts(access_schema, short_value)
+
+        assert _row_counts(access_schema) == {
+            "users": 0,
+            "user_roles": 0,
+            "buddy_relationships": 0,
+        }
+
+
+def test_seed_accepts_exactly_sixteen_raw_characters(
+    access_schema: psycopg.Connection,
+) -> None:
+    boundary = "x" * 16
+    seed_demo_accounts(access_schema, boundary)
+
+    assert _row_counts(access_schema)["users"] == 5
+    for username in _DEMO_USERNAMES:
+        user = get_user_by_username(access_schema, username)
+        assert user is not None
+        assert verify_password(boundary, user["password_hash"]) is True
+
+
+def test_seed_preserves_unicode_and_whitespace_exactly(
+    access_schema: psycopg.Connection,
+) -> None:
+    tricky = "  密码 password 16chars \n"
+    assert len(tricky) >= 16
+    seed_demo_accounts(access_schema, tricky)
+
+    for username in _DEMO_USERNAMES:
+        user = get_user_by_username(access_schema, username)
+        assert user is not None
+        assert verify_password(tricky, user["password_hash"]) is True
+        assert user["password_hash"] != tricky
+
+
+def test_seed_short_password_warning_never_logs_the_value(
+    access_schema: psycopg.Connection,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    short_value = "SHORT-not-16"
+    seed_demo_accounts(access_schema, short_value)
+
+    assert "demo seeding skipped" in caplog.text
+    assert short_value not in caplog.text
+
+
 def test_seed_skip_warning_never_logs_the_password(
     access_schema: psycopg.Connection, caplog: pytest.LogCaptureFixture
 ) -> None:

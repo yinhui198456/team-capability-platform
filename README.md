@@ -666,11 +666,11 @@ docker compose up --build
 启用演示种子数据（可选，无仓库默认密码）：
 
 ```bash
-export DEMO_SEED_PASSWORD='<your strong local value>'
+export DEMO_SEED_PASSWORD='<your strong local value, at least 16 characters>'
 docker compose up --build
 ```
 
-`DEMO_SEED_PASSWORD` 未设置或留空时跳过种子写入，不创建任何演示账号。密码由部署方自行设定并定期轮换，请勿将真实密码提交到仓库（参考 `backend/.env.example`）。
+`DEMO_SEED_PASSWORD` 未设置、留空或不足 16 位时跳过种子写入，不创建任何演示账号。密码由部署方自行设定并定期轮换，请勿将真实密码提交到仓库（参考 `backend/.env.example`）。
 
 停止服务：
 
