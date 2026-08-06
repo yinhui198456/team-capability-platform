@@ -294,6 +294,18 @@ export async function mockTeamAnalyticsData(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         year: 2026,
+        meta: {
+          year: 2026,
+          as_of: '2026-08-04T00:00:00.000Z',
+          scope: 'leader_team',
+          source: 'team_analytics.v2',
+          denominator_source: 'assessment_details',
+        },
+        gap_summary: {
+          current_required: filteredOverdue.length,
+          target_progressive: 2,
+          derivation: 'scope_v1',
+        },
         filters: { member_id: memberId, domain_code: domainCode },
         kpis: {
           assessment_completion_rate: 0.67,
@@ -311,6 +323,25 @@ export async function mockTeamAnalyticsData(page: Page): Promise<void> {
         member_attainment: memberAttainment,
         monthly_trends: monthlyTrends,
         overdue_items: filteredOverdue,
+        distributions: {
+          priority: { 高: 2, 中: 1, 低: 0, total: 3 },
+          formal_inclusion_ratio: {
+            included_count: 3,
+            total_count: 3,
+            ratio: 1,
+          },
+          quarterly: { Q1: 1, Q2: 2, Q3: 0, Q4: 0, total: 3 },
+          plan_status: {
+            未开始: 1,
+            进行中: 1,
+            已完成: 1,
+            延期: 0,
+            暂停: 0,
+            取消: 0,
+            total: 3,
+          },
+          pending_acceptance: { count: 0 },
+        },
       }),
     })
   })
@@ -323,6 +354,18 @@ export async function mockTeamAnalyticsEmptyData(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         year: 2026,
+        meta: {
+          year: 2026,
+          as_of: '2026-08-04T00:00:00.000Z',
+          scope: 'leader_team',
+          source: 'team_analytics.v2',
+          denominator_source: 'assessment_details',
+        },
+        gap_summary: {
+          current_required: 0,
+          target_progressive: 0,
+          derivation: 'scope_v1',
+        },
         filters: { member_id: null, domain_code: null },
         kpis: {
           assessment_completion_rate: 0,
@@ -354,6 +397,25 @@ export async function mockTeamAnalyticsEmptyData(page: Page): Promise<void> {
           cumulative_actual_hours: 0,
         })),
         overdue_items: [],
+        distributions: {
+          priority: { 高: 0, 中: 0, 低: 0, total: 0 },
+          formal_inclusion_ratio: {
+            included_count: 0,
+            total_count: 0,
+            ratio: 0,
+          },
+          quarterly: { Q1: 0, Q2: 0, Q3: 0, Q4: 0, total: 0 },
+          plan_status: {
+            未开始: 0,
+            进行中: 0,
+            已完成: 0,
+            延期: 0,
+            暂停: 0,
+            取消: 0,
+            total: 0,
+          },
+          pending_acceptance: { count: 0 },
+        },
       }),
     })
   })

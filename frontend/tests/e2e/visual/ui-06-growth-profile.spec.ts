@@ -6,6 +6,11 @@ import {
   mockGrowthProfileEmptyData,
 } from '../fixtures/growth-profile-mock'
 
+test.use({
+  locale: 'zh-CN',
+  timezoneId: 'Asia/Shanghai',
+})
+
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1280x800', width: 1280, height: 800 },
@@ -28,7 +33,7 @@ for (const viewport of VIEWPORTS) {
       const kpiRegion = page.getByRole('region', { name: '年度成长闭环摘要' })
       await expect(kpiRegion.getByText('已完成计划项')).toBeVisible()
       await expect(kpiRegion.getByText('实际学习时长')).toBeVisible()
-      await expect(kpiRegion.getByText('已归档 Evidence')).toBeVisible()
+      await expect(kpiRegion.getByText('已归档任务成果证明')).toBeVisible()
       await expect(kpiRegion.getByText('能力评估')).toBeVisible()
       await expect(page.getByText('计划学习时长')).toBeVisible()
       await expect(page.getByText('计划项完成率')).toBeVisible()
@@ -49,12 +54,12 @@ for (const viewport of VIEWPORTS) {
       ).toBeVisible()
       await expect(
         page.getByRole('article', {
-          name: 'Evidence 版本 1：P01-L2A-L3A',
+          name: '任务成果证明 版本 1：P01-L2A-L3A',
         }),
       ).toBeVisible()
       await expect(
         page.getByRole('article', {
-          name: 'Evidence 版本 1：C01-L2A-L3A',
+          name: '任务成果证明 版本 1：C01-L2A-L3A',
         }),
       ).toBeVisible()
       await expect(page.getByText('2026-03-15')).toBeVisible()

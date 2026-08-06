@@ -616,7 +616,13 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     ).find((item) => item.assessment_id === previousId)!
     const reviewed = await buddy.request.post(
       `/api/assessments/${previousId}/reviews/${review.id}`,
-      { data: { conclusion: '认可', feedback: 'E2E 认可' } },
+      {
+        data: {
+          conclusion: '认可',
+          feedback: 'E2E 认可',
+          expected_revision: (await submitted.json()).revision,
+        },
+      },
     )
     expect(reviewed.ok()).toBeTruthy()
     await buddy.close()

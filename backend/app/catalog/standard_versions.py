@@ -3,12 +3,180 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
 from typing import Any
 
 import psycopg
 
 JOB_LEVELS = ("P4", "P5", "P6", "P7", "P8")
+
+
+def _canonical_json(obj: Any) -> str:
+    """Stable JSON serialisation: sorted keys, stable separators."""
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def planning_snapshot_hash(
+    *,
+    l3_node_id: int,
+    l3_code: str,
+    l3_name: str,
+    materials_text: str | None,
+    resources: list[dict[str, Any]],
+    expected_output: str | None,
+    estimated_hours: str | None,
+    output_type: str | None,
+    notes: str | None,
+    source_workbook: str | None,
+    source_sheet: str | None,
+    source_row: int | None,
+    source_type: str,
+) -> str:
+    """SHA-256 over every frozen planning-source fact (stable key/array order).
+
+    Any change in a frozen field changes the hash; the same facts produce the
+    same hash across runs.  Resource arrays are sorted by code then name so the
+    hash does not depend on join order.
+    """
+    ordered_resources = sorted(
+        resources,
+        key=lambda r: (str(r.get("code") or ""), str(r.get("name") or "")),
+    )
+    payload = {
+        "l3_node_id": l3_node_id,
+        "l3_code": l3_code,
+        "l3_name": l3_name,
+        "materials_text": materials_text,
+        "resources": ordered_resources,
+        "expected_output": expected_output,
+        "estimated_hours": estimated_hours,
+        "output_type": output_type,
+        "notes": notes,
+        "source_workbook": source_workbook,
+        "source_sheet": source_sheet,
+        "source_row": source_row,
+        "source_type": source_type,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def load_node_resources(
+    connection: psycopg.Connection, node_id: int
+) -> list[dict[str, Any]]:
+    """Frozen resource facts (code/name/type/source/purpose/status) for a node."""
+    rows = connection.execute(
+        """
+        SELECT lr.material_code, lr.name, lr.material_type, lr.source_text,
+               lr.purpose, lr.status
+        FROM capability_node_resource cnr
+        JOIN learning_resource lr ON lr.id = cnr.resource_id
+        WHERE cnr.node_id = %s
+        ORDER BY lr.material_code
+        """,
+        (node_id,),
+    ).fetchall()
+    return [
+        {
+            "code": str(row[0]),
+            "name": str(row[1]),
+            "resource_type": str(row[2]),
+            "source": str(row[3]),
+            "purpose": str(row[4]),
+            "status": str(row[5]),
+        }
+        for row in rows
+    ]
+
+
+def capture_planning_snapshot(
+    connection: psycopg.Connection,
+    version_id: int,
+    node_id: int,
+    source_type: str,
+) -> dict[str, Any] | None:
+    """Capture the current catalog planning source for one L3 into the version.
+
+    Used by the draft lifecycle (reconcile/publish).  Published/archived
+    versions are frozen by the v0009 immutability trigger and never re-captured;
+    this repository guard rejects non-draft versions with a structured error
+    before any write is attempted.
+    Returns the captured row (or None when the node no longer exists).
+    """
+    status = connection.execute(
+        "SELECT status FROM capability_standard_version WHERE id = %s",
+        (version_id,),
+    ).fetchone()
+    if status is None or status[0] != "草稿":
+        raise StandardVersionError(
+            "standard_version_not_draft",
+            "planning snapshots can only be captured for draft versions",
+        )
+    row = connection.execute(
+        """
+        SELECT n.code, n.name, n.materials_text, n.expected_output,
+               n.estimated_hours, n.output_type, n.notes,
+               n.source_workbook, n.source_sheet, n.source_row
+        FROM capability_node n
+        WHERE n.id = %s AND n.node_type = 'L3'
+        """,
+        (node_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    resources = load_node_resources(connection, node_id)
+    source_hash = planning_snapshot_hash(
+        l3_node_id=node_id,
+        l3_code=str(row[0]),
+        l3_name=str(row[1]),
+        materials_text=row[2],
+        resources=resources,
+        expected_output=row[3],
+        estimated_hours=row[4],
+        output_type=row[5],
+        notes=row[6],
+        source_workbook=row[7],
+        source_sheet=row[8],
+        source_row=row[9],
+        source_type=source_type,
+    )
+    inserted = connection.execute(
+        """
+        INSERT INTO capability_standard_planning_snapshot (
+            capability_standard_version_id, l3_node_id, l3_code, l3_name,
+            materials_text, resource_snapshot, expected_output, estimated_hours,
+            output_type, notes, source_workbook, source_sheet, source_row,
+            source_type, source_hash, captured_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        RETURNING id, l3_code, l3_name, source_hash
+        """,
+        (
+            version_id,
+            node_id,
+            row[0],
+            row[1],
+            row[2],
+            psycopg.types.json.Jsonb(resources),
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+            row[8],
+            row[9],
+            source_type,
+            source_hash,
+        ),
+    ).fetchone()
+    assert inserted is not None
+    return {
+        "id": int(inserted[0]),
+        "l3_code": str(inserted[1]),
+        "l3_name": str(inserted[2]),
+        "source_hash": str(inserted[3]),
+    }
 
 
 class StandardVersionError(ValueError):
@@ -154,6 +322,25 @@ def create_draft(
             FROM capability_standard_item WHERE version_id = %s
             """,
             (version_id, actor_user_id, base[0]),
+        )
+        # Copy the published base's immutable planning snapshots into the draft
+        # so the draft inherits the frozen planning source.
+        connection.execute(
+            """
+            INSERT INTO capability_standard_planning_snapshot (
+                capability_standard_version_id, l3_node_id, l3_code, l3_name,
+                materials_text, resource_snapshot, expected_output,
+                estimated_hours, output_type, notes, source_workbook,
+                source_sheet, source_row, source_type, source_hash, captured_at
+            )
+            SELECT %s, l3_node_id, l3_code, l3_name, materials_text,
+                   resource_snapshot, expected_output, estimated_hours,
+                   output_type, notes, source_workbook, source_sheet,
+                   source_row, source_type, source_hash, captured_at
+            FROM capability_standard_planning_snapshot
+            WHERE capability_standard_version_id = %s
+            """,
+            (version_id, base[0]),
         )
         _audit(
             connection,
@@ -686,6 +873,175 @@ def catalog_drift(connection: psycopg.Connection, version_id: int) -> dict[str, 
     }
 
 
+def _planning_snapshot_table_exists(connection: psycopg.Connection) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'capability_standard_planning_snapshot'
+        """
+    ).fetchone()
+    return row is not None
+
+
+def _ensure_planning_snapshots(connection: psycopg.Connection, version_id: int) -> int:
+    """Fill missing planning snapshots for every L3 present in the version.
+
+    Existing snapshots are never overwritten (immutability: published versions
+    are frozen at the DB level; drafts keep the first captured value).
+    Versions managed before v0009 (no snapshot table) are left untouched.
+    """
+    if not _planning_snapshot_table_exists(connection):
+        return 0
+    node_ids = connection.execute(
+        """
+        SELECT DISTINCT l3_node_id FROM capability_standard_item
+        WHERE version_id = %s ORDER BY l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    captured = 0
+    for (node_id,) in node_ids:
+        existing = connection.execute(
+            """
+            SELECT 1 FROM capability_standard_planning_snapshot
+            WHERE capability_standard_version_id = %s AND l3_node_id = %s
+            """,
+            (version_id, node_id),
+        ).fetchone()
+        if existing is None:
+            result = capture_planning_snapshot(
+                connection, version_id, int(node_id), "version_publish"
+            )
+            if result is not None:
+                captured += 1
+    return captured
+
+
+def _assert_planning_snapshots_complete(
+    connection: psycopg.Connection, version_id: int
+) -> None:
+    """Publish gate: the snapshot set exactly matches the version matrix.
+
+    Checks (all read-only, no writes from this function):
+    - bidirectional anti-join: no version L3 without a snapshot, no snapshot
+      without a version L3 (missing / extra / duplicated);
+    - every snapshot node belongs to the version's capability model
+      (cross-model rows are rejected even when the counts would match);
+    - every stored ``source_hash`` is recomputed from the frozen fields and
+      compared (stale hash → reject).
+    All issues are collected and raised as one structured error.
+    """
+    if not _planning_snapshot_table_exists(connection):
+        return
+    issues: list[dict[str, object]] = []
+    missing = connection.execute(
+        """
+        SELECT i.l3_node_id, i.l3_code
+        FROM capability_standard_item i
+        LEFT JOIN capability_standard_planning_snapshot s
+          ON s.capability_standard_version_id = i.version_id
+         AND s.l3_node_id = i.l3_node_id
+        WHERE i.version_id = %s AND s.id IS NULL
+        ORDER BY i.l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for node_id, code in missing:
+        issues.append(
+            {
+                "issue": "missing_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    extra = connection.execute(
+        """
+        SELECT s.l3_node_id, s.l3_code, s.source_hash
+        FROM capability_standard_planning_snapshot s
+        LEFT JOIN capability_standard_item i
+          ON i.version_id = s.capability_standard_version_id
+         AND i.l3_node_id = s.l3_node_id
+        WHERE s.capability_standard_version_id = %s AND i.version_id IS NULL
+        ORDER BY s.l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for node_id, code, _hash in extra:
+        issues.append(
+            {
+                "issue": "extra_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    # Cross-model snapshots: the snapshot node must live in the version's model.
+    cross_model = connection.execute(
+        """
+        SELECT s.l3_node_id, s.l3_code
+        FROM capability_standard_planning_snapshot s
+        JOIN capability_standard_version v ON v.id = s.capability_standard_version_id
+        JOIN capability_node n ON n.id = s.l3_node_id
+        WHERE s.capability_standard_version_id = %s
+          AND n.model_id <> v.model_id
+        ORDER BY s.l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for node_id, code in cross_model:
+        issues.append(
+            {
+                "issue": "cross_model_snapshot",
+                "l3_node_id": int(node_id),
+                "l3_code": str(code),
+            }
+        )
+    # Per-row hash recomputation over every frozen field.
+    snapshots = connection.execute(
+        """
+        SELECT id, l3_node_id, l3_code, l3_name, materials_text, resource_snapshot,
+               expected_output, estimated_hours, output_type, notes,
+               source_workbook, source_sheet, source_row, source_type, source_hash
+        FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id = %s
+        ORDER BY l3_node_id
+        """,
+        (version_id,),
+    ).fetchall()
+    for row in snapshots:
+        resources = row[5]
+        if isinstance(resources, str):
+            resources = json.loads(resources)
+        recomputed = planning_snapshot_hash(
+            l3_node_id=int(row[1]),
+            l3_code=str(row[2]),
+            l3_name=str(row[3]),
+            materials_text=row[4],
+            resources=resources,
+            expected_output=row[6],
+            estimated_hours=row[7],
+            output_type=row[8],
+            notes=row[9],
+            source_workbook=row[10],
+            source_sheet=row[11],
+            source_row=row[12],
+            source_type=str(row[13]),
+        )
+        if recomputed != str(row[14]):
+            issues.append(
+                {
+                    "issue": "stale_source_hash",
+                    "l3_node_id": int(row[1]),
+                    "l3_code": str(row[2]),
+                }
+            )
+    if issues:
+        raise StandardVersionError(
+            "planning_snapshot_incomplete",
+            "planning snapshots do not exactly match the version matrix",
+            issues,
+        )
+
+
 def reconcile_catalog(
     connection: psycopg.Connection,
     version_id: int,
@@ -694,6 +1050,7 @@ def reconcile_catalog(
 ) -> dict[str, object]:
     with connection.transaction():
         version = _require_draft(connection, version_id, expected_revision)
+        _ensure_planning_snapshots(connection, version_id)
         drift = catalog_drift(connection, version_id)
         if not drift["has_drift"]:
             return {
@@ -715,6 +1072,13 @@ def reconcile_catalog(
         if removed:
             connection.execute(
                 "DELETE FROM capability_standard_item WHERE version_id=%s AND l3_node_id=ANY(%s)",
+                (version_id, removed),
+            )
+            # Draft snapshots follow their L3 items (published versions are
+            # frozen by the v0009 immutability trigger and never touched here).
+            connection.execute(
+                "DELETE FROM capability_standard_planning_snapshot "
+                "WHERE capability_standard_version_id=%s AND l3_node_id=ANY(%s)",
                 (version_id, removed),
             )
         for change in changed:
@@ -779,6 +1143,10 @@ def publish_version(
                 "standard version is invalid",
                 validation["issues"],
             )
+        # Fill any remaining snapshot gaps, then require exactly one snapshot
+        # per L3 before freezing the version.
+        _ensure_planning_snapshots(connection, version_id)
+        _assert_planning_snapshots_complete(connection, version_id)
         previous = connection.execute(
             "SELECT id,revision FROM capability_standard_version WHERE model_id=%s AND status='已发布' FOR UPDATE",
             (version[1],),
@@ -829,12 +1197,23 @@ def publish_preview(
         )
     drift = catalog_drift(connection, version_id)
     validation = validate_version(connection, version_id)
+    # Preview is strictly read-only (P1-1): it validates the existing snapshot
+    # set — including the exact-set and hash checks — but never writes missing
+    # snapshots.  A preview with gaps reports can_publish=False.
+    try:
+        _assert_planning_snapshots_complete(connection, version_id)
+        snapshots_ok = True
+    except StandardVersionError:
+        snapshots_ok = False
     return {
         "version_id": version_id,
         "revision": int(version[5]),
-        "can_publish": not drift["has_drift"] and bool(validation["valid"]),
+        "can_publish": (
+            not drift["has_drift"] and bool(validation["valid"]) and snapshots_ok
+        ),
         "catalog_drift": drift,
         "validation": validation,
+        "planning_snapshots_ok": snapshots_ok,
     }
 
 

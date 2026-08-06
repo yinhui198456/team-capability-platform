@@ -1,6 +1,54 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { formatCapabilityPath, formatL3Name } from './planning'
+import {
+  formatCapabilityPath,
+  formatL3Name,
+  updateLearningTask,
+  updatePlanItem,
+} from './planning'
+
+const ok = (body: unknown) =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+
+describe('CAS update helpers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('updatePlanItem sends only the editable fields plus the required expected_revision', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(ok({ id: 7, revision: 4 }))
+    await updatePlanItem(
+      7,
+      { plan_start_date: '2026-04-01', plan_end_date: '2026-06-30' },
+      3,
+    )
+    const [, init] = fetchSpy.mock.calls[0]
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      plan_start_date: '2026-04-01',
+      plan_end_date: '2026-06-30',
+      expected_revision: 3,
+    })
+  })
+
+  it('updateLearningTask always sends the expected revision', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(ok({ id: 7, revision: 4 }))
+    await updateLearningTask(7, { next_action: '继续' }, 2)
+    const [, init] = fetchSpy.mock.calls[0]
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      next_action: '继续',
+      expected_revision: 2,
+    })
+  })
+})
 
 describe('formatL3Name', () => {
   it('returns "名称（代码）" when l3_name is present', () => {

@@ -15,6 +15,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.main import app
 from app.migrations import run_migrations
+from app.planning.schema import create_planning_schema
 from tests.standard_target_support import create_scoped_draft
 
 SESSION_COOKIE = "tcp_session"
@@ -33,6 +34,11 @@ def _detail_l3_node_id(
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS gap")
         connection.execute("DROP TABLE IF EXISTS assessment_detail")
@@ -76,8 +82,12 @@ def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_assessment_schema(connection)
     connection.execute("DROP TABLE IF EXISTS schema_migration CASCADE")
     connection.execute("DROP TABLE IF EXISTS capability_standard_item CASCADE")
+    connection.execute(
+        "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+    )
     connection.execute("DROP TABLE IF EXISTS capability_standard_version CASCADE")
     import_catalog(resolve_workbook_dir(), connection)
+    create_planning_schema(connection)
     run_migrations(connection)
     connection.commit()
     return connection

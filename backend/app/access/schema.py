@@ -60,6 +60,8 @@ def create_access_schema(connection: psycopg.Connection) -> None:
             effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
             effective_to DATE,
             is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+            effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+            expiry_date DATE,
             CHECK (member_id <> buddy_id)
         )
         """
@@ -127,6 +129,11 @@ def create_access_schema(connection: psycopg.Connection) -> None:
         WHERE is_primary = TRUE AND effective_to IS NULL
         """
     )
+    # uniq_active_primary_buddy_v2 (on the canonical expiry_date column) is
+    # owned by migration v0009: the bootstrap runs BEFORE migrations on old
+    # ledgers, and expiry_date only exists on tables v0009 has extended.  The
+    # v0009 upgrade creates it with IF NOT EXISTS, so fresh installs get it
+    # from the migration too — never from here.
     connection.execute(
         """
         INSERT INTO tcp_role (code, name)

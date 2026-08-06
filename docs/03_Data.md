@@ -247,6 +247,8 @@ Assessment Detail 可记录：
 | 业务定义 | Annual Growth Plan 内对应一个 L3 的计划单元，是计划与跟踪的最小单元 |
 | 业务字段 | 计划项编码、年度成长计划编码、Growth Goal 编码、L3 编码、当前掌握度、目标掌握度、优先级、学习材料、学习任务 / 实操内容、预期输出 / 验收方式、预计耗时、计划开始日期、计划截止日期、目标月份、状态 |
 | 状态 | 未开始 / 进行中 / 已完成 / 延期 / 暂停 / 取消 |
+| 并发控制 | 单调递增 `revision`；写请求携带 `expected_revision`，过期返回 409 `plan_revision_conflict` |
+| 日期边界 | 计划开始日期须落在来源季度内，计划截止日期须落在来源计划月内（无来源月时同样限来源季度），且开始不晚于截止 |
 | 版本 / 年度 | 按 Annual Growth Plan 年度管理 |
 | 关联关系 | N:1 Annual Growth Plan；1:1 Growth Goal；N:1 Capability Item L3；1:1 Learning Task |
 | 唯一性约束 | 同一 Annual Growth Plan 内同一 L3 编码唯一 |
@@ -258,7 +260,9 @@ Assessment Detail 可记录：
 |---|---|
 | 业务定义 | Plan Item 的执行单元，一个 Plan Item 对应一个 Learning Task，MVP 不拆分子任务 |
 | 业务字段 | 任务编码、计划项编码、L3 编码、执行状态、实际开始日期、实际完成日期、实际耗时、完成质量、复盘结论、下步动作 |
-| 状态 | 未开始 / 进行中 / 待 Evidence Review / 已完成 / 延期 / 暂停 / 取消 |
+| 状态 | 未开始 / 进行中 / 暂停 / 延期 / 已完成 / 取消（已完成、取消为终态） |
+| 并发控制 | 单调递增 `revision`；写请求携带 `expected_revision`，过期返回 409 `task_revision_conflict` |
+| 字段可写性 | 完成质量（`completion_quality`）、复盘结论（`review_conclusion`）、下步动作（`next_action`）由 Member 编辑；实际耗时（`actual_hours`）由有效日志机器聚合，不可直接编辑 |
 | 版本 / 年度 | 按 Plan Item 年度管理 |
 | 关联关系 | 1:1 Plan Item；N:1 Capability Item L3；1:N Evidence |
 | 唯一性约束 | 同一 Plan Item 唯一 |
@@ -270,8 +274,9 @@ Assessment Detail 可记录：
 |---|---|
 | 业务定义 | Learning Task 的可验证输出版本 |
 | 业务字段 | Evidence 编码、任务编码、L3 编码、版本号、提交内容说明、证据链接 / 文件、提交时间、状态 |
-| 状态 | 草稿 / 待 Review / 通过 / 需补充 / 驳回 / 已归档 |
-| 版本 / 年度 | 同一 Learning Task 下多个版本顺序递增；补充或驳回后提交新版本 |
+| 状态 | 草稿 / 待 Review / 通过 / 需补充（枚举保留「驳回」「已归档」，当前无代码路径产生） |
+| 版本 / 年度 | 同一 Learning Task 下多个版本顺序递增；仅「需补充」版本可被新版本取代（`supersedes_evidence_id`），「通过」为终态 |
+| 并发控制 | 单调递增 `revision`；写请求携带 `expected_revision`，过期返回 409 `evidence_revision_conflict` |
 | 关联关系 | N:1 Learning Task；N:1 Capability Item L3；1:1 Evidence Review（已提交版本） |
 | 唯一性约束 | 同一 Learning Task 内版本号唯一 |
 | 维护角色 | Member |
@@ -282,12 +287,12 @@ Assessment Detail 可记录：
 |---|---|
 | 业务定义 | Buddy 对一个已提交 Evidence 版本的复核记录，MVP 中 Buddy 是唯一 Review 执行者 |
 | 业务字段 | Review 编码、Evidence 编码、Buddy 用户编码、Review 结论、Review 反馈、Review 时间 |
-| 状态 | 待 Review / 通过 / 需补充 / 驳回 / 已闭环 |
-| 版本 / 年度 | 每个已提交 Evidence 版本对应一条 Evidence Review；新版本 Evidence 触发新的 Review |
+| 状态 | 创建即「已闭环」；Review 不存在可观察的待 Review 状态 |
+| 版本 / 年度 | 每个已提交 Evidence 版本对应且仅对应一条 Evidence Review；新版本 Evidence 触发新的 Review |
 | 关联关系 | 1:1 Evidence；N:1 User（Buddy） |
-| 唯一性约束 | 同一 Evidence 版本唯一 |
+| 唯一性约束 | 同一 Evidence 版本唯一（重复提交返回 409 `review_already_submitted`） |
 | 维护角色 | Buddy |
-| Review 结论 | 通过 / 需补充 / 驳回 |
+| Review 结论 | 通过 / 需补充（需补充必须填写反馈） |
 
 ### 3.19 Team Annual Capability Plan
 
@@ -330,11 +335,12 @@ Assessment Detail 可记录：
 | 项目 | 说明 |
 |---|---|
 | 业务定义 | Learning Task 下的一条学习执行记录，仅用于按日期聚合实际学习时长 |
-| 业务字段 | `task_id`、`record_date`、`actual_hours`、`note`、`recorder` |
-| 状态 | 无独立状态；不参与任务状态流转 |
+| 业务字段 | `task_id`、`record_date`、`actual_hours`、`note`、`recorder`、`invalidated_at`、`correction_of_log_id` |
+| 状态 | 无独立状态；不参与任务状态流转；作废通过 `invalidated_at` 标记，仅未作废日志参与 `actual_hours` 聚合 |
 | 版本 / 年度 | 随 Learning Task 记录；按 `record_date` 参与月度与年度时长聚合 |
 | 关联关系 | N:1 Learning Task；不拆分 Plan Item 或 Learning Task |
-| 权限 | Member 可新增、编辑本人日志；Buddy、Leader 按负责成员 / 团队范围查看；Admin 全量查看 |
+| 权限 | 追加写：Member 可新增本人日志；不提供编辑，更正 = 作废原日志（`POST /progress-logs/{log_id}/invalidate`）+ 新增带 `correction_of_log_id` 的更正日志；Buddy、Leader 按负责成员 / 团队范围查看；Admin 全量查看 |
+| 幂等 | 接受 `idempotency_key`；同 key 同 payload 重放返回首次响应，不同 payload 返回 409 `log_idempotency_conflict` |
 | 唯一性约束 | 不设任务拆分约束；每条日志必须关联一个 Learning Task |
 | 维护角色 | Member |
 
@@ -414,8 +420,8 @@ flowchart TD
 - 同一 Learning Task 下，Evidence 按提交顺序递增版本号。
 - Member 可保存 Evidence 草稿，草稿不创建 Review 记录。
 - Evidence 提交后进入待 Review 状态，并创建一条 Evidence Review 记录。
-- Review 结论为「需补充」或「驳回」时，Member 创建新版本 Evidence；旧版本与旧 Review 保持闭环，不回流。
-- Review 结论为「通过」时，Evidence 归档，可计入计划项完成判定。
+- Review 结论为「需补充」时，Member 创建新版本 Evidence 取代旧版本；旧版本与旧 Review 保持闭环，不回流。
+- Review 结论为「通过」时，Evidence 进入终态，可计入计划项完成判定。
 
 ### 5.3 年度数据规则
 
@@ -457,11 +463,11 @@ flowchart TD
 | 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。 | Annual Growth Plan / Assessment / Assessment Review | 年度成长计划 |
 | 一个计划项对应一个学习任务，不拆分子任务 | Plan Item / Learning Task | 年度成长计划、学习任务 |
 | 学习任务执行跟踪与完成判定 | Learning Task | 学习任务 |
-| 学习执行日志仅用于学习时长聚合，字段为 task_id、record_date、actual_hours、note、recorder | Learning Progress Log / Learning Task | 我的成长看板、学习任务、月度复盘、团队能力分析 |
+| 学习执行日志仅用于学习时长聚合，追加写（新增 / 作废 / 更正），字段含 task_id、record_date、actual_hours、note、recorder、invalidated_at、correction_of_log_id | Learning Progress Log / Learning Task | 我的成长看板、学习任务、月度复盘、团队能力分析 |
 | Evidence 是可验证输出，支持链接 / 文件 | Evidence | 学习任务、Evidence Review |
 | Buddy 是唯一 Evidence Review 执行者 | Evidence / Evidence Review | Evidence Review |
-| Evidence Review 结论：通过 / 需补充 / 驳回 | Evidence Review | Evidence Review |
-| 补充或驳回后提交新版本 Evidence | Evidence / Evidence Review | 学习任务、Evidence Review |
+| Evidence Review 结论：通过 / 需补充 | Evidence Review | Evidence Review |
+| 「需补充」后提交新版本 Evidence | Evidence / Evidence Review | 学习任务、Evidence Review |
 | 按年度归档保留历史记录 | Assessment / Evidence / Capability Profile | 评估历史、成长档案 |
 | Buddy 负责成员的指导、复核、Review、反馈 | Buddy Relationship / Assessment Review / Evidence Review | 辅导成员看板、自评复核、Evidence Review、反馈记录 |
 | MVP 中每个 Member 仅有 1 名主 Buddy | Buddy Relationship | 用户管理、角色权限 |

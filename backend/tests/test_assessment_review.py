@@ -24,6 +24,11 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS gap")
         connection.execute("DROP TABLE IF EXISTS assessment_detail")
@@ -241,10 +246,15 @@ def test_buddy_approve_archives_assessment(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
+    assert body is not None
+    assert body["assessment_status"] == "已归档"
+    assert body["plan"]["created"] is True
+    assert body["plan"]["items_created"] == 1
+    assert body["plan"]["tasks_created"] == 1
 
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -282,6 +292,7 @@ def test_buddy_request_adjustment_and_resubmit(
         {
             "conclusion": "建议调整",
             "feedback": "请补充 P01-L2A-L3A 的项目实践依据",
+            "expected_revision": 3,
         },
         cookies=buddy_cookies,
     )
@@ -312,7 +323,7 @@ def test_buddy_request_adjustment_and_resubmit(
                     }
                 ],
             ),
-            "expected_revision": 3,
+            "expected_revision": 4,
         },
         cookies=member_cookies,
     )
@@ -321,7 +332,7 @@ def test_buddy_request_adjustment_and_resubmit(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 4},
+        {"expected_revision": 5},
         cookies=member_cookies,
     )
     assert status == 200
@@ -337,7 +348,7 @@ def test_buddy_request_adjustment_and_resubmit(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id2}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 6},
         cookies=buddy_cookies,
     )
     assert status == 200
@@ -371,7 +382,7 @@ def test_non_assigned_buddy_cannot_review(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可"},
+        {"conclusion": "认可", "expected_revision": 3},
         cookies=other_cookies,
     )
     assert status == 403
@@ -397,7 +408,7 @@ def test_member_cannot_submit_review(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可"},
+        {"conclusion": "认可", "expected_revision": 3},
         cookies=member_cookies,
     )
     assert status == 403
@@ -453,7 +464,7 @@ def test_invalid_conclusion_rejected(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "拒绝"},
+        {"conclusion": "拒绝", "expected_revision": 2},
         cookies=buddy_cookies,
     )
     assert status == 422
@@ -491,7 +502,7 @@ def test_assessment_review_summary_counts_pending_and_completed(
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200

@@ -17,6 +17,18 @@ import { MemoryRouter } from 'react-router-dom'
 
 const analytics: planningApi.TeamAnalytics = {
   year: 2026,
+  meta: {
+    year: 2026,
+    as_of: '2026-01-01T00:00:00Z',
+    scope: 'leader_team',
+    source: 'team_analytics.v2',
+    denominator_source: 'assessment_details',
+  },
+  gap_summary: {
+    current_required: 2,
+    target_progressive: 1,
+    derivation: 'scope_v1',
+  },
   filters: { member_id: null, domain_code: null },
   kpis: {
     assessment_completion_rate: 0.5,
@@ -81,6 +93,21 @@ const analytics: planningApi.TeamAnalytics = {
       status: '延期',
     },
   ],
+  distributions: {
+    priority: { 高: 1, 中: 1, 低: 0, total: 2 },
+    formal_inclusion_ratio: { included_count: 2, total_count: 2, ratio: 1 },
+    quarterly: { Q1: 2, Q2: 0, Q3: 0, Q4: 0, total: 2 },
+    plan_status: {
+      未开始: 0,
+      进行中: 1,
+      已完成: 1,
+      延期: 0,
+      暂停: 0,
+      取消: 0,
+      total: 2,
+    },
+    pending_acceptance: { count: 0 },
+  },
 }
 
 describe('TeamAnalyticsPage', () => {
@@ -163,12 +190,12 @@ describe('TeamAnalyticsPage', () => {
     )
   })
 
-  it('does not request team data for a non-Leader', async () => {
+  it('does not request team data for a user without any role', async () => {
     vi.spyOn(accessApi, 'me').mockResolvedValue({
       id: 2,
-      username: 'member',
-      full_name: 'Member',
-      roles: ['Member'],
+      username: 'guest',
+      full_name: 'Guest',
+      roles: [],
     })
     const getTeamAnalytics = vi.spyOn(planningApi, 'getTeamAnalytics')
     render(

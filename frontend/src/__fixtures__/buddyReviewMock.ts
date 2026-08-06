@@ -1,7 +1,6 @@
 // Mock fixture for Buddy Review Center — enabled via VITE_ENABLE_MOCK=true
 
 import type { PendingReview } from '../assessmentReview'
-import type { EvidenceReview } from '../planning'
 import { isMockEnabled as baseIsMockEnabled } from './memberDashboard'
 
 export function isMockEnabled(): boolean {
@@ -46,26 +45,6 @@ export const mockAssessmentReviews: PendingReview[] = [
   },
 ]
 
-export const mockEvidenceReviews: EvidenceReview[] = [
-  {
-    id: 301,
-    evidence_id: 401,
-    version_number: 1,
-    status: '待 Review',
-    conclusion: null,
-    feedback: null,
-    reviewed_at: null,
-    created_at: '2026-07-19T10:00:00+08:00',
-    submitted_at: '2026-07-19T10:00:00+08:00',
-    member_id: 3,
-    username: 'member',
-    learning_task_id: 501,
-    l3_code: 'P01.01.01',
-    content: '本地演示 Evidence：完成数据管道基础文档。',
-    evidence_link: 'https://example.invalid/tcp-demo-evidence',
-  },
-]
-
 export type ReviewSummary = {
   pending_count: number
   completed_count: number
@@ -74,11 +53,6 @@ export type ReviewSummary = {
 export const mockAssessmentReviewSummary: ReviewSummary = {
   pending_count: 2,
   completed_count: 1,
-}
-
-export const mockEvidenceReviewSummary: ReviewSummary = {
-  pending_count: 1,
-  completed_count: 2,
 }
 
 export type AssessmentDetailHistory = {
@@ -138,32 +112,6 @@ export const mockAssessmentHistories: Record<number, HistoryItem[]> = {
       conclusion: '认可',
       feedback: '上次自评认可，继续按计划提升。',
       reviewed_at: '2026-01-15T10:00:00+08:00',
-    },
-  ],
-}
-
-export const mockEvidenceHistories: Record<number, HistoryItem[]> = {
-  501: [
-    {
-      id: 2001,
-      status: '通过',
-      conclusion: '通过',
-      feedback: 'Evidence 充分，通过。',
-      reviewed_at: '2026-02-10T11:00:00+08:00',
-    },
-    {
-      id: 2002,
-      status: '需补充',
-      conclusion: '需补充',
-      feedback: '请补充数据质量监控截图。',
-      reviewed_at: '2026-03-05T14:00:00+08:00',
-    },
-    {
-      id: 2003,
-      status: '驳回',
-      conclusion: '驳回',
-      feedback: '链接无法访问，请重新提交。',
-      reviewed_at: '2026-04-12T09:30:00+08:00',
     },
   ],
 }

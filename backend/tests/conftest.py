@@ -32,6 +32,7 @@ def _ensure_test_database() -> None:
 def _clear_catalog(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS schema_migration")
+        connection.execute("DROP TABLE IF EXISTS capability_standard_planning_snapshot")
         connection.execute("DROP TABLE IF EXISTS capability_standard_version_audit")
         connection.execute("DROP TABLE IF EXISTS capability_standard_item")
         connection.execute("DROP TABLE IF EXISTS capability_standard_version")
@@ -44,15 +45,21 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
 
 def _clear_assessment(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal_detail")
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key")
         connection.execute("DROP TABLE IF EXISTS assessment_draft_target_repair_audit")
         connection.execute("DROP TABLE IF EXISTS assessment_idempotency_key")
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
         connection.execute("DROP TABLE IF EXISTS annual_growth_plan")
+        connection.execute("DROP TABLE IF EXISTS monthly_review_history")
+        connection.execute("DROP TABLE IF EXISTS monthly_review")
         connection.execute("DROP TABLE IF EXISTS capability_profile")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS gap")
@@ -95,3 +102,12 @@ def connection() -> Iterator[psycopg.Connection]:
         create_catalog_schema(test_connection)
         test_connection.commit()
         yield test_connection
+
+
+@pytest.fixture
+def review_schema(connection: psycopg.Connection) -> psycopg.Connection:
+    """Full v0009 schema (incl. migrations) for Issue #62 review tests."""
+    from tests.review_support import reset_full_schema
+
+    reset_full_schema(connection)
+    return connection

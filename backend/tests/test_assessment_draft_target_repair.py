@@ -14,6 +14,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.migrations import run_migrations
 from app.migrations.versions.v0004_legacy_draft_target_repair import upgrade
+from app.planning.schema import create_planning_schema
 
 
 def _schema(
@@ -30,6 +31,7 @@ def _schema(
             "assessment",
             "capability_standard_item",
             "capability_standard_version",
+            "capability_standard_planning_snapshot",
             "capability_standard_target_override",
             "capability_node",
             "capability_model",
@@ -95,6 +97,7 @@ def _schema(
         (member_id,),
     )
     connection.commit()
+    create_planning_schema(connection)
     run_migrations(connection)
     connection.commit()
     return int(member_id), int(model_id)
@@ -228,6 +231,7 @@ def test_migration_publishes_a_complete_legacy_baseline_once(
         ]
         == 10
     )
+    create_planning_schema(connection)
     run_migrations(connection)
     assert (
         connection.execute(
@@ -436,6 +440,17 @@ def test_missing_model_baseline_blocks_all_writes(
         """,
         (model_id,),
     )
+    connection.execute("SET session_replication_role = replica")
+    connection.execute(
+        """
+        DELETE FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id IN (
+            SELECT id FROM capability_standard_version WHERE model_id = %s
+        )
+        """,
+        (model_id,),
+    )
+    connection.execute("SET session_replication_role = origin")
     connection.execute(
         "DELETE FROM capability_standard_version WHERE model_id = %s", (model_id,)
     )
@@ -578,6 +593,7 @@ def test_upgrade_rolls_back_when_existing_snapshot_is_not_a_job_level(
     connection.commit()
 
     with pytest.raises(psycopg.errors.CheckViolation):
+        create_planning_schema(connection)
         run_migrations(connection)
 
     assert (
@@ -967,6 +983,7 @@ def test_invalid_legacy_baseline_rolls_back_the_entire_migration(
             "assessment",
             "capability_standard_item",
             "capability_standard_version",
+            "capability_standard_planning_snapshot",
             "capability_standard_target_override",
             "capability_node",
             "capability_model",
@@ -1028,6 +1045,7 @@ def test_invalid_legacy_baseline_rolls_back_the_entire_migration(
     connection.commit()
 
     with pytest.raises(ValueError, match="decreasing Legacy Baseline target"):
+        create_planning_schema(connection)
         run_migrations(connection)
     assert (
         connection.execute(

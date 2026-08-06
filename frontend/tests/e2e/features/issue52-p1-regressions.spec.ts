@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import { mockBuddyReviewData } from '../fixtures/buddy-review-mock'
+import {
+  mockBuddyReviewData,
+  mockBuddyReviewWorkspaceRoutes,
+} from '../fixtures/buddy-review-mock'
 import { mockTeamAnalyticsData } from '../fixtures/team-analytics-mock'
 
 const rangeHours = {
@@ -19,14 +22,17 @@ test.describe('Issue #52 P1 regressions', () => {
     page,
   }) => {
     await mockBuddyReviewData(page)
+    await mockBuddyReviewWorkspaceRoutes(page)
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
 
-    await expect(page.getByText('二级能力标准：P01.01')).toBeVisible()
+    // Issue #62 workspace: frozen facts in the summary grid and grouped table
+    await expect(page.getByText('适用 3')).toBeVisible()
     await expect(page.getByText('未映射历史项')).toBeVisible()
-    await expect(page.getByText(/unknown-legacy-l3/)).toBeVisible()
-    await expect(page.getByText(/当前掌握度 1 → 标准 3/)).toBeVisible()
-    await expect(page.getByText(/历史依据仍可复核/)).toBeVisible()
+    await expect(page.getByText(/unknown-legacy-l3/).first()).toBeVisible()
+    await expect(page.getByText('数据管道基础', { exact: true })).toBeVisible()
+    // personal adjustment shown only when it happened
+    await expect(page.getByText(/3 → 4（岗位项目要求/)).toBeVisible()
   })
 
   test('labels team aggregates as L3 mastery rather than job-level attainment', async ({
@@ -58,6 +64,31 @@ test.describe('Issue #52 P1 regressions', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             year: 2026,
+            meta: {
+              year: 2026,
+              scope: '本人',
+              as_of: '2026-07-01T00:00:00Z',
+              source: 'member_dashboard.v1',
+              denominator_source: 'assessment_details',
+            },
+            gap_summary: {
+              current_required: 0,
+              target_progressive: 0,
+              derivation: 'scope_v1',
+            },
+            current_month: {
+              planned_count: 1,
+              planned_ids: [1],
+              in_progress_count: 1,
+              delayed_count: 0,
+              pending_evidence_count: 0,
+              actual_hours: 0,
+            },
+            next_action: {
+              action_key: 'none',
+              message: '当前没有需要处理的事项',
+              count: 0,
+            },
             assessment: {
               id: 1,
               status: '已归档',
@@ -81,7 +112,8 @@ test.describe('Issue #52 P1 regressions', () => {
               current_month_planned_hours_has_values: true,
               current_month_planned_hours_has_unparsed: false,
               completed_task_count: 0,
-              pending_evidence_count: 0,
+              pending_evidence_to_submit: 0,
+              pending_evidence_to_review: 0,
             },
             plan_progress: {
               total: 1,

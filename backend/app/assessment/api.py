@@ -8,11 +8,13 @@ from .repository import (
     AssessmentValidationError,
     DetailValidationError,
     DraftTargetRepairError,
+    ReviewError,
     batch_fill_l2,
     create_assessment_draft,
     get_assessment,
     get_assessment_review_summary_for_buddy,
     get_assessment_reviews,
+    get_buddy_review_workspace,
     get_draft_target_repair_preview,
     get_gap,
     get_pending_reviews_for_buddy,
@@ -122,6 +124,7 @@ class DraftTargetRepairRequest(BaseModel):
 class SubmitReviewRequest(BaseModel):
     conclusion: str = Field(pattern=r"^(认可|建议调整)$")
     feedback: str | None = None
+    expected_revision: int = Field(ge=1)
 
 
 assessment_router = APIRouter(prefix="/api/assessments")
@@ -704,6 +707,41 @@ def get_history(
     return get_assessment_reviews(connection, assessment_id)
 
 
+@assessment_router.get("/{assessment_id}/buddy-review")
+def get_review_workspace(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+) -> dict[str, object]:
+    """Buddy Review workspace DTO (frozen facts only).
+
+    P1-3: Buddy-exclusive.  Only the current responsible Buddy (Buddy role +
+    canonical is_current_responsible_buddy relationship) may read this
+    endpoint; Member/Leader/Admin, old buddies, future or expired
+    relationships and deactivated users all get 403.  Admin/Leader reads use
+    the generic assessment endpoints (``/assessments/{id}``,
+    ``/assessments/{id}/history``) which keep the broader policy.
+    """
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if not policies.can_buddy_review(connection, user, assessment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    workspace = get_buddy_review_workspace(connection, assessment_id)
+    if workspace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    return workspace
+
+
 @assessment_router.post("/{assessment_id}/reviews/{review_id}")
 def submit_review(
     assessment_id: int,
@@ -711,6 +749,7 @@ def submit_review(
     request: SubmitReviewRequest,
     user: CurrentUser,
     connection: Connection,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
@@ -724,19 +763,59 @@ def submit_review(
             detail="insufficient permissions",
         )
     try:
-        submit_assessment_review(
+        return submit_assessment_review(
             connection,
             review_id,
             int(user["id"]),
             request.conclusion,
             request.feedback,
+            expected_revision=request.expected_revision,
+            assessment_id_from_url=assessment_id,
+            idempotency_key=idempotency_key,
         )
-    except ValueError as exc:
+    except ReviewError as exc:
+        detail: dict[str, object] = {
+            "code": exc.code,
+            "message": str(exc),
+        }
+        if exc.l3_node_id is not None:
+            detail["l3_node_id"] = exc.l3_node_id
+        if exc.l3_code is not None:
+            detail["l3_code"] = exc.l3_code
+        if exc.field is not None:
+            detail["field"] = exc.field
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            status_code=exc.status_code,
+            detail=detail,
         ) from exc
-    return {"ok": True}
+    except AssessmentValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": exc.code,
+                "l3_code": exc.l3_code,
+                "l3_node_id": exc.l3_node_id,
+                "field": exc.field,
+                "reason": exc.reason,
+                "message": str(exc),
+            },
+        ) from exc
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "business_key_conflict",
+                "message": "concurrent business key conflict",
+            },
+        ) from exc
+    except psycopg.errors.RaiseException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "database_guard_rejected",
+                "message": "database integrity guard rejected the write",
+            },
+        ) from exc
 
 
 # ponytail: archive remains a repository function only; not exposed via API.

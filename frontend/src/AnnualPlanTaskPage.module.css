@@ -218,3 +218,80 @@
   background: var(--color-warning-bg);
   color: var(--color-warning);
 }
+
+/* Execution controls (v0010) */
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+}
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+.actions button {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  background: var(--color-white);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.actions button:hover {
+  border-color: var(--color-brand-500);
+  color: var(--color-brand-700);
+}
+.actionForm {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--color-gray-300);
+  border-radius: var(--radius-md);
+  background: var(--color-white);
+}
+.actionForm label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-gray-600);
+}
+.actionForm textarea {
+  min-height: 64px;
+}
+.logVoided {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.logActions {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+.logActions button {
+  border: none;
+  background: none;
+  color: var(--color-brand-700);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+}
+.reviewFeedback {
+  font-size: var(--text-xs);
+  color: var(--color-gray-600);
+  background: var(--color-gray-100);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.evidenceDraft {
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+.evidenceClosed {
+  background: var(--color-gray-100);
+  color: var(--color-gray-500);
+}

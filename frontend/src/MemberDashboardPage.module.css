@@ -348,6 +348,12 @@
   padding: var(--space-3);
 }
 
+.gapSummary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
 .reviewStatusList dt {
   font-size: var(--text-xs);
   color: var(--color-gray-500);
