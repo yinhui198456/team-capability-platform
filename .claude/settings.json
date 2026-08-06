@@ -1,0 +1,18 @@
+{
+  "enabledPlugins": {
+    "playwright-skill@playwright-skill": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pretool-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
