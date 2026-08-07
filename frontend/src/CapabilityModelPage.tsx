@@ -317,6 +317,7 @@ export function ResourceForm({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [confirmArchive, setConfirmArchive] = useState(false)
+  const drawerRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     setMaterialCode(resource?.material_code ?? '')
@@ -379,60 +380,136 @@ export function ResourceForm({
     setL3Codes(next)
   }
 
+  // Put focus on the first field as soon as the drawer is on screen.
+  useLayoutEffect(() => {
+    drawerRef.current?.querySelector<HTMLElement>('input')?.focus()
+  }, [])
+
+  // Esc closes the drawer (never while a save is in flight).
+  useEffect(() => {
+    if (saving) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [saving, onClose])
+
+  // Keep Tab focus inside the drawer.
+  function handleDrawerKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Tab') return
+    const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    )
+    if (!focusable || focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
-    <form className="edit-form" onSubmit={handleSubmit}>
-      <h3>{isCreate ? '新建资源' : `编辑资源 ${resource.material_code}`}</h3>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {textField(
-        '资源编码',
-        materialCode,
-        setMaterialCode,
-        isCreate ? { required: true } : { readOnly: true },
-      )}
-      {textField('名称', name, setName, { required: true })}
-      {textField('类型', materialType, setMaterialType, { required: true })}
-      {textField('来源', sourceText, setSourceText)}
-      {textField('用途', purpose, setPurpose)}
-      {textField('状态', status, setStatus, { required: true })}
-      <fieldset className="link-set">
-        <legend>关联三级达成路径</legend>
-        {l3Nodes.map((node) => (
-          <label className="checkbox" key={node.code}>
-            <input
-              type="checkbox"
-              checked={new Set(l3Codes).has(node.code)}
-              onChange={() => toggleL3(node.code)}
-            />
-            {node.l2_code && node.l2_name
-              ? `${node.l2_code} · ${node.l2_name} → `
-              : ''}
-            {node.code} · {node.name}
-          </label>
-        ))}
-      </fieldset>
-      <div className="form-actions">
-        <button type="submit" disabled={saving}>
-          保存
-        </button>
-        {!isCreate && (
+    <>
+      <div
+        className={styles.editDrawerMask}
+        data-testid="resource-drawer-mask"
+        onClick={onClose}
+      />
+      <aside
+        ref={drawerRef}
+        className={`${styles.drawer} ${styles.editDrawer}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="resource-drawer-kicker resource-drawer-title resource-drawer-subtitle"
+        data-testid="resource-drawer"
+        tabIndex={-1}
+        onKeyDown={handleDrawerKeyDown}
+      >
+        <div className={`${styles.drawerHeader} ${styles.editDrawerHeader}`}>
+          <div>
+            <p className={styles.sectionKicker} id="resource-drawer-kicker">
+              {isCreate ? '新建资源' : '编辑资源'}
+            </p>
+            <h2 id="resource-drawer-title">
+              {isCreate ? '新资源' : resource?.material_code}
+            </h2>
+            <p id="resource-drawer-subtitle">
+              {isCreate ? '填写资源信息' : resource?.name}
+            </p>
+          </div>
           <button
             type="button"
-            className="archive-button"
-            onClick={handleArchive}
+            className={styles.drawerClose}
+            aria-label="关闭资源抽屉"
+            onClick={onClose}
             disabled={saving}
           >
-            {confirmArchive ? '确认归档' : '归档'}
+            ×
           </button>
-        )}
-        <button type="button" onClick={onClose} disabled={saving}>
-          取消
-        </button>
-      </div>
-    </form>
+        </div>
+        <form className={styles.editDrawerForm} onSubmit={handleSubmit}>
+          <div className={styles.editDrawerBody}>
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            {textField(
+              '资源编码',
+              materialCode,
+              setMaterialCode,
+              isCreate ? { required: true } : { readOnly: true },
+            )}
+            {textField('名称', name, setName, { required: true })}
+            {textField('类型', materialType, setMaterialType, {
+              required: true,
+            })}
+            {textField('来源', sourceText, setSourceText)}
+            {textField('用途', purpose, setPurpose)}
+            {textField('状态', status, setStatus, { required: true })}
+            <fieldset className="link-set">
+              <legend>关联三级达成路径</legend>
+              {l3Nodes.map((node) => (
+                <label className={styles.editDrawerCheckbox} key={node.code}>
+                  <input
+                    type="checkbox"
+                    checked={new Set(l3Codes).has(node.code)}
+                    onChange={() => toggleL3(node.code)}
+                  />
+                  {node.l2_code && node.l2_name
+                    ? `${node.l2_code} · ${node.l2_name} → `
+                    : ''}
+                  {node.code} · {node.name}
+                </label>
+              ))}
+            </fieldset>
+          </div>
+          <div className={`form-actions ${styles.editDrawerFooter}`}>
+            <button type="submit" disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </button>
+            {!isCreate && (
+              <button
+                type="button"
+                className="archive-button"
+                onClick={handleArchive}
+                disabled={saving}
+              >
+                {confirmArchive ? '确认归档' : '归档'}
+              </button>
+            )}
+            <button type="button" onClick={onClose} disabled={saving}>
+              取消
+            </button>
+          </div>
+        </form>
+      </aside>
+    </>
   )
 }
 

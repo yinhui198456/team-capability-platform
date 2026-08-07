@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 import { ResourceForm } from './CapabilityModelPage'
 import {
@@ -18,6 +18,8 @@ export function LearningResourcesPage() {
   const [selectedCode, setSelectedCode] = useState('')
   const [creating, setCreating] = useState(false)
   const [editingCode, setEditingCode] = useState('')
+  const editReturnFocusId = useRef<string | null>(null)
+  const editRestoreFocus = useRef(false)
   const { data: model } = useCatalog<CapabilityModel>('/api/capability-model')
   const {
     data: resources,
@@ -34,15 +36,28 @@ export function LearningResourcesPage() {
   const { isLeader } = useMe()
 
   function startCreate() {
+    editReturnFocusId.current = 'create-resource-btn'
+    editRestoreFocus.current = true
     setCreating(true)
     setEditingCode('')
   }
 
   function startEdit(code: string) {
+    editReturnFocusId.current = `resource-edit-${code}`
+    editRestoreFocus.current = true
     setSelectedCode(code)
     setEditingCode(code)
     setCreating(false)
   }
+
+  // Restore focus to the trigger once the drawer has closed.
+  useLayoutEffect(() => {
+    if (creating || editingCode) return
+    if (editRestoreFocus.current && editReturnFocusId.current) {
+      document.getElementById(editReturnFocusId.current)?.focus()
+      editRestoreFocus.current = false
+    }
+  }, [creating, editingCode])
 
   function handleSaved() {
     refreshResources()
@@ -96,7 +111,12 @@ export function LearningResourcesPage() {
       </div>
       {isLeader && (
         <div className="leader-bar">
-          <button type="button" onClick={startCreate}>
+          <button
+            id="create-resource-btn"
+            data-testid="create-resource-btn"
+            type="button"
+            onClick={startCreate}
+          >
             新建资源
           </button>
         </div>
@@ -118,6 +138,8 @@ export function LearningResourcesPage() {
             <p className="muted">已关联三级达成路径：{resource.l3_count}</p>
             {isLeader && (
               <button
+                id={`resource-edit-${resource.material_code}`}
+                data-testid={`resource-edit-${resource.material_code}`}
                 type="button"
                 onClick={() => startEdit(resource.material_code)}
               >

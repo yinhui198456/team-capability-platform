@@ -730,11 +730,6 @@ describe('Member and anonymous catalog access', () => {
 })
 
 describe('Leader catalog controls', () => {
-  function getFormByHeading(heading: string) {
-    const headingElement = screen.getByRole('heading', { name: heading })
-    return within(headingElement.closest('form')!)
-  }
-
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -961,7 +956,7 @@ describe('Leader catalog controls', () => {
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getByText('新建资源'))
 
-    const form = getFormByHeading('新建资源')
+    const form = within(screen.getByRole('dialog', { name: /新建资源/ }))
     fireEvent.change(form.getByLabelText('资源编码'), {
       target: { value: 'P01-M002' },
     })
@@ -1022,7 +1017,7 @@ describe('Leader catalog controls', () => {
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
 
-    const form = getFormByHeading('编辑资源 P01-M001')
+    const form = within(screen.getByRole('dialog', { name: /编辑资源/ }))
     const l3Checkbox = form.getByLabelText(/P01\.01\.01/) as HTMLInputElement
     await waitFor(() => expect(l3Checkbox.checked).toBe(true))
     fireEvent.click(l3Checkbox)
@@ -1069,7 +1064,7 @@ describe('Leader catalog controls', () => {
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
 
-    const form = getFormByHeading('编辑资源 P01-M001')
+    const form = within(screen.getByRole('dialog', { name: /编辑资源/ }))
     const codeInput = form.getByLabelText('资源编码') as HTMLInputElement
     expect(codeInput.readOnly).toBe(true)
   })
@@ -1083,7 +1078,7 @@ describe('Leader catalog controls', () => {
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getAllByText('编辑')[0])
 
-    const form = getFormByHeading('编辑资源 P01-M001')
+    const form = within(screen.getByRole('dialog', { name: /编辑资源/ }))
     fireEvent.click(form.getByText('归档'))
     expect(form.getByText('确认归档')).toBeTruthy()
     fireEvent.click(form.getByText('确认归档'))
@@ -1128,7 +1123,7 @@ describe('Leader catalog controls', () => {
     )
     await screen.findByText('有效未关联资源')
     fireEvent.click(screen.getByText('新建资源'))
-    const form = getFormByHeading('新建资源')
+    const form = within(screen.getByRole('dialog', { name: /新建资源/ }))
     fireEvent.change(form.getByLabelText('资源编码'), {
       target: { value: 'P01-M002' },
     })
@@ -1152,6 +1147,227 @@ describe('Leader catalog controls', () => {
           ).length,
       ).toBeGreaterThanOrEqual(2),
     )
+  })
+})
+
+describe('learning resources edit drawer', () => {
+  async function renderResourcesPage() {
+    render(
+      <MemoryRouter initialEntries={['/operations/resources']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('有效未关联资源')
+  }
+
+  it('opens the create drawer with accessible name, focuses the first field, no inline editor', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getByTestId('create-resource-btn'))
+
+    const dialog = screen.getByRole('dialog', { name: /新建资源/ })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(document.activeElement).toBe(
+      within(dialog).getByLabelText('资源编码'),
+    )
+    // The old bottom-of-page inline editor is gone: no form rendered
+    // directly on the page, the form lives inside the drawer only.
+    expect(document.querySelector('section.page > form')).toBeNull()
+    expect(dialog.querySelector('form')).toBeTruthy()
+  })
+
+  it('opens the edit drawer with code and name identity and read-only code', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+
+    const dialog = screen.getByRole('dialog', { name: /编辑资源/ })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(within(dialog).getByRole('heading', { level: 2 }).textContent).toBe(
+      'P01-M001',
+    )
+    expect(within(dialog).getByText('产品体系材料')).toBeTruthy()
+    const codeInput = within(dialog).getByLabelText(
+      '资源编码',
+    ) as HTMLInputElement
+    expect(codeInput.readOnly).toBe(true)
+    expect(within(dialog).getByText('归档')).toBeTruthy()
+    expect(document.querySelector('section.page > form')).toBeNull()
+  })
+
+  it('closes the create drawer with Escape and restores focus to the trigger', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    const trigger = screen.getByTestId('create-resource-btn')
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('closes the edit drawer with 取消 and via the mask, restoring focus', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    const editButton = screen.getAllByText('编辑')[0]
+    fireEvent.click(editButton)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    fireEvent.click(screen.getByText('取消'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(editButton)
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('resource-drawer-mask'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(editButton)
+  })
+
+  it('traps Tab focus inside the resource drawer', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+    const dialog = screen.getByTestId('resource-drawer')
+    const closeButton = within(dialog).getByRole('button', {
+      name: '关闭资源抽屉',
+    })
+    const cancelButton = within(dialog).getByText('取消')
+
+    // Tab from the last focusable wraps to the first (close button).
+    cancelButton.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    // Shift+Tab from the first focusable wraps to the last.
+    closeButton.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(cancelButton)
+  })
+
+  it('keeps input and shows an actionable error when saving fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input === '/api/auth/me') {
+          return response({
+            id: 1,
+            username: 'leader',
+            full_name: 'Leader User',
+            roles: ['Leader'],
+          })
+        }
+        if (
+          String(input).startsWith('/api/learning-resources/P01-M001') &&
+          init?.method === 'PUT'
+        ) {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: () => Promise.resolve({ detail: '资源名称已存在' }),
+          })
+        }
+        if (input === '/api/learning-resources/P01-M001')
+          return response(detail)
+        if (String(input).startsWith('/api/capability-model')) {
+          return response(model)
+        }
+        return response(resources)
+      }),
+    )
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+    const dialog = screen.getByRole('dialog')
+    const nameInput = within(dialog).getByLabelText('名称')
+    // Wait for the detail fetch to sync L3 links before editing (same as the
+    // PUT test) so the [resource, detail] sync effect cannot clobber input.
+    const l3Checkbox = within(dialog).getByLabelText(
+      /P01\.01\.01/,
+    ) as HTMLInputElement
+    await waitFor(() => expect(l3Checkbox.checked).toBe(true))
+    fireEvent.change(nameInput, { target: { value: '新名称' } })
+    fireEvent.click(within(dialog).getByText('保存'))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('资源名称已存在'),
+    )
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(
+      (within(dialog).getByLabelText('名称') as HTMLInputElement).value,
+    ).toBe('新名称')
+  })
+
+  it('does not leak the previous resource form state when switching resources', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input === '/api/auth/me') {
+          return response({
+            id: 1,
+            username: 'leader',
+            full_name: 'Leader User',
+            roles: ['Leader'],
+          })
+        }
+        if (input === '/api/learning-resources/P01-M001')
+          return response(detail)
+        if (input === '/api/learning-resources/P01-M099') {
+          return response({
+            material_code: 'P01-M099',
+            name: '有效未关联资源',
+            material_type: '文档',
+            source_text: '材料索引',
+            purpose: '待关联',
+            status: '待补充',
+            l3_nodes: [],
+          })
+        }
+        if (String(input).startsWith('/api/capability-model')) {
+          return response(model)
+        }
+        return response(resources)
+      }),
+    )
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+    let dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('名称'), {
+      target: { value: '改过的名称' },
+    })
+    fireEvent.click(within(dialog).getByText('取消'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    fireEvent.click(screen.getAllByText('编辑')[1])
+    dialog = screen.getByRole('dialog')
+    expect(
+      (within(dialog).getByLabelText('名称') as HTMLInputElement).value,
+    ).toBe('有效未关联资源')
+  })
+
+  it('regression: resource drawer form uses module classes only, never global edit-form', async () => {
+    stubLeader()
+    await renderResourcesPage()
+
+    fireEvent.click(screen.getAllByText('编辑')[0])
+    const dialog = screen.getByRole('dialog')
+    const form = dialog.querySelector('form') as HTMLFormElement
+    // The global .edit-form (display: grid) must not sit on the drawer form.
+    expect(form.className).not.toContain('edit-form')
+    expect(form.className).toContain('editDrawerForm')
+    expect(dialog.querySelector('[class*="editDrawerBody"]')).toBeTruthy()
+    expect(dialog.querySelector('[class*="editDrawerFooter"]')).toBeTruthy()
+    const checkboxes = dialog.querySelectorAll('[class*="editDrawerCheckbox"]')
+    expect(checkboxes.length).toBeGreaterThanOrEqual(1)
+    for (const label of checkboxes) {
+      expect(label.classList.contains('checkbox')).toBe(false)
+    }
   })
 })
 
