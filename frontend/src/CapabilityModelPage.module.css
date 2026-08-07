@@ -641,6 +641,23 @@
   padding: 14px 24px;
 }
 
+/* Field styling that the global .edit-form previously provided — scoped to
+   the drawer so no global rule can override this form's layout. */
+.editDrawerForm label {
+  font-size: 14px;
+}
+
+.editDrawerForm .checkbox {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.editDrawerForm .checkbox input[type='checkbox'] {
+  margin: 0;
+  width: auto;
+}
+
 @media (max-width: 900px) {
   .header {
     display: block;

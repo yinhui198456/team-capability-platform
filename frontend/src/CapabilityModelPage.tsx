@@ -215,10 +215,7 @@ function NodeEditForm({
             ×
           </button>
         </div>
-        <form
-          className={`edit-form ${styles.editDrawerForm}`}
-          onSubmit={handleSubmit}
-        >
+        <form className={styles.editDrawerForm} onSubmit={handleSubmit}>
           <div className={styles.editDrawerBody}>
             {error && (
               <p className="error" role="alert">

@@ -1237,6 +1237,23 @@ describe('capability model edit drawer', () => {
     expect(dialog.querySelector('form')).toBeTruthy()
   })
 
+  it('keeps the drawer form layout free of the global edit-form grid class', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    const dialog = screen.getByRole('dialog')
+    const form = dialog.querySelector('form') as HTMLFormElement
+    // The global .edit-form (display: grid) must not sit on the drawer form —
+    // its later bundle position overrode the module flex layout and stretched
+    // the footer/buttons on short forms. The module classes keep the layout.
+    expect(form.className).not.toContain('edit-form')
+    expect(form.className).toContain('editDrawerForm')
+    expect(dialog.querySelector('[class*="editDrawerBody"]')).toBeTruthy()
+    expect(dialog.querySelector('[class*="editDrawerFooter"]')).toBeTruthy()
+  })
+
   it('focuses the first field when the drawer opens', async () => {
     stubLeader()
     await renderModelPage()
