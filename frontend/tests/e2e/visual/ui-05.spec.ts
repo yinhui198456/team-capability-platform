@@ -91,17 +91,24 @@ for (const viewport of VIEWPORTS) {
       )
       await expect(filters.getByLabel('能力域')).toContainText('C03 · 学习创新')
 
+      // The accepted design is one KPI row: self-assessment completion is
+      // included (04_UI §4.5), and both gap KPIs live inside the same grid —
+      // there is no separate 差距分布 region anymore.
       const kpis = page.getByLabel('团队关键指标')
-      for (const label of ['计划完成率', '任务成果证明 通过率', '延期计划项']) {
+      for (const label of [
+        '自评完成率',
+        '计划完成率',
+        '任务成果证明 通过率',
+        '延期计划项',
+        '当前必修差距',
+        '进阶目标差距',
+      ]) {
         await expect(kpis).toContainText(label)
       }
-      const gaps = page.getByLabel('差距分布')
-      await expect(gaps).toContainText('当前必修差距')
-      await expect(gaps).toContainText('进阶目标差距')
-      // Self-assessment rate must not appear per Issue #28
-      await expect(kpis).not.toContainText('自评完成率')
 
+      // Plan distribution is the first dashboard card (first-screen visible).
       for (const heading of [
+        '计划项分布',
         'L3 掌握度实际 vs 目标',
         '成员 L3 掌握度达成率',
         '计划完成趋势',

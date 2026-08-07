@@ -95,8 +95,20 @@ test.describe('four-role core read paths', () => {
     await page.goto('/system/users')
 
     await expect(page.getByRole('heading', { name: '系统管理' })).toBeVisible()
-    await expect(page.getByText('数据范围：全量')).toBeVisible()
-    await expect(page.getByRole('heading', { name: '创建用户' })).toBeVisible()
+    await expect(
+      page.getByText('管理账号、固定角色及年度计划的全局参数。'),
+    ).toBeVisible()
+    // The create flow lives in an accessible dialog opened from the toolbar
+    // button; required account fields are asserted read-only (no user is
+    // created by this read-path suite).
+    await page.getByRole('button', { name: '创建用户' }).click()
+    const drawer = page.getByRole('dialog', { name: /创建用户/ })
+    await expect(drawer).toBeVisible()
+    await expect(drawer.getByLabel('用户名')).toBeVisible()
+    await expect(drawer.getByLabel('姓名')).toBeVisible()
+    await expect(drawer.getByLabel('初始密码')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveCount(0)
   })
 
   test('Admin: signs out and cannot revisit user management', async ({

@@ -314,11 +314,11 @@ test.describe('capability standard targets', () => {
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
     // N/A row has no adjustment entry point
     await expect(
-      page.locator('#row-2').getByRole('button', { name: '调整▸' }),
+      page.locator('#row-2').getByRole('button', { name: '调整个人目标' }),
     ).toHaveCount(0)
 
     const okRow = page.locator('#row-1')
-    await okRow.getByRole('button', { name: '调整▸' }).click()
+    await okRow.getByRole('button', { name: '调整个人目标' }).click()
     await page.getByLabel('启用个人调整 P01.01.01').check()
     await page.getByLabel('调整目标 P01.01.01').selectOption('5')
     await page.getByLabel('调整原因 P01.01.01').fill('晋升准备')

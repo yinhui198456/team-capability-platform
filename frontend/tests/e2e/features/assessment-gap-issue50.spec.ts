@@ -207,7 +207,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
     const current = page.getByLabel(`当前等级 ${code}`)
     if ((await current.inputValue()) === '') await current.selectOption('1')
     const row = current.locator('xpath=ancestor::tr')
-    await row.getByRole('button', { name: '调整▸' }).click()
+    await row.getByRole('button', { name: '调整个人目标' }).click()
     const enable = page.getByLabel(`启用个人调整 ${code}`)
     await enable.check()
     await page.getByLabel(`调整目标 ${code}`).selectOption('')
@@ -230,6 +230,33 @@ test.describe('Issue #50 assessment gap workflow', () => {
         detail.standard_target_applicable !== false &&
         (detail.l1_code ?? detail.l3_code.split('.')[0]) !== 'P01',
     )!
+    // Clear the client-side completeness check (mirrors the server gate) so
+    // the request reaches the server, whose structured 422 drives the
+    // domain switch and row locate below.
+    const gapDetails = draft.details.filter(
+      (detail) =>
+        detail.standard_target_applicable !== false &&
+        (detail.gap_value ?? 0) > 0,
+    )
+    if (gapDetails.length) {
+      const patched = await page.request.patch(
+        `/api/assessments/${draft.id}/draft`,
+        {
+          data: {
+            expected_revision: draft.revision,
+            details: gapDetails.map((detail) => ({
+              l3_node_id: detail.l3_node_id,
+              l3_code: detail.l3_code,
+              member_priority: '低',
+              include_in_plan: false,
+            })),
+          },
+        },
+      )
+      expect(patched.ok()).toBeTruthy()
+      await page.reload()
+      await expect(page.getByLabel('评估摘要')).toBeVisible()
+    }
     await page
       .getByRole('navigation', { name: '一级能力域导航' })
       .getByRole('button', { name: /^P01 · / })
@@ -251,8 +278,10 @@ test.describe('Issue #50 assessment gap workflow', () => {
       })
     })
     await page.getByRole('button', { name: '提交自评' }).click()
+    // Raw backend English is never shown: the structured reason maps to
+    // Chinese copy that still identifies the failing L3 row by name.
     await expect(
-      page.getByText(`${target.l3_code} requires member_priority`),
+      page.getByText('该能力项存在正 Gap，请先选择优先级（高/中/低/暂缓）'),
     ).toBeVisible()
     await expect(page.locator(`#row-${target.id}`)).toBeFocused()
     await expect(

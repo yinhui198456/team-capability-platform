@@ -297,17 +297,24 @@ test.describe('Issue #52 capability map', () => {
     await loginAs(page, 'leader')
     await page.goto('/capability/model')
 
+    const editDrawer = page.getByTestId('node-edit-drawer')
+
     await page
       .getByTestId('capability-domain-content-P01')
       .getByRole('button', { name: '编辑' })
       .first()
       .click()
-    await expect(page.locator('.edit-form')).toContainText('编辑 P01 (L1)')
+    await expect(editDrawer).toBeVisible()
+    await expect(editDrawer).toContainText('编辑能力域')
+    await expect(editDrawer).toContainText('P01')
     await page.getByRole('button', { name: '取消' }).click()
+    await expect(editDrawer).toHaveCount(0)
 
     await page.getByTestId('l2-toggle-P01.01').click()
     await page.getByTestId('l2-edit-P01.01').click()
-    await expect(page.locator('.edit-form')).toContainText('编辑 P01.01 (L2)')
+    await expect(editDrawer).toBeVisible()
+    await expect(editDrawer).toContainText('编辑能力标准')
+    await expect(editDrawer).toContainText('P01.01')
     await page.getByRole('button', { name: '取消' }).click()
 
     const l3Row = page.getByTestId('l3-row-P01.01.01')
@@ -323,15 +330,24 @@ test.describe('Issue #52 capability map', () => {
     expect(editBox!.x + editBox!.width).toBeLessThanOrEqual(
       rowBox!.x + rowBox!.width + 1,
     )
+
+    // The read-only L3 drawer stays separate from the edit drawer: it has no
+    // 编辑节点 button (that trigger lives on the row) and shows the detail
+    // kicker instead of an edit form.
     await l3Row.click()
-    await expect(page.getByRole('dialog')).toBeVisible()
+    const readOnlyDrawer = page.getByTestId('l3-drawer')
+    await expect(readOnlyDrawer).toBeVisible()
+    await expect(readOnlyDrawer).toContainText('达成路径详情')
     await expect(
-      page.getByRole('dialog').getByRole('button', { name: '编辑节点' }),
+      readOnlyDrawer.getByRole('button', { name: '编辑节点' }),
     ).toHaveCount(0)
+    await expect(editDrawer).toHaveCount(0)
     await page.keyboard.press('Escape')
+    await expect(readOnlyDrawer).toHaveCount(0)
+
     await page.getByTestId('l3-edit-P01.01.01').click()
-    await expect(page.locator('.edit-form')).toContainText(
-      '编辑 P01.01.01 (L3)',
-    )
+    await expect(editDrawer).toBeVisible()
+    await expect(editDrawer).toContainText('编辑达成路径')
+    await expect(editDrawer).toContainText('P01.01.01')
   })
 })
