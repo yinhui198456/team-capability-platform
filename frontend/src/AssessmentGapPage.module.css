@@ -576,15 +576,20 @@
   margin-right: auto;
 }
 
-/* Plan time layout */
-.planTime {
-  display: flex;
-  gap: 2px;
+/* Plan time — natural year-month input (YYYY-MM, no day granularity) */
+.planTimeInput {
+  width: 128px;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
-.planTime select {
-  width: 44px;
-  padding: 1px 2px;
-  font-size: 11px;
+
+/* Personal target adjustment explanation */
+.adjustHelp {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-gray-500, #6b7280);
 }
 
 @media (max-width: 1280px) {

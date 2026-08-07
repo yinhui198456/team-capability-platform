@@ -5,6 +5,8 @@ Covers:
 - member_priority is never auto-generated
 - 暂缓 ↔ include_in_plan mutual exclusion
 - include_in_plan tri-state (NULL/TRUE/FALSE)
+- Draft saves accept partially-completed plan state (include=TRUE missing
+  priority and/or quarter/month); only the submit gate enforces completeness
 - Quarter-month mapping (Q1=1-3, Q2=4-6, Q3=7-9, Q4=10-12)
 - Gap=0 auto-clears plan fields (same transaction)
 - Uncheck include_in_plan clears quarter/month atomically
@@ -455,14 +457,21 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_include_in_plan_requires_quarter_month(
+def test_draft_allows_partial_plan_state_save_reload_submit_gate(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """include_in_plan=TRUE without quarter+month → 422."""
-    member_id = _create_test_user(plan_schema, "m_noqm", ["Member"])
+    """Drafts save partially-completed plan state; submit gate still blocks it.
+
+    A positive-gap row with include_in_plan=TRUE but missing
+    member_priority / plan quarter / plan month is a legitimate draft
+    intermediate state: it must save and survive reload untouched. The
+    submit gate (_validate_submission) is unchanged and still rejects the
+    same draft with a structured 422 and zero writes.
+    """
+    member_id = _create_test_user(plan_schema, "m_partial", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
-    cookies = _login(plan_schema, "m_noqm")
+    cookies = _login(plan_schema, "m_partial")
 
     detail = plan_schema.execute(
         "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
@@ -472,6 +481,7 @@ def test_include_in_plan_requires_quarter_month(
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
+    # 1. include=TRUE with priority but no quarter/month → draft save OK.
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -492,7 +502,143 @@ def test_include_in_plan_requires_quarter_month(
         },
         cookies=cookies,
     )
-    assert status == 422, f"expected 422, got {status}: {body}"
+    assert status == 200, f"partial draft must save, got {status}: {body}"
+    assert body.get("auto_cleared") == []
+    assert int(body["revision"]) == 2
+
+    def _saved() -> dict[str, object]:
+        assessment = get_assessment(plan_schema, assessment_id)
+        return next(d for d in assessment["details"] if d["l3_code"] == code)
+
+    saved = _saved()
+    assert saved["include_in_plan"] is True
+    assert saved["member_priority"] == "高"
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+    # 2. Explicit null on priority while include stays TRUE → saved as-is
+    #    (no auto-clear, no 422).
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {"l3_node_id": node_id, "l3_code": code, "member_priority": None}
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert (
+        status == 200
+    ), f"priority null + include=TRUE must save, got {status}: {body}"
+    saved = _saved()
+    assert saved["member_priority"] is None
+    assert saved["include_in_plan"] is True
+    assert saved["plan_month"] is None
+
+    # 3. Month without quarter is a valid intermediate state too.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_node_id": node_id, "l3_code": code, "plan_month": 6}],
+            "expected_revision": 3,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"month-only must save, got {status}: {body}"
+    saved = _saved()
+    assert saved["plan_month"] == 6
+    assert saved["plan_quarter"] is None
+
+    # 4. The same partial draft is still blocked at submit — structured
+    #    422 (priority_required first, gate order unchanged) and zero writes.
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 4},
+        cookies=cookies,
+    )
+    assert status == 422, f"partial draft must not submit, got {status}: {body}"
+    assert "priority_required" in str(body)
+    assessment = get_assessment(plan_schema, assessment_id)
+    assert assessment["status"] == "草稿"
+    assert int(assessment["revision"]) == 4
+    saved = _saved()
+    assert saved["member_priority"] is None
+    assert saved["include_in_plan"] is True
+    assert saved["plan_month"] == 6
+
+    # 4b. With priority back but month-only (no quarter), the submit gate
+    #     reports plan_time_required.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {"l3_node_id": node_id, "l3_code": code, "member_priority": "高"}
+            ],
+            "expected_revision": 4,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"priority set must save, got {status}: {body}"
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 5},
+        cookies=cookies,
+    )
+    assert status == 422, f"month-only draft must not submit, got {status}: {body}"
+    assert "plan_time_required" in str(body)
+    assessment = get_assessment(plan_schema, assessment_id)
+    assert assessment["status"] == "草稿"
+    assert int(assessment["revision"]) == 5
+
+    # 5. Contradictory explicit quarter+month is still rejected at save.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "plan_quarter": "Q1",
+                    "plan_month": 6,
+                }
+            ],
+            "expected_revision": 5,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, f"Q1+6 must 422, got {status}: {body}"
+    assert "invalid_quarter_month" in str(body)
+    assessment = get_assessment(plan_schema, assessment_id)
+    assert int(assessment["revision"]) == 5
+
+    # 6. Consistent quarter+month still saves.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "plan_quarter": "Q2",
+                    "plan_month": 6,
+                }
+            ],
+            "expected_revision": 5,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"Q2+6 must save, got {status}: {body}"
+    saved = _saved()
+    assert saved["plan_quarter"] == "Q2"
+    assert saved["plan_month"] == 6
 
 
 def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
@@ -959,8 +1105,9 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert saved["plan_quarter"] == "Q2"
     assert saved["plan_month"] == 6
 
-    # Explicit null on priority while include_in_plan=TRUE → 422 conflict,
-    # zero writes (include requires a valid priority).
+    # Explicit null on priority while include_in_plan=TRUE → draft saves
+    # the partial state (priority NULL, include TRUE); only the submit gate
+    # rejects it.
     status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
@@ -972,11 +1119,12 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         },
         cookies=cookies,
     )
-    assert status == 422, f"null priority + include=TRUE must 422: {body}"
+    assert status == 200, f"null priority + include=TRUE must save draft: {body}"
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["member_priority"] == "中"
-    assert int(assessment["revision"]) == 3
+    assert saved["member_priority"] is None
+    assert saved["include_in_plan"] is True
+    assert int(assessment["revision"]) == 4
 
     # Patch with explicit null + include_in_plan=FALSE → priority cleared.
     status, _ = _request(
@@ -991,7 +1139,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
                     "include_in_plan": False,
                 }
             ],
-            "expected_revision": 3,
+            "expected_revision": 4,
         },
         cookies=cookies,
     )

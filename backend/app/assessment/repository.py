@@ -1750,25 +1750,16 @@ def save_assessment_draft(
 
             # include_in_plan tri-state validation.
             if include_in_plan is True:
-                if member_priority is None or member_priority == "暂缓":
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"include_in_plan requires valid priority for {code}",
-                        l3_code=str(code),
-                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_valid_priority",
-                    )
-                if plan_quarter is None or plan_month is None:
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"include_in_plan requires quarter and month for {code}",
-                        l3_code=str(code),
-                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_quarter_and_month",
-                    )
-                # Validate quarter-month mapping
+                # Drafts may hold partially-completed plan state: a
+                # positive-gap row with include_in_plan=TRUE but missing
+                # member_priority and/or plan quarter/month is an
+                # intermediate state and must save untouched (docs/03_Data
+                # "草稿允许部分完成"). The submit gate (_validate_submission)
+                # still enforces full completeness. Only contradictions are
+                # rejected here — see the 暂缓 mutex above and the
+                # quarter-month mapping check below.
+                #
+                # Validate quarter-month mapping when both are present.
                 if plan_quarter is not None and plan_month is not None:
                     valid = True
                     if plan_quarter == "Q1" and not (1 <= plan_month <= 3):

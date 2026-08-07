@@ -114,10 +114,10 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                 OR (plan_quarter = 'Q3' AND plan_month BETWEEN 7 AND 9)
                 OR (plan_quarter = 'Q4' AND plan_month BETWEEN 10 AND 12)
             ),
-            CHECK (
-                include_in_plan IS DISTINCT FROM TRUE
-                OR (plan_quarter IS NOT NULL AND plan_month IS NOT NULL)
-            ),
+            -- No "include_in_plan=TRUE requires quarter+month" CHECK here:
+            -- draft saves may hold that partial plan state (docs/03_Data.md),
+            -- the submit gate _validate_submission enforces completeness, and
+            -- migration v0015 dropped the v0007 constraint.
             CHECK (
                 include_in_plan IS DISTINCT FROM FALSE
                 OR (plan_quarter IS NULL AND plan_month IS NULL)

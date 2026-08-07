@@ -171,6 +171,7 @@ _EXPECTED_VERSIONS = [
     "0012_team_analytics_indexes",
     "0013_plan_item_growth_goal_nullable",
     "0014_evidence_archive_backfill",
+    "0015_draft_partial_plan_time",
 ]
 
 # Pre-v0007 planning DDL snapshot (v0006 era): plan_item.growth_goal_id is
@@ -547,13 +548,32 @@ def test_upgrade_to_v0008_and_lifespan(pre_v0007_db: psycopg.Connection) -> None
                 "WHERE id = %s",
                 (detail_id,),
             )
-    # include_in_plan=TRUE without quarter/month rejected (v0007).
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with connection.transaction():
-            connection.execute(
-                "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
-                (detail_id,),
-            )
+    # include_in_plan=TRUE without quarter/month: the v0007 DB CHECK was
+    # dropped by v0015 — the partial draft state now saves.  Completeness is
+    # enforced by the submit gate instead (locked via the real API in
+    # test_assessment_plan_selection.py).
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+            (detail_id,),
+        )
+    names = {
+        row[0]
+        for row in connection.execute(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'assessment_detail'::regclass AND contype = 'c'"
+        ).fetchall()
+    }
+    assert "assessment_detail_plan_time_required" not in names
+    assert "assessment_detail_quarter_month_consistent" in names
+    assert "assessment_detail_no_plan_time_when_false" in names
+    assert "assessment_detail_hold_plan_mutex" in names
+    # Restore the undecided state before the v0008 assertion below.
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = NULL " "WHERE id = %s",
+            (detail_id,),
+        )
     # include_in_plan=NULL with plan_quarter set rejected (v0008).
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():

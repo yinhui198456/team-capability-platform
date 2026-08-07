@@ -11,6 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as assessmentApi from './assessment'
+import {
+  monthToQuarter,
+  planMonthFromValue,
+  planMonthValue,
+} from './AssessmentGapPage'
 import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -200,12 +205,13 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    expect(
-      screen.getByRole('combobox', { name: /计划季度 P01.01.01/ }),
-    ).toBeTruthy()
-    expect(
-      screen.getByRole('combobox', { name: /计划月份 P01.01.01/ }),
-    ).toBeTruthy()
+    const month = screen.getByLabelText(
+      '计划月份 P01.01.01',
+    ) as HTMLInputElement
+    expect(month.type).toBe('month')
+    expect(month.value).toBe('')
+    expect(month.min).toBe('2026-01')
+    expect(month.max).toBe('2026-12')
   })
 
   it('filters work: 未评估, 有Gap, 已纳入计划, 暂缓', async () => {
@@ -687,7 +693,7 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力自评与 Gap 分析')
     const submit = screen.getByRole('button', { name: '提交自评' })
     // Click the adjustment expand button
-    fireEvent.click(screen.getByText('调整▸'))
+    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
     // Enable adjustment
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     expect(screen.getByText('需填写调整原因')).toBeTruthy()
@@ -717,7 +723,7 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByText('调整▸'))
+    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
       target: { value: '调整原因' },
@@ -789,6 +795,10 @@ describe('AssessmentGapPage', () => {
         {
           ...mockDraft().details![0],
           current_level: 1,
+          member_priority: '中',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
         },
       ],
     })
@@ -935,7 +945,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
 
-    fireEvent.click(screen.getByText('调整▸'))
+    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
       target: { value: '5' },
@@ -993,7 +1003,7 @@ describe('AssessmentGapPage', () => {
 
     await screen.findByText('不适用')
     // The adjust button should not appear for non-applicable items
-    expect(screen.queryByText('调整▸')).toBeNull()
+    expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
     expect(
       (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
         .disabled,
@@ -1037,7 +1047,347 @@ describe('AssessmentGapPage', () => {
 
     await screen.findByText('历史保留')
     // No adjustment button since standard_target_level is null
-    expect(screen.queryByText('调整▸')).toBeNull()
+    expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
+  })
+})
+
+describe('AssessmentGapPage plan time & submit contracts', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
+    // jsdom has no scrollIntoView; locateDetail schedules it after focus.
+    Element.prototype.scrollIntoView = vi.fn()
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('monthToQuarter derives Q1-Q4 deterministically', () => {
+    expect(monthToQuarter(1)).toBe('Q1')
+    expect(monthToQuarter(3)).toBe('Q1')
+    expect(monthToQuarter(4)).toBe('Q2')
+    expect(monthToQuarter(6)).toBe('Q2')
+    expect(monthToQuarter(7)).toBe('Q3')
+    expect(monthToQuarter(9)).toBe('Q3')
+    expect(monthToQuarter(10)).toBe('Q4')
+    expect(monthToQuarter(12)).toBe('Q4')
+  })
+
+  it('planMonthValue maps month to YYYY-MM and normalizes out of range', () => {
+    expect(planMonthValue(2026, 6)).toBe('2026-06')
+    expect(planMonthValue(2026, 1)).toBe('2026-01')
+    expect(planMonthValue(2026, null)).toBe('')
+    expect(planMonthValue(2026, undefined)).toBe('')
+    expect(planMonthValue(2026, 0)).toBe('')
+    expect(planMonthValue(2026, 13)).toBe('')
+  })
+
+  it('planMonthFromValue rejects empty, cross-year and invalid months', () => {
+    expect(planMonthFromValue(2026, '2026-06')).toEqual({
+      month: 6,
+      quarter: 'Q2',
+    })
+    expect(planMonthFromValue(2026, '2026-12')).toEqual({
+      month: 12,
+      quarter: 'Q4',
+    })
+    expect(planMonthFromValue(2026, '')).toBeNull()
+    expect(planMonthFromValue(2026, '2027-06')).toBeNull()
+    expect(planMonthFromValue(2026, '2026-00')).toBeNull()
+    expect(planMonthFromValue(2026, '2026-13')).toBeNull()
+    expect(planMonthFromValue(2026, 'not-a-month')).toBeNull()
+  })
+
+  it('renders the saved plan month as YYYY-MM and echoes on reload', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            member_priority: '高',
+            include_in_plan: true,
+            plan_quarter: 'Q2',
+            plan_month: 6,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const month = screen.getByLabelText(
+      '计划月份 P01.01.01',
+    ) as HTMLInputElement
+    expect(month.value).toBe('2026-06')
+    expect(month.min).toBe('2026-01')
+    expect(month.max).toBe('2026-12')
+  })
+
+  it('month change sends plan_month and derived plan_quarter in saveDraft', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-06' },
+    })
+    // Mark another field dirty so the save fires.
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    const detail = save.mock.calls[0][1][0]
+    expect(detail.plan_month).toBe(6)
+    expect(detail.plan_quarter).toBe('Q2')
+  })
+
+  it('clearing the month input clears plan_month and plan_quarter', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '' },
+    })
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    const detail = save.mock.calls[0][1][0]
+    expect(detail.plan_month).toBeNull()
+    expect(detail.plan_quarter).toBeNull()
+  })
+
+  it('saving a draft with partial plan state is allowed and not blocked', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(screen.getByText('草稿已保存')).toBeTruthy()
+  })
+
+  it('save 422 with structured reason shows Chinese copy and never raw English', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q1',
+          plan_month: 6,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockRejectedValue({
+      status: 422,
+      detail: {
+        code: 'plan_validation',
+        l3_code: 'P01.01.01',
+        l3_node_id: 1,
+        field: 'plan_quarter',
+        reason: 'invalid_quarter_month',
+        message: 'invalid quarter-month combination: Q1+6',
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() =>
+      expect(
+        screen.getByText('计划季度与月份不一致，请重新选择计划月份'),
+      ).toBeTruthy(),
+    )
+    expect(screen.queryByText(/invalid quarter-month/)).toBeNull()
+  })
+
+  it('submit is blocked client-side before the request when plan time missing', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() => expect(screen.getByText(/尚无法提交/)).toBeTruthy())
+    expect(screen.getByText(/已纳入计划的能力项请选择计划月份/)).toBeTruthy()
+    expect(submit).not.toHaveBeenCalled()
+    // The offending row is located (row id receives focus target).
+    expect(
+      document.getElementById('row-1') as HTMLElement | null,
+    ).not.toBeNull()
+  })
+
+  it('submit is blocked client-side when priority is missing on a positive gap', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() =>
+      expect(
+        screen.getByText(/该能力项存在正 Gap，请先选择优先级/),
+      ).toBeTruthy(),
+    )
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('submit proceeds when plan fields are complete', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() => expect(submit).toHaveBeenCalled())
+  })
+
+  it('adjust button explains the personal target override', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
+    expect(screen.getByText(/标准目标由你的目标职级与/)).toBeTruthy()
+    expect(screen.getByText(/能力标准自动生成、只读/)).toBeTruthy()
   })
 })
 

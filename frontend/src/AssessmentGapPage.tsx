@@ -208,6 +208,101 @@ function computeGap(detail: AssessmentDetail): number | null {
   return null
 }
 
+// ── Plan time: natural year-month (YYYY-MM) input, month→quarter derived.
+export function monthToQuarter(month: number): 'Q1' | 'Q2' | 'Q3' | 'Q4' {
+  if (month <= 3) return 'Q1'
+  if (month <= 6) return 'Q2'
+  if (month <= 9) return 'Q3'
+  return 'Q4'
+}
+
+export function planMonthValue(
+  year: number,
+  month: number | null | undefined,
+): string {
+  if (month == null || month < 1 || month > 12) return ''
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+export function planMonthFromValue(
+  year: number,
+  value: string,
+): { month: number; quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' } | null {
+  if (!value) return null
+  const match = /^(\d{4})-(\d{2})$/.exec(value)
+  if (!match) return null
+  const valueYear = Number(match[1])
+  const month = Number(match[2])
+  // Cross-year values are rejected/normalized away: plan months belong to
+  // the assessment's own year only.
+  if (valueYear !== year || month < 1 || month > 12) return null
+  return { month, quarter: monthToQuarter(month) }
+}
+
+// ── Chinese business copy for backend validation reasons.  Raw English
+//    backend messages are never shown to the member.
+const ASSESSMENT_ERROR_COPY: Record<string, string> = {
+  priority_required: '该能力项存在正 Gap，请先选择优先级（高/中/低/暂缓）',
+  plan_decision_required: '该能力项存在正 Gap，请明确是否纳入年度计划',
+  hold_plan_conflict: '已暂缓的能力项不能纳入年度计划，请先调整优先级',
+  plan_time_required: '已纳入计划的能力项请选择计划月份',
+  priority_not_applicable: '无正 Gap 的能力项不能设置优先级，已自动清除',
+  plan_not_applicable: '无正 Gap 的能力项不能纳入计划，已自动清除',
+  requires_current_level: '该能力项请先评估当前掌握度',
+  requires_target_level: '该能力项缺少有效目标，无法提交',
+  not_applicable_incomplete: '不适用项不应保留评估值，请检查后重试',
+  compatibility_repair_required:
+    '该能力项需先完成目标兼容性修复，请执行"修复草稿目标快照"',
+  invalid_quarter_month: '计划季度与月份不一致，请重新选择计划月份',
+  hold_plan_mutex: '已暂缓的能力项不能纳入年度计划',
+  requires_valid_priority: '纳入计划前请先选择优先级（高/中/低/暂缓）',
+  requires_quarter_and_month: '已纳入计划的能力项请选择计划月份',
+  invalid_range: '填写值超出允许范围，请检查后重试',
+  invalid_type: '填写内容类型不正确，请检查后重试',
+  missing_required: '必填项未填写完整',
+  missing_standard_target: '该能力项缺少标准目标，请联系管理员',
+  legacy_preserved_readonly: '历史保留的目标不可调整',
+  not_applicable: '不适用项不可调整或纳入计划',
+  adjustment_fields_without_flag: '调整内容需先勾选"启用调整"',
+  no_positive_gap: '无正 Gap 的能力项不能设置优先级',
+  l3_node_id_required: '评估范围缺少节点映射，请重新加载',
+  l3_node_id_not_found: '该能力项不在当前评估范围内，请重新加载',
+  l3_code_mismatch: '能力项映射不一致，请重新加载',
+  duplicate_detail: '明细数据重复，请重新加载',
+  batch_coverage: '明细数据不完整，请重新加载',
+  forbidden_field: '包含不可编辑字段，请重新加载',
+}
+
+export function assessmentErrorCopy(reason: string): string {
+  return ASSESSMENT_ERROR_COPY[reason] ?? '填写不完整，请按提示修正后再试'
+}
+
+function chineseMessage(msg: string, fallback: string): string {
+  // Keep app-authored Chinese messages; never surface raw backend English.
+  return /[一-鿿]/.test(msg) ? msg : fallback
+}
+
+export function submitProblemDetails(details: AssessmentDetail[]) {
+  const problems: Array<{ detail: AssessmentDetail; reason: string }> = []
+  for (const detail of details) {
+    if (!isApplicableDetail(detail)) continue
+    const gap = computeGap(detail)
+    if (gap == null || gap <= 0) continue
+    if (!detail.member_priority) {
+      problems.push({ detail, reason: 'priority_required' })
+    } else if (detail.include_in_plan == null) {
+      problems.push({ detail, reason: 'plan_decision_required' })
+    } else if (
+      detail.include_in_plan === true &&
+      detail.member_priority !== '暂缓' &&
+      (detail.plan_quarter == null || detail.plan_month == null)
+    ) {
+      problems.push({ detail, reason: 'plan_time_required' })
+    }
+  }
+  return problems
+}
+
 type Filter =
   | '全部'
   | '未评估'
@@ -438,12 +533,23 @@ export function AssessmentGapPage() {
       setMessage('草稿已保存')
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
+      const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
           ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : err instanceof Error
-            ? err.message
-            : '保存失败',
+          : isStructuredAssessmentError(detail)
+            ? (() => {
+                // Same structured locate as submit: switch domain, expand
+                // the L2 group, scroll to and focus the offending row.
+                const target = details.find(
+                  (item) => item.l3_code === detail.l3_code,
+                )
+                if (target) locateDetail(target)
+                return assessmentErrorCopy(detail.reason)
+              })()
+            : err instanceof Error
+              ? chineseMessage(err.message, '保存失败，请重新加载后再试。')
+              : '保存失败',
       )
     }
   }
@@ -547,6 +653,22 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
+      // Client-side minimum completeness check before the request, mirroring
+      // the server gate's order (priority → include decision → plan time).
+      // Locates the first incomplete positive-gap row, shows a top summary,
+      // and preserves every input — draft saves stay allowed regardless.
+      // The server submit gate remains the final authority.
+      const problems = submitProblemDetails(details)
+      if (problems.length) {
+        const first = problems[0]
+        locateDetail(first.detail)
+        setError(
+          `尚无法提交：还有 ${problems.length} 项待完善。请先处理「${
+            first.detail.l3_name ?? first.detail.l3_code
+          }」——${assessmentErrorCopy(first.reason)}。`,
+        )
+        return
+      }
       const result = await submitAssessment(assessment.id, revision)
       loadAssessment(await getAssessment(assessment.id))
       setMessage(
@@ -566,10 +688,10 @@ export function AssessmentGapPage() {
                   (item) => item.l3_code === detail.l3_code,
                 )
                 if (target) locateDetail(target)
-                return detail.message
+                return assessmentErrorCopy(detail.reason)
               })()
             : err instanceof Error
-              ? err.message
+              ? chineseMessage(err.message, '提交失败，请重新加载后再试。')
               : '提交失败',
       )
     }
@@ -809,8 +931,15 @@ export function AssessmentGapPage() {
         d.member_priority !== '暂缓' &&
         !d.member_priority,
     ).length
+    const inPlanNoTime = hasGap.filter(
+      (d) =>
+        d.include_in_plan === true &&
+        d.member_priority !== '暂缓' &&
+        d.member_priority &&
+        (d.plan_quarter == null || d.plan_month == null),
+    ).length
     const undecided = hasGap.filter((d) => d.include_in_plan == null).length
-    return { inPlanNoPriority, undecided }
+    return { inPlanNoPriority, inPlanNoTime, undecided }
   }, [assessedDetails])
 
   const filters: Filter[] = [
@@ -1388,6 +1517,7 @@ export function AssessmentGapPage() {
                                             <button
                                               type="button"
                                               className={s.adjustBtn}
+                                              title="申请个人调整目标（1–5 级），需填写调整原因，由 Buddy 复核"
                                               onClick={() =>
                                                 setAdjustmentId(
                                                   adjustmentId === detail.id
@@ -1396,7 +1526,7 @@ export function AssessmentGapPage() {
                                                 )
                                               }
                                             >
-                                              调整▸
+                                              调整个人目标
                                             </button>
                                           )}
                                           {detail.target_snapshot_source ===
@@ -1411,6 +1541,13 @@ export function AssessmentGapPage() {
                                               <div
                                                 className={s.adjustmentEditor}
                                               >
+                                                <p className={s.adjustHelp}>
+                                                  标准目标由你的目标职级与
+                                                  能力标准自动生成、只读；如需
+                                                  个人调整，选择调整后目标（1–5）
+                                                  并填写原因，保存后由 Buddy
+                                                  复核。
+                                                </p>
                                                 <label className="checkbox">
                                                   <input
                                                     type="checkbox"
@@ -1567,54 +1704,32 @@ export function AssessmentGapPage() {
                                         <option value="no">否</option>
                                       </select>
                                     </td>
-                                    {/* Column 7: 计划时间 */}
+                                    {/* Column 7: 计划时间 — natural YYYY-MM */}
                                     <td>
                                       {showPlanTime ? (
-                                        <div className={s.planTime}>
-                                          <select
-                                            value={detail.plan_quarter ?? ''}
-                                            onChange={(event) =>
-                                              updateDetail(index, {
-                                                plan_quarter:
-                                                  (event.target.value as
-                                                    | 'Q1'
-                                                    | 'Q2'
-                                                    | 'Q3'
-                                                    | 'Q4') || null,
-                                              })
-                                            }
-                                            disabled={!editable}
-                                            aria-label={`计划季度 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            <option value="Q1">Q1</option>
-                                            <option value="Q2">Q2</option>
-                                            <option value="Q3">Q3</option>
-                                            <option value="Q4">Q4</option>
-                                          </select>
-                                          <select
-                                            value={detail.plan_month ?? ''}
-                                            onChange={(event) =>
-                                              updateDetail(index, {
-                                                plan_month: event.target.value
-                                                  ? Number(event.target.value)
-                                                  : null,
-                                              })
-                                            }
-                                            disabled={!editable}
-                                            aria-label={`计划月份 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            {Array.from(
-                                              { length: 12 },
-                                              (_, i) => i + 1,
-                                            ).map((m) => (
-                                              <option key={m} value={m}>
-                                                {m}月
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
+                                        <input
+                                          type="month"
+                                          className={s.planTimeInput}
+                                          value={planMonthValue(
+                                            assessment.year,
+                                            detail.plan_month,
+                                          )}
+                                          min={`${assessment.year}-01`}
+                                          max={`${assessment.year}-12`}
+                                          onChange={(event) => {
+                                            const parsed = planMonthFromValue(
+                                              assessment.year,
+                                              event.target.value,
+                                            )
+                                            updateDetail(index, {
+                                              plan_month: parsed?.month ?? null,
+                                              plan_quarter:
+                                                parsed?.quarter ?? null,
+                                            })
+                                          }}
+                                          disabled={!editable}
+                                          aria-label={`计划月份 ${detail.l3_code}`}
+                                        />
                                       ) : detail.include_in_plan === false ? (
                                         <span className="muted">否</span>
                                       ) : (
@@ -1698,6 +1813,9 @@ export function AssessmentGapPage() {
             {unfilled > 0 && <span>还有 {unfilled} 项未完成</span>}
             {stickyStats.inPlanNoPriority > 0 && (
               <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
+            )}
+            {stickyStats.inPlanNoTime > 0 && (
+              <span>{stickyStats.inPlanNoTime} 项已纳入计划但未选计划月份</span>
             )}
             {stickyStats.undecided > 0 && (
               <span>{stickyStats.undecided} 项未决定计划</span>
