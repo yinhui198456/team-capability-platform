@@ -951,6 +951,142 @@ select {
   width: 56px;
 }
 
+/* Team analytics first-screen density (04_UI §4.5): one KPI row, tighter
+   chrome so the 计划项分布 block starts on the 1440×900 fold. Scoped to the
+   analytics page only — other pages sharing dashboard-page/metric-grid keep
+   their current layout. */
+.team-analytics-page .page-heading {
+  margin-bottom: 12px;
+}
+
+.team-analytics-page .analytics-filters {
+  margin: 12px 0;
+}
+
+.team-analytics-page .metric-grid {
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 14px 0;
+}
+
+.team-analytics-page .metric-grid article {
+  padding: 12px 14px;
+}
+
+.team-analytics-page .metric-grid strong {
+  margin-top: 4px;
+}
+
+.team-analytics-page .dashboard-grid {
+  margin: 14px 0;
+}
+
+/* Tables inside analytics cards scroll horizontally instead of shrinking. */
+.team-analytics-page .dashboard-card {
+  overflow-x: auto;
+}
+
+.analytics-loading {
+  border: 1px dashed var(--color-gray-300);
+  border-radius: var(--radius-lg);
+  margin: 20px 0;
+  min-height: 320px;
+  padding: 24px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Team annual plan summary strip and management cards. */
+.analytics-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.kpi-card {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  padding: 12px 18px;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.kpi-label {
+  color: #667085;
+  font-size: 13px;
+}
+
+.plan-summary {
+  background: #fff;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 12px 14px;
+}
+
+/* Priority/status pills — same language as AnnualPlanTaskPage badges. */
+.priority-high,
+.priority-medium,
+.priority-low,
+.status-completed,
+.status-in-progress,
+.status-delayed,
+.status-paused,
+.status-cancelled,
+.status-not-started {
+  border-radius: var(--radius-lg);
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+
+.priority-high,
+.status-delayed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.priority-medium {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.status-completed {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.status-in-progress {
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+
+.priority-low,
+.status-not-started {
+  background: var(--color-gray-100);
+  color: #475467;
+}
+
+.status-paused,
+.status-cancelled {
+  background: var(--color-gray-100);
+  color: #667085;
+}
+
 .compact-list,
 .radar-list {
   display: grid;

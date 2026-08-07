@@ -142,6 +142,120 @@ function emptyItemList(): planningApi.TeamAnnualPlanItemList {
   }
 }
 
+function itemList(): planningApi.TeamAnnualPlanItemList {
+  return {
+    meta: {
+      year: 2026,
+      as_of: '2026-01-01T00:00:00Z',
+      scope: 'leader_team',
+      source: 'team_annual_plan.items.v1',
+    },
+    filters: {
+      domain_code: null,
+      priority: null,
+      status: null,
+      quarter: null,
+      month: null,
+      member_id: null,
+      q: null,
+    },
+    pagination: {
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      total_count: 2,
+    },
+    summary: {
+      total_count: 2,
+      planned_hours_min: 10,
+      planned_hours_max: 20,
+      has_values: true,
+      has_unparsed: false,
+      actual_hours: 8,
+      status_breakdown: {
+        未开始: 0,
+        进行中: 0,
+        已完成: 1,
+        延期: 1,
+        暂停: 0,
+        取消: 0,
+        total: 2,
+      },
+    },
+    members: [{ member_id: 2, username: 'member', full_name: '成员甲' }],
+    items: [
+      {
+        id: 1,
+        annual_growth_plan_id: 1,
+        growth_goal_id: 1,
+        l2_code: 'P01.01',
+        l2_name: '数据基础',
+        l3_code: 'P01-L1-L2',
+        l3_name: '数据开发',
+        member_id: 2,
+        username: 'member',
+        full_name: '成员甲',
+        current_level: 2,
+        target_level: 4,
+        priority: '高',
+        learning_material: null,
+        learning_task_content: null,
+        expected_output: null,
+        estimated_hours: '10',
+        estimated_hours_parsed: {
+          raw: '10',
+          min_hours: 10,
+          max_hours: 10,
+          is_valid: true,
+          is_range: false,
+        },
+        plan_start_date: '2026-03-01',
+        plan_end_date: '2026-03-31',
+        target_month: 3,
+        plan_month: 3,
+        plan_quarter: 'Q1',
+        status: '已完成',
+        revision: 1,
+        actual_hours: 8,
+      },
+      {
+        id: 2,
+        annual_growth_plan_id: 1,
+        growth_goal_id: 1,
+        l2_code: 'P02.01',
+        l2_name: '模型工程',
+        l3_code: 'P02-L1-L2',
+        l3_name: '模型服务',
+        member_id: 2,
+        username: 'member',
+        full_name: '成员甲',
+        current_level: 1,
+        target_level: 3,
+        priority: '中',
+        learning_material: null,
+        learning_task_content: null,
+        expected_output: null,
+        estimated_hours: '8-12',
+        estimated_hours_parsed: {
+          raw: '8-12',
+          min_hours: 8,
+          max_hours: 12,
+          is_valid: true,
+          is_range: true,
+        },
+        plan_start_date: '2026-06-01',
+        plan_end_date: '2026-06-30',
+        target_month: 6,
+        plan_month: 6,
+        plan_quarter: 'Q2',
+        status: '延期',
+        revision: 2,
+        actual_hours: 0,
+      },
+    ],
+  }
+}
+
 describe('TeamAnnualPlanPage', () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -326,6 +440,41 @@ describe('TeamAnnualPlanPage', () => {
     expect(getTeamAnnualPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('更新')).toBeNull()
     expect(screen.queryByText('归档')).toBeNull()
+  })
+
+  it('renders KPI summary cards, pill classes and a scrollable items table', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnnualPlan').mockResolvedValue(
+      publishedPlan(),
+    )
+    vi.spyOn(planningApi, 'getTeamAnnualPlanItems').mockResolvedValue(
+      itemList(),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('计划项数')).toBeTruthy())
+    // Summary KPI cards render as a single 4-card strip.
+    expect(document.querySelectorAll('.kpi-card')).toHaveLength(4)
+    expect(screen.getByText('已完成/总数')).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    // The 9-column items table lives in a horizontal scroll container.
+    expect(document.querySelector('.table-scroll table')).toBeTruthy()
+    // Priority/status pills carry their semantic classes.
+    expect(document.querySelector('.priority-high')?.textContent).toBe('高')
+    expect(document.querySelector('.priority-medium')?.textContent).toBe('中')
+    expect(document.querySelector('.status-completed')?.textContent).toBe(
+      '已完成',
+    )
+    expect(document.querySelector('.status-delayed')?.textContent).toBe('延期')
   })
 
   it('shows the read-only PlanItem list but hides management controls for Member users', async () => {

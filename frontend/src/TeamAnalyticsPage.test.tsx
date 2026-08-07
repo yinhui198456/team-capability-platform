@@ -142,8 +142,15 @@ describe('TeamAnalyticsPage', () => {
     ).toBeTruthy()
     expect(screen.getByRole('figure', { name: '计划完成组合图' })).toBeTruthy()
     expect(screen.getByRole('figure', { name: '学习时长组合图' })).toBeTruthy()
-    // 自评完成率 must not appear per Issue #28
-    expect(screen.queryByText('自评完成率')).toBeNull()
+    // 04_UI §4.5: the KPI row includes 自评完成率 with numerator/denominator.
+    const completionCard = screen
+      .getByText('自评完成率')
+      .closest('article') as HTMLElement
+    expect(within(completionCard).getByText('1 / 2 项')).toBeTruthy()
+    // All KPI cards live in one 团队关键指标 region (no second sparse row).
+    const kpiRegion = screen.getByLabelText('团队关键指标')
+    expect(within(kpiRegion).getByText('当前必修差距')).toBeTruthy()
+    expect(within(kpiRegion).getByText('进阶目标差距')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('能力域'), {
       target: { value: 'P01' },
@@ -154,6 +161,105 @@ describe('TeamAnalyticsPage', () => {
         domain_code: 'P01',
       }),
     )
+  })
+
+  it('shows an explicit empty state when no assessments exist', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockResolvedValue({
+      ...analytics,
+      kpis: {
+        ...analytics.kpis,
+        assessment_completion_rate: 0,
+        assessment_completed_count: 0,
+        assessment_total_count: 0,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('自评完成率')).toBeTruthy())
+    const card = screen.getByText('自评完成率').closest('article')
+    expect(card).toBeTruthy()
+    expect(within(card as HTMLElement).getByText('—')).toBeTruthy()
+    expect(within(card as HTMLElement).getByText('暂无自评记录')).toBeTruthy()
+    expect(within(card as HTMLElement).queryByText('0%')).toBeNull()
+  })
+
+  it('keeps a min-height loading placeholder while the first request is in flight', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockReturnValue(
+      new Promise(() => {}),
+    )
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByText('正在加载团队数据…')).toBeTruthy(),
+    )
+    expect(screen.getByLabelText('正在加载团队数据')).toBeTruthy()
+  })
+
+  it('renders explicit empty states for empty attainment, averages and trends', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockResolvedValue({
+      ...analytics,
+      domain_averages: [],
+      member_attainment: [],
+      monthly_trends: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByText('L3 掌握度实际 vs 目标')).toBeTruthy(),
+    )
+    expect(screen.getByText('暂无掌握度数据。')).toBeTruthy()
+    expect(screen.getByText('暂无成员掌握度数据。')).toBeTruthy()
+    expect(screen.getAllByText('暂无趋势数据。')).toHaveLength(2)
+  })
+
+  it('wraps the member attainment heatmap in a horizontal scroll container', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockResolvedValue(analytics)
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByText('成员 L3 掌握度达成率')).toBeTruthy(),
+    )
+    const card = screen
+      .getByText('成员 L3 掌握度达成率')
+      .closest('article') as HTMLElement
+    const table = within(card).getByRole('table')
+    expect(table.parentElement?.classList.contains('table-scroll')).toBe(true)
   })
 
   it('opens a read-only detail drawer on overdue item click', async () => {

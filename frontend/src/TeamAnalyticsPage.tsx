@@ -278,7 +278,7 @@ export function TeamAnalyticsPage() {
   }
 
   return (
-    <section className="page dashboard-page">
+    <section className="page dashboard-page team-analytics-page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">团队运营 · 团队</p>
@@ -324,7 +324,11 @@ export function TeamAnalyticsPage() {
           {error}
         </p>
       )}
-      {loading && !analytics && <p className="muted">正在加载团队数据…</p>}
+      {loading && !analytics && (
+        <div className="analytics-loading" aria-label="正在加载团队数据">
+          <p className="muted">正在加载团队数据…</p>
+        </div>
+      )}
       {analytics && (
         <>
           <p className="muted">
@@ -334,6 +338,19 @@ export function TeamAnalyticsPage() {
               : '-'}
           </p>
           <div className="metric-grid" aria-label="团队关键指标">
+            <article>
+              <span>自评完成率</span>
+              <strong>
+                {analytics.kpis.assessment_total_count > 0
+                  ? percent(analytics.kpis.assessment_completion_rate)
+                  : '—'}
+              </strong>
+              <small>
+                {analytics.kpis.assessment_total_count > 0
+                  ? `${analytics.kpis.assessment_completed_count} / ${analytics.kpis.assessment_total_count} 项`
+                  : '暂无自评记录'}
+              </small>
+            </article>
             <article>
               <span>计划完成率</span>
               <strong>{percent(analytics.kpis.plan_completion_rate)}</strong>
@@ -355,8 +372,6 @@ export function TeamAnalyticsPage() {
               <strong>{analytics.kpis.overdue_plan_item_count}</strong>
               <small>待跟进</small>
             </article>
-          </div>
-          <div className="metric-grid" aria-label="差距分布">
             <article>
               <span>当前必修差距</span>
               <strong>{analytics.gap_summary.current_required}</strong>
@@ -498,89 +513,109 @@ export function TeamAnalyticsPage() {
                 以上指标基于三级达成路径的当前掌握度与目标掌握度聚合，不代表二级能力标准
                 P4–P8 岗位职级达成率。
               </p>
-              <table className="analytics-table">
-                <thead>
-                  <tr>
-                    <th>能力域</th>
-                    <th>当前掌握度均值（1–5）</th>
-                    <th>目标掌握度均值（1–5）</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {analytics.domain_averages.map((item) => (
-                    <tr key={item.domain_code}>
-                      <td>
-                        {item.domain_code} · {domainLabels[item.domain_code]}
-                      </td>
-                      <td>
-                        <progress
-                          aria-label={`${item.domain_code}当前掌握度均值`}
-                          max={5}
-                          value={item.actual}
-                        />{' '}
-                        {item.actual}
-                      </td>
-                      <td>
-                        <progress
-                          aria-label={`${item.domain_code}目标掌握度均值`}
-                          max={5}
-                          value={item.target}
-                        />{' '}
-                        {item.target}
-                      </td>
+              {analytics.domain_averages.length === 0 ? (
+                <p className="muted">暂无掌握度数据。</p>
+              ) : (
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>能力域</th>
+                      <th>当前掌握度均值（1–5）</th>
+                      <th>目标掌握度均值（1–5）</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {analytics.domain_averages.map((item) => (
+                      <tr key={item.domain_code}>
+                        <td>
+                          {item.domain_code} · {domainLabels[item.domain_code]}
+                        </td>
+                        <td>
+                          <progress
+                            aria-label={`${item.domain_code}当前掌握度均值`}
+                            max={5}
+                            value={item.actual}
+                          />{' '}
+                          {item.actual}
+                        </td>
+                        <td>
+                          <progress
+                            aria-label={`${item.domain_code}目标掌握度均值`}
+                            max={5}
+                            value={item.target}
+                          />{' '}
+                          {item.target}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </article>
             <article className="dashboard-card">
               <h2>成员 L3 掌握度达成率</h2>
-              <table className="analytics-table">
-                <thead>
-                  <tr>
-                    <th>成员</th>
-                    {analytics.domain_averages.map((item) => (
-                      <th key={item.domain_code}>{item.domain_code}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map(([id, name]) => (
-                    <tr key={id}>
-                      <td>{name}</td>
-                      {analytics.domain_averages.map((domain) => {
-                        const item = analytics.member_attainment.find(
-                          (entry) =>
-                            entry.member_id === id &&
-                            entry.domain_code === domain.domain_code,
-                        )
-                        return (
-                          <td
-                            key={domain.domain_code}
-                            style={{
-                              background: heatColor(item?.attainment ?? null),
-                            }}
-                          >
-                            {item?.attainment === null || !item
-                              ? '—'
-                              : `${Math.round(item.attainment)}%`}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {members.length === 0 ? (
+                <p className="muted">暂无成员掌握度数据。</p>
+              ) : (
+                <div className="table-scroll">
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>成员</th>
+                        {analytics.domain_averages.map((item) => (
+                          <th key={item.domain_code}>{item.domain_code}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map(([id, name]) => (
+                        <tr key={id}>
+                          <td>{name}</td>
+                          {analytics.domain_averages.map((domain) => {
+                            const item = analytics.member_attainment.find(
+                              (entry) =>
+                                entry.member_id === id &&
+                                entry.domain_code === domain.domain_code,
+                            )
+                            return (
+                              <td
+                                key={domain.domain_code}
+                                style={{
+                                  background: heatColor(
+                                    item?.attainment ?? null,
+                                  ),
+                                }}
+                              >
+                                {item?.attainment === null || !item
+                                  ? '—'
+                                  : `${Math.round(item.attainment)}%`}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </article>
           </div>
           <div className="dashboard-grid">
             <article className="dashboard-card">
               <h2>计划完成趋势</h2>
-              <TrendTable trends={analytics.monthly_trends} hours={false} />
+              {analytics.monthly_trends.length === 0 ? (
+                <p className="muted">暂无趋势数据。</p>
+              ) : (
+                <TrendTable trends={analytics.monthly_trends} hours={false} />
+              )}
             </article>
             <article className="dashboard-card">
               <h2>学习时长趋势</h2>
-              <TrendTable trends={analytics.monthly_trends} hours />
+              {analytics.monthly_trends.length === 0 ? (
+                <p className="muted">暂无趋势数据。</p>
+              ) : (
+                <TrendTable trends={analytics.monthly_trends} hours />
+              )}
             </article>
           </div>
           <article className="dashboard-card">

@@ -562,51 +562,55 @@ export function TeamAnnualPlanPage() {
 
           {items.length > 0 && (
             <>
-              <table className="analytics-table">
-                <thead>
-                  <tr>
-                    <th>成员</th>
-                    <th>能力路径</th>
-                    <th>优先级</th>
-                    <th>月份</th>
-                    <th>季度</th>
-                    <th>状态</th>
-                    <th>当前 → 目标</th>
-                    <th>预计时长</th>
-                    <th>实际时长</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.full_name}</td>
-                      <td>{formatCapabilityPath(item)}</td>
-                      <td>
-                        <span className={priorityClass(item.priority)}>
-                          {item.priority}
-                        </span>
-                      </td>
-                      <td>{item.plan_month ? `${item.plan_month}月` : '-'}</td>
-                      <td>{item.plan_quarter ?? '-'}</td>
-                      <td>
-                        <span className={statusClass(item.status)}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td>
-                        {item.current_level} → {item.target_level}
-                      </td>
-                      <td>
-                        {formatEstimatedHours(
-                          item.estimated_hours,
-                          item.estimated_hours_parsed,
-                        )}
-                      </td>
-                      <td>{item.actual_hours ?? 0}</td>
+              <div className="table-scroll">
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>成员</th>
+                      <th>能力路径</th>
+                      <th>优先级</th>
+                      <th>月份</th>
+                      <th>季度</th>
+                      <th>状态</th>
+                      <th>当前 → 目标</th>
+                      <th>预计时长</th>
+                      <th>实际时长</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.full_name}</td>
+                        <td>{formatCapabilityPath(item)}</td>
+                        <td>
+                          <span className={priorityClass(item.priority)}>
+                            {item.priority}
+                          </span>
+                        </td>
+                        <td>
+                          {item.plan_month ? `${item.plan_month}月` : '-'}
+                        </td>
+                        <td>{item.plan_quarter ?? '-'}</td>
+                        <td>
+                          <span className={statusClass(item.status)}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td>
+                          {item.current_level} → {item.target_level}
+                        </td>
+                        <td>
+                          {formatEstimatedHours(
+                            item.estimated_hours,
+                            item.estimated_hours_parsed,
+                          )}
+                        </td>
+                        <td>{item.actual_hours ?? 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               <div
                 className="form-actions"
