@@ -1,0 +1,262 @@
+/* User management — search/filter toolbar + compact table. */
+.sectionHead {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.sectionHead h2 {
+  margin-bottom: 0;
+}
+
+.createButton {
+  background: #175cd3;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 16px;
+}
+
+.createButton:hover,
+.rowAction:hover {
+  filter: brightness(0.97);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.searchBox {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.searchBox input {
+  width: 100%;
+}
+
+.toolbar select {
+  min-width: 130px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.userTable {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.userTable th,
+.userTable td {
+  border-bottom: 1px solid #eaecf0;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.userTable th {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.userTable td {
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.userTable th:first-child,
+.userTable td:first-child {
+  padding-left: 0;
+}
+
+.userTable th:last-child,
+.userTable td:last-child {
+  padding-right: 0;
+}
+
+.pillEnabled,
+.pillDisabled {
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.pillEnabled {
+  background: #e7f4ea;
+  color: #027a48;
+}
+
+.pillDisabled {
+  background: #f2f4f7;
+  color: #475467;
+}
+
+.rowAction {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.emptyState {
+  color: #667085;
+  margin: 18px 2px;
+}
+
+/* User drawer — same visual language as the capability-map edit drawer:
+   header / scrollable body / fixed footer, all module-scoped so no global
+   form rule can override this form's layout. */
+.userDrawerMask {
+  background: rgb(16 24 40 / 32%);
+  inset: 0;
+  position: fixed;
+  z-index: 49;
+}
+
+.userDrawer {
+  background: #fff;
+  border-left: 1px solid #d0d5dd;
+  box-shadow: -10px 0 28px rgb(16 24 40 / 16%);
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: min(460px, 100vw);
+  z-index: 50;
+}
+
+.userDrawer:focus {
+  outline: none;
+}
+
+.userDrawerHeader {
+  align-items: flex-start;
+  border-bottom: 1px solid #eaecf0;
+  display: flex;
+  flex-shrink: 0;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 24px 24px 16px;
+}
+
+.userDrawerHeader h2 {
+  font-size: 20px;
+  margin-bottom: 3px;
+}
+
+.userDrawerHeader p:last-child {
+  color: #475467;
+  margin: 0;
+}
+
+.drawerClose {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+  padding: 5px 9px;
+}
+
+.sectionKicker {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}
+
+.userDrawerForm {
+  background: transparent;
+  border: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+/* Short forms: fields stack at content height, free space stays at the
+   bottom of the body — same rule that fixed the capability-map drawer. */
+.userDrawerBody {
+  align-content: start;
+  display: grid;
+  flex: 1;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.userDrawerFooter {
+  border-top: 1px solid #eaecf0;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding: 14px 24px;
+}
+
+/* Checkbox rows use an explicit module class (a module sub-selector such as
+   .userDrawerForm .checkbox would hash .checkbox and never match the DOM). */
+.userDrawerCheckbox {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.userDrawerCheckbox input[type='checkbox'] {
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  width: 16px;
+}
+
+.rolePicker {
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+}
+
+.levelHelp {
+  background: #f5f8ff;
+  border-left: 3px solid #175cd3;
+  color: #344054;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 9px 12px;
+}
+
+.configScope {
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
