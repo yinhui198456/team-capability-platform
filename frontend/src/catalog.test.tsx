@@ -1154,3 +1154,257 @@ describe('Leader catalog controls', () => {
     )
   })
 })
+
+describe('capability model edit drawer', () => {
+  async function renderModelPage() {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+  }
+
+  async function expandFirstL2() {
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    await screen.findByTestId('l3-row-P01.01.01')
+  }
+
+  it('opens the edit drawer for L1 with level, code and name in the title', async () => {
+    stubLeader()
+    await renderModelPage()
+
+    fireEvent.click(screen.getByTestId('l1-edit-P01'))
+
+    const dialog = screen.getByRole('dialog', {
+      name: /编辑能力域 P01 Data Infra 能力/,
+    })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(within(dialog).getByRole('heading', { level: 2 }).textContent).toBe(
+      'P01',
+    )
+    expect(within(dialog).getByText('Data Infra 能力')).toBeTruthy()
+    expect(
+      (within(dialog).getByLabelText('名称') as HTMLInputElement).value,
+    ).toBe('Data Infra 能力')
+    expect(
+      (within(dialog).getByLabelText('一级概述') as HTMLInputElement).value,
+    ).toBe('P01 一级概述')
+  })
+
+  it('opens the edit drawer for L2 with its own code and name', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l2-edit-P01.01'))
+
+    const dialog = screen.getByRole('dialog', {
+      name: /编辑能力标准 P01\.01 Data Infra 产品体系认知/,
+    })
+    expect(within(dialog).getByLabelText('P4 描述')).toBeTruthy()
+    expect(
+      (within(dialog).getByLabelText('名称') as HTMLInputElement).value,
+    ).toBe('Data Infra 产品体系认知')
+  })
+
+  it('opens the edit drawer for L3 and renders no inline editor at page bottom', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+
+    const dialog = screen.getByRole('dialog', {
+      name: /编辑达成路径 P01\.01\.01 TDC \/ TDH \/ ArgoDB \/ TDS 产品定位/,
+    })
+    expect(
+      (within(dialog).getByLabelText('建议起始等级') as HTMLInputElement).value,
+    ).toBe('P6')
+    expect(
+      (within(dialog).getByLabelText('原始学习材料') as HTMLInputElement).value,
+    ).toBe('P01-M001、A8')
+    expect(
+      within(dialog).getByLabelText(/P01-M001 · 产品体系材料/),
+    ).toBeTruthy()
+    // The old bottom-of-page inline editor is gone: no heading of the old
+    // "编辑 <code> (<type>)" form, and no form rendered directly on the page.
+    expect(
+      screen.queryByRole('heading', { name: '编辑 P01.01.01 (L3)' }),
+    ).toBeNull()
+    expect(document.querySelector('section.page > form')).toBeNull()
+    // The form lives inside the dialog only.
+    expect(dialog.querySelector('form')).toBeTruthy()
+  })
+
+  it('focuses the first field when the drawer opens', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    expect(document.activeElement).toBe(screen.getByLabelText('名称'))
+  })
+
+  it('closes the edit drawer with Escape and restores focus', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    const editButton = screen.getByTestId('l3-edit-P01.01.01')
+    fireEvent.click(editButton)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(editButton)
+  })
+
+  it('closes the edit drawer with 取消 and restores focus', async () => {
+    stubLeader()
+    await renderModelPage()
+
+    const editButton = screen.getByTestId('l1-edit-P01')
+    fireEvent.click(editButton)
+    fireEvent.click(screen.getByText('取消'))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(editButton)
+  })
+
+  it('closes the edit drawer via the mask', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l2-edit-P01.01'))
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('node-edit-mask'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('traps Tab focus inside the edit drawer', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    const dialog = screen.getByTestId('node-edit-drawer')
+    const closeButton = within(dialog).getByRole('button', {
+      name: '关闭编辑抽屉',
+    })
+    const cancelButton = within(dialog).getByText('取消')
+
+    // Tab from the last focusable wraps to the first (close button).
+    cancelButton.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    // Shift+Tab from the first focusable wraps to the last.
+    closeButton.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(cancelButton)
+  })
+
+  it('keeps input and shows an actionable error when saving fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input === '/api/auth/me') {
+          return response({
+            id: 1,
+            username: 'leader',
+            full_name: 'Leader User',
+            roles: ['Leader'],
+          })
+        }
+        if (
+          String(input).startsWith('/api/capability-model') &&
+          init?.method === 'PUT'
+        ) {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: () => Promise.resolve({ detail: '节点名称已存在' }),
+          })
+        }
+        if (String(input).startsWith('/api/capability-model')) {
+          return response(model)
+        }
+        return response(resources)
+      }),
+    )
+    await renderModelPage()
+
+    fireEvent.click(screen.getByTestId('l1-edit-P01'))
+    const nameInput = screen.getByLabelText('名称')
+    fireEvent.change(nameInput, { target: { value: '新名称' } })
+    fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('节点名称已存在'),
+    )
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe(
+      '新名称',
+    )
+  })
+
+  it('closes the drawer, refreshes the model and restores focus after a successful save', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    const editButton = screen.getByTestId('l3-edit-P01.01.01')
+    fireEvent.click(editButton)
+    const modelGetCalls = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => url === '/api/capability-model').length
+    const before = modelGetCalls()
+
+    fireEvent.click(screen.getByText('保存'))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(modelGetCalls()).toBeGreaterThan(before)
+    expect(document.activeElement).toBe(editButton)
+    // Current domain and expansion position are preserved after refresh.
+    expect(
+      screen.getByTestId('l2-toggle-P01.01').getAttribute('aria-expanded'),
+    ).toBe('true')
+    expect(
+      screen.getByRole('tab', { name: /P01/ }).getAttribute('aria-selected'),
+    ).toBe('true')
+  })
+
+  it('does not keep stale form state across edited objects', async () => {
+    stubLeader()
+    await renderModelPage()
+
+    fireEvent.click(screen.getByTestId('l1-edit-P01'))
+    expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe(
+      'Data Infra 能力',
+    )
+    fireEvent.click(screen.getByText('取消'))
+
+    await expandFirstL2()
+    fireEvent.click(screen.getByTestId('l2-edit-P01.01'))
+    expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe(
+      'Data Infra 产品体系认知',
+    )
+    expect(screen.queryByLabelText('一级概述')).toBeNull()
+  })
+
+  it('keeps edit entries hidden for Member on the model page', async () => {
+    stubMember()
+    await renderModelPage()
+    await expandFirstL2()
+
+    expect(screen.queryByTestId('l1-edit-P01')).toBeNull()
+    expect(screen.queryByTestId('l2-edit-P01.01')).toBeNull()
+    expect(screen.queryByTestId('l3-edit-P01.01.01')).toBeNull()
+    expect(screen.queryByText('编辑节点')).toBeNull()
+  })
+})

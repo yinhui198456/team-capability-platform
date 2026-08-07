@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -102,6 +103,7 @@ function NodeEditForm({
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const drawerRef = useRef<HTMLElement | null>(null)
 
   const isL3 = node.nodeType === 'L3'
   const isL2 = node.nodeType === 'L2'
@@ -145,67 +147,141 @@ function NodeEditForm({
     setResourceCodes(next)
   }
 
+  // Put focus on the first field as soon as the drawer is on screen.
+  useLayoutEffect(() => {
+    drawerRef.current?.querySelector<HTMLElement>('input')?.focus()
+  }, [])
+
+  // Esc closes the drawer (never while a save is in flight).
+  useEffect(() => {
+    if (saving) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [saving, onClose])
+
+  // Keep Tab focus inside the drawer.
+  function handleDrawerKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Tab') return
+    const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    )
+    if (!focusable || focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
-    <form className="edit-form" onSubmit={handleSubmit}>
-      <h3>
-        编辑 {node.code} ({node.nodeType})
-      </h3>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {textField('名称', name, setName, { required: true })}
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        启用
-      </label>
-      {node.nodeType === 'L1' && textField('一级概述', overview, setOverview)}
-      {isL2 && (
-        <>
-          {textField('P4 描述', p4, setP4)}
-          {textField('P5 描述', p5, setP5)}
-          {textField('P6 描述', p6, setP6)}
-          {textField('P7 描述', p7, setP7)}
-          {textField('P8 描述', p8, setP8)}
-        </>
-      )}
-      {isL3 && (
-        <>
-          {textField('建议起始等级', recommended, setRecommended)}
-          {textField('原始学习材料', materialsText, setMaterialsText)}
-          {textField('预期输出', expectedOutput, setExpectedOutput)}
-          {textField('预计时长', estimatedHours, setEstimatedHours)}
-          {textField('输出类型', outputType, setOutputType)}
-          {textField('备注', notes, setNotes)}
-          <fieldset className="link-set">
-            <legend>关联资源</legend>
-            {resources.map((resource) => (
-              <label className="checkbox" key={resource.material_code}>
-                <input
-                  type="checkbox"
-                  checked={new Set(resourceCodes).has(resource.material_code)}
-                  onChange={() => toggleResource(resource.material_code)}
-                />
-                {resource.material_code} · {resource.name}
-              </label>
-            ))}
-          </fieldset>
-        </>
-      )}
-      <div className="form-actions">
-        <button type="submit" disabled={saving}>
-          保存
-        </button>
-        <button type="button" onClick={onClose} disabled={saving}>
-          取消
-        </button>
-      </div>
-    </form>
+    <>
+      <div
+        className={styles.editDrawerMask}
+        data-testid="node-edit-mask"
+        onClick={onClose}
+      />
+      <aside
+        ref={drawerRef}
+        className={`${styles.drawer} ${styles.editDrawer}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="node-edit-kicker node-edit-title node-edit-subtitle"
+        data-testid="node-edit-drawer"
+        tabIndex={-1}
+        onKeyDown={handleDrawerKeyDown}
+      >
+        <div className={`${styles.drawerHeader} ${styles.editDrawerHeader}`}>
+          <div>
+            <p className={styles.sectionKicker} id="node-edit-kicker">
+              编辑{SEARCH_KIND_LABEL[node.nodeType]}
+            </p>
+            <h2 id="node-edit-title">{node.code}</h2>
+            <p id="node-edit-subtitle">{node.name}</p>
+          </div>
+          <button
+            type="button"
+            className={styles.drawerClose}
+            aria-label="关闭编辑抽屉"
+            onClick={onClose}
+            disabled={saving}
+          >
+            ×
+          </button>
+        </div>
+        <form
+          className={`edit-form ${styles.editDrawerForm}`}
+          onSubmit={handleSubmit}
+        >
+          <div className={styles.editDrawerBody}>
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            {textField('名称', name, setName, { required: true })}
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(event) => setEnabled(event.target.checked)}
+              />
+              启用
+            </label>
+            {node.nodeType === 'L1' &&
+              textField('一级概述', overview, setOverview)}
+            {isL2 && (
+              <>
+                {textField('P4 描述', p4, setP4)}
+                {textField('P5 描述', p5, setP5)}
+                {textField('P6 描述', p6, setP6)}
+                {textField('P7 描述', p7, setP7)}
+                {textField('P8 描述', p8, setP8)}
+              </>
+            )}
+            {isL3 && (
+              <>
+                {textField('建议起始等级', recommended, setRecommended)}
+                {textField('原始学习材料', materialsText, setMaterialsText)}
+                {textField('预期输出', expectedOutput, setExpectedOutput)}
+                {textField('预计时长', estimatedHours, setEstimatedHours)}
+                {textField('输出类型', outputType, setOutputType)}
+                {textField('备注', notes, setNotes)}
+                <fieldset className="link-set">
+                  <legend>关联资源</legend>
+                  {resources.map((resource) => (
+                    <label className="checkbox" key={resource.material_code}>
+                      <input
+                        type="checkbox"
+                        checked={new Set(resourceCodes).has(
+                          resource.material_code,
+                        )}
+                        onChange={() => toggleResource(resource.material_code)}
+                      />
+                      {resource.material_code} · {resource.name}
+                    </label>
+                  ))}
+                </fieldset>
+              </>
+            )}
+          </div>
+          <div className={`form-actions ${styles.editDrawerFooter}`}>
+            <button type="submit" disabled={saving}>
+              保存
+            </button>
+            <button type="button" onClick={onClose} disabled={saving}>
+              取消
+            </button>
+          </div>
+        </form>
+      </aside>
+    </>
   )
 }
 
@@ -491,6 +567,8 @@ export function CapabilityModelPage() {
   const drawerRef = useRef<HTMLElement | null>(null)
   const returnFocusCode = useRef<string | null>(null)
   const restoreFocus = useRef(false)
+  const editReturnFocusId = useRef<string | null>(null)
+  const editRestoreFocus = useRef(false)
   const hashHandled = useRef(false)
   const consumedFocusTarget = useRef('')
 
@@ -539,6 +617,14 @@ export function CapabilityModelPage() {
       restoreFocus.current = false
     }
   }, [selectedL3])
+
+  useLayoutEffect(() => {
+    if (editingNode) return
+    if (editRestoreFocus.current && editReturnFocusId.current) {
+      document.getElementById(editReturnFocusId.current)?.focus()
+      editRestoreFocus.current = false
+    }
+  }, [editingNode])
 
   useEffect(() => {
     if (!focusTarget || focusTarget === consumedFocusTarget.current) return
@@ -656,8 +742,10 @@ export function CapabilityModelPage() {
     )
   }
 
-  function startEdit(node: EditableNode) {
+  function startEdit(node: EditableNode, returnFocusId: string) {
     closeBeforeNavigation()
+    editReturnFocusId.current = returnFocusId
+    editRestoreFocus.current = true
     setEditingNode(node)
   }
 
@@ -832,14 +920,19 @@ export function CapabilityModelPage() {
                 <button
                   type="button"
                   className="inline-edit"
+                  id={`l1-edit-${currentDomain.code}`}
+                  data-testid={`l1-edit-${currentDomain.code}`}
                   onClick={() =>
-                    startEdit({
-                      code: currentDomain.code,
-                      nodeType: 'L1',
-                      name: currentDomain.name,
-                      enabled: true,
-                      overview: currentDomain.overview,
-                    })
+                    startEdit(
+                      {
+                        code: currentDomain.code,
+                        nodeType: 'L1',
+                        name: currentDomain.name,
+                        enabled: true,
+                        overview: currentDomain.overview,
+                      },
+                      `l1-edit-${currentDomain.code}`,
+                    )
                   }
                 >
                   编辑
@@ -906,19 +999,23 @@ export function CapabilityModelPage() {
                         <button
                           type="button"
                           className="inline-edit"
+                          id={`l2-edit-${l2.code}`}
                           data-testid={`l2-edit-${l2.code}`}
                           onClick={() =>
-                            startEdit({
-                              code: l2.code,
-                              nodeType: 'L2',
-                              name: l2.name,
-                              enabled: true,
-                              p4_description: l2.p4_description,
-                              p5_description: l2.p5_description,
-                              p6_description: l2.p6_description,
-                              p7_description: l2.p7_description,
-                              p8_description: l2.p8_description,
-                            })
+                            startEdit(
+                              {
+                                code: l2.code,
+                                nodeType: 'L2',
+                                name: l2.name,
+                                enabled: true,
+                                p4_description: l2.p4_description,
+                                p5_description: l2.p5_description,
+                                p6_description: l2.p6_description,
+                                p7_description: l2.p7_description,
+                                p8_description: l2.p8_description,
+                              },
+                              `l2-edit-${l2.code}`,
+                            )
                           }
                         >
                           编辑
@@ -1045,24 +1142,29 @@ export function CapabilityModelPage() {
                                   <button
                                     type="button"
                                     className={`inline-edit ${styles.l3Edit}`}
+                                    id={`l3-edit-${l3.code}`}
                                     data-testid={`l3-edit-${l3.code}`}
                                     onClick={() =>
-                                      startEdit({
-                                        code: l3.code,
-                                        nodeType: 'L3',
-                                        name: l3.name,
-                                        enabled: true,
-                                        recommended_start_level:
-                                          l3.recommended_start_level,
-                                        materials_text: l3.materials_text,
-                                        expected_output: l3.expected_output,
-                                        estimated_hours: l3.estimated_hours,
-                                        output_type: l3.output_type,
-                                        notes: l3.notes,
-                                        resource_codes: l3.resources.map(
-                                          (resource) => resource.material_code,
-                                        ),
-                                      })
+                                      startEdit(
+                                        {
+                                          code: l3.code,
+                                          nodeType: 'L3',
+                                          name: l3.name,
+                                          enabled: true,
+                                          recommended_start_level:
+                                            l3.recommended_start_level,
+                                          materials_text: l3.materials_text,
+                                          expected_output: l3.expected_output,
+                                          estimated_hours: l3.estimated_hours,
+                                          output_type: l3.output_type,
+                                          notes: l3.notes,
+                                          resource_codes: l3.resources.map(
+                                            (resource) =>
+                                              resource.material_code,
+                                          ),
+                                        },
+                                        `l3-edit-${l3.code}`,
+                                      )
                                     }
                                   >
                                     编辑节点
@@ -1253,6 +1355,7 @@ export function CapabilityModelPage() {
 
       {editingNode && (
         <NodeEditForm
+          key={editingNode.code}
           node={editingNode}
           resources={resources ?? []}
           onClose={() => setEditingNode(null)}
