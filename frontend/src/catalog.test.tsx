@@ -1254,6 +1254,28 @@ describe('capability model edit drawer', () => {
     expect(dialog.querySelector('[class*="editDrawerFooter"]')).toBeTruthy()
   })
 
+  it('styles drawer checkbox rows with the module class, not the global one', async () => {
+    stubLeader()
+    await renderModelPage()
+    await expandFirstL2()
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    const dialog = screen.getByRole('dialog')
+    const checkboxes = dialog.querySelectorAll('[class*="editDrawerCheckbox"]')
+    // 启用 row plus one row per linked resource.
+    expect(checkboxes.length).toBeGreaterThanOrEqual(2)
+    for (const label of checkboxes) {
+      // The module class is hashed in production; a global sub-selector
+      // (.editDrawerForm .checkbox) would hash .checkbox and miss the DOM.
+      expect(label.className).not.toContain('checkbox"')
+      expect(label.className).not.toBe('checkbox')
+      expect(label.classList.contains('checkbox')).toBe(false)
+    }
+    expect(
+      dialog.querySelector('input[type="checkbox"]')?.getAttribute('type'),
+    ).toBe('checkbox')
+  })
+
   it('focuses the first field when the drawer opens', async () => {
     stubLeader()
     await renderModelPage()

@@ -223,7 +223,7 @@ function NodeEditForm({
               </p>
             )}
             {textField('名称', name, setName, { required: true })}
-            <label className="checkbox">
+            <label className={styles.editDrawerCheckbox}>
               <input
                 type="checkbox"
                 checked={enabled}
@@ -253,7 +253,10 @@ function NodeEditForm({
                 <fieldset className="link-set">
                   <legend>关联资源</legend>
                   {resources.map((resource) => (
-                    <label className="checkbox" key={resource.material_code}>
+                    <label
+                      className={styles.editDrawerCheckbox}
+                      key={resource.material_code}
+                    >
                       <input
                         type="checkbox"
                         checked={new Set(resourceCodes).has(

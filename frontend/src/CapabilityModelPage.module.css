@@ -626,6 +626,7 @@
 }
 
 .editDrawerBody {
+  align-content: start;
   display: grid;
   flex: 1;
   gap: 14px;
@@ -647,15 +648,19 @@
   font-size: 14px;
 }
 
-.editDrawerForm .checkbox {
+/* Checkbox rows use an explicit module class (a module sub-selector such as
+   .editDrawerForm .checkbox would hash .checkbox and never match the DOM). */
+.editDrawerCheckbox {
   align-items: center;
   display: flex;
   gap: 8px;
 }
 
-.editDrawerForm .checkbox input[type='checkbox'] {
+.editDrawerCheckbox input[type='checkbox'] {
+  height: 16px;
   margin: 0;
-  width: auto;
+  padding: 0;
+  width: 16px;
 }
 
 @media (max-width: 900px) {
