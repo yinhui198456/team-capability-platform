@@ -106,6 +106,12 @@ function PlanItemCard({ item }: { item: CapabilityProfilePlanItem }) {
     item.estimated_hours,
     item.estimated_hours_parsed,
   )
+  const scope =
+    item.scope_type === 'current_required'
+      ? '必备'
+      : item.scope_type === 'target_progressive'
+        ? '进阶'
+        : null
   return (
     <article className={styles.planItem} aria-label={`计划项：${item.l3_code}`}>
       <div className={styles.planItemHeader}>
@@ -122,6 +128,10 @@ function PlanItemCard({ item }: { item: CapabilityProfilePlanItem }) {
         </span>
         <Badge>{item.priority}</Badge>
         <span className={styles.taskMetaItem}>预计 {estimated}</span>
+        {scope && <Badge>{scope}</Badge>}
+        {item.source_assessment_id != null && (
+          <span className={styles.taskMetaItem}>来源自评</span>
+        )}
       </div>
     </article>
   )
@@ -210,10 +220,10 @@ function AnnualStatistics({ profile }: { profile: CapabilityProfile }) {
           </span>
         </div>
         <div className={styles.statRow}>
-          <span className={styles.statLabel}>Evidence 统计</span>
+          <span className={styles.statLabel}>任务成果证明 统计</span>
           <span className={styles.statValue}>
             {evidenceStats.length === 0
-              ? '无 Evidence'
+              ? '无 任务成果证明'
               : evidenceStats
                   .map(([status, count]) => `${status} ${count}`)
                   .join(' · ')}
@@ -284,15 +294,17 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
                 )}
 
                 {task.evidences.length === 0 ? (
-                  <p className={styles.emptyState}>暂无 Evidence</p>
+                  <p className={styles.emptyState}>暂无 任务成果证明</p>
                 ) : (
                   <div className={styles.evidenceList}>
-                    <div className={styles.statLabel}>Evidence 审核结果</div>
+                    <div className={styles.statLabel}>
+                      任务成果证明 审核结果
+                    </div>
                     {task.evidences.map((evidence) => (
                       <article
                         key={evidence.id}
                         className={styles.evidenceItem}
-                        aria-label={`Evidence 版本 ${evidence.version_number}：${item.l3_code}`}
+                        aria-label={`任务成果证明 版本 ${evidence.version_number}：${item.l3_code}`}
                       >
                         <div className={styles.evidenceHeader}>
                           <strong>版本 {evidence.version_number}</strong>
@@ -310,6 +322,43 @@ function LearningTaskTimeline({ profile }: { profile: CapabilityProfile }) {
               </article>
             )
           })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function MonthlyReviews({ profile }: { profile: CapabilityProfile }) {
+  return (
+    <section className={styles.card} aria-label="月度复盘记录">
+      <h2 className={styles.cardTitle}>月度复盘记录</h2>
+      {profile.monthly_reviews.length === 0 ? (
+        <p className={styles.emptyState}>暂无月度复盘记录</p>
+      ) : (
+        <div className={styles.reviewList}>
+          {profile.monthly_reviews.map((review) => (
+            <article
+              key={review.id}
+              className={styles.reviewItem}
+              aria-label={`月度复盘：${review.month} 月`}
+            >
+              <div className={styles.reviewHeader}>
+                <strong>{review.month} 月</strong>
+                <span className={styles.assessmentDate}>
+                  更新于 {formatDate(review.updated_at)}
+                </span>
+              </div>
+              <p className={styles.reviewOutput}>{review.main_output ?? '—'}</p>
+              <div className={styles.reviewHistory}>
+                <div className={styles.statLabel}>修订历史（不可变）</div>
+                {review.history.map((entry) => (
+                  <div key={entry.revision} className={styles.logItem}>
+                    v{entry.revision} · {formatDate(entry.changed_at) ?? '—'}
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
         </div>
       )}
     </section>
@@ -501,10 +550,10 @@ export function ProfilePage() {
               unit="小时"
             />
             <KpiCard
-              label="已归档 Evidence"
+              label="已归档任务成果证明"
               value={kpi.archived}
               unit="个"
-              hint="仅通过 Review 的 Evidence"
+              hint="任务完成后归档的已通过记录"
             />
             <KpiCard
               label="能力评估"
@@ -561,6 +610,7 @@ export function ProfilePage() {
           </div>
 
           <LearningTaskTimeline profile={profile} />
+          <MonthlyReviews profile={profile} />
         </>
       )}
     </section>

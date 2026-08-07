@@ -7,6 +7,7 @@ import {
 } from '../fixtures/team-analytics-mock'
 
 const VIEWPORTS = [
+  { name: '1920x1080', width: 1920, height: 1080 },
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1280x800', width: 1280, height: 800 },
 ] as const
@@ -62,7 +63,7 @@ async function assertKpis(
   const kpis = page.getByLabel('团队关键指标')
   await expect(kpis).toContainText(`计划完成率${expected.planCompletionRate}`)
   await expect(kpis).toContainText(
-    `Evidence 通过率${expected.evidencePassRate}`,
+    `任务成果证明 通过率${expected.evidencePassRate}`,
   )
   await expect(kpis).toContainText(`延期计划项${expected.overdueCount}`)
 }
@@ -91,9 +92,12 @@ for (const viewport of VIEWPORTS) {
       await expect(filters.getByLabel('能力域')).toContainText('C03 · 学习创新')
 
       const kpis = page.getByLabel('团队关键指标')
-      for (const label of ['计划完成率', 'Evidence 通过率', '延期计划项']) {
+      for (const label of ['计划完成率', '任务成果证明 通过率', '延期计划项']) {
         await expect(kpis).toContainText(label)
       }
+      const gaps = page.getByLabel('差距分布')
+      await expect(gaps).toContainText('当前必修差距')
+      await expect(gaps).toContainText('进阶目标差距')
       // Self-assessment rate must not appear per Issue #28
       await expect(kpis).not.toContainText('自评完成率')
 
@@ -341,7 +345,7 @@ test.describe('UI-05 cross-viewport business value consistency', () => {
           kpis.locator('article:has-text("计划完成率") strong'),
         ).toHaveText(scenario.expected.planCompletionRate)
         await expect(
-          kpis.locator('article:has-text("Evidence 通过率") strong'),
+          kpis.locator('article:has-text("任务成果证明 通过率") strong'),
         ).toHaveText(scenario.expected.evidencePassRate)
         await expect(
           kpis.locator('article:has-text("延期计划项") strong'),
@@ -352,17 +356,25 @@ test.describe('UI-05 cross-viewport business value consistency', () => {
 })
 
 test.describe('UI-05 team capability analysis permission boundary', () => {
-  test('Member cannot access team analytics', async ({ page }) => {
+  test('Member can access scoped team analytics', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
+    await mockTeamAnalyticsData(page)
     await loginAs(page, 'member')
     await page.goto('/operations/analytics')
-    await expect(page.getByText(/无权限/)).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '团队能力分析' }),
+    ).toBeVisible()
+    await expect(page.getByLabel('团队关键指标')).toBeVisible()
   })
 
-  test('Buddy cannot access team analytics', async ({ page }) => {
+  test('Buddy can access scoped team analytics', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
+    await mockTeamAnalyticsData(page)
     await loginAs(page, 'buddy')
     await page.goto('/operations/analytics')
-    await expect(page.getByText(/无权限/)).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '团队能力分析' }),
+    ).toBeVisible()
+    await expect(page.getByLabel('团队关键指标')).toBeVisible()
   })
 })

@@ -24,10 +24,8 @@ from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.migrations import run_migrations
 from app.planning.repository import (
-    create_growth_goal,
     create_progress_log,
-    generate_plan_items,
-    list_eligible_gaps,
+    list_plan_items,
 )
 from app.planning.schema import create_planning_schema
 from tests.standard_target_support import create_scoped_draft
@@ -40,11 +38,19 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS schema_migration")
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan_domain")
         connection.execute("DROP TABLE IF EXISTS team_annual_capability_plan")
+        connection.execute("DROP TABLE IF EXISTS monthly_review_history")
+        connection.execute("DROP TABLE IF EXISTS monthly_review")
         connection.execute("DROP TABLE IF EXISTS capability_profile")
         connection.execute("DROP TABLE IF EXISTS evidence_review")
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
         connection.execute("DROP TABLE IF EXISTS annual_growth_plan")
@@ -57,6 +63,9 @@ def _reset_full_schema(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
         connection.execute("DROP TABLE IF EXISTS tcp_role")
         connection.execute("DROP TABLE IF EXISTS tcp_user")
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -69,8 +78,8 @@ def team_analytics_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_full_schema(connection)
     create_access_schema(connection)
     create_assessment_schema(connection)
-    create_planning_schema(connection)
     create_catalog_schema(connection)
+    create_planning_schema(connection)
     return connection
 
 
@@ -314,7 +323,15 @@ def _submit_and_approve_assessment(
     submit_assessment(connection, assessment_id, member_id, expected_revision=2)
     pending = get_pending_reviews_for_buddy(connection, buddy_id)
     review = next(r for r in pending if r["assessment_id"] == assessment_id)
-    submit_assessment_review(connection, review["id"], buddy_id, "认可", "符合预期")
+    submit_assessment_review(
+        connection,
+        review["id"],
+        buddy_id,
+        "认可",
+        "符合预期",
+        expected_revision=3,
+        assessment_id_from_url=assessment_id,
+    )
     return assessment_id
 
 
@@ -325,11 +342,9 @@ def _create_plan_item_data(
     year: int,
     details: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    # Approval atomically creates the plan, items and tasks.
     _submit_and_approve_assessment(connection, member_id, buddy_id, year, details)
-    eligible = list_eligible_gaps(connection, member_id)
-    for gap in eligible:
-        create_growth_goal(connection, member_id, int(gap["id"]))
-    return generate_plan_items(connection, member_id)
+    return list_plan_items(connection, member_id)
 
 
 def _build_two_member_team(
@@ -423,6 +438,14 @@ def _build_two_member_team(
         """,
         (5, "2026-05-31", p02_item_a["id"]),
     )
+    # v0010: logs require a running task — start, log, then close.
+    connection.execute(
+        "UPDATE learning_task SET status = '进行中' WHERE id = %s",
+        (p01_task_a[0],),
+    )
+    create_progress_log(
+        connection, member_a_id, int(p01_task_a[0]), "2026-03-10", 5, "日志"
+    )
     connection.execute(
         """
         UPDATE learning_task
@@ -438,9 +461,6 @@ def _build_two_member_team(
         WHERE id = %s
         """,
         (p01_item_a["id"],),
-    )
-    create_progress_log(
-        connection, member_a_id, int(p01_task_a[0]), "2026-03-10", 5, "日志"
     )
     connection.execute(
         """
@@ -472,7 +492,7 @@ def _build_two_member_team(
     return member_a_id, member_b_id, _login(connection, "team_leader")
 
 
-def test_team_analytics_requires_leader(
+def test_team_analytics_read_scope(
     team_analytics_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(team_analytics_schema, "member_only", ["Member"])
@@ -485,12 +505,15 @@ def test_team_analytics_requires_leader(
     status, _, _ = _request("GET", "/api/planning/team-analytics?year=2026")
     assert status == 401
 
+    # Member, Buddy and Admin now have read access to their scoped data.
     for username in ("member_only", "buddy_only", "admin_only"):
         cookies = _login(team_analytics_schema, username)
-        status, _, _ = _request(
+        status, body, _ = _request(
             "GET", "/api/planning/team-analytics?year=2026", cookies=cookies
         )
-        assert status == 403, f"{username} should not access team analytics"
+        assert status == 200, f"{username} should access scoped team analytics"
+        assert body is not None
+        assert body["meta"]["source"] == "team_analytics.v2"
 
     for username in ("leader_user", "admin_leader"):
         cookies = _login(team_analytics_schema, username)
@@ -499,6 +522,7 @@ def test_team_analytics_requires_leader(
         )
         assert status == 200, f"{username} should access team analytics"
         assert body is not None
+        assert body["meta"]["scope"] == "leader_team"
 
 
 def test_team_analytics_rejects_invalid_domain(
@@ -548,6 +572,14 @@ def test_team_analytics_empty_data_returns_zero_aggregates(
     assert status == 200
     assert body is not None
     assert body["year"] == 2026
+    assert body["meta"]["year"] == 2026
+    assert body["meta"]["scope"] == "leader_team"
+    assert body["meta"]["source"] == "team_analytics.v2"
+    assert body["gap_summary"] == {
+        "current_required": 0,
+        "target_progressive": 0,
+        "derivation": "scope_v1",
+    }
     assert body["kpis"]["assessment_completion_rate"] == 0.0
     assert body["kpis"]["plan_completion_rate"] == 0.0
     assert body["kpis"]["evidence_pass_rate"] == 0.0
@@ -557,6 +589,25 @@ def test_team_analytics_empty_data_returns_zero_aggregates(
     assert body["member_attainment"] == []
     assert len(body["monthly_trends"]) == 12
     assert body["overdue_items"] == []
+    assert body["distributions"] == {
+        "priority": {"高": 0, "中": 0, "低": 0, "total": 0},
+        "formal_inclusion_ratio": {
+            "included_count": 0,
+            "total_count": 0,
+            "ratio": 0.0,
+        },
+        "quarterly": {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0, "total": 0},
+        "plan_status": {
+            "未开始": 0,
+            "进行中": 0,
+            "已完成": 0,
+            "延期": 0,
+            "暂停": 0,
+            "取消": 0,
+            "total": 0,
+        },
+        "pending_acceptance": {"count": 0},
+    }
 
 
 def test_team_analytics_aggregates_match_data(
@@ -585,6 +636,21 @@ def test_team_analytics_aggregates_match_data(
     assert kpis["evidence_pass_rate"] == 0.5
     assert kpis["overdue_plan_item_count"] == 2
 
+    gap_summary = body["gap_summary"]
+    gap_count = team_analytics_schema.execute(
+        """
+        SELECT COUNT(*)
+        FROM gap g
+        JOIN assessment a ON a.id = g.assessment_id
+        WHERE a.year = %s AND a.status != '草稿'
+        """,
+        (2026,),
+    ).fetchone()[0]
+    assert (
+        gap_summary["current_required"] + gap_summary["target_progressive"] == gap_count
+    )
+    assert gap_summary["derivation"] in {"scope_v1", "legacy_fallback"}
+
     averages = {row["domain_code"]: row for row in body["domain_averages"]}
     assert len(averages) == 6
     assert averages["P01"]["actual"] == pytest.approx(2.5, rel=1e-3)
@@ -606,13 +672,14 @@ def test_team_analytics_aggregates_match_data(
     )
 
     trends = {row["month"]: row for row in body["monthly_trends"]}
-    assert trends[3]["planned_count"] == 2
+    assert trends[3]["planned_count"] == 0
     assert trends[3]["actual_count"] == 1
-    assert trends[3]["planned_hours"] == 20
+    assert trends[3]["planned_hours"] == 0
     assert trends[3]["actual_hours"] == 5
-    assert trends[3]["cumulative_planned_rate"] == pytest.approx(2 / 3, rel=1e-3)
+    assert trends[3]["cumulative_planned_rate"] == 0.0
     assert trends[3]["cumulative_actual_rate"] == pytest.approx(1 / 3, rel=1e-3)
-    assert trends[5]["planned_count"] == 1
+    assert trends[5]["planned_count"] == 3
+    assert trends[5]["planned_hours"] == 30
     assert trends[5]["cumulative_planned_rate"] == 1.0
     assert trends[5]["cumulative_actual_rate"] == pytest.approx(1 / 3, rel=1e-3)
 
@@ -622,6 +689,31 @@ def test_team_analytics_aggregates_match_data(
     assert overdue_members == {member_a_id, member_b_id}
     assert all(item["l2_code"] is not None for item in overdue)
     assert all(item["l3_name"] is not None for item in overdue)
+
+    distributions = body["distributions"]
+    assert distributions["priority"] == {"高": 3, "中": 0, "低": 0, "total": 3}
+    assert distributions["formal_inclusion_ratio"] == {
+        "included_count": 3,
+        "total_count": 3,
+        "ratio": 1.0,
+    }
+    assert distributions["quarterly"] == {
+        "Q1": 0,
+        "Q2": 3,
+        "Q3": 0,
+        "Q4": 0,
+        "total": 3,
+    }
+    assert distributions["plan_status"] == {
+        "未开始": 2,
+        "进行中": 0,
+        "已完成": 1,
+        "延期": 0,
+        "暂停": 0,
+        "取消": 0,
+        "total": 3,
+    }
+    assert distributions["pending_acceptance"] == {"count": 0}
 
 
 def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
@@ -642,11 +734,11 @@ def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
     )
     assert status == 200
     assert body is not None
-    march = next(row for row in body["monthly_trends"] if row["month"] == 3)
-    assert march["planned_hours_min"] == 8
-    assert march["planned_hours_max"] == 12
-    assert march["planned_hours"] == 8
-    assert march["planned_hours_max"] != 46
+    may = next(row for row in body["monthly_trends"] if row["month"] == 5)
+    assert may["planned_hours_min"] == 18
+    assert may["planned_hours_max"] == 22
+    assert may["planned_hours"] == 18
+    assert may["planned_hours_max"] != 46
 
 
 def test_team_analytics_domain_filter_restricts_aggregates(
@@ -771,3 +863,58 @@ def test_team_analytics_preserves_personal_plan_endpoints(
     assert status == 200
     assert body is not None
     assert body["kpis"]["plan_total_count"] == 1
+
+
+def test_team_analytics_member_scope_isolation(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    member_a_id, member_b_id, leader_cookies = _build_two_member_team(
+        team_analytics_schema
+    )
+
+    member_a_cookies = _login(team_analytics_schema, "member_a")
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=member_a_cookies
+    )
+    assert status == 200
+    assert body["filters"]["member_id"] is None
+    assert body["meta"]["scope"] == "本人"
+    assert body["kpis"]["plan_total_count"] == 2
+
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_b_id}",
+        cookies=member_a_cookies,
+    )
+    assert status == 403
+
+
+def test_team_analytics_buddy_scope_isolation(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    member_a_id, member_b_id, _ = _build_two_member_team(team_analytics_schema)
+    buddy_cookies = _login(team_analytics_schema, "team_buddy")
+
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert body["meta"]["scope"] == "buddy_assigned"
+    assert body["kpis"]["plan_total_count"] == 3
+
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_a_id}",
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert body["kpis"]["plan_total_count"] == 2
+
+    extra_id = _create_test_user(team_analytics_schema, "extra_member", ["Member"])
+    team_analytics_schema.commit()
+    status, _, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={extra_id}",
+        cookies=buddy_cookies,
+    )
+    assert status == 403

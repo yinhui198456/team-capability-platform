@@ -192,7 +192,16 @@ export function useMe() {
 
   const user = hasProvider ? auth.user : directUser
   const loading = hasProvider ? auth.loading : directLoading
-  return { user, loading, isLeader: user?.roles.includes('Leader') ?? false }
+  const roles = user?.roles ?? []
+  return {
+    user,
+    loading,
+    roles,
+    isLeader: roles.includes('Leader'),
+    isAdmin: roles.includes('Admin'),
+    isBuddy: roles.includes('Buddy'),
+    isMember: roles.includes('Member'),
+  }
 }
 
 export function enabledDomains(model: CapabilityModel | null) {

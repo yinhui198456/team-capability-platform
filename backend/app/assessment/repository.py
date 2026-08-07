@@ -4,7 +4,10 @@ from typing import Any
 
 import psycopg
 
-from ..access.repository import get_primary_buddy, is_member_assigned_to_buddy
+from ..access.repository import (
+    get_primary_buddy,
+    is_current_responsible_buddy,
+)
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .scope import AssessmentScopeError, compute_assessment_scope
 
@@ -25,6 +28,31 @@ class AssessmentValidationError(ValueError):
         self.l3_node_id = l3_node_id
         self.field = field
         self.reason = reason
+
+
+class ReviewError(ValueError):
+    """Structured Review write failure (409/422/403).
+
+    ``status_code`` is the HTTP status the API should return; never a 500 and
+    never a raw database constraint exception.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 409,
+        l3_node_id: int | None = None,
+        l3_code: str | None = None,
+        field: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+        self.l3_node_id = l3_node_id
+        self.l3_code = l3_code
+        self.field = field
 
 
 class DetailValidationError(ValueError):
@@ -2538,6 +2566,12 @@ def get_assessment_reviews(
 def get_pending_reviews_for_buddy(
     connection: psycopg.Connection, buddy_id: int
 ) -> list[dict[str, object]]:
+    """Pending assessment reviews for the member's *current* responsible Buddy.
+
+    Authorisation is dynamic: after a relationship switch the new Buddy sees
+    (and may take over) the pending task while the old Buddy immediately loses
+    access.  ``assessment_review.buddy_id`` stays the assignment-time snapshot.
+    """
     rows = connection.execute(
         """
         SELECT ar.id, ar.assessment_id, ar.sequence, ar.buddy_id, ar.status,
@@ -2545,7 +2579,16 @@ def get_pending_reviews_for_buddy(
                a.submitted_at
         FROM assessment_review ar
         JOIN assessment a ON a.id = ar.assessment_id
-        WHERE ar.buddy_id = %s AND ar.status = '待复核'
+        JOIN buddy_relationship br ON br.member_id = a.member_id
+        JOIN tcp_user u ON u.id = br.buddy_id
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id AND r.code = 'Buddy'
+        WHERE br.buddy_id = %s
+          AND br.is_primary = TRUE
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+          AND u.is_active = TRUE
+          AND ar.status = '待复核'
         ORDER BY a.submitted_at ASC NULLS LAST
         """,
         (buddy_id,),
@@ -2567,47 +2610,927 @@ def get_pending_reviews_for_buddy(
     ]
 
 
+_REVIEW_LOCK_NAMESPACE = "tcp62_review_plan"
+
+
+def _review_fingerprint(
+    assessment_id: int,
+    expected_revision: int,
+    conclusion: str,
+    feedback_token: str,
+    buddy_id: int,
+    review_sequence: int,
+) -> str:
+    payload = (
+        f"{assessment_id}|{expected_revision}|{conclusion}|"
+        f"{feedback_token}|{buddy_id}|{review_sequence}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _lookup_idempotency(
+    connection: psycopg.Connection,
+    buddy_id: int,
+    idempotency_key: str,
+    fingerprint: str,
+) -> dict[str, object] | None:
+    """Return the stored response for a matching key, or raise on key reuse."""
+    row = connection.execute(
+        """
+        SELECT fingerprint, response FROM review_idempotency_key
+        WHERE buddy_id = %s AND idempotency_key = %s
+        """,
+        (buddy_id, idempotency_key),
+    ).fetchone()
+    if row is None:
+        return None
+    stored_fingerprint = str(row[0])
+    if stored_fingerprint != fingerprint:
+        raise ReviewError(
+            "idempotency_key_reused",
+            "idempotency key was already used with a different payload",
+        )
+    response = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+    return {**response, "idempotent_replayed": True}
+
+
+def _save_idempotency(
+    connection: psycopg.Connection,
+    buddy_id: int,
+    idempotency_key: str,
+    assessment_id: int,
+    review_id: int,
+    fingerprint: str,
+    response: dict[str, object],
+) -> dict[str, object]:
+    """Insert the idempotency row; a concurrent unique conflict is handled with
+    a savepoint: re-read and replay (same fingerprint) or 409 (reused)."""
+    connection.execute("SAVEPOINT idem_sp")
+    try:
+        connection.execute(
+            """
+            INSERT INTO review_idempotency_key (
+                buddy_id, idempotency_key, assessment_id, review_id,
+                fingerprint, response
+            )
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                buddy_id,
+                idempotency_key,
+                assessment_id,
+                review_id,
+                fingerprint,
+                json.dumps(response, ensure_ascii=False),
+            ),
+        )
+        connection.execute("RELEASE SAVEPOINT idem_sp")
+    except psycopg.errors.UniqueViolation:
+        connection.execute("ROLLBACK TO SAVEPOINT idem_sp")
+        replay = _lookup_idempotency(connection, buddy_id, idempotency_key, fingerprint)
+        if replay is not None:
+            return replay
+        raise ReviewError(
+            "idempotency_key_reused",
+            "idempotency key was already used with a different payload",
+        ) from None
+    return response
+
+
+def _frozen_detail_rows(
+    connection: psycopg.Connection, assessment_id: int
+) -> list[tuple[Any, ...]]:
+    return connection.execute(
+        """
+        SELECT ad.id, ad.l3_node_id, ad.l3_code, ad.l3_name,
+               ad.l1_code, ad.l1_name, ad.l2_code, ad.l2_name,
+               ad.scope_type, ad.current_level, ad.standard_target_level,
+               ad.adjusted_target_level, ad.target_level, ad.gap_value,
+               ad.member_priority, ad.include_in_plan, ad.plan_quarter,
+               ad.plan_month, ad.standard_job_level_snapshot, ad.target_adjusted,
+               ad.target_adjustment_reason, ad.target_compatibility_error
+        FROM assessment_detail ad
+        WHERE ad.assessment_id = %s AND ad.include_in_plan = TRUE
+        ORDER BY ad.l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+
+
+def _planning_snapshot_for(
+    connection: psycopg.Connection,
+    version_id: int,
+    l3_node_id: int,
+) -> tuple[Any, ...] | None:
+    return connection.execute(
+        """
+        SELECT id, materials_text, expected_output, estimated_hours, l3_name
+        FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id = %s AND l3_node_id = %s
+        """,
+        (version_id, l3_node_id),
+    ).fetchone()
+
+
+def _resolve_detail_l3_node_id(
+    connection: psycopg.Connection,
+    version_id: int,
+    detail_id: Any,
+    l3_node_id: Any,
+    l3_code: Any,
+) -> int:
+    """Canonical node id for an approval-path detail.
+
+    Compatibility-repaired legacy drafts may carry a NULL l3_node_id while
+    l3_code still identifies the standard item (observed in #65 UAT: Buddy
+    final approval crashed with a 500 TypeError on int(None)).  Resolve the
+    node through the immutable planning snapshot of the bound standard
+    version and, inside the same atomic approval transaction, stamp it back
+    onto the detail so downstream frozen rows satisfy the composite FK to
+    assessment_detail.  Insufficient or ambiguous identity stays a
+    controlled 422 — canonical validation is never skipped and exceptions
+    never swallowed.
+    """
+    if l3_node_id is not None:
+        return int(l3_node_id)
+    rows = connection.execute(
+        """
+        SELECT DISTINCT l3_node_id
+        FROM capability_standard_planning_snapshot
+        WHERE capability_standard_version_id = %s AND l3_code = %s
+        """,
+        (version_id, str(l3_code)),
+    ).fetchall()
+    if len(rows) == 1:
+        resolved = int(rows[0][0])
+        connection.execute(
+            "UPDATE assessment_detail SET l3_node_id = %s WHERE id = %s",
+            (resolved, int(detail_id)),
+        )
+        return resolved
+    if not rows:
+        raise ReviewError(
+            "planning_snapshot_missing",
+            "missing immutable planning source snapshot",
+            status_code=422,
+            l3_code=str(l3_code),
+        )
+    raise ReviewError(
+        "planning_snapshot_ambiguous",
+        "legacy detail code does not resolve to a unique planning snapshot",
+        status_code=422,
+        l3_code=str(l3_code),
+    )
+
+
+def _derive_legacy_included_scope(
+    connection: psycopg.Connection,
+    assessment: dict[str, object],
+    unscoped: list[tuple[Any, ...]],
+) -> None:
+    """Issue #65: derive the missing frozen scope of legacy included details.
+
+    Legacy (pre-scope) drafts never froze scope_type and the member UI has no
+    control for it, so Buddy final approval of a legitimate legacy assessment
+    was blocked with planning_snapshot_incomplete (observed in UAT on three
+    included repair-lineage details).
+
+    Legacy drafts are canonically measured against the member's annual TARGET
+    job level: the compat repair flow (_baseline_item_for_detail) resolves
+    applicability and the standard target from the bound version's matrix row
+    at the frozen target job level only, and treats a detail whose target-level
+    row is not applicable as not plannable.  Under that same immutable contract
+    the only scope a legacy included detail can carry is "target_progressive"
+    with the target job level snapshot.  It is derived only when the
+    target-level matrix row exists (UNIQUE(version_id, l3_node_id, job_level)
+    makes it unique), is applicable and agrees with every other frozen
+    canonical field; a populated scope_type is never touched, and missing or
+    conflicting evidence stays a controlled 422 instead of manufacturing a
+    scope.  The stamp runs inside the caller's atomic approval transaction, so
+    any later failure rolls it back together with everything else.
+    """
+    version_id = int(assessment["capability_standard_version_id"])
+    target_job = str(assessment["member_target_level_snapshot"])
+    for detail_id, node_id, code, frozen_target, frozen_job in unscoped:
+        resolved_node = _resolve_detail_l3_node_id(
+            connection, version_id, detail_id, node_id, code
+        )
+        row = connection.execute(
+            """
+            SELECT applicable, target_level
+            FROM capability_standard_item
+            WHERE version_id = %s AND l3_node_id = %s AND job_level = %s
+            """,
+            (version_id, resolved_node, target_job),
+        ).fetchone()
+        if row is None:
+            raise ReviewError(
+                "planning_snapshot_incomplete",
+                "published standard matrix is incomplete for legacy detail",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if not bool(row[0]) or row[1] is None:
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "canonical standard marks the included legacy detail not "
+                "applicable at the member target level",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if frozen_target is not None and int(frozen_target) != int(row[1]):
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "frozen standard target conflicts with the canonical standard "
+                "for the resolved scope",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        if frozen_job is not None and str(frozen_job) != target_job:
+            raise ReviewError(
+                "planning_snapshot_conflict",
+                "frozen standard job level conflicts with the resolved scope",
+                status_code=422,
+                l3_node_id=resolved_node,
+                l3_code=str(code),
+            )
+        connection.execute(
+            """
+            UPDATE assessment_detail
+            SET scope_type = 'target_progressive',
+                standard_job_level_snapshot = %s
+            WHERE id = %s
+            """,
+            (target_job, int(detail_id)),
+        )
+
+
+def _resolve_detail_frozen_lineage(
+    connection: psycopg.Connection,
+    detail: tuple[Any, ...],
+    node_id: int,
+    snapshot: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Issue #65: derive missing frozen lineage for legacy approval details.
+
+    Compat-repaired legacy details may carry NULL l1/l2/l3 name/code columns
+    (only l3_code survives); the proposal-detail NOT NULL contract and the
+    plan_item approval-completeness CHECK then surfaced as an uncontrolled
+    500 (observed in UAT on the F3 retry).  Fresh drafts freeze these columns
+    from the node's catalog ancestry at creation; legacy rows derive them at
+    approval time from the same canonical source: l1/l2 from the resolved
+    node's ancestry (node codes are stable identity; the hierarchy is
+    enforced by CHECK + trigger) and l3_name from the immutable version-bound
+    planning snapshot.  Only NULL columns are stamped — populated frozen
+    values are never re-derived (frozen-after-rename semantics) — and the
+    stamp shares the caller's atomic approval transaction, so any later
+    failure rolls it back with everything else.  A node whose ancestry
+    cannot be resolved stays a controlled 422, never a 500.
+    """
+    if all(detail[i] is not None for i in (3, 4, 5, 6, 7)):
+        return detail
+    lineage = connection.execute(
+        """
+        SELECT l1.code, l1.name, l2.code, l2.name
+        FROM capability_node AS n
+        JOIN capability_node AS l2
+          ON l2.id = n.parent_node_id AND l2.node_type = 'L2'
+        JOIN capability_node AS l1
+          ON l1.id = l2.parent_node_id AND l1.node_type = 'L1'
+        WHERE n.id = %s AND n.node_type = 'L3'
+        """,
+        (node_id,),
+    ).fetchone()
+    if lineage is None:
+        raise ReviewError(
+            "planning_snapshot_incomplete",
+            "canonical node lineage is incomplete for legacy detail",
+            status_code=422,
+            l3_node_id=node_id,
+            l3_code=str(detail[2]),
+        )
+    derived = (
+        str(snapshot[4]),
+        str(lineage[0]),
+        str(lineage[1]),
+        str(lineage[2]),
+        str(lineage[3]),
+    )
+    connection.execute(
+        """
+        UPDATE assessment_detail
+        SET l3_name = COALESCE(l3_name, %s),
+            l1_code = COALESCE(l1_code, %s),
+            l1_name = COALESCE(l1_name, %s),
+            l2_code = COALESCE(l2_code, %s),
+            l2_name = COALESCE(l2_name, %s)
+        WHERE id = %s
+        """,
+        (*derived, int(detail[0])),
+    )
+    patched = list(detail)
+    for index, value in zip((3, 4, 5, 6, 7), derived, strict=True):
+        if patched[index] is None:
+            patched[index] = value
+    return tuple(patched)
+
+
+def _insert_plan_item_and_task(
+    connection: psycopg.Connection,
+    plan_id: int,
+    assessment: dict[str, object],
+    detail: tuple[Any, ...],
+    snapshot: tuple[Any, ...],
+) -> tuple[int, int]:
+    """Insert one Plan Item (full frozen source snapshot) and its 1:1 Task."""
+    (
+        detail_id,
+        l3_node_id,
+        l3_code,
+        l3_name,
+        l1_code,
+        l1_name,
+        l2_code,
+        l2_name,
+        scope_type,
+        current_level,
+        standard_target_level,
+        adjusted_target_level,
+        effective_target_level,
+        gap_value,
+        member_priority,
+        include_in_plan,
+        plan_quarter,
+        plan_month,
+        standard_job_level_snapshot,
+        _target_adjusted,
+        _adjustment_reason,
+        _compatibility_error,
+    ) = detail
+    snapshot_id = int(snapshot[0])
+    item = connection.execute(
+        """
+        INSERT INTO plan_item (
+            annual_growth_plan_id, growth_goal_id, l3_code, current_level,
+            target_level, priority, learning_material, learning_task_content,
+            expected_output, estimated_hours, plan_start_date, plan_end_date,
+            target_month, status, source_assessment_id,
+            source_assessment_detail_id, capability_standard_version_id,
+            planning_snapshot_id, l3_node_id, l1_code, l1_name, l2_code,
+            l2_name, l3_name, scope_type, standard_target_level,
+            adjusted_target_level, effective_target_level,
+            standard_job_level_snapshot, member_current_level_snapshot,
+            member_target_level_snapshot, plan_quarter, plan_month,
+            planning_source_type, assessment_revision, gap_value,
+            include_in_plan
+        )
+        VALUES (
+            %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL, NULL,
+            '未开始', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, 'assessment_approval', %s, %s, TRUE
+        )
+        RETURNING id
+        """,
+        (
+            plan_id,
+            l3_code,
+            current_level,
+            effective_target_level,
+            member_priority,
+            snapshot[1],
+            snapshot[4],
+            snapshot[2],
+            snapshot[3],
+            int(assessment["id"]),
+            detail_id,
+            int(assessment["capability_standard_version_id"]),
+            snapshot_id,
+            l3_node_id,
+            l1_code,
+            l1_name,
+            l2_code,
+            l2_name,
+            l3_name,
+            scope_type,
+            standard_target_level,
+            adjusted_target_level,
+            effective_target_level,
+            standard_job_level_snapshot,
+            assessment["member_current_level_snapshot"],
+            assessment["member_target_level_snapshot"],
+            plan_quarter,
+            plan_month,
+            int(assessment["revision"]),
+            gap_value,
+        ),
+    ).fetchone()
+    assert item is not None
+    task = connection.execute(
+        """
+        INSERT INTO learning_task (plan_item_id, l3_code, status)
+        VALUES (%s, %s, '未开始')
+        RETURNING id
+        """,
+        (int(item[0]), l3_code),
+    ).fetchone()
+    assert task is not None
+    return int(item[0]), int(task[0])
+
+
+def _approve_first_assessment(
+    connection: psycopg.Connection,
+    assessment: dict[str, object],
+    member_id: int,
+    year: int,
+) -> dict[str, object]:
+    """Create the formal Annual Plan (shell included), one Item + one Task per
+    include_in_plan=TRUE detail.  All writes share the caller's transaction."""
+    plan_row = connection.execute(
+        """
+        INSERT INTO annual_growth_plan (
+            member_id, year, status, source_assessment_id, planning_source_type
+        )
+        VALUES (%s, %s, '制定中', %s, 'assessment_approval')
+        RETURNING id
+        """,
+        (member_id, year, int(assessment["id"])),
+    ).fetchone()
+    assert plan_row is not None
+    plan_id = int(plan_row[0])
+    version_id = int(assessment["capability_standard_version_id"])
+    items_created = 0
+    tasks_created = 0
+    for detail in _frozen_detail_rows(connection, int(assessment["id"])):
+        node_id = _resolve_detail_l3_node_id(
+            connection, version_id, detail[0], detail[1], detail[2]
+        )
+        snapshot = _planning_snapshot_for(connection, version_id, node_id)
+        if snapshot is None:
+            raise ReviewError(
+                "planning_snapshot_missing",
+                "missing immutable planning source snapshot",
+                status_code=422,
+                l3_node_id=node_id,
+                l3_code=str(detail[2]),
+            )
+        detail = (detail[0], node_id) + tuple(detail[2:])
+        detail = _resolve_detail_frozen_lineage(connection, detail, node_id, snapshot)
+        item_id, task_id = _insert_plan_item_and_task(
+            connection, plan_id, assessment, detail, snapshot
+        )
+        items_created += 1
+        tasks_created += 1
+    return {
+        "created": True,
+        "plan_id": plan_id,
+        "items_created": items_created,
+        "tasks_created": tasks_created,
+        "target_is_legacy": None,
+    }
+
+
+def _approve_with_proposal(
+    connection: psycopg.Connection,
+    assessment: dict[str, object],
+    member_id: int,
+    year: int,
+    buddy_id: int,
+    target_plan_id: int,
+    target_is_legacy: bool,
+) -> dict[str, object]:
+    """Subsequent approval: only an atomic Change Proposal with full frozen
+    details; the formal plan, its items and tasks are never touched."""
+    items = _frozen_detail_rows(connection, int(assessment["id"]))
+    summary = {
+        "source_assessment_id": int(assessment["id"]),
+        "source_assessment_version": int(assessment["version"]),
+        "source_assessment_revision": int(assessment["revision"]),
+        "year": year,
+        "member_id": member_id,
+        "items_count": len(items),
+        "target_annual_growth_plan_id": target_plan_id,
+        "target_is_legacy": target_is_legacy,
+    }
+    proposal = connection.execute(
+        """
+        INSERT INTO annual_plan_change_proposal (
+            member_id, year, source_assessment_id,
+            target_annual_growth_plan_id, status, created_by, summary
+        )
+        VALUES (%s, %s, %s, %s, '待处理', %s, %s::jsonb)
+        RETURNING id
+        """,
+        (
+            member_id,
+            year,
+            int(assessment["id"]),
+            target_plan_id,
+            buddy_id,
+            json.dumps(summary, ensure_ascii=False),
+        ),
+    ).fetchone()
+    assert proposal is not None
+    proposal_id = int(proposal[0])
+    version_id = int(assessment["capability_standard_version_id"])
+    for detail in items:
+        node_id = _resolve_detail_l3_node_id(
+            connection, version_id, detail[0], detail[1], detail[2]
+        )
+        snapshot = _planning_snapshot_for(connection, version_id, node_id)
+        if snapshot is None:
+            raise ReviewError(
+                "planning_snapshot_missing",
+                "missing immutable planning source snapshot",
+                status_code=422,
+                l3_node_id=node_id,
+                l3_code=str(detail[2]),
+            )
+        detail = _resolve_detail_frozen_lineage(connection, detail, node_id, snapshot)
+        (
+            detail_id,
+            _detail_node_id,
+            l3_code,
+            l3_name,
+            l1_code,
+            l1_name,
+            l2_code,
+            l2_name,
+            scope_type,
+            current_level,
+            standard_target_level,
+            adjusted_target_level,
+            effective_target_level,
+            gap_value,
+            member_priority,
+            include_in_plan,
+            plan_quarter,
+            plan_month,
+            standard_job_level_snapshot,
+            _target_adjusted,
+            _adjustment_reason,
+            _compatibility_error,
+        ) = detail
+        connection.execute(
+            """
+            INSERT INTO annual_plan_change_proposal_detail (
+                proposal_id, source_assessment_detail_id, assessment_id,
+                l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_code,
+                l3_name, scope_type, current_level, standard_target_level,
+                adjusted_target_level, effective_target_level, gap_value,
+                member_priority, include_in_plan, plan_quarter, plan_month,
+                standard_job_level_snapshot, member_current_level_snapshot,
+                member_target_level_snapshot, capability_standard_version_id,
+                planning_snapshot_id, assessment_revision, planning_source_type
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'assessment_approval'
+            )
+            """,
+            (
+                proposal_id,
+                detail_id,
+                int(assessment["id"]),
+                node_id,
+                l1_code,
+                l1_name,
+                l2_code,
+                l2_name,
+                l3_code,
+                l3_name,
+                scope_type,
+                current_level,
+                standard_target_level,
+                adjusted_target_level,
+                effective_target_level,
+                gap_value,
+                member_priority,
+                include_in_plan,
+                plan_quarter,
+                plan_month,
+                standard_job_level_snapshot,
+                assessment["member_current_level_snapshot"],
+                assessment["member_target_level_snapshot"],
+                version_id,
+                int(snapshot[0]),
+                int(assessment["revision"]),
+            ),
+        )
+    return {
+        "created": True,
+        "proposal_id": proposal_id,
+        "target_annual_growth_plan_id": target_plan_id,
+        "target_is_legacy": target_is_legacy,
+    }
+
+
+def validate_assessment_canonical(
+    connection: psycopg.Connection,
+    assessment_id: int,
+    *,
+    require_planning_snapshot: bool = False,
+) -> None:
+    """Full #61 canonical submission validation, reused by the approval lock.
+
+    Runs the exact same rules as member submit; approval additionally requires
+    an immutable planning snapshot for every include_in_plan=TRUE detail.
+    """
+    _validate_submission(connection, assessment_id)
+    if not require_planning_snapshot:
+        return
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise ReviewError("assessment_not_found", "assessment not found")
+    version_id = assessment.get("capability_standard_version_id")
+    if version_id is None:
+        raise ReviewError(
+            "assessment_scope_required",
+            "assessment has no bound standard version",
+            status_code=422,
+        )
+    missing = connection.execute(
+        """
+        SELECT ad.l3_node_id, ad.l3_code
+        FROM assessment_detail ad
+        WHERE ad.assessment_id = %s AND ad.include_in_plan = TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM capability_standard_planning_snapshot sp
+              WHERE sp.capability_standard_version_id = %s
+                AND (
+                    sp.l3_node_id = ad.l3_node_id
+                    OR (ad.l3_node_id IS NULL AND sp.l3_code = ad.l3_code)
+                )
+          )
+        ORDER BY ad.l3_code
+        """,
+        (assessment_id, int(version_id)),
+    ).fetchall()
+    for node_id, code in missing:
+        raise ReviewError(
+            "planning_snapshot_missing",
+            "missing immutable planning source snapshot",
+            status_code=422,
+            l3_node_id=int(node_id) if node_id is not None else None,
+            l3_code=str(code),
+        )
+    # P1-2 (2nd review): the frozen plan-item/proposal-detail contract requires
+    # the member level snapshots and a scope_type on every included row.  The
+    # DB CHECK is the last line; here the approval path returns a structured
+    # 422 instead of letting a DB CheckViolation surface as 500.
+    if not assessment.get("member_current_level_snapshot") or not assessment.get(
+        "member_target_level_snapshot"
+    ):
+        raise ReviewError(
+            "assessment_scope_required",
+            "assessment member level snapshots are required for approval",
+            status_code=422,
+        )
+    unscoped = connection.execute(
+        """
+        SELECT id, l3_node_id, l3_code, standard_target_level,
+               standard_job_level_snapshot
+        FROM assessment_detail
+        WHERE assessment_id = %s AND include_in_plan = TRUE
+          AND scope_type IS NULL
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    if unscoped and assessment.get("assessment_scope_version") is None:
+        # Legacy drafts never froze scope_type; derive it from the immutable
+        # target-level matrix row when the canonical evidence is unique and
+        # consistent, otherwise raise a controlled 422 (never a 500).
+        _derive_legacy_included_scope(connection, assessment, unscoped)
+        unscoped = []
+    for _detail_id, node_id, code, _frozen_target, _frozen_job in unscoped:
+        raise ReviewError(
+            "planning_snapshot_incomplete",
+            "included detail requires a frozen scope_type",
+            status_code=422,
+            l3_node_id=int(node_id) if node_id is not None else None,
+            l3_code=str(code),
+        )
+    # P1-C (3rd review): the standard target is unconditionally frozen on
+    # every included row — the DB CHECK is the last line; here the approval
+    # path returns a structured 422 instead of a CheckViolation 500.
+    missing_standard_target = connection.execute(
+        """
+        SELECT l3_node_id, l3_code
+        FROM assessment_detail
+        WHERE assessment_id = %s AND include_in_plan = TRUE
+          AND standard_target_level IS NULL
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    for node_id, code in missing_standard_target:
+        raise ReviewError(
+            "planning_snapshot_incomplete",
+            "included detail requires a frozen standard target level",
+            status_code=422,
+            l3_node_id=int(node_id) if node_id is not None else None,
+            l3_code=str(code),
+        )
+
+
 def submit_assessment_review(
     connection: psycopg.Connection,
     review_id: int,
     buddy_id: int,
     conclusion: str,
     feedback: str | None,
-) -> None:
+    *,
+    expected_revision: int,
+    assessment_id_from_url: int,
+    idempotency_key: str | None = None,
+) -> dict[str, object]:
     if conclusion not in ("认可", "建议调整"):
-        raise ValueError("invalid conclusion")
+        raise ReviewError("invalid_conclusion", "invalid conclusion", status_code=422)
+    feedback_token = (feedback or "").strip()
+    if conclusion == "建议调整" and not feedback_token:
+        raise ReviewError(
+            "feedback_required",
+            "建议调整 requires non-empty feedback",
+            status_code=422,
+        )
+
+    # Phase 0: read member/year without locks to acquire the business lock.
+    pre = connection.execute(
+        """
+        SELECT ar.assessment_id, ar.sequence, ar.status, a.member_id, a.year
+        FROM assessment_review ar
+        JOIN assessment a ON a.id = ar.assessment_id
+        WHERE ar.id = %s
+        """,
+        (review_id,),
+    ).fetchone()
+    if pre is None:
+        raise ReviewError("review_not_found", "review not found", status_code=404)
+    assessment_id = int(pre[0])
+    sequence = int(pre[1])
+    member_id = int(pre[3])
+    year = int(pre[4])
+    if assessment_id != assessment_id_from_url:
+        raise ReviewError(
+            "assessment_mismatch",
+            "review does not belong to the assessment in the URL",
+            status_code=409,
+        )
+    fingerprint = _review_fingerprint(
+        assessment_id,
+        expected_revision,
+        conclusion,
+        feedback_token,
+        buddy_id,
+        sequence,
+    )
 
     with connection.transaction():
-        row = connection.execute(
+        # 1. Early idempotency replay (pre-lock).
+        if idempotency_key:
+            replay = _lookup_idempotency(
+                connection, buddy_id, idempotency_key, fingerprint
+            )
+            if replay is not None:
+                return replay
+
+        # 2. P1-2: fixed global lock order — buddy relationship lock first,
+        # then the member+year review/plan lock, then the row locks.  The
+        # relationship write path takes only the first lock, so the orders can
+        # never deadlock; holding the relationship lock until commit closes the
+        # TOCTOU where an Admin switches/ends the relationship between the
+        # permission re-read and the Review commit.
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"tcp_buddy_relationship:{member_id}",),
+        )
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"{_REVIEW_LOCK_NAMESPACE}:{member_id}:{year}",),
+        )
+        arow = connection.execute(
             """
-            SELECT ar.assessment_id, ar.buddy_id, ar.status, a.member_id
-            FROM assessment_review ar
-            JOIN assessment a ON a.id = ar.assessment_id
-            WHERE ar.id = %s
+            SELECT id, member_id, year, revision, status,
+                   capability_standard_version_id, version,
+                   member_current_level_snapshot, member_target_level_snapshot
+            FROM assessment WHERE id = %s FOR UPDATE
+            """,
+            (assessment_id,),
+        ).fetchone()
+        if arow is None:
+            raise ReviewError(
+                "assessment_not_found", "assessment not found", status_code=404
+            )
+        if int(arow[1]) != member_id or int(arow[2]) != year:
+            raise ReviewError(
+                "assessment_mismatch",
+                "assessment membership changed during review",
+            )
+        # Locked idempotency re-check: after the business locks are held but
+        # before any state validation, so a concurrent same-key request replays
+        # instead of being rejected as already-reviewed.
+        if idempotency_key:
+            replay = _lookup_idempotency(
+                connection, buddy_id, idempotency_key, fingerprint
+            )
+            if replay is not None:
+                return replay
+        if str(arow[4]) != "待复核":
+            if str(arow[4]) in ("已复核", "已归档", "建议调整"):
+                raise ReviewError(
+                    "assessment_already_reviewed",
+                    "assessment was already reviewed",
+                )
+            raise ReviewError("review_not_pending", "assessment is not pending review")
+        if int(arow[3]) != expected_revision:
+            raise ReviewError(
+                "revision_conflict",
+                "revision conflict",
+            )
+
+        rrow = connection.execute(
+            """
+            SELECT id, assessment_id, status FROM assessment_review
+            WHERE id = %s FOR UPDATE
             """,
             (review_id,),
         ).fetchone()
-        if row is None:
-            raise ValueError("review not found")
-        assessment_id, review_buddy_id, review_status, member_id = row
-        if review_status != "待复核":
-            raise ValueError("review is not pending")
-        if int(review_buddy_id) != buddy_id:
-            raise ValueError("review is not assigned to this buddy")
-        if not is_member_assigned_to_buddy(connection, int(member_id), buddy_id):
-            raise ValueError("buddy is not assigned to member")
+        if rrow is None or int(rrow[1]) != assessment_id or str(rrow[2]) != "待复核":
+            raise ReviewError(
+                "review_not_pending",
+                "review is not pending",
+            )
 
+        # 3. Canonical Buddy permission re-check inside the lock.
+        if not is_current_responsible_buddy(connection, member_id, buddy_id):
+            raise ReviewError(
+                "insufficient_permissions",
+                "buddy is not the current responsible buddy for this member",
+                status_code=403,
+            )
+
+        assessment: dict[str, object] = {
+            "id": int(arow[0]),
+            "member_id": int(arow[1]),
+            "year": int(arow[2]),
+            "revision": int(arow[3]),
+            "status": str(arow[4]),
+            "capability_standard_version_id": arow[5],
+            "version": int(arow[6]),
+            "member_current_level_snapshot": arow[7],
+            "member_target_level_snapshot": arow[8],
+        }
+
+        # 5. Close the review (immutable history, actual closer recorded).
         reviewed_at = _now(connection)
         connection.execute(
             """
             UPDATE assessment_review
-            SET conclusion = %s, feedback = %s, reviewed_at = %s, status = '已闭环'
+            SET conclusion = %s, feedback = %s, reviewed_at = %s,
+                status = '已闭环', reviewed_by_buddy_id = %s
             WHERE id = %s
             """,
-            (conclusion, feedback, reviewed_at, review_id),
+            (conclusion, feedback_token or None, reviewed_at, buddy_id, review_id),
         )
 
+        plan_payload: dict[str, object] | None = None
+        proposal_payload: dict[str, object] | None = None
         if conclusion == "认可":
+            validate_assessment_canonical(
+                connection, assessment_id, require_planning_snapshot=True
+            )
+            plan_row = connection.execute(
+                """
+                SELECT id, source_assessment_id FROM annual_growth_plan
+                WHERE member_id = %s AND year = %s
+                FOR UPDATE
+                """,
+                (member_id, year),
+            ).fetchone()
+            if plan_row is None:
+                plan_payload = _approve_first_assessment(
+                    connection, assessment, member_id, year
+                )
+            elif plan_row[1] is not None and int(plan_row[1]) == assessment_id:
+                raise ReviewError(
+                    "inconsistent_plan_source",
+                    "a formal plan already exists for this assessment",
+                )
+            else:
+                proposal_payload = _approve_with_proposal(
+                    connection,
+                    assessment,
+                    member_id,
+                    year,
+                    buddy_id,
+                    int(plan_row[0]),
+                    target_is_legacy=plan_row[1] is None,
+                )
+            # Final visible state is archived (passing through 已复核 internally;
+            # submitted_at is untouched).
             connection.execute(
                 """
                 UPDATE assessment
@@ -2616,7 +3539,8 @@ def submit_assessment_review(
                 """,
                 (assessment_id,),
             )
-            archive_assessment(connection, assessment_id, int(member_id))
+            archive_assessment(connection, assessment_id, member_id)
+            assessment_status = "已归档"
         else:
             connection.execute(
                 """
@@ -2626,6 +3550,41 @@ def submit_assessment_review(
                 """,
                 (assessment_id,),
             )
+            assessment_status = "建议调整"
+
+        next_revision = int(arow[3]) + 1
+        connection.execute(
+            "UPDATE assessment SET revision = %s WHERE id = %s",
+            (next_revision, assessment_id),
+        )
+
+        response: dict[str, object] = {
+            "ok": True,
+            "assessment_status": assessment_status,
+            "assessment_id": assessment_id,
+            "revision": next_revision,
+            "review": {
+                "id": review_id,
+                "sequence": sequence,
+                "conclusion": conclusion,
+                "feedback": feedback_token or None,
+                "reviewed_by_buddy_id": buddy_id,
+            },
+            "plan": plan_payload,
+            "proposal": proposal_payload,
+            "idempotent_replayed": False,
+        }
+        if idempotency_key:
+            response = _save_idempotency(
+                connection,
+                buddy_id,
+                idempotency_key,
+                assessment_id,
+                review_id,
+                fingerprint,
+                response,
+            )
+        return response
 
 
 def get_assessment_review_summary_for_buddy(
@@ -2655,4 +3614,191 @@ def get_assessment_review_summary_for_buddy(
     return {
         "pending_count": int(row[0] or 0),
         "completed_count": int(row[1] or 0),
+    }
+
+
+def _frozen_data_issues(details: list[dict[str, object]]) -> int:
+    """Count inconsistencies visible in frozen details (never fixes them).
+
+    Re-computation is advisory only: canonical target/gap values are never
+    overwritten, mismatches merely surface as data issues for the Buddy.
+    """
+    issues = 0
+    for detail in details:
+        current = detail.get("current_level")
+        target = detail.get("target_level")
+        gap = detail.get("gap_value")
+        if (
+            current is not None
+            and target is not None
+            and gap is not None
+            and int(gap) != max(int(target) - int(current), 0)
+        ):
+            issues += 1
+            continue
+        include = detail.get("include_in_plan")
+        quarter = detail.get("plan_quarter")
+        month = detail.get("plan_month")
+        if include is True and (quarter is None or month is None):
+            issues += 1
+            continue
+        if include is False and (quarter is not None or month is not None):
+            issues += 1
+            continue
+        if detail.get("member_priority") == "暂缓" and include is True:
+            issues += 1
+            continue
+        if (
+            detail.get("target_adjusted")
+            and not (detail.get("target_adjustment_reason") or "").strip()
+        ):
+            issues += 1
+            continue
+        if (
+            quarter is not None
+            and month is not None
+            and not (
+                (quarter == "Q1" and 1 <= int(month) <= 3)
+                or (quarter == "Q2" and 4 <= int(month) <= 6)
+                or (quarter == "Q3" and 7 <= int(month) <= 9)
+                or (quarter == "Q4" and 10 <= int(month) <= 12)
+            )
+        ):
+            issues += 1
+    return issues
+
+
+def _detail_data_issue(detail: dict[str, object]) -> bool:
+    """Advisory per-detail consistency flag (never fixes canonical values)."""
+    current = detail.get("current_level")
+    target = detail.get("target_level")
+    gap = detail.get("gap_value")
+    if (
+        current is not None
+        and target is not None
+        and gap is not None
+        and int(gap) != max(int(target) - int(current), 0)
+    ):
+        return True
+    include = detail.get("include_in_plan")
+    quarter = detail.get("plan_quarter")
+    month = detail.get("plan_month")
+    if include is True and (quarter is None or month is None):
+        return True
+    if include is False and (quarter is not None or month is not None):
+        return True
+    if detail.get("member_priority") == "暂缓" and include is True:
+        return True
+    if (
+        detail.get("target_adjusted")
+        and not (detail.get("target_adjustment_reason") or "").strip()
+    ):
+        return True
+    if (
+        quarter is not None
+        and month is not None
+        and not (
+            (quarter == "Q1" and 1 <= int(month) <= 3)
+            or (quarter == "Q2" and 4 <= int(month) <= 6)
+            or (quarter == "Q3" and 7 <= int(month) <= 9)
+            or (quarter == "Q4" and 10 <= int(month) <= 12)
+        )
+    ):
+        return True
+    return False
+
+
+def get_buddy_review_workspace(
+    connection: psycopg.Connection, assessment_id: int
+) -> dict[str, object] | None:
+    """Buddy Review workspace DTO — frozen facts only, no live catalog reads.
+
+    effective target and gap are read straight from the canonical
+    assessment_detail columns; advisory recomputation only feeds data_issues.
+    """
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        return None
+    details = [d for d in assessment["details"] if d.get("l3_node_id") is not None]
+    scope_details = [d for d in assessment["details"] if d.get("scope_type")]
+    member_id = int(assessment["member_id"])
+    year = int(assessment["year"])
+
+    plan_row = connection.execute(
+        """
+        SELECT id, source_assessment_id FROM annual_growth_plan
+        WHERE member_id = %s AND year = %s
+        """,
+        (member_id, year),
+    ).fetchone()
+    existing_formal_plan = plan_row is not None
+    will_create_proposal = existing_formal_plan and (
+        plan_row[1] is None or int(plan_row[1]) != assessment_id
+    )
+
+    by_quarter = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
+    in_plan = 0
+    adjustments = 0
+    for detail in details:
+        if detail.get("include_in_plan") is True:
+            in_plan += 1
+            quarter = detail.get("plan_quarter")
+            if quarter in by_quarter:
+                by_quarter[quarter] += 1
+        if detail.get("target_adjusted"):
+            adjustments += 1
+
+    summary = {
+        "total": len(assessment["details"]),
+        "current_required": sum(
+            1 for d in scope_details if d.get("scope_type") == "current_required"
+        ),
+        "target_progressive": sum(
+            1 for d in scope_details if d.get("scope_type") == "target_progressive"
+        ),
+        "assessed": sum(
+            1 for d in assessment["details"] if d.get("current_level") is not None
+        ),
+        "gap_items": sum(
+            1 for d in assessment["details"] if (d.get("gap_value") or 0) > 0
+        ),
+        "high": sum(1 for d in details if d.get("member_priority") == "高"),
+        "medium": sum(1 for d in details if d.get("member_priority") == "中"),
+        "low": sum(1 for d in details if d.get("member_priority") == "低"),
+        "hold": sum(1 for d in details if d.get("member_priority") == "暂缓"),
+        "in_plan": in_plan,
+        "by_quarter": by_quarter,
+        "adjustments": adjustments,
+        "data_issues": _frozen_data_issues(assessment["details"]),
+        "existing_formal_plan": existing_formal_plan,
+        "will_create_proposal": will_create_proposal,
+        "target_is_legacy": (
+            bool(plan_row is not None and plan_row[1] is None)
+            if existing_formal_plan
+            else None
+        ),
+    }
+    workspace_details = []
+    for detail in assessment["details"]:
+        detail = dict(detail)
+        detail["data_issue"] = _detail_data_issue(detail)
+        workspace_details.append(detail)
+
+    return {
+        "assessment_id": assessment_id,
+        "member_id": member_id,
+        "year": year,
+        "version": int(assessment["version"]),
+        "assessment_status": str(assessment["status"]),
+        "revision": int(assessment["revision"]),
+        "member_current_level_snapshot": assessment.get(
+            "member_current_level_snapshot"
+        ),
+        "member_target_level_snapshot": assessment.get("member_target_level_snapshot"),
+        "standard_version": {
+            "id": assessment.get("capability_standard_version_id"),
+            "label": assessment.get("standard_version_label"),
+        },
+        "summary": summary,
+        "details": workspace_details,
     }

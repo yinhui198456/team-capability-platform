@@ -21,6 +21,11 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS gap")
         connection.execute("DROP TABLE IF EXISTS assessment_detail")
@@ -370,7 +375,7 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "建议调整", "feedback": "请补充"},
+        {"conclusion": "建议调整", "feedback": "请补充", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
@@ -396,7 +401,7 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
                     }
                 ],
             ),
-            "expected_revision": 3,
+            "expected_revision": 4,
         },
         cookies=member_cookies,
     )
@@ -405,7 +410,7 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 4},
+        {"expected_revision": 5},
         cookies=member_cookies,
     )
     assert status == 200

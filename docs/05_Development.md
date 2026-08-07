@@ -73,14 +73,14 @@
 | Learning Resource | 资源查询与维护 | Leader 维护；其他角色按范围查看 | `/operations/resources` |
 | Assessment / Assessment Detail | 草稿、提交、历史快照 | Member 维护本人；Buddy 复核负责成员；Leader 按团队查看；Admin 全量查看 | `/capability/assessment`、`/capability/assessment/history` |
 | Assessment Review | 自评复核记录创建、反馈、闭环查询 | Buddy 对负责成员指导、复核、反馈；Member 查看本人历史；Admin 全量查看但不因 Admin 身份自动获得 Buddy Review 权限 | `/mentoring/assessment-review`、`/mentoring/feedback` |
-| Gap | Gap 计算、优先级、纳入计划标记 | Member 维护本人；Buddy 提供指导；Leader 查看团队；Admin 全量查看 | `/capability/gap`、`/growth/goals` |
-| Growth Goal | Gap 纳入后的年度目标查询/维护 | Member 维护本人；其他角色按范围查看 | `/growth/goals` |
+| Gap | Gap 计算、优先级、纳入计划标记 | Member 维护本人；Buddy 提供指导；Leader 查看团队；Admin 全量查看 | `/capability/assessment`（原 `/capability/gap`、`/growth/goals` 已重定向并入） |
+| Growth Goal | Gap 纳入后的年度目标查询/维护 | Member 维护本人；其他角色按范围查看 | `/growth/annual-plan` |
 | Annual Growth Plan | 年度计划生成、状态、统计 | Member 维护本人；其他角色按范围查看；生成受统一门禁约束 | `/growth/annual-plan` |
 | Plan Item | L3 计划项查询与执行管理 | Member 维护本人；Buddy/Leader 按范围查看；一个 L3 计划项对应一个 Learning Task | `/growth/annual-plan` |
-| Learning Task | 任务状态、日期、完成判定 | Member 维护本人；Buddy/Leader 按范围查看 | `/growth/tasks`、`/growth/review/monthly` |
-| Learning Progress Log | 日志新增/编辑/查询与时长聚合 | 字段固定为 `task_id`、`record_date`、`actual_hours`、`note`、`recorder`；Member 维护本人，Buddy/Leader 按范围查看，Admin 全量查看；仅聚合时长，不改变任务关系或状态 | `/growth/tasks`、`/growth/review/monthly`、`/dashboard/member`、`/operations/analytics` |
-| Evidence | 草稿、提交、版本历史 | Member 维护本人；历史版本只读；Buddy Review 负责成员；Leader/Admin 按范围查看 | `/growth/tasks`、`/growth/profile` |
-| Evidence Review | Review 队列、结论、反馈、闭环历史 | Buddy 对负责成员执行；Member 查看本人；Leader/Admin 按范围查看；Admin 不因全量查看而自动成为 Review 执行者 | `/mentoring/evidence-review`、`/mentoring/feedback` |
+| Learning Task | 任务状态、日期、完成判定 | Member 维护本人；Buddy/Leader 按范围查看 | `/growth/annual-plan`、`/growth/review/monthly` |
+| Learning Progress Log | 日志新增/作废/更正与时长聚合（追加写，无编辑） | 字段含 `task_id`、`record_date`、`actual_hours`、`note`、`recorder`、`invalidated_at`、`correction_of_log_id`；Member 维护本人，Buddy/Leader 按范围查看，Admin 全量查看；仅聚合时长，不改变任务关系或状态 | `/growth/annual-plan`、`/growth/review/monthly`、`/dashboard/member`、`/operations/analytics` |
+| Evidence | 草稿、提交、版本历史 | Member 维护本人；历史版本只读；Buddy Review 负责成员；Leader/Admin 按范围查看 | `/growth/annual-plan`、`/growth/profile` |
+| Evidence Review | Review 队列、结论、反馈、闭环历史 | Buddy 对负责成员执行；Member 查看本人；Leader/Admin 按范围查看；Admin 不因全量查看而自动成为 Review 执行者 | `/mentoring/evidence-review`（`/mentoring/feedback` 规划中） |
 | Team Annual Capability Plan | 团队年度能力规划发布/归档 | Leader 维护；团队范围查看 | `/operations/team-annual-plan` |
 | Capability Profile | 年度成长档案聚合查询 | Member 本人；Buddy 负责成员；Leader 团队；Admin 全量 | `/growth/profile` |
 | System Config | 年度窗口、首页待办、默认周期等参数查询/维护 | Admin 管理；不建设独立消息中心 | `/system/settings` |
@@ -105,24 +105,25 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 |---|---|---|---|
 | `/dashboard/member` | 我的成长看板 | Member | UI-01 |
 | `/capability/model` | 能力模型 | 全员按权限 | 无固定主原型 |
+| `/capability/standards` | 能力标准版本 | 全员按权限 | 无固定主原型 |
 | `/capability/assessment` | 能力自评 | Member | UI-02 |
-| `/capability/gap` | Gap 分析 | Member / Buddy | UI-02 |
+| `/capability/gap` | Gap 分析（重定向至 `/capability/assessment`） | Member / Buddy | UI-02 |
 | `/capability/assessment/history` | 评估历史 | Member / Buddy | UI-02 历史区 |
-| `/growth/goals` | 成长目标 | Member | UI-02 / UI-03 衔接 |
+| `/growth/goals` | 成长目标（重定向至 `/growth/annual-plan`） | Member | UI-02 / UI-03 衔接 |
 | `/growth/annual-plan` | 年度成长计划 | Member | UI-03 |
-| `/growth/tasks` | 学习任务 | Member | UI-03 |
+| `/growth/tasks` | 学习任务（重定向至 `/growth/annual-plan`） | Member | UI-03 |
 | `/growth/review/monthly` | 月度复盘 | Member / Buddy / Leader | UI-01 / UI-03 数据入口 |
 | `/growth/profile` | 成长档案 | Member | UI-03 结果衔接 |
 | `/mentoring/dashboard` | 辅导成员看板 | Buddy | UI-04 |
-| `/mentoring/assessment-review` | 自评复核 | Buddy | UI-04 |
+| `/mentoring/assessment-review` | 自评复核（重定向至 `/mentoring/dashboard`） | Buddy | UI-04 |
 | `/mentoring/evidence-review` | Evidence Review | Buddy | UI-04 |
-| `/mentoring/feedback` | 反馈记录 | Buddy / Member | UI-04 历史区 |
+| `/mentoring/feedback` | 反馈记录（规划中，暂无路由） | Buddy / Member | UI-04 历史区 |
 | `/operations/resources` | 学习资源 | Leader | 无固定主原型 |
 | `/operations/analytics` | 团队能力分析 | Leader | UI-05 |
 | `/operations/team-annual-plan` | 团队年度能力规划 | Leader | 无固定主原型 |
 | `/system/users` | 用户管理 | Admin | 无固定主原型 |
-| `/system/roles` | 角色权限 | Admin | 无固定主原型 |
-| `/system/settings` | 系统配置 | Admin | 无固定主原型 |
+| `/system/roles` | 角色权限（规划中，暂无路由） | Admin | 无固定主原型 |
+| `/system/settings` | 系统配置（规划中，暂无路由） | Admin | 无固定主原型 |
 
 原型路径固定为：`docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png`、`UI-02-assessment-gap.png`、`UI-03-annual-plan-task.png`、`UI-04-buddy-review-center.png`、`UI-05-team-capability-analysis.png`。
 
@@ -140,9 +141,9 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | 原型 | 主路由/页面 | 实际资产路径 |
 |---|---|---|
 | UI-01 | `/dashboard/member` / 我的成长看板 | `docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png` |
-| UI-02 | `/capability/assessment`、`/capability/gap` / 能力自评与 Gap 分析 | `docs/assets/ui-prototypes/UI-02-assessment-gap.png` |
-| UI-03 | `/growth/annual-plan`、`/growth/tasks` / 年度成长计划与学习任务 | `docs/assets/ui-prototypes/UI-03-annual-plan-task.png` |
-| UI-04 | `/mentoring/dashboard`、`/mentoring/assessment-review`、`/mentoring/evidence-review` / Buddy 复核中心 | `docs/assets/ui-prototypes/UI-04-buddy-review-center.png` |
+| UI-02 | `/capability/assessment` / 能力自评与 Gap 分析（`/capability/gap` 重定向至此） | `docs/assets/ui-prototypes/UI-02-assessment-gap.png` |
+| UI-03 | `/growth/annual-plan` / 年度成长计划与学习任务（`/growth/tasks` 重定向至此） | `docs/assets/ui-prototypes/UI-03-annual-plan-task.png` |
+| UI-04 | `/mentoring/dashboard`、`/mentoring/evidence-review` / Buddy 复核中心（`/mentoring/assessment-review` 重定向至 `/mentoring/dashboard`） | `docs/assets/ui-prototypes/UI-04-buddy-review-center.png` |
 | UI-05 | `/operations/analytics` / 团队能力分析 | `docs/assets/ui-prototypes/UI-05-team-capability-analysis.png` |
 
 ### 4.2 状态与交互契约
@@ -152,11 +153,11 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | Assessment | 草稿 → 待复核 → 已复核或建议调整 → 已归档；调整后新提交产生新的 Review 记录 | 保存草稿、提交、查看 Gap、查看历史 |
 | Assessment Review | 待复核 → 已闭环；结论为认可/建议调整 | Buddy 复核、反馈、闭环；历史记录不重复流转 |
 | Annual Growth Plan | 制定中 → 执行中 → 已归档 | 通过门禁后生成/维护年度计划 |
-| Plan Item | 未开始、进行中、已完成、延期、暂停、取消 | 按 L3 维护计划月份、预计时长和状态 |
-| Learning Task | 未开始、进行中、待 Evidence Review、已完成、延期、暂停、取消 | 执行、填写日志、提交 Evidence |
-| Evidence | 草稿 → 待 Review → 通过/需补充/驳回 → 已归档；补充或重提创建新版本 | 旧版本只读，不直接回流 |
-| Evidence Review | 待 Review → 通过/需补充/驳回 → 已闭环 | Buddy 提交结论与反馈，旧 Review 不回流 |
-| Learning Progress Log | 无独立状态 | 仅新增/编辑本人记录并按 `record_date` 聚合 `actual_hours` |
+| Plan Item | 未开始、进行中、已完成、延期、暂停、取消 | 按 L3 维护计划月份、预计时长和状态；计划日期受来源季度/来源月边界约束；写携带 `expected_revision`，冲突返回 409 `plan_revision_conflict` |
+| Learning Task | 未开始、进行中、暂停、延期、已完成、取消；已完成、取消为终态 | 执行、填写日志、提交 Evidence；迁移经 `/transitions` 并带原因字段；完成判定（completion gate）不满足返回 422 |
+| Evidence | 草稿 → 待 Review → 通过/需补充；枚举保留「驳回」「已归档」但当前无代码路径产生 | 仅「需补充」可被新版本取代；旧版本只读，不直接回流 |
+| Evidence Review | 创建即已闭环；结论为通过/需补充（需补充必须填反馈） | Buddy 提交结论与反馈；每 Evidence 仅一条 Review，重复提交返回 409 `review_already_submitted`；旧 Review 不回流 |
+| Learning Progress Log | 无独立状态；作废经 `invalidated_at` 标记 | 追加写：仅新增，更正 = 作废 + 新增更正日志；仅未作废记录按 `record_date` 聚合 `actual_hours`；接受 `idempotency_key` |
 
 ## 5. 演示种子数据规范
 
@@ -167,8 +168,8 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 - 资源与规划：为 L3 准备少量 Learning Resource 索引，并准备一份 Leader 发布的 Team Annual Capability Plan；两者只用于演示页面和关联关系，不引入课程生命周期。
 - 评估：至少准备一个最新提交且 Assessment Review 已闭环、结论为认可的 Member；另准备一个待复核或建议调整的 Member，用于演示计划门禁阻塞。所有 Assessment 保留历史版本。
 - Gap/Goal/Plan：认可成员准备多个不同优先级 Gap、Growth Goal、年度计划、L3 Plan Item；同一 Plan Item 只派生一个 Learning Task。
-- 任务/日志：准备未开始、进行中、待 Evidence Review、已完成、延期等任务；每个任务准备多条 `Learning Progress Log`，覆盖不同月份与小时数，使 UI-01、UI-03、UI-05 能展示全年/当月计划与实际时长。
-- Evidence/Review：至少准备草稿、待 Review、通过、需补充、驳回及已归档版本；补充/驳回必须对应新版本和新的 Review 历史。
+- 任务/日志：准备未开始、进行中、已完成、延期等任务；每个任务准备多条 `Learning Progress Log`，覆盖不同月份与小时数，使 UI-01、UI-03、UI-05 能展示全年/当月计划与实际时长。
+- Evidence/Review：至少准备草稿、待 Review、通过、需补充版本；需补充必须对应新版本和新的 Review 历史。
 - 团队分析：跨成员准备实际 vs 计划、成员达成率、计划完成趋势、学习时长趋势和延期计划项明细所需的聚合数据。
 
 ## 6. 端到端验收场景
@@ -180,10 +181,10 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | 场景 | 前置条件 | 操作 | 预期结果 |
 |---|---|---|---|
 | Member 主线 | Member 有六域评估和 Gap；最新 Review 已认可 | 提交自评 → 查看 Gap → 选入计划 → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task |
-| Buddy 自评复核 | Buddy 负责该 Member，Assessment Review 待复核 | 打开 `/mentoring/assessment-review`，查看依据，提交认可或建议调整 | Review 形成闭环历史；建议调整不影响 Gap 查看，但阻止正式纳入计划 |
-| 计划门禁阻塞/解除 | 最新 Assessment Review 待复核或结论非认可 | 在 `/growth/goals` 尝试纳入 Gap；完成 Buddy Review 认可后重试 | 阻塞时 API 拒绝并返回原因；解除后可生成 Annual Growth Plan/Plan Item |
-| 学习时长聚合 | Learning Task 关联多条日志 | 在 `/growth/tasks` 新增不同日期、小时数日志，查看看板/月度复盘 | 仅按 `record_date` 聚合 `actual_hours`；不创建子任务、不改变任务状态 |
-| Evidence Review | Evidence 已提交待 Review | Buddy 在 `/mentoring/evidence-review` 提交通过/需补充/驳回 | Review 闭环；需补充/驳回要求新 Evidence 版本，旧版本只读 |
+| Buddy 自评复核 | Buddy 负责该 Member，Assessment Review 待复核 | 打开 `/mentoring/dashboard`（自评复核队列），查看依据，提交认可或建议调整 | Review 形成闭环历史；建议调整不影响 Gap 查看，但阻止正式纳入计划 |
+| 计划门禁阻塞/解除 | 最新 Assessment Review 待复核或结论非认可 | 在 `/growth/annual-plan` 尝试纳入 Gap；完成 Buddy Review 认可后重试 | 阻塞时 API 拒绝并返回原因；解除后可生成 Annual Growth Plan/Plan Item |
+| 学习时长聚合 | Learning Task 关联多条日志 | 在 `/growth/annual-plan` 新增不同日期、小时数日志，查看看板/月度复盘 | 仅按 `record_date` 聚合 `actual_hours`；不创建子任务、不改变任务状态 |
+| Evidence Review | Evidence 已提交待 Review | Buddy 在 `/mentoring/evidence-review` 提交通过/需补充（需补充必须填反馈） | Review 闭环；需补充要求新 Evidence 版本，旧版本只读 |
 | Leader 团队分析 | 多成员有评估、计划、日志、Evidence、延期项 | 打开 `/operations/analytics`，切换年度/成员/能力域 | UI-05 四类图表和延期明细口径正确；Leader 不可编辑成员业务数据 |
 | Admin 范围 | Admin 账号可登录；是否附加业务角色分别准备两种数据 | 查看全量并进入系统管理；无 Buddy 角色时尝试 Review | Admin 可全量查看和管理用户/角色/配置；业务操作只由附加角色授权 |
 | 原型截图 | 种子数据已加载 | 对五条固定主路由截图并与实际 PNG 对照 | UI-01 四项时长+能力/GAP/任务；UI-02 L3+Gap+门禁；UI-03 计划项/月轴/详情/Evidence；UI-04 成员/队列/工作区/历史；UI-05 实际 vs 计划/达成率/月累计趋势/延期明细均可见 |
@@ -251,6 +252,16 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
   - `PLAYWRIGHT_BASE_URL=http://localhost:5173 PLAYWRIGHT_NO_WEBSERVER=1 npm run test:e2e` — 对 Vite dev server 运行。
   - `npm run test:e2e:update-snapshots` — 更新视觉回归基线截图。
   - `npm run test:e2e:ui` / `npm run test:e2e:debug` — UI 模式与调试模式。
+- 官方容器基线（与 GitHub Actions 一致，canonical 见 `.github/workflows/e2e.yml`）：先启动 Compose 栈并等待 `/ready`，再在官方镜像内运行：
+
+  ```bash
+  docker run --rm --network host -v "$PWD/frontend:/app" -w /app \
+    -e PLAYWRIGHT_NO_WEBSERVER=1 -e TCP_E2E_ISOLATED=1 \
+    mcr.microsoft.com/playwright:v1.61.1-jammy \
+    bash -c "apt-get update && apt-get install -y fonts-noto-cjk && npm ci && npx playwright test"
+  ```
+
+  在 Docker 网络内运行（非 `--network host`）时，前端与后端 URL 必须同源（cookie 按域名隔离）：`PLAYWRIGHT_BASE_URL=http://frontend PLAYWRIGHT_BACKEND_URL=http://frontend`（nginx 代理 `/api`）。
 
 ### 9.2 测试策略
 
@@ -274,12 +285,12 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 ## 10. 后端本地测试
 
-后端代码依赖 `psycopg` 等包，必须在项目虚拟环境中运行测试。
+后端代码依赖 `psycopg` 等包，必须在项目虚拟环境中运行测试。测试需要可达的 PostgreSQL；`tests/conftest.py` 默认连接 `127.0.0.1:5432`，本地规范实例（`tmp-postgres-1` 容器）端口为 15460，须显式指定：
 
 ```bash
 cd backend
 source .venv/bin/activate
-python -m pytest tests/test_member_dashboard.py tests/test_capability_profile.py -v
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=15460 python3 -m pytest tests/test_member_dashboard.py tests/test_capability_profile.py -v
 ```
 
 ### 全量测试命令
@@ -295,10 +306,10 @@ ruff check app tests
 black --check app tests
 
 # 全量后端测试
-pytest tests -q
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=15460 python3 -m pytest tests -q
 
 # 单模块调试
-pytest tests/test_catalog_api.py -v
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=15460 python3 -m pytest tests/test_catalog_api.py -v
 ```
 
 ### Docker 内测试

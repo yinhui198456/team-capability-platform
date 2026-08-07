@@ -25,6 +25,11 @@ from app.access.security import (
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
         connection.execute("DROP TABLE IF EXISTS tcp_session")
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
@@ -286,7 +291,10 @@ def test_primary_buddy_unique_index_enforced(
     assign_role(access_schema, buddy_id, "Buddy")
     create_buddy_relationship(access_schema, member_id, buddy_id)
 
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(
+        ValueError,
+        match="(overlaps existing primary range|conflicts with existing primary)",
+    ):
         with access_schema.transaction():
             create_buddy_relationship(access_schema, member_id, buddy_id)
 

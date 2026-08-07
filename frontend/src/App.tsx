@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './AuthContext'
 import { useMe } from './catalog'
@@ -9,11 +9,11 @@ import { LoginPage } from './LoginPage'
 import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
-import { GrowthGoalPage } from './GrowthGoalPage'
 import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { BuddyReviewCenter } from './BuddyReviewCenter'
+import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
 import { LearningResourcesPage } from './LearningResourcesPage'
@@ -49,6 +49,16 @@ function AuthenticatedShell() {
   )
 }
 
+// Only valid inside AuthenticatedShell, which guarantees an authenticated
+// user; this guard enforces the Buddy-only boundary of the evidence page.
+function RequireBuddy({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  if (!user?.roles.includes('Buddy')) {
+    return <Navigate to={defaultRouteFor(user?.roles ?? [])} replace />
+  }
+  return children
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -63,10 +73,6 @@ export function App() {
         />
         <Route
           path="/mentoring/assessment-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
-        />
-        <Route
-          path="/mentoring/evidence-review"
           element={<Navigate to="/mentoring/dashboard" replace />}
         />
         <Route
@@ -90,7 +96,10 @@ export function App() {
             path="/capability/assessment/history"
             element={<AssessmentHistoryPage />}
           />
-          <Route path="/growth/goals" element={<GrowthGoalPage />} />
+          <Route
+            path="/growth/goals"
+            element={<Navigate to="/growth/annual-plan" replace />}
+          />
           <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
           <Route path="/growth/profile" element={<ProfilePage />} />
           <Route
@@ -98,6 +107,14 @@ export function App() {
             element={<MonthlyReviewPage />}
           />
           <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          <Route
+            path="/mentoring/evidence-review"
+            element={
+              <RequireBuddy>
+                <EvidenceReviewPage />
+              </RequireBuddy>
+            }
+          />
           <Route
             path="/operations/resources"
             element={<LearningResourcesPage />}

@@ -24,6 +24,11 @@ from tests.standard_target_support import create_scoped_draft
 @pytest.fixture
 def issue50_schema(connection: psycopg.Connection) -> psycopg.Connection:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
         connection.execute("DROP TABLE IF EXISTS tcp_session")
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
@@ -32,6 +37,9 @@ def issue50_schema(connection: psycopg.Connection) -> psycopg.Connection:
     create_access_schema(connection)
     create_assessment_schema(connection)
     import_catalog(resolve_workbook_dir(), connection)
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
     run_migrations(connection)
     connection.commit()
     return connection

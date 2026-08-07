@@ -62,6 +62,7 @@ const baseProfile: planningApi.CapabilityProfile = {
     items: [
       {
         id: 30,
+        revision: 0,
         annual_growth_plan_id: 20,
         growth_goal_id: 40,
         l3_code: 'P01-L2A-L3A',
@@ -79,6 +80,9 @@ const baseProfile: planningApi.CapabilityProfile = {
         plan_end_date: null,
         target_month: null,
         status: '进行中',
+        scope_type: 'current_required',
+        source_assessment_id: 10,
+        planning_source_type: 'assessment_approval',
         learning_task: {
           id: 50,
           plan_item_id: 30,
@@ -93,6 +97,13 @@ const baseProfile: planningApi.CapabilityProfile = {
           completion_quality: null,
           review_conclusion: null,
           next_action: null,
+          revision: 0,
+          actual_started_at: null,
+          actual_completed_at: null,
+          delay_reason: null,
+          pause_reason: null,
+          cancel_reason: null,
+          revised_due_date: null,
           plan_item_current_level: 2,
           plan_item_target_level: 4,
           plan_item_priority: '中',
@@ -108,6 +119,11 @@ const baseProfile: planningApi.CapabilityProfile = {
               actual_hours: 5,
               note: '学习日志',
               recorder_id: 1,
+              created_at: '2026-03-15T00:00:00Z',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
             },
           ],
           evidences: [
@@ -116,11 +132,21 @@ const baseProfile: planningApi.CapabilityProfile = {
               learning_task_id: 50,
               l3_code: 'P01-L2A-L3A',
               version_number: 1,
-              content: 'Evidence 内容',
+              content: '任务成果证明 内容',
               evidence_link: 'http://example.com',
               status: '已归档',
               submitted_at: '2026-03-20T00:00:00Z',
               created_at: '2026-03-20T00:00:00Z',
+              submitted_by: 1,
+              description: null,
+              evidence_type: null,
+              url: null,
+              file_reference: null,
+              file_name: null,
+              mime_type: null,
+              file_size: null,
+              supersedes_evidence_id: null,
+              revision: 0,
               review: {
                 id: 110,
                 evidence_id: 70,
@@ -129,12 +155,54 @@ const baseProfile: planningApi.CapabilityProfile = {
                 conclusion: '通过' as const,
                 feedback: '符合要求',
                 reviewed_at: '2026-03-21T00:00:00Z',
+                created_at: '2026-03-21T00:00:00Z',
               },
             },
           ],
         },
       },
     ],
+  },
+  monthly_reviews: [
+    {
+      id: 9,
+      member_id: 1,
+      year: 2026,
+      month: 5,
+      revision: 2,
+      main_output: '完成数据建模规范初稿',
+      problems: '排期紧张',
+      next_month_focus: '推进 C01 任务',
+      notes: '备注文本',
+      created_at: '2026-05-31T10:00:00Z',
+      updated_at: '2026-06-02T09:00:00Z',
+      history: [
+        {
+          revision: 1,
+          main_output: '完成数据建模规范初稿',
+          problems: null,
+          next_month_focus: null,
+          notes: null,
+          changed_by: 1,
+          changed_at: '2026-05-31T10:00:00Z',
+        },
+        {
+          revision: 2,
+          main_output: '完成数据建模规范初稿',
+          problems: '排期紧张',
+          next_month_focus: '推进 C01 任务',
+          notes: '备注文本',
+          changed_by: 1,
+          changed_at: '2026-06-02T09:00:00Z',
+        },
+      ],
+    },
+  ],
+  meta: {
+    year: 2026,
+    scope: '本人',
+    as_of: '2026-06-02T09:00:00Z',
+    source: 'capability_profile.v1',
   },
   statistics: {
     total_learning_hours: 5,
@@ -183,7 +251,7 @@ describe('ProfilePage', () => {
     const kpiRegion = screen.getByRole('region', { name: '年度成长闭环摘要' })
     expect(within(kpiRegion).getByText('已完成计划项')).toBeTruthy()
     expect(within(kpiRegion).getByText('实际学习时长')).toBeTruthy()
-    expect(within(kpiRegion).getByText('已归档 Evidence')).toBeTruthy()
+    expect(within(kpiRegion).getByText('已归档任务成果证明')).toBeTruthy()
     expect(within(kpiRegion).getByText('能力评估')).toBeTruthy()
     expect(
       screen.getAllByText(
@@ -193,6 +261,39 @@ describe('ProfilePage', () => {
     const assessmentRegion = screen.getByRole('region', { name: '评估历史' })
     expect(within(assessmentRegion).getByText('认可')).toBeTruthy()
     expect(screen.getByText(/Review 结论：通过/)).toBeTruthy()
+  })
+
+  it('shows plan-item provenance scope and monthly review history', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'member',
+      full_name: 'Member',
+      roles: ['Member'],
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/growth/profile']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('region', { name: '年度成长闭环摘要' }),
+      ).toBeTruthy()
+    })
+
+    // 计划项展示 assessment 快照推导的 scope（必备/进阶），不暗示任务完成即晋级。
+    const item = screen.getByRole('article', { name: '计划项：P01-L2A-L3A' })
+    expect(item.textContent).toContain('必备')
+    expect(item.textContent).toContain('来源自评')
+
+    // 月度复盘记录区展示不可变修订历史。
+    const reviews = screen.getByRole('region', { name: '月度复盘记录' })
+    expect(reviews.textContent).toContain('5 月')
+    expect(reviews.textContent).toContain('完成数据建模规范初稿')
+    expect(reviews.textContent).toContain('v1')
+    expect(reviews.textContent).toContain('v2')
   })
 
   it('shows the redesigned landmarks in the capability profile', async () => {
@@ -223,7 +324,7 @@ describe('ProfilePage', () => {
     ).toBeTruthy()
     expect(
       screen.getByRole('article', {
-        name: 'Evidence 版本 1：P01-L2A-L3A',
+        name: '任务成果证明 版本 1：P01-L2A-L3A',
       }),
     ).toBeTruthy()
     expect(screen.getByRole('region', { name: '年度成长计划' })).toBeTruthy()
@@ -356,6 +457,13 @@ describe('ProfilePage', () => {
       },
       assessments: [],
       annual_plan: null,
+      monthly_reviews: [],
+      meta: {
+        year: 2026,
+        scope: '负责成员',
+        as_of: null,
+        source: 'capability_profile.v1',
+      },
       statistics: {
         total_learning_hours: 0,
         total_planned_hours: 0,
@@ -420,6 +528,13 @@ describe('ProfilePage', () => {
       },
       assessments: [],
       annual_plan: null,
+      monthly_reviews: [],
+      meta: {
+        year: 2026,
+        scope: '负责成员',
+        as_of: null,
+        source: 'capability_profile.v1',
+      },
       statistics: {
         total_learning_hours: 0,
         total_planned_hours: 0,

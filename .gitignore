@@ -49,3 +49,4 @@ gitleaks-report*
 trivy-report*
 trivy-results*
 *.sarif
+docker-compose.override.yml

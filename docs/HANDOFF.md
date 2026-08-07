@@ -1,9 +1,10 @@
 # TCP 当前交接
 
-更新日期：2026-07-17。
+更新日期：2026-08-03。
 
 ## 当前进度
 
+- `Issue #63 学习执行与 Evidence 闭环：第三阶段工程收口` 已完成：新增跨角色真实 API E2E `frontend/tests/e2e/smoke/issue-63-execution-evidence.spec.ts`（E2E-63-01..05：Member 执行链 / Buddy 评审闭环 / 401·403 权限边界 / 409 冲突恢复与幂等 / 三视口），并修复一处生产缺陷（双角色 Buddy 账号经 Member 路径查询评审历史被 403，`get_task_evidence_reviews` 现回退 Buddy 路径，附 2 条后端回归测试，红→绿）。受影响 shard（issue-62 buddy-review 10/10、后端相关套件 47/47）通过；文档（02_Design / 03_Data / 04_UI / 05_Development / acceptance）已对齐真实路由、六态、结论白名单与 CAS/幂等语义。验收记录：`docs/acceptance/ISSUE_63_ENGINEERING_CLOSEOUT.md`。PR #71 保持 Draft；#63 UAT 未执行、不得视为通过；不进入 #64/#65。
 - Git Project 已补齐既有 UAT 卡的可执行 checklist；用户 UAT 仍待执行。
 - `6C-1：Codex 浏览器 UI/UX 验收（UI-01～UI-05）` 记录了修复前的原型差异；其结论已由后续 6A-0、6A-5～6A-8、6B-6 修复和 6C-2 真实容器复验覆盖。
 - `6A-0：共享导航、角色菜单与视觉框架` 已完成：深蓝顶部模块导航、浅蓝工作区、侧边菜单、按有效角色过滤的入口，以及“本人/负责成员/团队/全量”数据范围提示均已落地；未修改业务数据或后端鉴权。
@@ -13,7 +14,7 @@
 - `6A-8：UI-03 年度计划、任务与 Evidence` 已完成：计划总览、状态/时长、1–12 月时间轴、计划项详情联动、任务执行摘要、日志、Evidence 版本与 Review 历史均已落地，并已纳入 6C-2 真实容器复验。
 - `6B-6：UI-05 Leader 分析` 已完成本地实现与隔离浏览器复测：年度/成员/能力域筛选、四项 KPI、实际-vs-计划、成员热力表、计划和时长组合图、延期明细均已验证；浏览器请求均为 GET，未写入 UAT 数据。前端 `19 files / 119 tests`、build、lint 与 `git diff --check` 通过。
 - `6C-2：真实容器浏览器 UI/UX 复验` 已完成并通过：当前工作树经 `docker compose up -d --build` 重建，后端 `/ready` 健康；Member、Buddy、Leader、Admin 共 11 个业务页面的已登录截图通过，Member/Buddy/Leader 的只读交互与 Member→Leader 越权反馈通过，`bash scripts/e2e-smoke.sh` 通过。
-- 本轮后端全量回归已在固定工作簿 Docker 挂载下通过：`230 passed`；测试模块已显式封装其跨模块夹具，避免收集顺序影响全量回归。
+- 本轮后端全量回归已在固定工作簿 Docker 挂载下通过：`230 passed`；测试模块已显式封装其跨模块夹具，避免收集顺序影响全量回归。Issue #63 在其后新增 2 条评审历史回归测试（`test_evidence_review.py` 16/16）。
 
 ## 浏览器验收结果
 
@@ -38,7 +39,7 @@
 
 - UI-01～UI-05 的 Codex 真实容器浏览器复验已通过；该结论基于关键区域与交互截图，不使用像素级自动比对。
 - 角色菜单已按有效角色过滤；后端受限页反馈仍作为直接 URL 访问的兜底，不替代后端授权。
-- 用户数据写入型 UAT 尚未执行；待执行卡为 4-5、5-4、6A-4、6B-5、7-4。
+- 用户数据写入型 UAT 尚未执行；待执行卡为 4-5、5-4、6A-4、6B-5、7-4，以及 Issue #63 UAT（`docs/acceptance/ISSUE_63_ENGINEERING_CLOSEOUT.md` §5）。
 - 本轮真实容器复验只执行登录、读取、筛选和导航；未执行任何业务数据写入。用户 UAT 与发布决策仍未执行。
 
 ## 下一步

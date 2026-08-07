@@ -152,25 +152,26 @@ flowchart TD
 |---|---|---|---|---|---|
 | 我的成长看板 | /dashboard/member | Member | Growth | 查看年度进度、待办、完成情况 | Annual Growth Plan / Plan Item / Learning Task / Learning Progress Log / Evidence |
 | 能力模型 | /capability/model | 全员 | Capability | 查看一级 / 二级 / 三级能力项及等级描述 | Capability Model |
+| 能力标准版本 | /capability/standards | 全员 | Capability | 查看能力标准版本与内容 | Capability Model |
 | 能力自评 | /capability/assessment | Member | Capability | 填写当前掌握度与依据，查看标准目标，按需申请个人调整 | Assessment |
-| Gap 分析 | /capability/gap | Member / Buddy | Capability | 查看 Gap 值、分级、优先级，选择纳入计划项 | Gap |
+| Gap 分析（已并入能力自评页，/capability/gap 重定向） | /capability/assessment | Member / Buddy | Capability | 查看 Gap 值、分级、优先级，选择纳入计划项 | Gap |
 | 评估历史 | /capability/assessment/history | Member / Buddy | Capability | 查看历次评估快照与成长曲线 | Assessment |
-| 成长目标 | /growth/goals | Member | Growth | 确认年度补齐目标 | Growth Goal / Gap |
+| 成长目标（已并入年度计划页，/growth/goals 重定向） | /growth/annual-plan | Member | Growth | 确认年度补齐目标 | Growth Goal / Gap |
 | 年度成长计划 | /growth/annual-plan | Member | Growth | 查看和编辑年度成长计划及其计划项 | Annual Growth Plan / Plan Item |
-| 学习任务 | /growth/tasks | Member | Growth | 跟踪学习任务执行状态、填写学习执行日志、提交 Evidence | Learning Task / Learning Progress Log / Evidence / Plan Item |
+| 学习任务（已并入年度计划页，/growth/tasks 重定向） | /growth/annual-plan | Member | Growth | 跟踪学习任务执行状态、填写学习执行日志、提交 Evidence | Learning Task / Learning Progress Log / Evidence / Plan Item |
 | 月度复盘 | /growth/review/monthly | Member / Buddy / Leader | Growth | 查看月度计划完成情况 | Plan Item / Learning Task |
 | 成长档案 | /growth/profile | Member | Growth | 查看个人完整成长记录 | Capability Profile |
 | 辅导成员看板 | /mentoring/dashboard | Buddy | Mentoring | 查看负责成员进度与待办 | Member / Learning Task / Evidence |
-| 自评复核 | /mentoring/assessment-review | Buddy | Mentoring | 复核 Member 自评结果并给出反馈 | Assessment / Assessment Review |
+| 自评复核（已并入辅导成员看板，/mentoring/assessment-review 重定向） | /mentoring/dashboard | Buddy | Mentoring | 复核 Member 自评结果并给出反馈 | Assessment / Assessment Review |
 | Evidence Review | /mentoring/evidence-review | Buddy | Mentoring | 复核 Evidence 并填写反馈 | Evidence / Evidence Review |
-| 反馈记录 | /mentoring/feedback | Buddy / Member | Mentoring | 查看历史复核反馈 | Assessment Review / Evidence Review |
+| 反馈记录（规划中，暂无路由） | /mentoring/feedback | Buddy / Member | Mentoring | 查看历史复核反馈 | Assessment Review / Evidence Review |
 | 学习资源 | /operations/resources | Leader | Operations | 维护学习材料索引 | Learning Resource |
 | 团队能力分析 | /operations/analytics | Leader | Operations | 查看团队 Gap 分布、完成率等指标 | Assessment / Plan Item / Evidence |
 | 团队年度能力规划 | /operations/team-annual-plan | Leader | Operations | 发布团队年度能力运营重点 | Team Annual Capability Plan |
 | 用户管理 | /system/users | Admin | System | 创建、编辑、启用 / 禁用用户 | User |
-| 角色权限 | /system/roles | Admin | System | 分配角色与数据权限 | Role / Permission |
-| 系统配置 | /system/settings | Admin | System | 维护系统参数 | System Config |
-| 个人中心 | /profile | 全员 | System | 查看和修改个人信息 | User |
+| 角色权限（规划中，暂无路由） | /system/roles | Admin | System | 分配角色与数据权限 | Role / Permission |
+| 系统配置（规划中，暂无路由） | /system/settings | Admin | System | 维护系统参数 | System Config |
+| 个人中心（规划中，暂无路由） | /profile | 全员 | System | 查看和修改个人信息 | User |
 
 ---
 
@@ -196,9 +197,7 @@ flowchart LR
     K --> L{Review 结论}
     L -->|通过| M[学习任务完成，计划项达成，进入成长档案]
     L -->|需补充| N[补充后提交新版本 Evidence]
-    L -->|驳回| O[重新学习后提交新版本 Evidence]
     N --> K
-    O --> K
     M --> P[查看成长档案]
 ```
 
@@ -220,11 +219,9 @@ flowchart LR
     B -->|否| G{存在待 Review Evidence}
     G -->|是| H[Review Evidence]
     H --> I{Review 结论}
-    I -->|认可| J[学习任务可标记完成]
+    I -->|通过| J[学习任务可标记完成]
     I -->|需补充| K[要求 Member 补充]
-    I -->|驳回| L[要求 Member 重新准备]
     K --> M[Member 创建并提交新版本 Evidence]
-    L --> M
     M --> G
     G -->|否| N[跟踪成员成长进度]
 ```
@@ -369,24 +366,35 @@ Learning Task 由计划项派生，用于记录该 L3 计划项的执行与 Evid
 stateDiagram-v2
     [*] --> 未开始
     未开始 --> 进行中 : Member 开始任务
-    进行中 --> 待 Evidence Review : Member 提交 Evidence 版本
-    待 Evidence Review --> 已完成 : Evidence Review 结论为通过
-    待 Evidence Review --> 进行中 : 结论为需补充或驳回，继续执行并准备新版本
+    进行中 --> 已完成 : 完成判定条件满足
     进行中 --> 延期 : 超过截止日期
     进行中 --> 暂停 : Member 暂停
     暂停 --> 进行中 : Member 恢复
+    暂停 --> 取消 : Member 取消
     未开始 --> 取消 : Member 取消
     进行中 --> 取消 : Member 取消
     已完成 --> [*]
     延期 --> 进行中 : Member 恢复执行
+    延期 --> 暂停 : Member 暂停
+    延期 --> 已完成 : 完成判定条件满足
     延期 --> 取消 : Member 取消
     取消 --> [*]
 ```
 
 说明：
 
-- 学习任务只有在某个 Evidence 版本获得 Buddy「通过」结论后才完成；计划项据此达到完成判定条件。
-- 「需补充」或「驳回」只结束当前 Evidence 版本及其 Review。Member 继续执行时创建新的 Evidence 版本并触发新的 Review 记录，旧版本和旧 Review 不回流。
+- 学习任务固定为六种状态：未开始、进行中、暂停、延期、已完成、取消；其中「已完成」「取消」为终态，不再接受任何迁移。
+- 「待 Evidence Review」不是学习任务状态。Member 提交 Evidence 后任务保持「进行中」，Review 状态记录在 Evidence 上；任务完成由 Evidence「通过」驱动。
+- 完成判定条件（completion gate，服务端强制，不满足返回 422 `completion_gate_failed`）：存在结论为「通过」的 Evidence；`review_conclusion` 非空；有效日志聚合 `actual_hours` 大于 0；`completion_quality` 为达到预期 / 部分达到 / 超出预期之一；`next_action` 非空且不超过 200 字。
+- 迁移通过 `POST /api/planning/learning-tasks/{task_id}/transitions` 执行：延期须带 `delay_reason`（可选 `revised_due_date`），暂停须带 `pause_reason`，取消须带 `cancel_reason`；非法迁移返回结构化 422 `invalid_task_transition`。
+- 每次迁移将任务状态同步映射回来源计划项。
+
+### 6.4.1 并发与幂等语义
+
+以下语义对 Learning Task 迁移、计划项与 Evidence 更新、进度日志一致适用：
+
+- **乐观并发（CAS）**：计划项、学习任务与 Evidence 均维护单调递增 `revision`；写请求须携带 `expected_revision`，过期返回 409（`plan_revision_conflict` / `task_revision_conflict` / `evidence_revision_conflict`）。客户端保留输入、刷新最新 revision 后由用户确认重试。
+- **幂等写入**：进度日志、任务迁移与 Evidence Review 接受 `idempotency_key`；同 key 同 payload 重放返回首次响应，不重复写入；同 key 不同 payload 返回 409（`log_idempotency_conflict` / `transition_idempotency_conflict` / `review_idempotency_conflict`）。
 
 ### 6.5 Evidence 状态机
 
@@ -398,11 +406,6 @@ stateDiagram-v2
     草稿 --> 待 Review : Member 提交 Evidence
     待 Review --> 通过 : Evidence Review 认可
     待 Review --> 需补充 : Buddy 要求补充
-    待 Review --> 驳回 : Buddy 驳回
-    通过 --> 已归档 : 进入成长档案
-    需补充 --> 已归档 : 旧版本保留
-    驳回 --> 已归档 : 旧版本保留
-    已归档 --> [*]
 ```
 
 状态说明：
@@ -411,46 +414,33 @@ stateDiagram-v2
 |---|---|
 | 草稿 | Member 正在准备 Evidence，尚未提交 |
 | 待 Review | Member 已提交，等待 Evidence Review |
-| 通过 | Buddy 认可该 Evidence 充分证明能力达成 |
+| 通过 | Buddy 认可该 Evidence 充分证明能力达成；终态，不可再创建新版本 |
 | 需补充 | Buddy 认为 Evidence 不足，Member 需补充材料后提交新版本 |
-| 驳回 | Buddy 认为 Evidence 明显不符合要求，Member 需重新准备后提交新版本 |
-| 已归档 | 当前 Evidence 版本及其 Review 已结束；通过版本进入成长档案，需补充或驳回版本作为历史保留 |
+
+枚举中保留「驳回」「已归档」两个值，但当前没有代码路径会产生它们：Review 结论只有「通过 / 需补充」，被取代的旧版本保持「需补充」作为历史。后续如需启用，应先补设计再实现。
 
 版本规则：
 
-- 「需补充」「驳回」及「已归档」的旧 Evidence 版本不得直接回到「待 Review」。
-- Member 补充或重新提交时，从同一学习任务创建新的「草稿」版本；该新版本提交后进入「待 Review」，并创建新的 Evidence Review 记录。
+- 「需补充」的旧 Evidence 版本不得直接回到「待 Review」；「通过」版本为终态，不允许被取代。
+- Member 补充时，从同一学习任务创建新的「草稿」版本并声明取代（`supersedes_evidence_id`）某个「需补充」版本；该新版本提交后进入「待 Review」，并创建新的 Evidence Review 记录，旧版本与旧 Review 作为历史保留、不回流。
 
 ### 6.6 Evidence Review 状态机
 
-Evidence Review 是 Buddy 对一个已提交 Evidence 版本作出的历史反馈记录。每个已提交 Evidence 版本对应一条 Evidence Review；Review 给出反馈后即闭环，不因后续 Evidence 版本而重新进入待 Review。
+Evidence Review 是 Buddy 对一个已提交 Evidence 版本作出的历史反馈记录。每个已提交 Evidence 版本对应且仅对应一条 Evidence Review（服务端唯一约束；对同一 Evidence 重复提交返回 409 `review_already_submitted`）。Review 创建即闭环，不因后续 Evidence 版本而重新流转。
 
-```mermaid
-stateDiagram-v2
-    [*] --> 待 Review
-    待 Review --> 通过 : 结论为通过
-    待 Review --> 需补充 : 结论为需补充
-    待 Review --> 驳回 : 结论为驳回
-    通过 --> 已闭环 : 反馈已记录
-    需补充 --> 已闭环 : Review 结论生效
-    驳回 --> 已闭环 : Review 结论生效
-    已闭环 --> [*]
-```
+结论固定为两种：
 
-状态说明：
-
-| 状态 | 说明 |
+| 结论 | 说明 |
 |---|---|
-| 待 Review | Buddy 收到待复核 / 待 Review 项 |
-| 通过 | Buddy 认可其有效或充分 |
-| 需补充 | Buddy 要求补充材料或说明 |
-| 驳回 | Buddy 认为明显不符合要求 |
-| 已闭环 | Review 结论已记录，该条 Review 结束 |
+| 通过 | Buddy 认可其有效或充分；Evidence 状态同步为「通过」 |
+| 需补充 | Buddy 要求补充材料或说明；必须填写反馈，Evidence 状态同步为「需补充」 |
 
 说明：
 
-- Buddy 的「通过 / 需补充 / 驳回」是指导、Evidence Review 与反馈结论，不承担行政决策职责。
-- 当结论为「需补充」或「驳回」时，Member 提交新版本 Evidence 会触发一条新的 Review 记录；原 Review 保持闭环历史，不得再次流转。
+- Buddy 的「通过 / 需补充」是指导、Evidence Review 与反馈结论，不承担行政决策职责；「驳回」不是合法的 Review 结论。
+- 当结论为「需补充」时，Member 提交新版本 Evidence 会触发一条新的 Review 记录；原 Review 保持闭环历史，不得再次流转。
+- Review 提交接受 `idempotency_key`：同 key 同 payload 重放返回首次响应，不同 payload 返回 409 `review_idempotency_conflict`。
+- Review 提交端点为 `POST /api/planning/evidences/{evidence_id}/review`，仅当前有效 Buddy 关系的 Buddy 可提交；历史查询端点为 `GET /api/planning/learning-tasks/{task_id}/evidence-reviews`。
 
 ---
 
@@ -673,7 +663,7 @@ flowchart TD
 3. **无代码 / 无 API / 无数据模型**：本阶段不描述具体实现、接口或数据库表结构。
 4. **计划对象层级**：年度成长计划、计划项、学习任务、Evidence 为四层独立对象，状态各自维护，避免将计划项与学习任务完全等同。
 5. **Buddy 定位**：Buddy 负责指导、自评复核、Evidence Review、反馈与跟踪，不承担行政决策职责；Review 结论用于反馈与跟踪，不影响成员继续学习。
-6. **状态机闭环**：Review 记录按次闭环；Evidence 被补充或驳回后产生新版本，原版本记录保留。
+6. **状态机闭环**：Review 记录按次闭环；Evidence 结论为「需补充」后由 Member 创建新版本，原版本记录保留。
 7. **MVP 能力域收敛**：MVP 仅启用 P01、P02、P03、C01、C02、C03 六个能力域；架构与工程、咨询与方案、DevOps 与稳定性三个域仅保留扩展占位，不导入有效 L3，不参与自评、Gap、计划、学习任务、Evidence、团队分析，也不在页面中作为可操作能力域展示。
 ## Issue #50 页面与流程补充
 

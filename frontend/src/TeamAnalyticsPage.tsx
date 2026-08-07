@@ -194,7 +194,7 @@ function TrendTable({
 
 export function TeamAnalyticsPage() {
   const year = useYear()
-  const { user, isLeader } = useMe()
+  const { user, isLeader, isAdmin, isBuddy, isMember } = useMe()
   const [memberId, setMemberId] = useState('')
   const [domainCode, setDomainCode] = useState('')
   const [analytics, setAnalytics] = useState<TeamAnalytics | null>(null)
@@ -206,8 +206,10 @@ export function TeamAnalyticsPage() {
   const lastFocusedRow = useRef<HTMLTableRowElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
 
+  const canView = isMember || isBuddy || isLeader || isAdmin
+
   useEffect(() => {
-    if (!isLeader) return
+    if (!canView) return
     setLoading(true)
     setError('')
     getTeamAnalytics({
@@ -221,7 +223,7 @@ export function TeamAnalyticsPage() {
           setError(reason instanceof Error ? reason.message : '加载失败'),
       )
       .finally(() => setLoading(false))
-  }, [year, memberId, domainCode, isLeader])
+  }, [year, memberId, domainCode, canView])
 
   useEffect(() => {
     if (!drawerItem) return
@@ -265,10 +267,12 @@ export function TeamAnalyticsPage() {
         <p className="muted">正在加载用户信息…</p>
       </section>
     )
-  if (!isLeader) {
+  if (!canView) {
     return (
       <section className="page">
-        <p className="muted">无权限，仅 Leader 可查看团队能力分析。</p>
+        <p className="muted">
+          无权限，需要 Member、Buddy、Leader 或 Admin 角色。
+        </p>
       </section>
     )
   }
@@ -289,6 +293,7 @@ export function TeamAnalyticsPage() {
             aria-label="成员"
             value={memberId}
             onChange={(event) => setMemberId(event.target.value)}
+            disabled={!isLeader && !isAdmin && !isBuddy}
           >
             <option value="">全部</option>
             {members.map(([id, name]) => (
@@ -322,6 +327,12 @@ export function TeamAnalyticsPage() {
       {loading && !analytics && <p className="muted">正在加载团队数据…</p>}
       {analytics && (
         <>
+          <p className="muted">
+            数据范围：{analytics.meta.scope} · 统计时间：
+            {analytics.meta.as_of
+              ? new Date(analytics.meta.as_of).toLocaleString('zh-CN')
+              : '-'}
+          </p>
           <div className="metric-grid" aria-label="团队关键指标">
             <article>
               <span>计划完成率</span>
@@ -332,7 +343,7 @@ export function TeamAnalyticsPage() {
               </small>
             </article>
             <article>
-              <span>Evidence 通过率</span>
+              <span>任务成果证明 通过率</span>
               <strong>{percent(analytics.kpis.evidence_pass_rate)}</strong>
               <small>
                 {analytics.kpis.evidence_passed_count} /{' '}
@@ -343,6 +354,141 @@ export function TeamAnalyticsPage() {
               <span>延期计划项</span>
               <strong>{analytics.kpis.overdue_plan_item_count}</strong>
               <small>待跟进</small>
+            </article>
+          </div>
+          <div className="metric-grid" aria-label="差距分布">
+            <article>
+              <span>当前必修差距</span>
+              <strong>{analytics.gap_summary.current_required}</strong>
+              <small>
+                来源：
+                {analytics.gap_summary.derivation === 'scope_v1'
+                  ? 'scope-v1 快照'
+                  : 'legacy 回退'}
+              </small>
+            </article>
+            <article>
+              <span>进阶目标差距</span>
+              <strong>{analytics.gap_summary.target_progressive}</strong>
+              <small>
+                来源：
+                {analytics.gap_summary.derivation === 'scope_v1'
+                  ? 'scope-v1 快照'
+                  : 'legacy 回退'}
+              </small>
+            </article>
+          </div>
+          <div className="dashboard-grid">
+            <article className="dashboard-card">
+              <h2>计划项分布</h2>
+              <div className="dashboard-grid">
+                <section aria-labelledby="priority-distribution">
+                  <h3 id="priority-distribution">优先级分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>高</th>
+                        <th>中</th>
+                        <th>低</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.priority.高}</td>
+                        <td>{analytics.distributions.priority.中}</td>
+                        <td>{analytics.distributions.priority.低}</td>
+                        <td>{analytics.distributions.priority.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="quarterly-distribution">
+                  <h3 id="quarterly-distribution">季度分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>Q1</th>
+                        <th>Q2</th>
+                        <th>Q3</th>
+                        <th>Q4</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.quarterly.Q1}</td>
+                        <td>{analytics.distributions.quarterly.Q2}</td>
+                        <td>{analytics.distributions.quarterly.Q3}</td>
+                        <td>{analytics.distributions.quarterly.Q4}</td>
+                        <td>{analytics.distributions.quarterly.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="plan-status-distribution">
+                  <h3 id="plan-status-distribution">计划状态分布</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>未开始</th>
+                        <th>进行中</th>
+                        <th>已完成</th>
+                        <th>延期</th>
+                        <th>暂停</th>
+                        <th>取消</th>
+                        <th>合计</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{analytics.distributions.plan_status.未开始}</td>
+                        <td>{analytics.distributions.plan_status.进行中}</td>
+                        <td>{analytics.distributions.plan_status.已完成}</td>
+                        <td>{analytics.distributions.plan_status.延期}</td>
+                        <td>{analytics.distributions.plan_status.暂停}</td>
+                        <td>{analytics.distributions.plan_status.取消}</td>
+                        <td>{analytics.distributions.plan_status.total}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+                <section aria-labelledby="other-distribution">
+                  <h3 id="other-distribution">其他</h3>
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>纳入正式计划占比</th>
+                        <th>待确认计划项</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>
+                          {percent(
+                            analytics.distributions.formal_inclusion_ratio
+                              .ratio,
+                          )}
+                          （
+                          {
+                            analytics.distributions.formal_inclusion_ratio
+                              .included_count
+                          }
+                          /
+                          {
+                            analytics.distributions.formal_inclusion_ratio
+                              .total_count
+                          }
+                          ）
+                        </td>
+                        <td>
+                          {analytics.distributions.pending_acceptance.count}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
             </article>
           </div>
           <div className="dashboard-grid">

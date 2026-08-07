@@ -216,7 +216,7 @@ const stageMeta: Record<
   plan: {
     label: '计划执行中',
     title: '我的成长总览',
-    description: '将自评、Gap、年度计划与 Evidence 进展放在同一工作区。',
+    description: '将自评、Gap、年度计划与任务成果证明进展放在同一工作区。',
     cta: { label: '查看年度计划', href: '/growth/annual-plan' },
   },
   'plan-pending': {
@@ -457,6 +457,21 @@ function AbilitySection({
         </article>
         <article>
           <h3>Gap 概览</h3>
+          <div className={styles.gapSummary} data-testid="gap-summary">
+            <span>
+              必备 Gap <strong>{dashboard.gap_summary.current_required}</strong>
+            </span>
+            <span>
+              进阶 Gap{' '}
+              <strong>{dashboard.gap_summary.target_progressive}</strong>
+            </span>
+          </div>
+          {dashboard.assessment?.applicable_completion && (
+            <p className="muted" data-testid="applicable-completion">
+              适用完成度 {dashboard.assessment.applicable_completion.completed}/
+              {dashboard.assessment.applicable_completion.total}
+            </p>
+          )}
           {filteredGaps.length === 0 ? (
             <p className="muted">当前范围暂无 Gap。</p>
           ) : (
@@ -561,6 +576,14 @@ function PlanDashboard({
                   {dashboard.plan_progress.延期}
                 </dd>
               </div>
+              <div className={styles.statusItem}>
+                <dt>暂停</dt>
+                <dd>{dashboard.plan_progress.暂停}</dd>
+              </div>
+              <div className={styles.statusItem}>
+                <dt>取消</dt>
+                <dd>{dashboard.plan_progress.取消}</dd>
+              </div>
             </dl>
           </div>
           <a href={`/growth/annual-plan?year=${dashboard.year}`}>
@@ -614,16 +637,44 @@ function PlanDashboard({
             查看月度复盘
           </a>
         </article>
+        <article
+          className={`card ${styles.hoursCard}`}
+          data-testid="current-month-card"
+        >
+          <h2>本月概览</h2>
+          <div className={styles.metricGrid}>
+            <div className={styles.metric}>
+              <span>本月计划</span>
+              <strong>{dashboard.current_month.planned_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月进行中</span>
+              <strong>{dashboard.current_month.in_progress_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月延期</span>
+              <strong>{dashboard.current_month.delayed_count}</strong>
+            </div>
+            <div className={styles.metric}>
+              <span>本月待验收</span>
+              <strong>{dashboard.current_month.pending_evidence_count}</strong>
+            </div>
+          </div>
+          <p className="muted">下一步：{dashboard.next_action.message}</p>
+          <a href={`/growth/review/monthly?year=${dashboard.year}`}>
+            进入月度复盘
+          </a>
+        </article>
         <article className={`card ${styles.todoCard}`} data-testid="todo-card">
           <h2>待办事项</h2>
           <div className={styles.todoGrid}>
             <TodoItem
-              label="待提交 Evidence"
-              value={dashboard.summary.pending_evidence_count}
+              label="待提交任务成果证明"
+              value={dashboard.summary.pending_evidence_to_submit}
             />
             <TodoItem
               label="待 Buddy 复核"
-              value={dashboard.plan_progress['待 Evidence Review']}
+              value={dashboard.summary.pending_evidence_to_review}
             />
             <TodoItem
               label="计划到期"
@@ -647,7 +698,7 @@ function PlanDashboard({
         <div className={styles.tasksHead}>
           <h2>当前学习任务</h2>
           <a href={`/growth/annual-plan?year=${dashboard.year}`}>
-            进入任务与 Evidence
+            进入任务与任务成果证明
           </a>
         </div>
         {dashboard.current_tasks.length === 0 ? (
@@ -774,7 +825,7 @@ export function MemberDashboardPage() {
           <h1>{meta?.title ?? '我的成长总览'}</h1>
           <p className="muted">
             {meta?.description ??
-              '将自评、Gap、年度计划与 Evidence 进展放在同一工作区。'}
+              '将自评、Gap、年度计划与任务成果证明进展放在同一工作区。'}
           </p>
         </div>
         <div className={styles.headerActions}>

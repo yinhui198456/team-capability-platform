@@ -52,6 +52,9 @@ def scope_schema(connection: psycopg.Connection) -> psycopg.Connection:
             connection.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
     create_access_schema(connection)
     create_assessment_schema(connection)
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
     import_catalog(resolve_workbook_dir(), connection)
     run_migrations(connection)
     connection.commit()

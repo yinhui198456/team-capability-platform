@@ -108,6 +108,11 @@ def ensure_capability_nodes(
             target_level = COALESCE(target_level, 'P8')
         """
     )
+    # Migrations (incl. v0009) ALTER planning tables, so the planning schema
+    # must exist first.
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
     run_migrations(connection)
     connection.commit()
 

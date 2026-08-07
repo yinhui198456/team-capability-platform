@@ -211,10 +211,33 @@
 
 .assessmentItem,
 .taskItem,
-.evidenceItem {
+.evidenceItem,
+.reviewItem {
   border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-md);
   padding: 14px;
+}
+
+.reviewList {
+  display: grid;
+  gap: 12px;
+}
+
+.reviewHeader {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.reviewOutput {
+  margin: 0;
+}
+
+.reviewHistory {
+  margin-top: 10px;
 }
 
 .assessmentHeader {

@@ -1,4 +1,4 @@
-import { request, getOrNull } from './shared/api'
+import { request, getOrNull, type ApiError } from './shared/api'
 import type { EstimatedHours, EstimatedHoursSummary } from './estimatedHours'
 
 export type AvailableYears = {
@@ -69,19 +69,41 @@ export type GrowthGoal = CapabilityContext & {
 export type PlanItemStatus =
   '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
 
+// v0010 six-state machine — '待 Evidence Review' is gone for tasks; a task
+// stays 进行中 while evidence awaits review and completes via the gate.
 export type LearningTaskStatus =
-  | '未开始'
-  | '进行中'
-  | '待 Evidence Review'
-  | '已完成'
-  | '延期'
-  | '暂停'
-  | '取消'
+  '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
+
+export const TASK_TRANSITIONS: Record<
+  LearningTaskStatus,
+  LearningTaskStatus[]
+> = {
+  未开始: ['进行中', '取消'],
+  进行中: ['暂停', '延期', '已完成', '取消'],
+  暂停: ['进行中', '取消'],
+  延期: ['进行中', '暂停', '已完成', '取消'],
+  已完成: [],
+  取消: [],
+}
+
+// Reasons are required when ENTERING these states (server-enforced).
+export const STATUS_REASON_FIELDS: Partial<Record<LearningTaskStatus, string>> =
+  {
+    延期: 'delay_reason',
+    暂停: 'pause_reason',
+    取消: 'cancel_reason',
+  }
+
+export const COMPLETION_QUALITY_VALUES = [
+  '达到预期',
+  '部分达到',
+  '超出预期',
+] as const
 
 export type PlanItem = CapabilityContext & {
   id: number
   annual_growth_plan_id: number
-  growth_goal_id: number
+  growth_goal_id: number | null
   l3_code: string
   current_level: number
   target_level: number
@@ -95,6 +117,32 @@ export type PlanItem = CapabilityContext & {
   plan_end_date: string | null
   target_month: number | null
   status: PlanItemStatus
+  // CAS: every plan-item PUT must carry the item's current revision.
+  revision: number
+  // #62 frozen source snapshot (assessment-approval items)
+  source_assessment_id?: number | null
+  source_assessment_detail_id?: number | null
+  capability_standard_version_id?: number | null
+  planning_snapshot_id?: number | null
+  l3_node_id?: number | null
+  l1_code?: string | null
+  l1_name?: string | null
+  l2_code?: string | null
+  l2_name?: string | null
+  l3_name?: string | null
+  scope_type?: 'current_required' | 'target_progressive' | null
+  standard_target_level?: number | null
+  adjusted_target_level?: number | null
+  effective_target_level?: number | null
+  standard_job_level_snapshot?: string | null
+  member_current_level_snapshot?: string | null
+  member_target_level_snapshot?: string | null
+  plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month?: number | null
+  planning_source_type?: 'assessment_approval' | null
+  assessment_revision?: number | null
+  gap_value?: number | null
+  include_in_plan?: boolean | null
 }
 
 export type LearningTask = CapabilityContext & {
@@ -108,7 +156,13 @@ export type LearningTask = CapabilityContext & {
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
-  delay_reason?: string | null
+  revision: number
+  actual_started_at: string | null
+  actual_completed_at: string | null
+  delay_reason: string | null
+  pause_reason: string | null
+  cancel_reason: string | null
+  revised_due_date: string | null
   plan_item_current_level: number
   plan_item_target_level: number
   plan_item_priority: '高' | '中' | '低'
@@ -135,6 +189,11 @@ export type MemberDashboardAssessment = {
   review_conclusion: '认可' | '建议调整' | null
   member_current_level_snapshot?: string | null
   member_target_level_snapshot?: string | null
+  applicable_completion?: {
+    total: number
+    completed: number
+    ratio: number
+  }
 }
 
 export type MemberDashboard = {
@@ -155,18 +214,47 @@ export type MemberDashboard = {
     current_month_planned_hours_has_values?: boolean
     current_month_planned_hours_has_unparsed?: boolean
     completed_task_count: number
-    pending_evidence_count: number
+    // Split evidence todos: what the member must submit vs what the buddy
+    // must review — superseded evidence versions are never counted.
+    pending_evidence_to_submit: number
+    pending_evidence_to_review: number
   }
   plan_progress: {
     total: number
     未开始: number
     进行中: number
-    '待 Evidence Review': number
     已完成: number
     延期: number
+    暂停: number
+    取消: number
   }
   domain_radar: { domain_code: string; score: number }[]
   gaps: EligibleGap[]
+  gap_summary: {
+    current_required: number
+    target_progressive: number
+    derivation: 'scope_v1' | 'legacy_fallback'
+  }
+  current_month: {
+    planned_count: number
+    planned_ids: number[]
+    in_progress_count: number
+    delayed_count: number
+    pending_evidence_count: number
+    actual_hours: number
+  }
+  next_action: {
+    action_key: string
+    message: string
+    count: number
+  }
+  meta: {
+    year: number
+    scope: string
+    as_of: string | null
+    source: string
+    denominator_source?: string | null
+  }
   current_tasks: LearningTask[]
 }
 
@@ -181,6 +269,72 @@ export type AnnualPlan = {
   created_at: string
   items: PlanItem[]
   estimated_hours_summary?: EstimatedHoursSummary
+  source_assessment_id?: number | null
+  planning_source_type?: 'assessment_approval' | null
+  source_standard_version_label?: string | null
+}
+
+export type ChangeProposalDetail = {
+  id: number
+  source_assessment_detail_id: number
+  assessment_id: number
+  l3_node_id: number
+  l1_code: string
+  l1_name: string
+  l2_code: string
+  l2_name: string
+  l3_code: string
+  l3_name: string
+  scope_type: 'current_required' | 'target_progressive' | null
+  current_level: number | null
+  standard_target_level: number | null
+  adjusted_target_level: number | null
+  effective_target_level: number | null
+  gap_value: number | null
+  member_priority: '高' | '中' | '低' | '暂缓' | null
+  include_in_plan: boolean | null
+  plan_quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
+  plan_month: number | null
+  standard_job_level_snapshot: string | null
+  member_current_level_snapshot: string | null
+  member_target_level_snapshot: string | null
+  capability_standard_version_id: number
+  planning_snapshot_id: number | null
+  assessment_revision: number
+  planning_source_type: 'assessment_approval'
+}
+
+export type ChangeProposal = {
+  id: number
+  member_id: number
+  year: number
+  source_assessment_id: number
+  target_annual_growth_plan_id: number
+  status: '待处理'
+  created_by: number
+  summary: {
+    source_assessment_id: number
+    source_assessment_version: number
+    source_assessment_revision: number
+    year: number
+    member_id: number
+    items_count: number
+    target_annual_growth_plan_id: number
+    target_is_legacy: boolean
+  }
+  created_at: string
+  details: ChangeProposalDetail[]
+}
+
+export async function listChangeProposals(
+  year: number,
+  memberId?: number,
+): Promise<ChangeProposal[]> {
+  const query = new URLSearchParams({ year: String(year) })
+  if (memberId !== undefined) query.set('member_id', String(memberId))
+  return request<ChangeProposal[]>(`/api/planning/change-proposals?${query}`, {
+    method: 'GET',
+  })
 }
 
 export type EvidenceStatus =
@@ -196,11 +350,35 @@ export type Evidence = CapabilityContext & {
   status: EvidenceStatus
   submitted_at: string | null
   created_at: string
+  submitted_by: number | null
+  description: string | null
+  evidence_type: 'link' | 'file' | null
+  url: string | null
+  file_reference: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  supersedes_evidence_id: number | null
+  revision: number
 }
+
+export type EvidenceCreate = Partial<{
+  content: string | null
+  evidence_link: string | null
+  description: string | null
+  evidence_type: 'link' | 'file'
+  url: string | null
+  file_reference: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  supersedes_evidence_id: number
+}>
 
 export type EvidenceUpdate = Partial<{
   content: string | null
   evidence_link: string | null
+  description: string | null
 }>
 
 export async function getAnnualPlanEligibility(): Promise<AnnualPlanEligibility> {
@@ -265,11 +443,11 @@ export async function listPlanItems(): Promise<PlanItem[]> {
   return request<PlanItem[]>('/api/planning/plan-items', { method: 'GET' })
 }
 
+// Members may edit ONLY the two schedule dates of a plan item; everything
+// else (target_month, status, the #62 source snapshot) is frozen server-side.
 export type PlanItemUpdate = Partial<{
   plan_start_date: string | null
   plan_end_date: string | null
-  target_month: number | null
-  status: '进行中' | '暂停' | '取消'
 }>
 
 export function formatL3Name(
@@ -280,14 +458,17 @@ export function formatL3Name(
   return name ? `${name}（${l3Code}）` : l3Code
 }
 
+// CAS contract: every plan-item PUT carries the item's current revision;
+// a stale client gets a 409 plan_revision_conflict.
 export async function updatePlanItem(
   plan_item_id: number,
   fields: PlanItemUpdate,
+  expected_revision: number,
 ): Promise<PlanItem> {
   return request<PlanItem>(
     `/api/planning/plan-items/${plan_item_id}`,
     { method: 'PUT' },
-    fields,
+    { ...fields, expected_revision },
   )
 }
 
@@ -303,6 +484,8 @@ export async function getLearningTask(task_id: number): Promise<LearningTask> {
   })
 }
 
+// Append-only progress log.  Rows are voided (invalidated_at) or corrected
+// (correction_of_log_id) — never physically deleted.
 export type ProgressLog = {
   id: number
   task_id: number
@@ -310,49 +493,154 @@ export type ProgressLog = {
   actual_hours: number
   note: string | null
   recorder_id: number
+  created_at: string
+  invalidated_at: string | null
+  invalidated_by: number | null
+  correction_of_log_id: number | null
+  idempotency_key: string | null
 }
 
-export type ProgressLogUpdate = Partial<{
+export type ProgressLogCreate = {
   record_date: string
   actual_hours: number
-  note: string | null
-}>
-
-export type MonthlyHours = {
-  month: number
-  total_hours: number
+  note?: string
+  idempotency_key?: string
+  correction_of_log_id?: number
 }
 
+export type MonthlyReviewDetail = {
+  plan_item_id: number
+  task_id: number | null
+  l3_code: string
+  status: string
+  estimated_hours: string | null
+  estimated_hours_parsed: EstimatedHours
+  actual_hours: number
+}
+
+export type MonthlyReviewSummary = {
+  planned_count: number
+  completed_count: number
+  in_progress_count: number
+  delayed_count: number
+  paused_count: number
+  cancelled_count: number
+  completion_rate: number
+  actual_hours: number
+  estimated_hours_summary: EstimatedHoursSummary
+}
+
+export type MonthlyReviewWritten = {
+  id: number
+  member_id: number
+  year: number
+  month: number
+  revision: number
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type MonthlyReviewHistoryEntry = {
+  revision: number
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+  changed_by: number
+  changed_at: string | null
+}
+
+export type MonthlyReview = {
+  summary: MonthlyReviewSummary
+  details: MonthlyReviewDetail[]
+  written: MonthlyReviewWritten | null
+  history: MonthlyReviewHistoryEntry[]
+  meta: {
+    year: number
+    month: number
+    scope: string
+    as_of: string | null
+    source: string
+  }
+}
+
+export type MonthlyReviewWriteFields = Partial<{
+  main_output: string | null
+  problems: string | null
+  next_month_focus: string | null
+  notes: string | null
+}>
+
 export type LearningTaskUpdate = Partial<{
-  status: '未开始' | '进行中' | '延期' | '暂停' | '取消'
-  actual_start_date: string | null
-  actual_end_date: string | null
   completion_quality: string | null
   review_conclusion: string | null
   next_action: string | null
 }>
 
+// CAS contract: the revision is mandatory — a PUT without it is a 422.
 export async function updateLearningTask(
   task_id: number,
   fields: LearningTaskUpdate,
+  expected_revision: number,
 ): Promise<LearningTask> {
   return request<LearningTask>(
     `/api/planning/learning-tasks/${task_id}`,
     { method: 'PUT' },
-    fields,
+    { ...fields, expected_revision },
+  )
+}
+
+export type TaskTransitionPayload = {
+  to_status: LearningTaskStatus
+  reason?: string
+  expected_revision: number
+  idempotency_key?: string
+  revised_due_date?: string
+}
+
+export async function transitionLearningTask(
+  task_id: number,
+  payload: TaskTransitionPayload,
+): Promise<LearningTask> {
+  return request<LearningTask>(
+    `/api/planning/learning-tasks/${task_id}/transitions`,
+    { method: 'POST' },
+    payload,
+  )
+}
+
+export type TransitionHistoryItem = {
+  id: number
+  learning_task_id: number
+  from_status: string
+  to_status: string
+  reason: string | null
+  actor_id: number
+  occurred_at: string
+  request_key: string | null
+}
+
+export async function listTaskTransitionHistory(
+  task_id: number,
+): Promise<TransitionHistoryItem[]> {
+  return request<TransitionHistoryItem[]>(
+    `/api/planning/learning-tasks/${task_id}/transition-history`,
+    { method: 'GET' },
   )
 }
 
 export async function createProgressLog(
   task_id: number,
-  record_date: string,
-  actual_hours: number,
-  note: string,
+  fields: ProgressLogCreate,
 ): Promise<ProgressLog> {
   return request<ProgressLog>(
     `/api/planning/learning-tasks/${task_id}/progress-logs`,
     { method: 'POST' },
-    { record_date, actual_hours, note },
+    fields,
   )
 }
 
@@ -365,50 +653,75 @@ export async function listProgressLogs(
   )
 }
 
-export async function updateProgressLog(
+export async function invalidateProgressLog(
   log_id: number,
-  fields: ProgressLogUpdate,
+  idempotency_key?: string,
 ): Promise<ProgressLog> {
   return request<ProgressLog>(
-    `/api/planning/progress-logs/${log_id}`,
-    { method: 'PUT' },
-    fields,
+    `/api/planning/progress-logs/${log_id}/invalidate`,
+    { method: 'POST' },
+    idempotency_key === undefined ? {} : { idempotency_key },
   )
 }
 
-export async function deleteProgressLog(log_id: number): Promise<void> {
-  await request<void>(`/api/planning/progress-logs/${log_id}`, {
-    method: 'DELETE',
+export async function getMonthlyReview(
+  year: number,
+  month: number,
+  memberId?: number,
+): Promise<MonthlyReview> {
+  const query = new URLSearchParams({
+    year: String(year),
+    month: String(month),
   })
+  if (memberId !== undefined) query.set('member_id', String(memberId))
+  return request<MonthlyReview>(
+    `/api/planning/monthly-reviews?${query.toString()}`,
+    { method: 'GET' },
+  )
 }
 
-export async function getMonthlyHours(year: number): Promise<MonthlyHours[]> {
-  return request<MonthlyHours[]>(
-    `/api/planning/progress-logs/monthly?year=${year}`,
-    { method: 'GET' },
+// CAS contract: the revision is mandatory — a PUT without it is a 422.
+export async function upsertMonthlyReview(
+  year: number,
+  month: number,
+  fields: MonthlyReviewWriteFields,
+  expected_revision: number,
+): Promise<{
+  written: MonthlyReviewWritten
+  history: MonthlyReviewHistoryEntry[]
+}> {
+  return request<{
+    written: MonthlyReviewWritten
+    history: MonthlyReviewHistoryEntry[]
+  }>(
+    `/api/planning/monthly-reviews?year=${year}&month=${month}`,
+    { method: 'PUT' },
+    { ...fields, expected_revision },
   )
 }
 
 export async function createEvidence(
   task_id: number,
-  content: string,
-  evidence_link: string,
+  fields: EvidenceCreate,
 ): Promise<Evidence> {
   return request<Evidence>(
     `/api/planning/learning-tasks/${task_id}/evidences`,
     { method: 'POST' },
-    { content, evidence_link },
+    fields,
   )
 }
 
+// CAS contract: every draft-updating PUT carries the evidence's current
+// revision; a stale client gets a 409 evidence_revision_conflict.
 export async function updateEvidence(
   evidence_id: number,
   fields: EvidenceUpdate,
+  expected_revision: number,
 ): Promise<Evidence> {
   return request<Evidence>(
     `/api/planning/evidences/${evidence_id}`,
     { method: 'PUT' },
-    fields,
+    { ...fields, expected_revision },
   )
 }
 
@@ -433,32 +746,26 @@ export async function getEvidence(evidence_id: number): Promise<Evidence> {
   })
 }
 
-export type EvidenceReviewStatus =
-  '待 Review' | '通过' | '需补充' | '驳回' | '已闭环'
+// The server accepts exactly 通过 / 需补充 for evidence review conclusions.
+export type EvidenceReviewConclusion = '通过' | '需补充'
 
-export type EvidenceReviewConclusion = '通过' | '需补充' | '驳回'
+// A pending queue item is the evidence row itself, joined with the member
+// owning the task (server already scoped it to the current primary Buddy).
+export type PendingEvidenceReview = Evidence & {
+  member_id: number
+  username: string
+}
 
-export type EvidenceReview = {
+// The immutable review history for a task: one closed row per evidence version.
+export type EvidenceReviewRecord = {
   id: number
   evidence_id: number
   version_number: number
-  status: EvidenceReviewStatus
+  status: string
   conclusion: EvidenceReviewConclusion | null
   feedback: string | null
   reviewed_at: string | null
-  created_at?: string
-  submitted_at?: string | null
-  member_id?: number
-  username?: string
-  learning_task_id?: number
-  l3_code?: string
-  l1_code?: string | null
-  l1_name?: string | null
-  l2_code?: string | null
-  l2_name?: string | null
-  l3_name?: string | null
-  content?: string | null
-  evidence_link?: string | null
+  created_at: string
 }
 
 export type CapabilityProfileAssessmentReview = {
@@ -491,7 +798,7 @@ export type CapabilityProfilePlanItem = PlanItem & {
     | (LearningTask & {
         l3_name?: string | null
         progress_logs: ProgressLog[]
-        evidences: (Evidence & { review: EvidenceReview | null })[]
+        evidences: (Evidence & { review: EvidenceReviewRecord | null })[]
       })
     | null
 }
@@ -538,6 +845,15 @@ export type CapabilityProfile = {
   }
   assessments: CapabilityProfileAssessment[]
   annual_plan: CapabilityProfileAnnualPlan | null
+  monthly_reviews: (MonthlyReviewWritten & {
+    history: MonthlyReviewHistoryEntry[]
+  })[]
+  meta: {
+    year: number
+    scope: string
+    as_of: string | null
+    source: string
+  }
   statistics: CapabilityProfileStatistics
 }
 
@@ -579,10 +895,15 @@ export async function getCapabilityProfileForMember(
   )
 }
 
-export async function listPendingEvidenceReviews(): Promise<EvidenceReview[]> {
-  return request<EvidenceReview[]>('/api/planning/evidence-reviews/pending', {
-    method: 'GET',
-  })
+export async function listPendingEvidenceReviews(): Promise<
+  PendingEvidenceReview[]
+> {
+  return request<PendingEvidenceReview[]>(
+    '/api/planning/evidence-reviews/pending',
+    {
+      method: 'GET',
+    },
+  )
 }
 
 export type ReviewSummary = {
@@ -599,25 +920,65 @@ export async function getEvidenceReviewSummary(
   )
 }
 
+// Review is submitted against the evidence id (the queue item), not a review
+// row id.  The idempotency key is bound to the exact payload so an unchanged
+// retry replays server-side instead of double-writing.
 export async function submitEvidenceReview(
-  review_id: number,
+  evidence_id: number,
   conclusion: EvidenceReviewConclusion,
   feedback: string,
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/planning/evidence-reviews/${review_id}`,
+  idempotency_key?: string,
+): Promise<EvidenceReviewRecord> {
+  return request<EvidenceReviewRecord>(
+    `/api/planning/evidences/${evidence_id}/review`,
     { method: 'POST' },
-    { conclusion, feedback },
+    idempotency_key === undefined
+      ? { conclusion, feedback }
+      : { conclusion, feedback, idempotency_key },
   )
 }
 
 export async function listEvidenceReviewsForTask(
   task_id: number,
-): Promise<EvidenceReview[]> {
-  return request<EvidenceReview[]>(
+): Promise<EvidenceReviewRecord[]> {
+  return request<EvidenceReviewRecord[]>(
     `/api/planning/learning-tasks/${task_id}/evidence-reviews`,
     { method: 'GET' },
   )
+}
+
+export type ApiErrorDetail = {
+  status: number
+  code: string | null
+  field: string | null
+  message: string
+  isConflict: boolean
+}
+
+// Maps the structured server envelope {code, field, reason, message} (409) and
+// {code, field, message} (422) plus plain 403s to a field-locatable state.
+export function parseApiErrorDetail(error: unknown): ApiErrorDetail {
+  const apiError = error as ApiError
+  const detail = apiError?.detail
+  const structured =
+    detail !== null &&
+    typeof detail === 'object' &&
+    !Array.isArray(detail) &&
+    detail !== undefined
+      ? (detail as Record<string, unknown>)
+      : null
+  return {
+    status: apiError?.status ?? 0,
+    code: typeof structured?.code === 'string' ? structured.code : null,
+    field: typeof structured?.field === 'string' ? structured.field : null,
+    message:
+      typeof structured?.message === 'string'
+        ? structured.message
+        : apiError instanceof Error
+          ? apiError.message
+          : '请求失败',
+    isConflict: apiError?.status === 409,
+  }
 }
 
 export type TeamAnnualCapabilityPlan = {
@@ -679,8 +1040,40 @@ export async function archiveTeamAnnualPlan(
   )
 }
 
+export type TeamAnalyticsDistributions = {
+  priority: { 高: number; 中: number; 低: number; total: number }
+  formal_inclusion_ratio: {
+    included_count: number
+    total_count: number
+    ratio: number
+  }
+  quarterly: { Q1: number; Q2: number; Q3: number; Q4: number; total: number }
+  plan_status: {
+    未开始: number
+    进行中: number
+    已完成: number
+    延期: number
+    暂停: number
+    取消: number
+    total: number
+  }
+  pending_acceptance: { count: number }
+}
+
 export type TeamAnalytics = {
   year: number
+  meta: {
+    year: number
+    as_of: string | null
+    scope: string
+    source: string
+    denominator_source?: string | null
+  }
+  gap_summary: {
+    current_required: number
+    target_progressive: number
+    derivation: 'scope_v1' | 'legacy_fallback'
+  }
   filters: { member_id: number | null; domain_code: string | null }
   kpis: {
     assessment_completion_rate: number
@@ -741,6 +1134,7 @@ export type TeamAnalytics = {
     overdue_days: number
     status: string
   }>
+  distributions: TeamAnalyticsDistributions
 }
 
 export async function getTeamAnalytics(query: {
@@ -756,6 +1150,100 @@ export async function getTeamAnalytics(query: {
   return request<TeamAnalytics>(`/api/planning/team-analytics?${parameters}`, {
     method: 'GET',
   })
+}
+
+export type TeamAnnualPlanItem = PlanItem & {
+  member_id: number
+  username: string
+  full_name: string
+  actual_hours?: number
+}
+
+export type TeamAnnualPlanItemStatusBreakdown = {
+  未开始: number
+  进行中: number
+  已完成: number
+  延期: number
+  暂停: number
+  取消: number
+  total: number
+}
+
+export type TeamAnnualPlanItemSummary = {
+  total_count: number
+  planned_hours_min: number | null
+  planned_hours_max: number | null
+  has_values: boolean
+  has_unparsed: boolean
+  actual_hours: number
+  status_breakdown: TeamAnnualPlanItemStatusBreakdown
+}
+
+export type TeamAnnualPlanMember = {
+  member_id: number
+  username: string
+  full_name: string
+}
+
+export type TeamAnnualPlanItemList = {
+  meta: {
+    year: number
+    as_of: string | null
+    scope: string
+    source: string
+  }
+  filters: {
+    domain_code: string | null
+    priority: string | null
+    status: string | null
+    quarter: string | null
+    month: number | null
+    member_id: number | null
+    q: string | null
+  }
+  pagination: {
+    page: number
+    page_size: number
+    total_pages: number
+    total_count: number
+  }
+  summary: TeamAnnualPlanItemSummary
+  members: TeamAnnualPlanMember[]
+  items: TeamAnnualPlanItem[]
+}
+
+export async function getTeamAnnualPlanItems(query: {
+  year: number
+  page?: number
+  page_size?: number
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+  member_id?: number
+  domain_code?: string
+  priority?: string
+  status?: string
+  quarter?: string
+  month?: number
+  q?: string
+}): Promise<TeamAnnualPlanItemList> {
+  const parameters = new URLSearchParams({ year: String(query.year) })
+  if (query.page !== undefined) parameters.set('page', String(query.page))
+  if (query.page_size !== undefined)
+    parameters.set('page_size', String(query.page_size))
+  if (query.sort_by) parameters.set('sort_by', query.sort_by)
+  if (query.sort_order) parameters.set('sort_order', query.sort_order)
+  if (query.member_id !== undefined)
+    parameters.set('member_id', String(query.member_id))
+  if (query.domain_code) parameters.set('domain_code', query.domain_code)
+  if (query.priority) parameters.set('priority', query.priority)
+  if (query.status) parameters.set('status', query.status)
+  if (query.quarter) parameters.set('quarter', query.quarter)
+  if (query.month !== undefined) parameters.set('month', String(query.month))
+  if (query.q) parameters.set('q', query.q)
+  return request<TeamAnnualPlanItemList>(
+    `/api/planning/team-annual-plan/items?${parameters}`,
+    { method: 'GET' },
+  )
 }
 
 export async function createLearningTask(

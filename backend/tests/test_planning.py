@@ -22,7 +22,13 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -40,6 +46,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -53,6 +60,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -62,6 +70,9 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
 
 def _reset_catalog_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -130,9 +141,11 @@ def _ensure_l3_node(
         INSERT INTO capability_node (
             model_id, parent_node_id, node_type, code, name, sort_order,
             materials_text, expected_output, estimated_hours,
+            recommended_start_level,
             source_workbook, source_sheet, source_row
         )
-        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'test.xlsx', 'sheet', 4)
+        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'P4',
+                'test.xlsx', 'sheet', 4)
         """,
         (model_id, l2[0], l3_code, materials_text, expected_output, estimated_hours),
     )
@@ -270,6 +283,10 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -320,13 +337,13 @@ def _approve_assessment(
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
 
 
-def test_generate_without_submitted_assessment_returns_409(
+def test_legacy_generate_endpoint_blocked(
     planning_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(planning_schema, "member_no_assess", ["Member"])
@@ -335,11 +352,11 @@ def test_generate_without_submitted_assessment_returns_409(
     status, body, _ = _request(
         "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
     )
-    assert status == 409
-    assert body == {"detail": "暂无已提交的能力评估"}
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_planning_write_disabled"
 
 
-def test_generate_creates_plan_items_and_is_idempotent(
+def test_approval_creates_plan_items_and_is_idempotent(
     planning_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(planning_schema, "member_plan", ["Member"])
@@ -352,83 +369,46 @@ def test_generate_creates_plan_items_and_is_idempotent(
     _approve_assessment(planning_schema, assessment_id, "buddy_plan")
 
     member_cookies = _login(planning_schema, "member_plan")
-
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
-    )
-    assert status == 200
-    assert len(gaps) == 2
-    for gap in gaps:
-        status, _, _ = _request(
-            "POST",
-            "/api/planning/growth-goals",
-            {"gap_id": gap["id"]},
-            cookies=member_cookies,
-        )
-        assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 2
-    items = result["items"]
-    assert len(items) == 2
-    items_by_code = {item["l3_code"]: item for item in items}
-    assert "P01-L2A-L3A" in items_by_code
-    assert "P01-L2A-L3B" in items_by_code
-    item = items_by_code["P01-L2A-L3A"]
-    assert item["l1_code"] == "P01"
-    assert item["l2_code"] == "P01-L2A"
-    assert item["l2_name"] is not None
-    assert item["l3_name"] is not None
-    assert item["current_level"] == 2
-    assert item["target_level"] == 4
-    assert item["priority"] == "高"
-    assert item["learning_material"] == "test materials"
-    assert item["expected_output"] == "test output"
-    assert item["estimated_hours"] == "10"
-    assert item["estimated_hours_parsed"] == {
-        "raw": "10",
-        "min_hours": 10.0,
-        "max_hours": 10.0,
-        "is_valid": True,
-        "is_range": False,
-    }
-    assert item["status"] == "未开始"
-    assert item["target_month"] is None
-
-    status, tasks, _ = _request(
-        "GET", "/api/planning/learning-tasks", cookies=member_cookies
-    )
-    assert status == 200
-    assert {task["plan_item_id"] for task in tasks} == {item["id"] for item in items}
-    assert {task["status"] for task in tasks} == {"未开始"}
-    assert (
-        next(task for task in tasks if task["l3_code"] == "P01-L2A-L3A")["l2_code"]
-        == "P01-L2A"
-    )
-
+    # The approval atomically created the plan, items and tasks.
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
     assert plan is not None
-    assert plan["year"] == 2026
-    assert plan["estimated_hours_summary"] == {
-        "min_hours": 10.0,
-        "max_hours": 10.0,
-        "has_values": True,
-        "has_unparsed": False,
-    }
-    assert plan["status"] == "制定中"
-    assert len(plan["items"]) == 2
+    assert plan["planning_source_type"] == "assessment_approval"
+    assert plan["source_assessment_id"] == assessment_id
+    items = plan["items"]
+    assert len(items) == 2
+    for item in items:
+        assert item["source_assessment_detail_id"] is not None
+        assert item["planning_source_type"] == "assessment_approval"
 
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
+    status, plan2, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert result["created"] == 0
+    assert len(plan2["items"]) == 2
+
+    # re-approval (without key) is rejected; nothing is duplicated
+    from app.assessment.repository import ReviewError, submit_assessment_review
+
+    review_id = planning_schema.execute(
+        "SELECT id FROM assessment_review WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchone()[0]
+    try:
+        submit_assessment_review(
+            planning_schema,
+            int(review_id),
+            buddy_id,
+            "认可",
+            "重复",
+            expected_revision=3,
+            assessment_id_from_url=assessment_id,
+        )
+        raise AssertionError("duplicate approval should be rejected")
+    except ReviewError as exc:
+        assert exc.code == "assessment_already_reviewed"
 
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
@@ -437,7 +417,7 @@ def test_generate_creates_plan_items_and_is_idempotent(
     assert len(tasks) == 2
 
 
-def test_generate_plan_item_parses_hour_suffix_ranges(
+def test_approval_plan_item_parses_hour_suffix_ranges(
     planning_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(planning_schema, "member_range", ["Member"])
@@ -450,25 +430,13 @@ def test_generate_plan_item_parses_hour_suffix_ranges(
     _approve_assessment(planning_schema, assessment_id, "buddy_range")
 
     member_cookies = _login(planning_schema, "member_range")
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert len(gaps) == 2
-    status, _, _ = _request(
-        "POST",
-        "/api/planning/growth-goals",
-        {"gap_id": gaps[0]["id"]},
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 1
-    item = result["items"][0]
+    assert plan is not None
+    item = plan["items"][0]
+    # frozen snapshot copied the node's hour text at generation time
     assert item["estimated_hours"] == "4–6h"
     assert item["estimated_hours_parsed"] == {
         "raw": "4–6h",
@@ -477,12 +445,6 @@ def test_generate_plan_item_parses_hour_suffix_ranges(
         "is_valid": True,
         "is_range": True,
     }
-
-    status, plan, _ = _request(
-        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
-    )
-    assert status == 200
-    assert plan is not None
     assert plan["estimated_hours_summary"] == {
         "min_hours": 4.0,
         "max_hours": 6.0,
@@ -503,17 +465,22 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
     assessment_id = _create_and_submit_assessment(planning_schema, "member_adjust_plan")
     _approve_assessment(planning_schema, assessment_id, "buddy_adjust_plan")
     cookies = _login(planning_schema, "member_adjust_plan")
-    status, gaps, _ = _request("GET", "/api/planning/eligible-gaps", cookies=cookies)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
     assert status == 200
+    item = plan["items"][0]
+    item_id = int(item["id"])
+    item_revision = int(item["revision"])
+
+    # legacy target_month is frozen for assessment-approved items
     status, _, _ = _request(
-        "POST", "/api/planning/growth-goals", {"gap_id": gaps[0]["id"]}, cookies=cookies
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {"target_month": 5, "expected_revision": item_revision},
+        cookies=cookies,
     )
-    assert status == 200
-    status, generated, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=cookies
-    )
-    assert status == 200
-    item_id = int(generated["items"][0]["id"])
+    assert status == 422
 
     status, item, _ = _request(
         "PUT",
@@ -521,23 +488,37 @@ def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
         {
             "plan_start_date": "2026-04-01",
             "plan_end_date": "2026-05-31",
-            "target_month": 5,
-            "status": "暂停",
+            "expected_revision": item_revision,
         },
         cookies=cookies,
     )
     assert status == 200
     assert item["plan_start_date"] == "2026-04-01"
     assert item["plan_end_date"] == "2026-05-31"
-    assert item["target_month"] == 5
-    assert item["status"] == "暂停"
+    # successful CAS write returns the bumped revision
+    assert int(item["revision"]) == item_revision + 1
 
+    # v0010: task status is machine-managed via the transition endpoint.
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    assert (
-        next(task for task in tasks if task["plan_item_id"] == item_id)["status"]
-        == "暂停"
+    task_id = next(task for task in tasks if task["plan_item_id"] == item_id)["id"]
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "进行中"},
+        cookies=cookies,
     )
+    assert status == 200
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "暂停", "reason": "等待资源"},
+        cookies=cookies,
+    )
+    assert status == 200
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    assert next(task for task in tasks if task["id"] == task_id)["status"] == "暂停"
 
 
 def test_plan_items_list_and_annual_plan_are_member_only(
@@ -564,6 +545,11 @@ def test_annual_plan_returns_null_when_missing(
     planning_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(planning_schema, "member_empty_plan", ["Member"])
+    ensure_capability_nodes(planning_schema, ["P01-L2A-L3A"])
+    from app.migrations import run_migrations
+
+    run_migrations(planning_schema)
+    planning_schema.commit()
     cookies = _login(planning_schema, "member_empty_plan")
 
     status, body, _ = _request(
@@ -571,3 +557,558 @@ def test_annual_plan_returns_null_when_missing(
     )
     assert status == 200
     assert body is None
+
+
+# ── Issue #63 contract: Member PUTs require a valid expected_revision (CAS) ──
+# put_plan_item / put_learning_task must mirror put_evidence: validate the
+# expected revision at both API and repository layers, strip it from the
+# business fields before the whitelist, and bump the revision on success.
+
+
+def _seed_cas_plan_item(
+    connection: psycopg.Connection,
+) -> tuple[dict[str, str], int, int]:
+    member_id = _create_test_user(connection, "member_cas", ["Member"])
+    buddy_id = _create_test_user(connection, "buddy_cas", ["Buddy"])
+    create_buddy_relationship(connection, member_id, buddy_id)
+    _ensure_l3_node(connection, "P01-L2A-L3A")
+    connection.commit()
+
+    assessment_id = _create_and_submit_assessment(connection, "member_cas")
+    _approve_assessment(connection, assessment_id, "buddy_cas")
+
+    cookies = _login(connection, "member_cas")
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    assert status == 200 and plan is not None
+    item_id = int(plan["items"][0]["id"])
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    task_id = next(task["id"] for task in tasks if task["plan_item_id"] == item_id)
+    return cookies, item_id, task_id
+
+
+def _invalid_revision_cases() -> list[tuple[str, object]]:
+    return [
+        ("missing", None),
+        ("bool", True),
+        ("negative", -1),
+        ("non-integer", "1"),
+        ("float", 1.5),
+    ]
+
+
+def test_plan_item_put_enforces_expected_revision_cas(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    revision = int(plan["items"][0]["revision"])
+
+    # Correct revision: CAS succeeds and bumps the revision.
+    status, item, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-01",
+            "plan_end_date": "2026-05-31",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert item["plan_start_date"] == "2026-04-01"
+    assert item["plan_end_date"] == "2026-05-31"
+    assert int(item["revision"]) == revision + 1
+
+    # Stale revision: structured 409, nothing written.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-15",
+            "plan_end_date": "2026-05-15",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 409
+    assert body["detail"]["code"] == "plan_revision_conflict"
+
+    # Invalid revision shapes: structured 422 and zero writes.
+    for label, bad_value in _invalid_revision_cases():
+        payload: dict[str, object] = {
+            "plan_start_date": "2026-04-20",
+            "plan_end_date": "2026-05-20",
+        }
+        if bad_value is not None:
+            payload["expected_revision"] = bad_value
+        status, body, _ = _request(
+            "PUT",
+            f"/api/planning/plan-items/{item_id}",
+            payload,
+            cookies=cookies,
+        )
+        assert status == 422, f"{label}: expected 422, got {status}"
+        assert body["detail"]["field"] == "expected_revision", label
+        assert body["detail"]["code"] in {
+            "invalid_plan_item",
+            "invalid_plan_item_revision",
+        }, label
+
+    # Zero writes: revision and dates untouched after every invalid attempt.
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    item = plan["items"][0]
+    assert int(item["revision"]) == revision + 1
+    assert item["plan_start_date"] == "2026-04-01"
+    assert item["plan_end_date"] == "2026-05-31"
+
+
+def test_learning_task_put_enforces_expected_revision_cas(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, _, task_id = _seed_cas_plan_item(planning_schema)
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert status == 200
+    task = next(t for t in tasks if t["id"] == task_id)
+    revision = int(task["revision"])
+
+    status, updated, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {
+            "completion_quality": "达到预期",
+            "review_conclusion": "自评完成",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert updated["completion_quality"] == "达到预期"
+    assert int(updated["revision"]) == revision + 1
+
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {
+            "review_conclusion": "改后自评",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 409
+    assert body["detail"]["code"] == "task_revision_conflict"
+
+    for label, bad_value in _invalid_revision_cases():
+        payload: dict[str, object] = {"review_conclusion": "x"}
+        if bad_value is not None:
+            payload["expected_revision"] = bad_value
+        status, body, _ = _request(
+            "PUT",
+            f"/api/planning/learning-tasks/{task_id}",
+            payload,
+            cookies=cookies,
+        )
+        assert status == 422, f"{label}: expected 422, got {status}"
+        assert body["detail"]["field"] == "expected_revision", label
+
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert int(next(t for t in tasks if t["id"] == task_id)["revision"]) == revision + 1
+
+
+def test_plan_item_put_concurrent_same_revision_exactly_one_succeeds(
+    planning_schema: psycopg.Connection,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    revision = int(plan["items"][0]["revision"])
+
+    def _competing_write() -> int:
+        status, _, _ = _request(
+            "PUT",
+            f"/api/planning/plan-items/{item_id}",
+            {
+                "plan_start_date": "2026-04-01",
+                "plan_end_date": "2026-05-31",
+                "expected_revision": revision,
+            },
+            cookies=cookies,
+        )
+        return status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = sorted(pool.map(lambda _: _competing_write(), range(2)))
+
+    assert results == [200, 409]
+
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    assert int(plan["items"][0]["revision"]) == revision + 1
+
+
+def test_learning_task_put_concurrent_same_revision_exactly_one_succeeds(
+    planning_schema: psycopg.Connection,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    cookies, _, task_id = _seed_cas_plan_item(planning_schema)
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    revision = int(next(t for t in tasks if t["id"] == task_id)["revision"])
+
+    def _competing_write() -> int:
+        status, _, _ = _request(
+            "PUT",
+            f"/api/planning/learning-tasks/{task_id}",
+            {
+                "review_conclusion": "并发自评",
+                "expected_revision": revision,
+            },
+            cookies=cookies,
+        )
+        return status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = sorted(pool.map(lambda _: _competing_write(), range(2)))
+
+    assert results == [200, 409]
+
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert int(next(t for t in tasks if t["id"] == task_id)["revision"]) == revision + 1
+
+
+def test_learning_task_empty_business_put_is_forbidden_for_other_member(
+    planning_schema: psycopg.Connection,
+) -> None:
+    """A token-only PUT must never read another member's task back."""
+    cookies, _, task_id = _seed_cas_plan_item(planning_schema)
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    revision = int(next(t for t in tasks if t["id"] == task_id)["revision"])
+
+    _create_test_user(planning_schema, "other_cas", ["Member"])
+    planning_schema.commit()
+    other_cookies = _login(planning_schema, "other_cas")
+
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"expected_revision": revision},
+        cookies=other_cookies,
+    )
+    assert status == 403
+    assert body == {"detail": "learning task does not belong to member"}
+
+    # Zero writes: the owner's revision is untouched.
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert int(next(t for t in tasks if t["id"] == task_id)["revision"]) == revision
+
+
+def test_learning_task_empty_business_put_is_not_a_read_interface(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, _, task_id = _seed_cas_plan_item(planning_schema)
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    revision = int(next(t for t in tasks if t["id"] == task_id)["revision"])
+
+    # Correct token but no business fields: a PUT is not a read endpoint.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"expected_revision": revision},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_task"
+    assert body["detail"]["field"] == "fields"
+
+    # Stale token with no business fields is a 422, never a 200.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"expected_revision": revision + 99},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_task"
+
+    status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
+    assert int(next(t for t in tasks if t["id"] == task_id)["revision"]) == revision
+
+
+def test_plan_item_empty_business_put_is_not_a_read_interface(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    revision = int(plan["items"][0]["revision"])
+
+    # Correct token but no business fields: a PUT is not a read endpoint.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {"expected_revision": revision},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_plan_item"
+    assert body["detail"]["field"] == "fields"
+
+    # Stale token with no business fields is a 422, never a 200.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {"expected_revision": revision + 99},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_plan_item"
+
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    assert int(plan["items"][0]["revision"]) == revision
+
+
+def test_plan_item_and_task_put_repository_reject_empty_fields_directly(
+    planning_schema: psycopg.Connection,
+) -> None:
+    """Repository-layer callers cannot bypass the empty-fields rule either."""
+    from app.planning import repository
+
+    cookies, item_id, task_id = _seed_cas_plan_item(planning_schema)
+    member_id = planning_schema.execute(
+        "SELECT id FROM tcp_user WHERE username = 'member_cas'"
+    ).fetchone()[0]
+    _create_test_user(planning_schema, "other_cas_repo", ["Member"])
+    planning_schema.commit()
+    other_id = planning_schema.execute(
+        "SELECT id FROM tcp_user WHERE username = 'other_cas_repo'"
+    ).fetchone()[0]
+
+    # Owner + empty fields: structured domain error, not a row read.
+    with pytest.raises(repository.PlanItemValidationError):
+        repository.update_plan_item(
+            planning_schema, member_id, item_id, {}, expected_revision=0
+        )
+    with pytest.raises(repository.TaskValidationError):
+        repository.update_learning_task(
+            planning_schema, member_id, task_id, {}, expected_revision=0
+        )
+
+    # Other member + token-only: ownership holds even with no business fields.
+    with pytest.raises(PermissionError):
+        repository.update_learning_task(
+            planning_schema, other_id, task_id, {}, expected_revision=0
+        )
+    with pytest.raises(PermissionError):
+        repository.update_plan_item(
+            planning_schema, other_id, item_id, {}, expected_revision=0
+        )
+
+    # The legal write path is untouched: CAS still bumps once.
+    status, _, _ = _request(
+        "PUT",
+        f"/api/planning/learning-tasks/{task_id}",
+        {"review_conclusion": "正常写入", "expected_revision": 0},
+        cookies=cookies,
+    )
+    assert status == 200
+
+
+def _null_source_months(connection: psycopg.Connection, item_id: int) -> None:
+    # v0009 enforces plan_month NOT NULL for assessment_approval rows; to test
+    # the quarter-boundary path we temporarily drop that guard.
+    connection.execute(
+        "ALTER TABLE plan_item "
+        "DROP CONSTRAINT IF EXISTS plan_item_approval_completeness"
+    )
+    connection.execute(
+        "UPDATE plan_item SET plan_month = NULL, target_month = NULL WHERE id = %s",
+        (item_id,),
+    )
+    connection.commit()
+
+
+def test_plan_item_dates_use_source_quarter_when_months_are_null(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    item = plan["items"][0]
+    assert item["plan_quarter"] == "Q2"  # seeded assessment sits in Q2
+    revision = int(item["revision"])
+    _null_source_months(planning_schema, item_id)
+
+    # Legal: both dates inside Q2 (April–June 2026), no month bound applies.
+    status, updated, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-15",
+            "plan_end_date": "2026-06-15",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert int(updated["revision"]) == revision + 1
+
+    # Start in Q1 is rejected by the quarter bound.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-03-31",
+            "plan_end_date": "2026-06-15",
+            "expected_revision": revision + 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_start_date"
+
+    # End in Q3 is rejected by the quarter bound.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-01",
+            "plan_end_date": "2026-07-01",
+            "expected_revision": revision + 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_end_date"
+
+    # Cross-year end is rejected by the quarter bound.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-04-01",
+            "plan_end_date": "2027-01-01",
+            "expected_revision": revision + 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_end_date"
+
+    # Zero change: only the legal write landed; dates and revision untouched.
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    item = plan["items"][0]
+    assert int(item["revision"]) == revision + 1
+    assert item["plan_start_date"] == "2026-04-15"
+    assert item["plan_end_date"] == "2026-06-15"
+
+
+def test_plan_item_dates_bounded_by_q4_with_null_months(
+    planning_schema: psycopg.Connection,
+) -> None:
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    revision = int(plan["items"][0]["revision"])
+    # v0009 requires plan_month NOT NULL for assessment_approval rows.
+    planning_schema.execute(
+        "ALTER TABLE plan_item "
+        "DROP CONSTRAINT IF EXISTS plan_item_approval_completeness"
+    )
+    planning_schema.execute(
+        "UPDATE plan_item SET plan_quarter = 'Q4', plan_month = NULL, "
+        "target_month = NULL WHERE id = %s",
+        (item_id,),
+    )
+    planning_schema.commit()
+
+    # December 31 is the Q4 boundary and must be accepted.
+    status, updated, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-10-01",
+            "plan_end_date": "2026-12-31",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 200
+    assert int(updated["revision"]) == revision + 1
+
+    # The next year is outside Q4.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-10-01",
+            "plan_end_date": "2027-01-01",
+            "expected_revision": revision + 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_end_date"
+
+    # September 30 is outside Q4.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-09-30",
+            "plan_end_date": "2026-12-31",
+            "expected_revision": revision + 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_start_date"
+
+
+def test_plan_item_dates_quarter_and_month_both_bound_end(
+    planning_schema: psycopg.Connection,
+) -> None:
+    """Quarter and month both present: the month bound is the stricter one."""
+    cookies, item_id, _ = _seed_cas_plan_item(planning_schema)
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    item = plan["items"][0]
+    assert item["plan_quarter"] == "Q2"
+    assert item["plan_month"] == 5
+    revision = int(item["revision"])
+
+    # End inside Q2 but outside the source month is still rejected.
+    status, body, _ = _request(
+        "PUT",
+        f"/api/planning/plan-items/{item_id}",
+        {
+            "plan_start_date": "2026-05-01",
+            "plan_end_date": "2026-06-15",
+            "expected_revision": revision,
+        },
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["field"] == "plan_end_date"
+
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
+    )
+    assert int(plan["items"][0]["revision"]) == revision

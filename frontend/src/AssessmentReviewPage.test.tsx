@@ -16,6 +16,42 @@ import * as planningApi from './planning'
 import * as reviewApi from './assessmentReview'
 import { MemoryRouter } from 'react-router-dom'
 
+function workspaceFixture(
+  assessmentId: number,
+  revision = 3,
+): reviewApi.BuddyReviewWorkspace {
+  return {
+    assessment_id: assessmentId,
+    member_id: 1,
+    year: 2026,
+    version: 1,
+    assessment_status: '待复核',
+    revision,
+    member_current_level_snapshot: 'P4',
+    member_target_level_snapshot: 'P5',
+    standard_version: { id: 1, label: 'Legacy Baseline v1' },
+    summary: {
+      total: 0,
+      current_required: 0,
+      target_progressive: 0,
+      assessed: 0,
+      gap_items: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      hold: 0,
+      in_plan: 0,
+      by_quarter: { Q1: 0, Q2: 0, Q3: 0, Q4: 0 },
+      adjustments: 0,
+      data_issues: 0,
+      existing_formal_plan: false,
+      will_create_proposal: false,
+      target_is_legacy: null,
+    },
+    details: [],
+  }
+}
+
 describe('AssessmentReviewPage', () => {
   beforeEach(() => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
@@ -60,33 +96,9 @@ describe('AssessmentReviewPage', () => {
         submitted_at: '2026-01-02T00:00:00Z',
       },
     ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '待复核',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: '2026-01-02T00:00:00Z',
-      archived_at: null,
-      details: [
-        {
-          id: 1,
-          l3_code: 'P01-L2A-L3A',
-          current_level: 2,
-          target_level: 4,
-          standard_target_applicable: true,
-          standard_target_level: 3,
-          target_adjusted: true,
-          adjusted_target_level: 4,
-          target_adjustment_reason: '岗位项目要求',
-          gap_value: 2,
-          evidence_note: '测试中',
-          plan_candidate: true,
-        },
-      ],
-    })
+    vi.spyOn(reviewApi, 'getBuddyReviewWorkspace').mockResolvedValue(
+      workspaceFixture(7),
+    )
 
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
@@ -115,21 +127,31 @@ describe('AssessmentReviewPage', () => {
         submitted_at: '2026-01-02T00:00:00Z',
       },
     ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 7,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '待复核',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: '2026-01-02T00:00:00Z',
-      archived_at: null,
-      details: [],
+    vi.spyOn(reviewApi, 'getBuddyReviewWorkspace').mockResolvedValue(
+      workspaceFixture(7),
+    )
+    const submitReview = vi.spyOn(reviewApi, 'submitReview').mockResolvedValue({
+      ok: true,
+      assessment_status: '已归档',
+      assessment_id: 7,
+      revision: 4,
+      review: {
+        id: 10,
+        sequence: 1,
+        conclusion: '认可',
+        feedback: '符合预期',
+        reviewed_by_buddy_id: 2,
+      },
+      plan: {
+        created: true,
+        plan_id: 5,
+        items_created: 0,
+        tasks_created: 0,
+        target_is_legacy: null,
+      },
+      proposal: null,
+      idempotent_replayed: false,
     })
-    const submitReview = vi
-      .spyOn(reviewApi, 'submitReview')
-      .mockResolvedValue({ ok: true })
 
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
@@ -147,12 +169,20 @@ describe('AssessmentReviewPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
 
     await waitFor(() => {
-      expect(screen.getByText('已认可，反馈已归入历史。')).toBeTruthy()
+      expect(
+        screen.getByText(/年度计划已生成（0 项 \/ 0 个任务）/),
+      ).toBeTruthy()
     })
-    expect(submitReview).toHaveBeenCalledWith(7, 10, {
+    const [assessmentId, reviewId, payload, idemKey] =
+      submitReview.mock.calls[0]
+    expect(assessmentId).toBe(7)
+    expect(reviewId).toBe(10)
+    expect(payload).toEqual({
       conclusion: '认可',
       feedback: '符合预期',
+      expected_revision: 3,
     })
+    expect(typeof idemKey).toBe('string')
   })
 
   it('submits adjustment with correct message', async () => {
@@ -170,21 +200,25 @@ describe('AssessmentReviewPage', () => {
         submitted_at: '2026-01-02T00:00:00Z',
       },
     ])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue({
-      id: 8,
-      member_id: 1,
-      year: 2026,
-      version: 1,
-      assessment_type: '年度',
-      status: '待复核',
-      created_at: '2026-01-01T00:00:00Z',
-      submitted_at: '2026-01-02T00:00:00Z',
-      archived_at: null,
-      details: [],
+    vi.spyOn(reviewApi, 'getBuddyReviewWorkspace').mockResolvedValue(
+      workspaceFixture(8),
+    )
+    const submitReview = vi.spyOn(reviewApi, 'submitReview').mockResolvedValue({
+      ok: true,
+      assessment_status: '建议调整',
+      assessment_id: 8,
+      revision: 4,
+      review: {
+        id: 11,
+        sequence: 1,
+        conclusion: '建议调整',
+        feedback: '请补充依据',
+        reviewed_by_buddy_id: 2,
+      },
+      plan: null,
+      proposal: null,
+      idempotent_replayed: false,
     })
-    const submitReview = vi
-      .spyOn(reviewApi, 'submitReview')
-      .mockResolvedValue({ ok: true })
 
     render(
       <MemoryRouter initialEntries={['/mentoring/assessment-review']}>
@@ -202,11 +236,12 @@ describe('AssessmentReviewPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '提交复核反馈' }))
 
     await waitFor(() => {
-      expect(screen.getByText('已建议调整，反馈已归入历史。')).toBeTruthy()
+      expect(screen.getByText(/已建议调整，等待成员修改/)).toBeTruthy()
     })
-    expect(submitReview).toHaveBeenCalledWith(8, 11, {
+    expect(submitReview.mock.calls[0][2]).toEqual({
       conclusion: '建议调整',
       feedback: '请补充依据',
+      expected_revision: 3,
     })
   })
 })
@@ -239,17 +274,26 @@ describe('assessmentReview api helpers', () => {
     )
   })
 
-  it('submitReview posts with credentials include', async () => {
-    await reviewApi.submitReview(7, 10, {
-      conclusion: '认可',
-      feedback: '符合预期',
-    })
+  it('submitReview posts with credentials include and idempotency header', async () => {
+    await reviewApi.submitReview(
+      7,
+      10,
+      { conclusion: '认可', feedback: '符合预期', expected_revision: 3 },
+      'key-1',
+    )
     expect(fetch).toHaveBeenCalledWith(
       '/api/assessments/7/reviews/10',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
-        body: JSON.stringify({ conclusion: '认可', feedback: '符合预期' }),
+        headers: expect.objectContaining({
+          'Idempotency-Key': 'key-1',
+        }),
+        body: JSON.stringify({
+          conclusion: '认可',
+          feedback: '符合预期',
+          expected_revision: 3,
+        }),
       }),
     )
   })

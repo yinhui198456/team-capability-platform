@@ -60,11 +60,12 @@ EV=$(curl -fsS -b /tmp/tcp_uat_cookies.txt -X POST "http://localhost:18081/api/p
 # 3. 提交 Evidence（草稿 → 待 Review）
 curl -fsS -b /tmp/tcp_uat_cookies.txt -X POST "http://localhost:18081/api/planning/evidences/${EV}/submit" | jq '{version_number,status}'
 
-# 4. 登录 buddy，查看待 Review 队列并提交 Review
+# 4. 登录 buddy，查看待 Review 队列并对 Evidence 提交 Review
 curl -fsS -c /tmp/tcp_uat_cookies_buddy.txt -X POST http://localhost:18081/api/auth/login \
   -H 'Content-Type: application/json' -d '{"username":"buddy","password":"123456"}' | jq '.roles'
-REV=$(curl -fsS -b /tmp/tcp_uat_cookies_buddy.txt http://localhost:18081/api/planning/evidence-reviews/pending | jq -r '.[0].id')
-curl -fsS -b /tmp/tcp_uat_cookies_buddy.txt -X POST "http://localhost:18081/api/planning/evidence-reviews/${REV}" \
+curl -fsS -b /tmp/tcp_uat_cookies_buddy.txt http://localhost:18081/api/planning/evidence-reviews/pending | jq -r '.[].id'
+# 注意：Review 提交针对 evidence id（上文 ${EV}），不是队列条目 id
+curl -fsS -b /tmp/tcp_uat_cookies_buddy.txt -X POST "http://localhost:18081/api/planning/evidences/${EV}/review" \
   -H 'Content-Type: application/json' -d '{"conclusion":"通过","feedback":"证据充分"}' | jq .
 
 # 5. member 查看 Capability Profile
@@ -77,7 +78,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt 'http://localhost:18081/api/planning/profi
 
 - 前端（Nginx 反向代理 `/api/`）：`http://localhost:18081`
 - 登录页：`http://localhost:18081/login`
-- 学习任务（含 Evidence 区）：`http://localhost:18081/growth/tasks`
+- 学习任务（含 Evidence 区）：`http://localhost:18081/growth/annual-plan`（`/growth/tasks` 已重定向至此）
 - Evidence Review 队列（Buddy）：`http://localhost:18081/mentoring/evidence-review`
 - 成长档案：`http://localhost:18081/growth/profile`
 - 后端健康/就绪：`http://localhost:18001/health`、`http://localhost:18001/ready`
@@ -90,7 +91,7 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt 'http://localhost:18081/api/planning/profi
 
 ### Evidence 草稿与版本（5-1）
 
-- [ ] 使用 `member` / `123456` 登录，进入 `/growth/tasks`，确认任一学习任务下出现 Evidence 区。
+- [ ] 使用 `member` / `123456` 登录，进入 `/growth/annual-plan`（原 `/growth/tasks` 已重定向），确认任一学习任务下出现 Evidence 区。
 - [ ] 新增 Evidence 草稿（内容 + 链接），确认出现在列表中，状态为“草稿”，版本号为 1。
 - [ ] 编辑草稿内容并保存，确认内容更新、版本号不变。
 - [ ] 点击“提交”，确认状态变为“待 Review”，且草稿不再可编辑。
@@ -99,22 +100,22 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt 'http://localhost:18081/api/planning/profi
 ### Buddy Evidence Review（5-2）
 
 - [ ] 使用 `buddy` / `123456` 登录，进入 `/mentoring/evidence-review`，确认待 Review 队列包含负责成员提交的 Evidence。
-- [ ] 对一条 Evidence 提交 Review（结论：通过 / 需补充 / 驳回 任选，附反馈），确认该条从待 Review 队列消失。
-- [ ] 回到 `member` 账号 `/growth/tasks`，确认对应 Evidence 版本显示 Review 结论与反馈。
+- [ ] 对一条 Evidence 提交 Review（结论：通过 / 需补充 任选；需补充必须附反馈），确认该条从待 Review 队列消失。
+- [ ] 回到 `member` 账号 `/growth/annual-plan`（原 `/growth/tasks` 已重定向），确认对应 Evidence 版本显示 Review 结论与反馈。
 - [ ] 对“需补充”的 Evidence 由 member 提交新版本，确认新版本进入 buddy 待 Review 队列，旧版本 Review 记录保留不回流。
 - [ ] 确认 buddy 看不到非负责成员的 Evidence Review 队列项。
 
 ### Capability Profile 成长档案（5-3）
 
 - [ ] 使用 `member` 登录，进入 `/growth/profile`，确认页面展示 2026 年度档案：成员信息、Assessment 历史、年度成长计划、Plan Item → Learning Task → Evidence/Review/日志的聚合视图。
-- [ ] 确认页面显示年度总学习时长与 Evidence 状态统计，数值与 `/growth/tasks`、`/growth/review/monthly` 中的数据一致。
+- [ ] 确认页面显示年度总学习时长与 Evidence 状态统计，数值与 `/growth/annual-plan`（原 `/growth/tasks`）、`/growth/review/monthly` 中的数据一致。
 - [ ] 使用 `buddy` 登录，确认可查看负责成员的成长档案（通过 API `/api/planning/profiles?member_id=<id>&year=2026` 或页面入口）。
 - [ ] 确认 `buddy` 查看非负责成员档案返回 403。
 - [ ] 确认未登录访问 `/growth/profile` 会被引导至登录页。
 
 ### 权限与约束回归
 
-- [ ] 确认非 Member 角色无法在 `/growth/tasks` 创建/编辑 Evidence。
+- [ ] 确认非 Member 角色无法在 `/growth/annual-plan`（原 `/growth/tasks`）创建/编辑 Evidence。
 - [ ] 确认 Evidence 与其 Learning Task 严格关联，不能跨任务挂载。
 - [ ] 确认 Review 与 Evidence 版本 1:1，同一版本不能被重复 Review。
 

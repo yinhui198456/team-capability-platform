@@ -19,6 +19,11 @@ SESSION_COOKIE = "tcp_session"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
         connection.execute("DROP TABLE IF EXISTS tcp_session")
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
@@ -34,6 +39,9 @@ def initialize_catalog_and_access(connection: psycopg.Connection) -> None:
     _reset_access_schema(connection)
     create_catalog_schema(connection)
     create_assessment_schema(connection)
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
     import_catalog(WORKBOOK_DIR, connection)
     run_migrations(connection)
     connection.commit()

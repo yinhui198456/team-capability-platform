@@ -1,19 +1,21 @@
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ..access.policies import Connection, CurrentUser
+from ..access.repository import get_assigned_members
 from .gate import check_annual_plan_gate
 from .repository import (
+    EvidenceValidationError,
+    LegacyPlanningWriteDisabled,
+    PlanItemValidationError,
+    PlanningDomainError,
+    TaskValidationError,
+    _assert_monthly_review_read_permission,
     archive_team_annual_plan,
     create_evidence_draft,
-    create_growth_goal,
-    create_learning_task,
     create_or_publish_team_annual_plan,
     create_progress_log,
-    delete_growth_goal,
-    delete_progress_log,
-    generate_plan_items,
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
@@ -21,8 +23,11 @@ from .repository import (
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
+    get_monthly_review,
     get_team_analytics,
     get_team_annual_plan_by_year,
+    invalidate_progress_log,
+    list_change_proposals,
     list_eligible_gaps,
     list_evidence_reviews_for_buddy_task,
     list_evidence_reviews_for_task,
@@ -33,15 +38,49 @@ from .repository import (
     list_plan_items,
     list_progress_logs,
     list_selectable_members_for_profile,
+    list_task_transition_history,
+    list_team_annual_plan_items,
     submit_evidence,
     submit_evidence_review,
+    transition_learning_task,
     update_evidence_draft,
     update_learning_task,
     update_plan_item,
-    update_progress_log,
     update_team_annual_plan,
+    upsert_monthly_review,
     validate_team_analytics_domain_filter,
 )
+
+_CONFLICT_CODES = {
+    "task_revision_conflict",
+    "plan_revision_conflict",
+    "evidence_revision_conflict",
+    "transition_idempotency_conflict",
+    "log_idempotency_conflict",
+    "review_idempotency_conflict",
+    "review_already_submitted",
+    "monthly_review_revision_conflict",
+}
+
+
+def _domain_error(exc: PlanningDomainError) -> HTTPException:
+    """Structured error envelope: code/entity_type/entity_id/field/reason."""
+    return HTTPException(
+        status_code=(
+            status.HTTP_409_CONFLICT
+            if exc.code in _CONFLICT_CODES
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        ),
+        detail={
+            "code": exc.code,
+            "entity_type": exc.entity_type,
+            "entity_id": exc.entity_id,
+            "field": exc.field,
+            "reason": exc.code,
+            "message": str(exc),
+        },
+    )
+
 
 planning_router = APIRouter(prefix="/api/planning")
 
@@ -68,6 +107,73 @@ def _require_leader(user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
+
+
+def _member_ids_with_role(
+    connection: Connection,
+    role_code: str,
+) -> list[int]:
+    rows = connection.execute(
+        """
+        SELECT u.id
+        FROM tcp_user u
+        JOIN tcp_user_role ur ON ur.user_id = u.id
+        JOIN tcp_role r ON r.id = ur.role_id
+        WHERE r.code = %s
+        ORDER BY u.id
+        """,
+        (role_code,),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _resolve_team_read_scope(
+    connection: Connection,
+    user: CurrentUser,
+    requested_member_id: int | None = None,
+) -> tuple[list[int], str]:
+    """Return the member IDs a caller may read in team views and a scope label."""
+    roles = set(user["roles"])
+    viewer_id = int(user["id"])
+    if not roles & {"Member", "Buddy", "Leader", "Admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+
+    if "Leader" in roles or "Admin" in roles:
+        member_ids = _member_ids_with_role(connection, "Member")
+        scope_label = "leader_team"
+    elif "Buddy" in roles:
+        assigned = get_assigned_members(connection, viewer_id)
+        member_ids = [int(m["id"]) for m in assigned]
+        scope_label = "buddy_assigned"
+    else:
+        member_ids = [viewer_id]
+        scope_label = "本人"
+
+    if requested_member_id is not None:
+        if requested_member_id not in member_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="member out of scope",
+            )
+        member_ids = [requested_member_id]
+
+    return member_ids, scope_label
+
+
+def _legacy_write_disabled() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": LegacyPlanningWriteDisabled.code,
+            "message": (
+                "manual planning writes are disabled; plans are generated "
+                "atomically from an approved assessment"
+            ),
+        },
+    )
 
 
 @planning_router.get("/available-years")
@@ -104,6 +210,79 @@ def get_member_dashboard_view(
     return get_member_dashboard(connection, int(user["id"]), year)
 
 
+def _monthly_review_scope(roles: list[str], viewer_id: int, member_id: int) -> str:
+    if viewer_id == member_id:
+        return "本人"
+    if "Buddy" in roles:
+        return "buddy_assigned"
+    if "Leader" in roles:
+        return "leader_team"
+    return "本人"
+
+
+@planning_router.get("/monthly-reviews")
+def get_monthly_review_view(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    month: int,
+    member_id: int | None = None,
+) -> dict[str, object]:
+    target_member_id = int(member_id) if member_id is not None else int(user["id"])
+    try:
+        _assert_monthly_review_read_permission(
+            connection, int(user["id"]), user["roles"], target_member_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return get_monthly_review(
+        connection,
+        target_member_id,
+        year,
+        month,
+        scope=_monthly_review_scope(user["roles"], int(user["id"]), target_member_id),
+    )
+
+
+@planning_router.put("/monthly-reviews")
+def put_monthly_review_view(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    month: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise PlanningDomainError(
+                "expected_revision is required and must be a non-negative integer",
+                code="monthly_review_validation_error",
+                entity_type="monthly_review",
+                field="expected_revision",
+            )
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return upsert_monthly_review(
+            connection,
+            int(user["id"]),
+            year,
+            month,
+            fields,
+            expected_revision=expected,
+        )
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
+
+
 @planning_router.get("/annual-plan-eligibility")
 def get_annual_plan_eligibility(
     user: CurrentUser, connection: Connection
@@ -137,20 +316,7 @@ def post_growth_goal(
     user: CurrentUser, connection: Connection, body: dict[str, object]
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        gap_id = int(body["gap_id"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="gap_id is required",
-        ) from exc
-    try:
-        return create_growth_goal(connection, int(user["id"]), gap_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/growth-goals")
@@ -166,19 +332,7 @@ def remove_growth_goal(
     user: CurrentUser, connection: Connection, goal_id: int
 ) -> Response:
     _require_member(user)
-    try:
-        delete_growth_goal(connection, int(user["id"]), goal_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/annual-plan")
@@ -189,19 +343,46 @@ def get_annual_plan(
     return get_annual_plan_with_items(connection, int(user["id"]), year)
 
 
+@planning_router.get("/change-proposals")
+def get_change_proposals(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    member_id: int | None = None,
+) -> list[dict[str, object]]:
+    """Read-only change proposals. Member sees their own; a current responsible
+    Buddy, Leader or Admin may query a specific member."""
+    roles: list[str] = user["roles"]
+    if member_id is None:
+        _require_member(user)
+        target_member_id = int(user["id"])
+    elif int(user["id"]) == member_id:
+        target_member_id = int(user["id"])
+    elif "Admin" in roles or "Leader" in roles:
+        target_member_id = member_id
+    elif "Buddy" in roles:
+        from ..access.repository import is_current_responsible_buddy
+
+        if not is_current_responsible_buddy(connection, member_id, int(user["id"])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient permissions",
+            )
+        target_member_id = member_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    return list_change_proposals(connection, target_member_id, year)
+
+
 @planning_router.post("/annual-plan/generate")
 def post_generate_plan_items(
     user: CurrentUser, connection: Connection
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        items = generate_plan_items(connection, int(user["id"]))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
-    return {"created": len(items), "items": items}
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/plan-items")
@@ -221,12 +402,36 @@ def put_plan_item(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_plan_item(connection, int(user["id"]), plan_item_id, body)
+        expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise PlanItemValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="plan_item",
+                entity_id=plan_item_id,
+                field="expected_revision",
+            )
+        # Business fields only; the revision token is CAS metadata, never a
+        # writable field (the repository whitelist must not see it).
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return update_plan_item(
+            connection,
+            int(user["id"]),
+            plan_item_id,
+            fields,
+            expected_revision=expected,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -239,18 +444,7 @@ def post_learning_task(
     user: CurrentUser, connection: Connection, plan_item_id: int
 ) -> dict[str, object]:
     _require_member(user)
-    try:
-        return create_learning_task(connection, int(user["id"]), plan_item_id)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+    raise _legacy_write_disabled()
 
 
 @planning_router.get("/learning-tasks")
@@ -284,15 +478,101 @@ def put_learning_task(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_learning_task(connection, int(user["id"]), task_id, body)
+        expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise TaskValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="learning_task",
+                entity_id=task_id,
+                field="expected_revision",
+            )
+        # Business fields only; the revision token is CAS metadata, never a
+        # writable field (the repository whitelist must not see it).
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return update_learning_task(
+            connection,
+            int(user["id"]),
+            task_id,
+            fields,
+            expected_revision=expected,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.post("/learning-tasks/{task_id}/transitions")
+def post_task_transition(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        to_status = str(body["to_status"])
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_task_transition",
+                "entity_type": "learning_task",
+                "entity_id": task_id,
+                "field": "to_status",
+                "reason": "invalid_task_transition",
+                "message": "to_status is required",
+            },
+        ) from exc
+    expected = body.get("expected_revision")
+    try:
+        return transition_learning_task(
+            connection,
+            int(user["id"]),
+            task_id,
+            to_status,
+            body.get("reason"),
+            expected_revision=int(expected) if expected is not None else None,
+            idempotency_key=body.get("idempotency_key"),
+            revised_due_date=body.get("revised_due_date"),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@planning_router.get("/learning-tasks/{task_id}/transition-history")
+def get_task_transition_history(
+    user: CurrentUser, connection: Connection, task_id: int
+) -> list[dict[str, object]]:
+    _require_member(user)
+    try:
+        return list_task_transition_history(connection, int(user["id"]), task_id)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
 
@@ -320,12 +600,16 @@ def post_progress_log(
             record_date,
             body.get("actual_hours"),
             body.get("note"),
+            idempotency_key=body.get("idempotency_key"),
+            correction_of_log_id=body.get("correction_of_log_id"),
         )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -355,16 +639,22 @@ def get_monthly_hours_summary(
     return get_monthly_hours(connection, int(user["id"]), year)
 
 
-@planning_router.put("/progress-logs/{log_id}")
-def put_progress_log(
+@planning_router.post("/progress-logs/{log_id}/invalidate")
+def post_invalidate_progress_log(
     user: CurrentUser,
     connection: Connection,
     log_id: int,
     body: dict[str, object],
 ) -> dict[str, object]:
+    """Append-only correction: void the log (never delete) and re-aggregate."""
     _require_member(user)
     try:
-        return update_progress_log(connection, int(user["id"]), log_id, body)
+        return invalidate_progress_log(
+            connection,
+            int(user["id"]),
+            log_id,
+            idempotency_key=body.get("idempotency_key"),
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -375,31 +665,8 @@ def put_progress_log(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
-
-@planning_router.delete("/progress-logs/{log_id}")
-def remove_progress_log(
-    user: CurrentUser, connection: Connection, log_id: int
-) -> Response:
-    _require_member(user)
-    try:
-        delete_progress_log(connection, int(user["id"]), log_id)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @planning_router.post("/learning-tasks/{task_id}/evidences")
@@ -410,17 +677,29 @@ def post_evidence(
     body: dict[str, object],
 ) -> dict[str, object]:
     _require_member(user)
-    content = body.get("content")
-    evidence_link = body.get("evidence_link")
     try:
         return create_evidence_draft(
-            connection, int(user["id"]), task_id, content, evidence_link
+            connection,
+            int(user["id"]),
+            task_id,
+            body.get("content"),
+            body.get("evidence_link"),
+            description=body.get("description"),
+            evidence_type=body.get("evidence_type"),
+            url=body.get("url"),
+            file_reference=body.get("file_reference"),
+            file_name=body.get("file_name"),
+            mime_type=body.get("mime_type"),
+            file_size=body.get("file_size"),
+            supersedes_evidence_id=body.get("supersedes_evidence_id"),
         )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -437,12 +716,34 @@ def put_evidence(
 ) -> dict[str, object]:
     _require_member(user)
     try:
-        return update_evidence_draft(connection, int(user["id"]), evidence_id, body)
+        expected = body.get("expected_revision")
+        if (
+            expected is None
+            or isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected < 0
+        ):
+            raise EvidenceValidationError(
+                "expected_revision is required and must be a non-negative integer",
+                entity_type="evidence",
+                entity_id=evidence_id,
+                field="expected_revision",
+            )
+        fields = {k: v for k, v in body.items() if k != "expected_revision"}
+        return update_evidence_draft(
+            connection,
+            int(user["id"]),
+            evidence_id,
+            fields,
+            expected_revision=expected,
+        )
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -462,6 +763,8 @@ def post_submit_evidence(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -513,51 +816,50 @@ def get_evidence_review_summary(
     return get_evidence_review_summary_for_buddy(connection, int(user["id"]), year)
 
 
-@planning_router.post("/evidence-reviews/{review_id}")
+@planning_router.post("/evidences/{evidence_id}/review")
 def post_evidence_review(
     user: CurrentUser,
     connection: Connection,
-    review_id: int,
+    evidence_id: int,
     body: dict[str, object],
-) -> dict[str, bool]:
+) -> dict[str, object]:
     _require_buddy(user)
     try:
         conclusion = str(body["conclusion"])
     except (KeyError, TypeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="conclusion is required",
+            detail={
+                "code": "invalid_review",
+                "entity_type": "evidence_review",
+                "entity_id": evidence_id,
+                "field": "conclusion",
+                "reason": "invalid_review",
+                "message": "conclusion is required",
+            },
         ) from exc
     feedback = body.get("feedback")
     try:
-        submit_evidence_review(
-            connection, review_id, int(user["id"]), conclusion, feedback
+        return submit_evidence_review(
+            connection,
+            evidence_id,
+            int(user["id"]),
+            conclusion,
+            feedback,
+            idempotency_key=body.get("idempotency_key"),
         )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
     except ValueError as exc:
-        msg = str(exc)
-        if msg == "review not found":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=msg,
-            ) from exc
-        if msg in (
-            "review is not assigned to this buddy",
-            "buddy is not assigned to member",
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=msg,
-            ) from exc
-        if msg == "review is not pending":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=msg,
-            ) from exc
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=msg,
+            detail=str(exc),
         ) from exc
-    return {"ok": True}
 
 
 @planning_router.get("/learning-tasks/{task_id}/evidence-reviews")
@@ -565,8 +867,17 @@ def get_task_evidence_reviews(
     user: CurrentUser, connection: Connection, task_id: int
 ) -> list[dict[str, object]]:
     try:
+        # Dual-role accounts (production seeds give buddies the Member role
+        # too): the member path 403s on other members' tasks, so fall through
+        # to the buddy path instead of rejecting outright.
         if "Member" in user["roles"]:
-            return list_evidence_reviews_for_task(connection, int(user["id"]), task_id)
+            try:
+                return list_evidence_reviews_for_task(
+                    connection, int(user["id"]), task_id
+                )
+            except PermissionError:
+                if "Buddy" not in user["roles"]:
+                    raise
         if "Buddy" in user["roles"]:
             return list_evidence_reviews_for_buddy_task(
                 connection, int(user["id"]), task_id
@@ -634,11 +945,18 @@ def get_team_analytics_view(
     member_id: int | None = None,
     domain_code: str | None = None,
 ) -> dict[str, object]:
-    _require_leader(user)
+    member_ids, scope_label = _resolve_team_read_scope(connection, user, member_id)
     target_year = year if year is not None else date.today().year
     try:
         validate_team_analytics_domain_filter(connection, domain_code)
-        return get_team_analytics(connection, target_year, member_id, domain_code)
+        return get_team_analytics(
+            connection,
+            target_year,
+            member_ids,
+            domain_code,
+            scope_label,
+            requested_member_id=member_id,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -658,6 +976,54 @@ def get_team_annual_plan(
             detail="team annual plan not found",
         )
     return result
+
+
+@planning_router.get("/team-annual-plan/items")
+def get_team_annual_plan_items(
+    user: CurrentUser,
+    connection: Connection,
+    year: int,
+    member_id: int | None = None,
+    domain_code: str | None = None,
+    priority: str | None = None,
+    status: str | None = Query(default=None, alias="status"),
+    quarter: str | None = None,
+    month: int | None = None,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str = "plan_month",
+    sort_order: str = "asc",
+) -> dict[str, object]:
+    member_ids, scope_label = _resolve_team_read_scope(connection, user, member_id)
+    try:
+        return list_team_annual_plan_items(
+            connection,
+            year,
+            member_ids,
+            scope_label=scope_label,
+            domain_code=domain_code,
+            priority=priority,
+            status=status,
+            quarter=quarter,
+            month=month,
+            member_id=member_id,
+            q=q,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @planning_router.post("/team-annual-plan")

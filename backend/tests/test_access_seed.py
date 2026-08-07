@@ -26,6 +26,11 @@ _TEST_DEMO_PASSWORD = "test-only-demo-password"
 
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS buddy_relationship")
         connection.execute("DROP TABLE IF EXISTS tcp_session")
         connection.execute("DROP TABLE IF EXISTS tcp_user_role")
@@ -308,7 +313,12 @@ def test_seed_business_data_builds_repeatable_core_loop(
             "capability_profile",
         )
     }
-    assert counts == dict.fromkeys(counts, 1)
+    # the manual growth-goal lifecycle is closed; the approved assessment
+    # creates the plan directly
+    assert counts["growth_goal"] == 0
+    expected = dict.fromkeys(counts, 1)
+    expected["growth_goal"] = 0
+    assert counts == expected
     assert (
         access_schema.execute("SELECT conclusion FROM evidence_review").fetchone()[0]
         == "通过"

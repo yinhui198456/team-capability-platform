@@ -74,6 +74,11 @@ const NAV_SECTIONS: NavSection[] = [
         href: '/mentoring/dashboard',
         roles: ['Buddy'],
       },
+      {
+        label: '待验收成果',
+        href: '/mentoring/evidence-review',
+        roles: ['Buddy'],
+      },
     ],
   },
   {

@@ -23,7 +23,13 @@ SESSION_COOKIE = "tcp_session"
 def _reset_access_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
+        connection.execute(
+            "DROP TABLE IF EXISTS annual_plan_change_proposal_detail CASCADE"
+        )
+        connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal CASCADE")
+        connection.execute("DROP TABLE IF EXISTS review_idempotency_key CASCADE")
         connection.execute("DROP TABLE IF EXISTS assessment_review")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -42,6 +48,7 @@ def _reset_access_schema(connection: psycopg.Connection) -> None:
 def _reset_assessment_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -56,6 +63,7 @@ def _reset_assessment_schema(connection: psycopg.Connection) -> None:
 def _reset_planning_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
+        connection.execute("DROP TABLE IF EXISTS task_transition_history")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
@@ -65,6 +73,9 @@ def _reset_planning_schema(connection: psycopg.Connection) -> None:
 
 def _reset_catalog_schema(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute(
+            "DROP TABLE IF EXISTS capability_standard_planning_snapshot CASCADE"
+        )
         connection.execute("DROP TABLE IF EXISTS capability_node_resource")
         connection.execute("DROP TABLE IF EXISTS learning_resource")
         connection.execute("DROP TABLE IF EXISTS capability_standard_target_override")
@@ -136,9 +147,11 @@ def _ensure_l3_node(
         INSERT INTO capability_node (
             model_id, parent_node_id, node_type, code, name, sort_order,
             materials_text, expected_output, estimated_hours,
+            recommended_start_level,
             source_workbook, source_sheet, source_row
         )
-        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'test.xlsx', 'sheet', 4)
+        VALUES (%s, %s, 'L3', %s, 'Leaf', 1, %s, %s, %s, 'P4',
+                'test.xlsx', 'sheet', 4)
         ON CONFLICT (model_id, code) DO UPDATE SET
             materials_text = EXCLUDED.materials_text,
             expected_output = EXCLUDED.expected_output,
@@ -280,6 +293,10 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -330,7 +347,7 @@ def _approve_assessment(
     status, _, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期"},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
         cookies=buddy_cookies,
     )
     assert status == 200
@@ -351,33 +368,20 @@ def _seed_plan_items(
 
     member_cookies = _login(connection, "member_task")
 
-    status, gaps, _ = _request(
-        "GET", "/api/planning/eligible-gaps", cookies=member_cookies
+    status, plan, _ = _request(
+        "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert len(gaps) == 2
-    for gap in gaps:
-        status, _, _ = _request(
-            "POST",
-            "/api/planning/growth-goals",
-            {"gap_id": gap["id"]},
-            cookies=member_cookies,
-        )
-        assert status == 200
-
-    status, result, _ = _request(
-        "POST", "/api/planning/annual-plan/generate", {}, cookies=member_cookies
-    )
-    assert status == 200
-    assert result["created"] == 2
-    return member_cookies, result
+    assert plan is not None
+    assert len(plan["items"]) == 2
+    return member_cookies, plan
 
 
 def test_generated_plan_item_already_has_a_unique_learning_task(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    cookies, result = _seed_plan_items(learning_task_schema)
-    item = result["items"][0]
+    cookies, plan = _seed_plan_items(learning_task_schema)
+    item = plan["items"][0]
     item_id = int(item["id"])
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
@@ -395,16 +399,15 @@ def test_generated_plan_item_already_has_a_unique_learning_task(
         {},
         cookies=cookies,
     )
-    assert status == 409
-    assert body == {"detail": "learning task already exists for this plan item"}
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_planning_write_disabled"
 
 
 def test_create_learning_task_for_other_member_plan_item_returns_403(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    member_cookies, result = _seed_plan_items(learning_task_schema)
-    item = result["items"][0]
-    item_id = int(item["id"])
+    member_cookies, plan = _seed_plan_items(learning_task_schema)
+    item_id = int(plan["items"][0]["id"])
 
     _create_test_user(learning_task_schema, "other_member_task", ["Member"])
     learning_task_schema.commit()
@@ -416,15 +419,16 @@ def test_create_learning_task_for_other_member_plan_item_returns_403(
         {},
         cookies=other_cookies,
     )
-    assert status == 403
-    assert body == {"detail": "plan item does not belong to member"}
+    # manual task creation is blocked for everyone; ownership never reached
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_planning_write_disabled"
 
 
 def test_list_and_get_learning_tasks(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    cookies, result = _seed_plan_items(learning_task_schema)
-    item = result["items"][0]
+    cookies, plan = _seed_plan_items(learning_task_schema)
+    item = plan["items"][0]
     item_id = int(item["id"])
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
@@ -446,40 +450,43 @@ def test_list_and_get_learning_tasks(
 def test_update_learning_task_success(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    cookies, result = _seed_plan_items(learning_task_schema)
-    item_id = int(result["items"][0]["id"])
+    cookies, plan = _seed_plan_items(learning_task_schema)
+    item_id = int(plan["items"][0]["id"])
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
     status, updated, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
         {
-            "status": "进行中",
-            "actual_start_date": "2026-07-01",
+            "completion_quality": "达到预期",
             "next_action": "继续学习",
+            "expected_revision": revision,
         },
         cookies=cookies,
     )
     assert status == 200
-    assert updated["status"] == "进行中"
-    assert updated["actual_start_date"] == "2026-07-01"
+    assert updated["completion_quality"] == "达到预期"
     assert updated["next_action"] == "继续学习"
+    assert updated["status"] == "未开始"  # status untouched by PATCH
+    assert int(updated["revision"]) == revision + 1
 
 
 def test_update_learning_task_forbidden_for_other_member(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    member_cookies, result = _seed_plan_items(learning_task_schema)
-    item_id = int(result["items"][0]["id"])
+    member_cookies, plan = _seed_plan_items(learning_task_schema)
+    item_id = int(plan["items"][0]["id"])
 
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
     _create_test_user(learning_task_schema, "other_member_task", ["Member"])
     learning_task_schema.commit()
@@ -488,7 +495,7 @@ def test_update_learning_task_forbidden_for_other_member(
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "进行中"},
+        {"next_action": "继续学习", "expected_revision": revision},
         cookies=other_cookies,
     )
     assert status == 403
@@ -498,30 +505,33 @@ def test_update_learning_task_forbidden_for_other_member(
 def test_update_learning_task_invalid_status_or_hours(
     learning_task_schema: psycopg.Connection,
 ) -> None:
-    cookies, result = _seed_plan_items(learning_task_schema)
-    item_id = int(result["items"][0]["id"])
+    cookies, plan = _seed_plan_items(learning_task_schema)
+    item_id = int(plan["items"][0]["id"])
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
     task_id = int(next(task for task in tasks if task["plan_item_id"] == item_id)["id"])
+    revision = int(next(task for task in tasks if task["id"] == task_id)["revision"])
 
+    # Status / machine-owned fields are locked on the PATCH endpoint.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "无效状态"},
+        {"status": "进行中", "expected_revision": revision},
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "invalid status"}
+    assert body["detail"]["code"] == "source_field_locked"
 
+    # Invalid completion_quality dictionary value rejected.
     status, body, _ = _request(
         "PUT",
         f"/api/planning/learning-tasks/{task_id}",
-        {"status": "待 Evidence Review"},
+        {"completion_quality": "随便写", "expected_revision": revision},
         cookies=cookies,
     )
     assert status == 422
-    assert body == {"detail": "task status is managed by Evidence Review"}
+    assert body["detail"]["field"] == "completion_quality"
 
 
 def test_learning_task_endpoints_require_member_role(

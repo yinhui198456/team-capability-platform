@@ -86,9 +86,9 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt 'http://localhost:18081/api/planning/progr
 
 - 前端（Nginx 反向代理 `/api/`）：`http://localhost:18081`
 - 登录页：`http://localhost:18081/login`
-- 成长目标：`http://localhost:18081/growth/goals`
+- 成长目标：`http://localhost:18081/growth/annual-plan`（原 `/growth/goals` 已重定向并入）
 - 年度成长计划：`http://localhost:18081/growth/annual-plan`
-- 学习任务：`http://localhost:18081/growth/tasks`
+- 学习任务：`http://localhost:18081/growth/annual-plan`（原 `/growth/tasks` 已重定向并入）
 - 月度复盘：`http://localhost:18081/growth/review/monthly`
 - 后端健康/就绪：`http://localhost:18001/health`、`http://localhost:18001/ready`
 - PostgreSQL：`localhost:5432`，数据库 `tcp`，用户 `tcp`，开发密码 `tcp_dev_only`
@@ -100,12 +100,12 @@ curl -fsS -b /tmp/tcp_uat_cookies.txt 'http://localhost:18081/api/planning/progr
 ## 6. 迭代 4 用户 UAT 检查清单（4-5）
 
 - [ ] 使用 `member` / `123456` 登录，确认顶部导航出现“成长目标”“年度成长计划”“学习任务”“月度复盘”。
-- [ ] 进入 `/growth/goals`，确认页面列出“合格 Gap”与“已创建的成长目标”。
+- [ ] 进入 `/growth/annual-plan`（原 `/growth/goals` 已重定向），确认页面列出“合格 Gap”与“已创建的成长目标”。
 - [ ] 选择一个尚未创建目标的 Gap，点击创建，确认目标出现在“已创建的成长目标”列表。
 - [ ] 在成长目标页面删除一个目标，确认目标被移除。
 - [ ] 进入 `/growth/annual-plan`，确认 2026 年度成长计划及按 L3 生成的 Plan Item 列表。
 - [ ] 若年度 plan 不存在，点击“生成年度计划”，确认 Plan Items 生成成功。
-- [ ] 进入 `/growth/tasks`，确认“待创建学习任务的计划项”与“我的学习任务”两个区域。
+- [ ] 进入 `/growth/annual-plan`（原 `/growth/tasks` 已重定向），确认“待创建学习任务的计划项”与“我的学习任务”两个区域。
 - [ ] 为一个尚未创建任务的 Plan Item 点击“创建学习任务”，确认该计划项移动到“我的学习任务”。
 - [ ] 修改一个 Learning Task 的状态、实际开始/完成日期、实际耗时、下步动作，确认更新保存。
 - [ ] 在一个 Learning Task 下新增学习日志（日期、时长、备注），确认日志出现在列表，总时长随之更新。

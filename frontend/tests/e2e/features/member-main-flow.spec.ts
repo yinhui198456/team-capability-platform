@@ -52,9 +52,10 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
       page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
     ).toBeVisible()
 
+    // #62: the legacy growth-goals route redirects to the annual plan page
     await page.goto('/growth/goals')
     await expect(
-      page.getByRole('heading', { name: '成长目标', exact: true }),
+      page.getByRole('heading', { name: '年度成长计划' }),
     ).toBeVisible()
 
     await page.goto('/growth/annual-plan')
