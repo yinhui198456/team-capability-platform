@@ -3526,11 +3526,11 @@ def submit_assessment_review(
                 # Plan already created by this assessment (e.g., via atomic generation on self-submit)
                 # Return success without creating duplicate plan
                 plan_payload = {
-                    "annual_plan_id": int(plan_row[0]),
-                    "created_items": 0,
-                    "skipped_items": 0,
-                    "created_tasks": 0,
-                    "message": "Plan already exists for this assessment",
+                    "created": False,  # Plan was already created
+                    "plan_id": int(plan_row[0]),
+                    "items_created": 0,
+                    "tasks_created": 0,
+                    "target_is_legacy": None,
                 }
             else:
                 proposal_payload = _approve_with_proposal(
