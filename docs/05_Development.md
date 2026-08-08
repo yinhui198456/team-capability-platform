@@ -85,13 +85,31 @@
 | Capability Profile | 年度成长档案聚合查询 | Member 本人；Buddy 负责成员；Leader 团队；Admin 全量 | `/growth/profile` |
 | System Config | 年度窗口、首页待办、默认周期等参数查询/维护 | Admin 管理；不建设独立消息中心 | `/system/settings` |
 
-### 3.1 年度计划生成门禁
+### 3.1 年度计划生成门禁（Issue #82 已废弃）
 
-以下原文在前后端均作为同一业务策略使用：
+以下原文已被 Issue #82 废弃，保留供历史参考：
 
-**正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。**
+~~**正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。**~~
 
-门禁前 Gap 仍立即可见、可筛选、可设置优先级；门禁只约束正式纳入年度成长计划及生成 Plan Item。后端策略拒绝不满足条件的写入，前端同时展示原因；不得只依赖前端禁用。
+Issue #82 实施后，Member 提交自评时，系统在单一事务中原子生成：Gap 分析 → 年度成长计划（若不存在）→ 计划项（标记为「纳入计划」的 Gap）→ 学习任务（1:1）。Buddy 复核结果作为反馈，不阻塞计划生成。
+
+新 API 契约：
+
+- `POST /api/assessment/{assessment_id}/submit` 返回：
+  ```json
+  {
+    "revision": int,
+    "auto_cleared": [],
+    "plan_generation": {
+      "annual_plan_id": int,
+      "created_items": int,
+      "skipped_items": int,
+      "created_tasks": int
+    }
+  }
+  ```
+- 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_and_tasks_from_assessment(connection, assessment_id)`
+- 幂等性：重复提交时，已存在的计划项不再重复创建（按 `annual_growth_plan_id` + `l3_code` 去重）。
 
 ### 3.2 权限叠加
 
