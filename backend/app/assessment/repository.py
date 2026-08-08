@@ -2309,12 +2309,20 @@ def submit_assessment(
 
         generate_gaps_for_assessment(connection, assessment_id)
 
+        # Issue #82: Generate annual plan and learning tasks atomically on submit
+        from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
+        plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
+
         next_revision = int(revision) + 1
         connection.execute(
             "UPDATE assessment SET revision = %s WHERE id = %s",
             (next_revision, assessment_id),
         )
-        return {"revision": next_revision, "auto_cleared": []}
+        return {
+            "revision": next_revision,
+            "auto_cleared": [],
+            "plan_generation": plan_result,
+        }
 
 
 def generate_gaps_for_assessment(

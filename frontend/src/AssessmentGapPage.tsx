@@ -549,11 +549,20 @@ export function AssessmentGapPage() {
       }
       const result = await submitAssessment(assessment.id, revision)
       loadAssessment(await getAssessment(assessment.id))
-      setMessage(
-        (result.auto_cancelled_plan_candidates ?? []).length
-          ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
-          : '已提交，Gap 即时生成。等待 Buddy 复核。',
-      )
+
+      // Issue #82: Show plan generation result
+      const planGen = (result as any).plan_generation
+      if (planGen && planGen.created_tasks > 0) {
+        setMessage(
+          `✅ 自评已提交\n📋 已生成 ${planGen.created_tasks} 个学习任务${planGen.skipped_items > 0 ? `（${planGen.skipped_items} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看`,
+        )
+      } else {
+        setMessage(
+          (result.auto_cancelled_plan_candidates ?? []).length
+            ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
+            : '已提交，Gap 即时生成。',
+        )
+      }
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
