@@ -107,6 +107,10 @@ def generate_plan_and_tasks_from_assessment(
             standard_job_snapshot
         ) = detail
 
+        # Constraint requires priority to be non-NULL when planning_source_type='assessment_approval'
+        if priority is None:
+            priority = '中'
+
         # Check if plan_item already exists for this L3
         existing_item = connection.execute(
             """
