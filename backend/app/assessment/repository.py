@@ -3523,10 +3523,15 @@ def submit_assessment_review(
                     connection, assessment, member_id, year
                 )
             elif plan_row[1] is not None and int(plan_row[1]) == assessment_id:
-                raise ReviewError(
-                    "inconsistent_plan_source",
-                    "a formal plan already exists for this assessment",
-                )
+                # Plan already created by this assessment (e.g., via atomic generation on self-submit)
+                # Return success without creating duplicate plan
+                plan_payload = {
+                    "annual_plan_id": int(plan_row[0]),
+                    "created_items": 0,
+                    "skipped_items": 0,
+                    "created_tasks": 0,
+                    "message": "Plan already exists for this assessment",
+                }
             else:
                 proposal_payload = _approve_with_proposal(
                     connection,
