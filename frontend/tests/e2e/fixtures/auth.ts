@@ -51,3 +51,17 @@ export async function loginAs(page: Page, role: ExtendedRole): Promise<void> {
 export async function logout(page: Page): Promise<void> {
   await page.goto('/logout')
 }
+
+// Id of the signed-in account, derived from the real session. Fixtures must
+// never hardcode user ids: the assessment page's owner gate compares the
+// assessment owner against this value, so mocked assessments derive it here.
+export async function currentMemberId(page: Page): Promise<number> {
+  const user = await page.evaluate(async () => {
+    const response = await fetch('/api/auth/me', { credentials: 'include' })
+    if (!response.ok) {
+      throw new Error(`GET /api/auth/me failed: ${response.status}`)
+    }
+    return (await response.json()) as { id: number }
+  })
+  return user.id
+}

@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
-import { loginAs } from '../fixtures/auth'
+import { currentMemberId, loginAs, logout } from '../fixtures/auth'
 
 const l3 = {
   id: 101,
@@ -236,9 +236,14 @@ test.describe('capability standard targets', () => {
     page,
   }) => {
     let saved: Record<string, unknown> | null = null
+    // The mocked draft must belong to the signed-in member: the page's owner
+    // gate compares assessment.member_id against the real /api/me id, so the
+    // fixture derives it from the session instead of a hardcoded id.
+    await loginAs(page, 'member')
+    const memberId = await currentMemberId(page)
     const assessment = {
       id: 900,
-      member_id: 3,
+      member_id: memberId,
       year: 2026,
       version: 1,
       assessment_type: '年度',
@@ -308,7 +313,6 @@ test.describe('capability standard targets', () => {
       await route.fulfill({ status: 200, json: assessment })
     })
 
-    await loginAs(page, 'member')
     await page.goto('/capability/assessment')
     await expect(page.getByText('4 · P4 标准')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
@@ -333,6 +337,71 @@ test.describe('capability standard targets', () => {
     })
     expect(details[0]).not.toHaveProperty('target_level')
     expect(details[0]).not.toHaveProperty('standard_target_level')
+  })
+
+  test('a non-owner viewer sees the draft read-only without edit controls', async ({
+    page,
+  }) => {
+    // The owner id comes from the real member session — never hardcoded.
+    await loginAs(page, 'member')
+    const ownerId = await currentMemberId(page)
+    await logout(page)
+    await loginAs(page, 'buddy')
+
+    const assessment = {
+      id: 901,
+      member_id: ownerId,
+      year: 2026,
+      version: 1,
+      assessment_type: '年度',
+      status: '草稿',
+      created_at: '2026-07-27T00:00:00Z',
+      submitted_at: null,
+      archived_at: null,
+      details: [
+        {
+          id: 1,
+          l3_code: 'P01.01.01',
+          l3_name: '适用能力',
+          l1_code: 'P01',
+          l2_code: 'P01.01',
+          l2_name: '测试分类',
+          current_level: 2,
+          standard_target_applicable: true,
+          standard_target_level: 4,
+          standard_job_level_snapshot: 'P4',
+          target_adjusted: false,
+          adjusted_target_level: null,
+          target_adjustment_reason: null,
+          target_level: 4,
+          gap_value: 2,
+          evidence_note: '已有依据',
+          plan_candidate: false,
+          recommended_start_level: 'P4',
+        },
+      ],
+      gap_summary: {
+        total_gaps: 1,
+        avg_gap: 2,
+        high_priority: 0,
+        medium_priority: 1,
+        low_priority: 0,
+      },
+    }
+    await page.route(/\/api\/assessments$/, (route) =>
+      route.fulfill({ status: 200, json: [assessment] }),
+    )
+    await page.route(/\/api\/assessments\/901$/, (route) =>
+      route.fulfill({ status: 200, json: assessment }),
+    )
+
+    await page.goto('/capability/assessment')
+    await expect(page.getByText(/当前账号仅可查看本评估/)).toBeVisible()
+    await expect(
+      page.locator('#row-1').getByRole('button', { name: '调整个人目标' }),
+    ).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '保存草稿' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '提交自评' })).toHaveCount(0)
   })
 
   test('Leader inspects, copies and blocks an invalid draft without route ambiguity', async ({
