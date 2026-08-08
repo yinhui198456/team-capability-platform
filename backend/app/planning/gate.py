@@ -73,13 +73,13 @@ def _has_pending_review(connection: psycopg.Connection, assessment_id: int) -> b
 def check_annual_plan_gate(
     connection: psycopg.Connection, member_id: int
 ) -> dict[str, Any]:
-    “””
+    """
     Issue #82: Weak management flow - plans are generated atomically on assessment submit.
     This gate is kept for backward compatibility but always returns eligible if any assessment exists.
-    “””
+    """
     latest = get_latest_submitted_assessment(connection, member_id)
     if latest is None:
-        return {“eligible”: False, “reason”: “暂无已提交的能力评估”}
+        return {"eligible": False, "reason": "暂无已提交的能力评估"}
 
     # Issue #82: No longer blocks on Buddy review - plans are generated immediately
-    return {“eligible”: True, “reason”: None}
+    return {"eligible": True, "reason": None}
