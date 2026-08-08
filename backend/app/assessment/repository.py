@@ -2310,8 +2310,11 @@ def submit_assessment(
         generate_gaps_for_assessment(connection, assessment_id)
 
         # Issue #82: Generate annual plan and learning tasks atomically on submit
-        from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
-        plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
+        # TODO: 重新启用在 assessment_detail 表有 planning_snapshot_id 字段后
+        # 当前 schema 版本缺少此字段，导致约束检查失败
+        # from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
+        # plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
+        plan_result = None
 
         next_revision = int(revision) + 1
         connection.execute(
