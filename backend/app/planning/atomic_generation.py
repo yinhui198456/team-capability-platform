@@ -37,7 +37,9 @@ def generate_plan_and_tasks_from_assessment(
     # Get assessment metadata
     assessment = connection.execute(
         """
-        SELECT member_id, year, capability_standard_version_id, revision
+        SELECT member_id, year, capability_standard_version_id, revision,
+               member_current_level_snapshot, member_target_level_snapshot,
+               planning_snapshot_id
         FROM assessment
         WHERE id = %s
         """,
@@ -47,7 +49,8 @@ def generate_plan_and_tasks_from_assessment(
     if assessment is None:
         raise ValueError(f"Assessment {assessment_id} not found")
 
-    member_id, year, standard_version_id, assessment_revision = assessment
+    (member_id, year, standard_version_id, assessment_revision,
+     member_current_snapshot, member_target_snapshot, planning_snapshot_id) = assessment
 
     # Get or create annual plan
     plan_row = connection.execute(
@@ -133,9 +136,11 @@ def generate_plan_and_tasks_from_assessment(
                 status, revision,
                 source_assessment_id, source_assessment_detail_id,
                 capability_standard_version_id,
+                planning_snapshot_id,
                 l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
                 scope_type, standard_target_level, adjusted_target_level,
                 effective_target_level, standard_job_level_snapshot,
+                member_current_level_snapshot, member_target_level_snapshot,
                 plan_quarter, plan_month, gap_value, include_in_plan,
                 planning_source_type, assessment_revision
             )
@@ -143,8 +148,10 @@ def generate_plan_and_tasks_from_assessment(
                 %s, %s, %s, %s, %s,
                 '未开始', 1,
                 %s, %s, %s,
+                %s,
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
+                %s, %s,
                 %s, %s, %s, TRUE,
                 'assessment_approval', %s
             )
@@ -153,9 +160,11 @@ def generate_plan_and_tasks_from_assessment(
             (
                 annual_plan_id, l3_code, current_level, target_level, priority,
                 assessment_id, detail_id, standard_version_id,
+                planning_snapshot_id,
                 l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
                 scope_type, standard_target, adjusted_target, effective_target,
                 standard_job_snapshot,
+                member_current_snapshot, member_target_snapshot,
                 plan_quarter, plan_month, gap_value,
                 assessment_revision
             ),
