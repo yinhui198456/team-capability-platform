@@ -81,6 +81,14 @@ describe('login year initialization flow', () => {
       },
       assessment: null,
       annual_plan_status: null,
+      follow_up: {
+        assessment_id: null,
+        assessment_status: null,
+        required_incomplete: 0,
+        advanced_unassessed: 0,
+        gaps_waiting_planning: 0,
+        review_return: false,
+      },
       summary: {
         annual_actual_hours: 0,
         annual_planned_hours: 0,
@@ -190,6 +198,14 @@ describe('login year initialization flow', () => {
         },
         assessment: null,
         annual_plan_status: null,
+        follow_up: {
+          assessment_id: null,
+          assessment_status: null,
+          required_incomplete: 0,
+          advanced_unassessed: 0,
+          gaps_waiting_planning: 0,
+          review_return: false,
+        },
         summary: {
           annual_actual_hours: 0,
           annual_planned_hours: 0,

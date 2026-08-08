@@ -61,6 +61,14 @@ const emptyDashboard: planningApi.MemberDashboard = {
     review_conclusion: '认可',
   },
   annual_plan_status: '执行中',
+  follow_up: {
+    assessment_id: 1,
+    assessment_status: '已归档',
+    required_incomplete: 0,
+    advanced_unassessed: 0,
+    gaps_waiting_planning: 0,
+    review_return: false,
+  },
   summary: {
     annual_actual_hours: 0,
     annual_planned_hours: 0,

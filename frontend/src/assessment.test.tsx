@@ -1387,7 +1387,9 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
   })
 
   it('applies the ?focus=required-incomplete deep link from the workspace', async () => {
-    const draft = {
+    // Typed as Assessment so scope_type keeps the intended literal union
+    // (current_required | target_progressive) instead of widening to string.
+    const draft: assessmentApi.Assessment = {
       ...mockDraft(),
       assessment_scope_version: 'scope-v1',
       details: [
