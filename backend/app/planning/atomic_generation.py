@@ -65,7 +65,7 @@ def generate_plan_and_tasks_from_assessment(
                 member_id, year, status,
                 source_assessment_id, planning_source_type
             )
-            VALUES (%s, %s, '执行中', %s, 'atomic_v0015')
+            VALUES (%s, %s, '执行中', %s, 'assessment_approval')
             RETURNING id
             """,
             (member_id, year, assessment_id),
@@ -142,7 +142,7 @@ def generate_plan_and_tasks_from_assessment(
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, TRUE,
-                'atomic_v0015', %s
+                'assessment_approval', %s
             )
             RETURNING id
             """,
