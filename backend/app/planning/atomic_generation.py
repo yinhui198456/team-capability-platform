@@ -203,12 +203,11 @@ def generate_plan_and_tasks_from_assessment(
             connection.execute(
                 """
                 INSERT INTO learning_task (
-                    plan_item_id, member_id, l3_code,
-                    status, task_sequence, revision
+                    plan_item_id, l3_code, status, revision
                 )
-                VALUES (%s, %s, %s, '未开始', 1, 1)
+                VALUES (%s, %s, '未开始', 0)
                 """,
-                (plan_item_id, member_id, l3_code),
+                (plan_item_id, l3_code),
             )
             created_tasks += 1
 
