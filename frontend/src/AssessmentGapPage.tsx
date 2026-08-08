@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
+import { useAuth } from './AuthContext'
 import {
   type Assessment,
   type AssessmentDetail,
@@ -314,6 +315,7 @@ type Filter =
 
 export function AssessmentGapPage() {
   const year = useYear()
+  const { user } = useAuth()
   const [assessment, setAssessment] = useState<Assessment | null>(null)
   const [details, setDetails] = useState<AssessmentDetail[]>([])
   const [activeDomain, setActiveDomain] = useState('')
@@ -535,21 +537,23 @@ export function AssessmentGapPage() {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
-        status === 409
-          ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : isStructuredAssessmentError(detail)
-            ? (() => {
-                // Same structured locate as submit: switch domain, expand
-                // the L2 group, scroll to and focus the offending row.
-                const target = details.find(
-                  (item) => item.l3_code === detail.l3_code,
-                )
-                if (target) locateDetail(target)
-                return assessmentErrorCopy(detail.reason)
-              })()
-            : err instanceof Error
-              ? chineseMessage(err.message, '保存失败，请重新加载后再试。')
-              : '保存失败',
+        status === 403
+          ? '仅评估本人可以保存草稿，当前账号无修改权限，已保留本地输入。'
+          : status === 409
+            ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+            : isStructuredAssessmentError(detail)
+              ? (() => {
+                  // Same structured locate as submit: switch domain, expand
+                  // the L2 group, scroll to and focus the offending row.
+                  const target = details.find(
+                    (item) => item.l3_code === detail.l3_code,
+                  )
+                  if (target) locateDetail(target)
+                  return assessmentErrorCopy(detail.reason)
+                })()
+              : err instanceof Error
+                ? chineseMessage(err.message, '保存失败，请重新加载后再试。')
+                : '保存失败',
       )
     }
   }
@@ -680,19 +684,21 @@ export function AssessmentGapPage() {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
-        status === 409
-          ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
-          : isStructuredAssessmentError(detail)
-            ? (() => {
-                const target = details.find(
-                  (item) => item.l3_code === detail.l3_code,
-                )
-                if (target) locateDetail(target)
-                return assessmentErrorCopy(detail.reason)
-              })()
-            : err instanceof Error
-              ? chineseMessage(err.message, '提交失败，请重新加载后再试。')
-              : '提交失败',
+        status === 403
+          ? '仅评估本人可以提交自评，当前账号无提交权限，已保留本地输入。'
+          : status === 409
+            ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
+            : isStructuredAssessmentError(detail)
+              ? (() => {
+                  const target = details.find(
+                    (item) => item.l3_code === detail.l3_code,
+                  )
+                  if (target) locateDetail(target)
+                  return assessmentErrorCopy(detail.reason)
+                })()
+              : err instanceof Error
+                ? chineseMessage(err.message, '提交失败，请重新加载后再试。')
+                : '提交失败',
       )
     }
   }
@@ -776,7 +782,11 @@ export function AssessmentGapPage() {
   const hasCompatibilityError = details.some((detail) =>
     Boolean(detail.target_compatibility_error),
   )
+  // Only the assessed member may edit the draft; other roles (e.g. the
+  // assigned buddy) view it read-only. Backend 403s remain the final guard.
+  const isOwner = !!user && assessment?.member_id === user.id
   const editable =
+    isOwner &&
     !hasCompatibilityError &&
     (assessment?.status === '草稿' || assessment?.status === '建议调整')
   const assessedDetails = useMemo(() => progressDetails(details), [details])
@@ -1037,6 +1047,12 @@ export function AssessmentGapPage() {
             <a href="/capability/assessment/history">查看评估历史</a>
           </div>
         </header>
+
+        {assessment && !isOwner && (
+          <p className="muted" data-testid="readonly-notice" role="note">
+            当前账号仅可查看本评估；只有评估本人可以编辑、保存草稿或提交自评。
+          </p>
+        )}
 
         {/* Top stats bar */}
         <section

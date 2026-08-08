@@ -1564,6 +1564,110 @@ describe('Assessment draft target repair', () => {
   )
 })
 
+describe('AssessmentGapPage ownership gate (#81)', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('a non-owner viewer sees the draft read-only: no edit/save/submit controls', async () => {
+    // Viewer session in the same Member workspace whose id differs from the
+    // draft owner — e.g. the assigned buddy viewing the member's draft.
+    vi.mocked(accessApi.me).mockResolvedValue({
+      id: 2,
+      username: 'buddy',
+      full_name: 'Buddy',
+      roles: ['Member', 'Buddy'],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft({ member_id: 1 }), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({ member_id: 1 }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    expect(screen.queryByRole('button', { name: '保存草稿' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '提交自评' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
+    expect(
+      (screen.getByRole('combobox', { name: /当前等级/ }) as HTMLSelectElement)
+        .disabled,
+    ).toBe(true)
+    expect(screen.getByTestId('readonly-notice').textContent).toContain(
+      '仅可查看',
+    )
+  })
+
+  it.each([
+    [
+      '保存草稿',
+      '仅评估本人可以保存草稿，当前账号无修改权限，已保留本地输入。',
+    ],
+    [
+      '提交自评',
+      '仅评估本人可以提交自评，当前账号无提交权限，已保留本地输入。',
+    ],
+  ])(
+    'maps a %s 403 to a specific Chinese permission message and preserves inputs',
+    async (action, expected) => {
+      const draft = mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            member_priority: '高',
+            include_in_plan: true,
+            plan_quarter: 'Q2',
+            plan_month: 6,
+          },
+        ],
+      })
+      vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+      vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+      const save = vi.spyOn(assessmentApi, 'saveDraft').mockRejectedValue({
+        status: 403,
+        detail: 'insufficient permissions',
+      })
+      render(
+        <MemoryRouter initialEntries={['/capability/assessment']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByText('能力自评与 Gap 分析')
+      fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+        target: { value: '3' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: action }))
+      expect(await screen.findByText(expected)).toBeTruthy()
+      // No generic reload copy, no raw backend English.
+      expect(screen.queryByText(/重新加载后再/)).toBeNull()
+      expect(screen.queryByText(/insufficient permissions/)).toBeNull()
+      // Inputs preserved; the action stays retryable.
+      expect(
+        (
+          screen.getByRole('combobox', {
+            name: /当前等级/,
+          }) as HTMLSelectElement
+        ).value,
+      ).toBe('3')
+      expect(
+        (screen.getByRole('button', { name: action }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false)
+      expect(save).toHaveBeenCalled()
+    },
+  )
+})
+
 describe('AssessmentHistoryPage', () => {
   beforeEach(() => {
     stubAuthAndYear()
