@@ -38,8 +38,7 @@ def generate_plan_and_tasks_from_assessment(
     assessment = connection.execute(
         """
         SELECT member_id, year, capability_standard_version_id, revision,
-               member_current_level_snapshot, member_target_level_snapshot,
-               planning_snapshot_id
+               member_current_level_snapshot, member_target_level_snapshot
         FROM assessment
         WHERE id = %s
         """,
@@ -50,7 +49,7 @@ def generate_plan_and_tasks_from_assessment(
         raise ValueError(f"Assessment {assessment_id} not found")
 
     (member_id, year, standard_version_id, assessment_revision,
-     member_current_snapshot, member_target_snapshot, planning_snapshot_id) = assessment
+     member_current_snapshot, member_target_snapshot) = assessment
 
     # Get or create annual plan
     plan_row = connection.execute(
@@ -87,7 +86,8 @@ def generate_plan_and_tasks_from_assessment(
             ad.l2_code, ad.l2_name, ad.l3_name,
             ad.scope_type, ad.standard_target_level,
             ad.adjusted_target_level, ad.target_level AS effective_target,
-            ad.standard_job_level_snapshot
+            ad.standard_job_level_snapshot,
+            ad.planning_snapshot_id
         FROM assessment_detail ad
         WHERE ad.assessment_id = %s
           AND ad.include_in_plan = TRUE
@@ -107,7 +107,8 @@ def generate_plan_and_tasks_from_assessment(
             gap_value, priority, plan_quarter, plan_month,
             l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
             scope_type, standard_target, adjusted_target, effective_target,
-            standard_job_snapshot
+            standard_job_snapshot,
+            planning_snapshot_id
         ) = detail
 
         # Constraint requires priority to be non-NULL when planning_source_type='assessment_approval'
