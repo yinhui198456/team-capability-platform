@@ -2106,12 +2106,26 @@ def _evidence_is_valid(
 
 
 def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> None:
+    """Formal submission contract (staged self-assessment, #81 round 1).
+
+    Submission requires a valid assessment outcome (current_level 0–5 and an
+    effective target) for every applicable current-role REQUIRED capability
+    (``scope_type=current_required``; legacy drafts without a scope snapshot
+    keep requiring every applicable item).  ADVANCED
+    (``scope_type=target_progressive``) items may stay unassessed — they do
+    not block submission and surface as personal-workspace follow-up work.
+
+    Gap plan decisions (priority / include_in_plan / plan quarter+month) are
+    deliberately NOT part of this contract; undecided Gaps enter the growth
+    backlog after review.  The strict plan-selection contract lives in
+    ``validate_plan_selection`` and runs only where plan items are generated
+    (Buddy approval).
+    """
     rows = connection.execute(
         """
         SELECT l3_code, current_level, standard_target_applicable,
                target_level, target_compatibility_error,
-               member_priority, include_in_plan, plan_quarter, plan_month,
-               gap_value, l3_node_id
+               l3_node_id, scope_type
         FROM assessment_detail
         WHERE assessment_id = %s
         ORDER BY l3_code
@@ -2126,12 +2140,8 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
         applicable,
         target_level,
         compatibility_error,
-        member_priority,
-        include_in_plan,
-        plan_quarter,
-        plan_month,
-        gap_value,
         l3_node_id,
+        scope_type,
     ) in rows:
         if compatibility_error:
             raise AssessmentValidationError(
@@ -2151,7 +2161,11 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
                     field="target_level",
                 )
             continue
-        # All applicable items must have current_level 0–5 (NULL = not yet assessed).
+        # ADVANCED items may be assessed later; they never block submission.
+        if scope_type == "target_progressive":
+            continue
+        # REQUIRED items (and legacy applicable items) must have a valid
+        # outcome: current_level 0–5 (NULL = not yet assessed).
         if current_level is None:
             raise AssessmentValidationError(
                 code,
@@ -2169,10 +2183,47 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
                 field="target_level",
             )
 
-        # ── Plan field validation ──────────────────────────────
+
+def validate_plan_selection(connection: psycopg.Connection, assessment_id: int) -> None:
+    """Strict plan-selection contract, enforced where plan items are
+    generated (Buddy approval), never at member submission (#81 round 1).
+
+    Only items the member explicitly selected into the annual plan
+    (``include_in_plan=TRUE``) require priority, plan quarter/month and the
+    hold/plan mutual-exclusion rules; unselected/undecided Gaps stay in the
+    growth backlog without blocking.  Rows without a positive gap must not
+    carry plan fields at all.
+    """
+    rows = connection.execute(
+        """
+        SELECT l3_code, member_priority, include_in_plan, plan_quarter,
+               plan_month, gap_value, l3_node_id
+        FROM assessment_detail
+        WHERE assessment_id = %s
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    for (
+        code,
+        member_priority,
+        include_in_plan,
+        plan_quarter,
+        plan_month,
+        gap_value,
+        l3_node_id,
+    ) in rows:
         has_positive_gap = gap_value is not None and int(gap_value) > 0
-        if has_positive_gap:
-            # Must have a priority.
+        if include_in_plan is True:
+            if not has_positive_gap:
+                raise AssessmentValidationError(
+                    code,
+                    "plan_not_applicable",
+                    f"item {code} with gap<=0 cannot have plan selection",
+                    l3_node_id=l3_node_id,
+                    field="include_in_plan",
+                )
+            # Included items must have a priority.
             if member_priority is None:
                 raise AssessmentValidationError(
                     code,
@@ -2181,34 +2232,23 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
                     l3_node_id=l3_node_id,
                     field="member_priority",
                 )
-            # include_in_plan must be explicitly decided (not NULL).
-            if include_in_plan is None:
+            if member_priority == "暂缓":
                 raise AssessmentValidationError(
                     code,
-                    "plan_decision_required",
-                    f"positive gap item {code} requires include_in_plan decision",
+                    "hold_plan_conflict",
+                    f"暂缓 item {code} cannot be include_in_plan=TRUE",
                     l3_node_id=l3_node_id,
                     field="include_in_plan",
                 )
-            if include_in_plan is True:
-                if member_priority == "暂缓":
-                    raise AssessmentValidationError(
-                        code,
-                        "hold_plan_conflict",
-                        f"暂缓 item {code} cannot be include_in_plan=TRUE",
-                        l3_node_id=l3_node_id,
-                        field="include_in_plan",
-                    )
-                if plan_quarter is None or plan_month is None:
-                    raise AssessmentValidationError(
-                        code,
-                        "plan_time_required",
-                        f"include_in_plan=TRUE requires quarter and month for {code}",
-                        l3_node_id=l3_node_id,
-                        field="plan_quarter",
-                    )
-            # include_in_plan=FALSE with 暂缓 is valid.
-        else:
+            if plan_quarter is None or plan_month is None:
+                raise AssessmentValidationError(
+                    code,
+                    "plan_time_required",
+                    f"include_in_plan=TRUE requires quarter and month for {code}",
+                    l3_node_id=l3_node_id,
+                    field="plan_quarter",
+                )
+        elif not has_positive_gap:
             # Gap<=0: plan fields must be cleared.
             if member_priority is not None:
                 raise AssessmentValidationError(
@@ -3224,12 +3264,16 @@ def validate_assessment_canonical(
     *,
     require_planning_snapshot: bool = False,
 ) -> None:
-    """Full #61 canonical submission validation, reused by the approval lock.
+    """Canonical assessment validation, reused by the approval lock.
 
-    Runs the exact same rules as member submit; approval additionally requires
-    an immutable planning snapshot for every include_in_plan=TRUE detail.
+    Runs the member submission contract (``_validate_submission``) plus the
+    strict plan-selection contract (``validate_plan_selection``): approval is
+    where undecided Gap planning stops being allowed.  When
+    ``require_planning_snapshot`` is set, approval additionally requires an
+    immutable planning snapshot for every include_in_plan=TRUE detail.
     """
     _validate_submission(connection, assessment_id)
+    validate_plan_selection(connection, assessment_id)
     if not require_planning_snapshot:
         return
     assessment = get_assessment(connection, assessment_id)

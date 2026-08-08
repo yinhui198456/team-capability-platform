@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
 import { useAuth } from './AuthContext'
@@ -169,6 +170,9 @@ function canBatchFill(detail: AssessmentDetail) {
 
 function unfilledReason(detail: AssessmentDetail) {
   if (!isApplicableDetail(detail)) return ''
+  // ADVANCED capabilities may be assessed later (staged self-assessment,
+  // #81 round 1); they never block submission or count as unfinished.
+  if (detail.scope_type === 'target_progressive') return ''
   const adjustment = adjustmentReason(detail)
   if (adjustment) return adjustment
   if (detail.current_level == null || effectiveTarget(detail) == null) {
@@ -284,21 +288,21 @@ function chineseMessage(msg: string, fallback: string): string {
 }
 
 export function submitProblemDetails(details: AssessmentDetail[]) {
+  // Staged self-assessment (#81 round 1): submission blocks only on current-
+  // role REQUIRED capabilities missing a valid assessment outcome.  Gap plan
+  // decisions (priority / include_in_plan / plan time) are not part of the
+  // submission contract; undecided Gaps enter the growth backlog after
+  // review.  ADVANCED capabilities may stay unassessed.
   const problems: Array<{ detail: AssessmentDetail; reason: string }> = []
   for (const detail of details) {
     if (!isApplicableDetail(detail)) continue
-    const gap = computeGap(detail)
-    if (gap == null || gap <= 0) continue
-    if (!detail.member_priority) {
-      problems.push({ detail, reason: 'priority_required' })
-    } else if (detail.include_in_plan == null) {
-      problems.push({ detail, reason: 'plan_decision_required' })
-    } else if (
-      detail.include_in_plan === true &&
-      detail.member_priority !== '暂缓' &&
-      (detail.plan_quarter == null || detail.plan_month == null)
-    ) {
-      problems.push({ detail, reason: 'plan_time_required' })
+    if (detail.scope_type === 'target_progressive') continue
+    if (detail.current_level == null) {
+      problems.push({ detail, reason: 'requires_current_level' })
+      continue
+    }
+    if (effectiveTarget(detail) == null) {
+      problems.push({ detail, reason: 'requires_target_level' })
     }
   }
   return problems
@@ -657,28 +661,42 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
-      // Client-side minimum completeness check before the request, mirroring
-      // the server gate's order (priority → include decision → plan time).
-      // Locates the first incomplete positive-gap row, shows a top summary,
-      // and preserves every input — draft saves stay allowed regardless.
-      // The server submit gate remains the final authority.
+      // Client-side completeness check before the request, mirroring the
+      // server gate: only current-role REQUIRED capabilities missing an
+      // assessment outcome block submission (staged workflow, #81 round 1).
+      // Locates the first incomplete REQUIRED row, shows a top summary, and
+      // preserves every input — draft saves stay allowed regardless.  The
+      // server submit gate remains the final authority.
       const problems = submitProblemDetails(details)
       if (problems.length) {
         const first = problems[0]
         locateDetail(first.detail)
         setError(
-          `尚无法提交：还有 ${problems.length} 项待完善。请先处理「${
+          `尚无法提交：还有 ${problems.length} 项当前职级必备能力未完成评估。请先处理「${
             first.detail.l3_name ?? first.detail.l3_code
           }」——${assessmentErrorCopy(first.reason)}。`,
         )
         return
       }
+      const undecidedGaps = details.filter(
+        (detail) =>
+          isApplicableDetail(detail) &&
+          detail.scope_type !== 'target_progressive' &&
+          (computeGap(detail) ?? 0) > 0 &&
+          detail.include_in_plan !== true,
+      ).length
       const result = await submitAssessment(assessment.id, revision)
       loadAssessment(await getAssessment(assessment.id))
       setMessage(
-        (result.auto_cancelled_plan_candidates ?? []).length
-          ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
-          : '已提交，Gap 即时生成。等待 Buddy 复核。',
+        `${
+          (result.auto_cancelled_plan_candidates ?? []).length
+            ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
+            : '已提交，Gap 即时生成。等待 Buddy 复核。'
+        }${
+          undecidedGaps > 0
+            ? ` 另有 ${undecidedGaps} 项 Gap 未决定规划：复核通过后将保留在成长积压中，可稍后在年度计划中选择。`
+            : ''
+        }`,
       )
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
@@ -951,6 +969,47 @@ export function AssessmentGapPage() {
     const undecided = hasGap.filter((d) => d.include_in_plan == null).length
     return { inPlanNoPriority, inPlanNoTime, undecided }
   }, [assessedDetails])
+
+  // Deep links from the personal workspace (?focus=…) — staged workflow
+  // (#81 round 1): apply the matching filter once the data is loaded and
+  // locate the first relevant row; applied once per page load.
+  const [searchParams] = useSearchParams()
+  const focusParam = searchParams.get('focus')
+  const focusApplied = useRef(false)
+  useEffect(() => {
+    if (!focusParam || focusApplied.current || details.length === 0) return
+    focusApplied.current = true
+    if (focusParam === 'required-incomplete') {
+      setScopeFilter(
+        assessment?.assessment_scope_version ? 'current_required' : '全部',
+      )
+      setFilter('未评估')
+    } else if (focusParam === 'advanced-unassessed') {
+      setScopeFilter(
+        assessment?.assessment_scope_version ? 'target_progressive' : '全部',
+      )
+      setFilter('未评估')
+    } else if (focusParam === 'gaps-waiting-planning') {
+      setScopeFilter('全部')
+      setFilter('有Gap')
+    }
+    const first = details.find((detail) => {
+      if (focusParam === 'gaps-waiting-planning') {
+        return (
+          isApplicableDetail(detail) &&
+          detail.scope_type !== 'target_progressive' &&
+          (computeGap(detail) ?? 0) > 0 &&
+          detail.include_in_plan !== true
+        )
+      }
+      return (
+        isApplicableDetail(detail) &&
+        detail.scope_type !== 'target_progressive' &&
+        detail.current_level == null
+      )
+    })
+    if (first) locateDetail(first)
+  }, [focusParam, details, assessment, locateDetail])
 
   const filters: Filter[] = [
     '全部',
@@ -1834,7 +1893,9 @@ export function AssessmentGapPage() {
               <span>{stickyStats.inPlanNoTime} 项已纳入计划但未选计划月份</span>
             )}
             {stickyStats.undecided > 0 && (
-              <span>{stickyStats.undecided} 项未决定计划</span>
+              <span>
+                {stickyStats.undecided} 项 Gap 未决定规划（提交后进入成长积压）
+              </span>
             )}
             <button type="button" onClick={handleSave}>
               保存草稿

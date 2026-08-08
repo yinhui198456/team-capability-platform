@@ -468,28 +468,17 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
-    # Set current_level low enough to create a positive gap (standard target is 3),
-    # but DON'T provide plan fields — submit must fail validation.
+    # Leave the REQUIRED item unassessed — submission must fail with a
+    # structured, locatable error (staged workflow: plan decisions no longer
+    # gate submission; missing REQUIRED assessment outcomes still do).
     l3_code = "C01.01.01"
     node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    status, _, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": [
-                {"l3_node_id": node_id, "l3_code": l3_code, "current_level": 0}
-            ],
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        {"expected_revision": 1},
         cookies=cookies,
     )
     assert status == 422
@@ -498,8 +487,8 @@ def test_submit_validation_returns_structured_l3_error(
     assert detail["l3_code"] == "C01.01.01"
     assert "l3_node_id" in detail
     assert isinstance(detail["l3_node_id"], int)
-    # With #61: evidence gate removed; validation now catches missing plan fields.
-    assert detail["reason"] == "priority_required"
+    assert detail["reason"] == "requires_current_level"
+    assert detail["field"] == "current_level"
     assert "message" in detail
 
 

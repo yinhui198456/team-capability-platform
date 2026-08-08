@@ -196,10 +196,26 @@ export type MemberDashboardAssessment = {
   }
 }
 
+export type MemberFollowUp = {
+  assessment_id: number | null
+  assessment_status: string | null
+  // REQUIRED capabilities still missing an assessment outcome — blocks
+  // submission while the assessment is a draft / returned.
+  required_incomplete: number
+  // ADVANCED capabilities that may be completed later (never block submit).
+  advanced_unassessed: number
+  // Confirmed Gaps not selected into the annual plan — the growth backlog
+  // waiting for planning (staged self-assessment, #81 round 1).
+  gaps_waiting_planning: number
+  // 待复核 / 建议调整 — review or return work awaiting the member/buddy.
+  review_return: boolean
+}
+
 export type MemberDashboard = {
   year: number
   assessment: MemberDashboardAssessment | null
   annual_plan_status: MemberDashboardAnnualPlanStatus
+  follow_up: MemberFollowUp
   summary: {
     annual_actual_hours: number
     annual_planned_hours: number

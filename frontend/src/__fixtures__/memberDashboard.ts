@@ -39,6 +39,14 @@ export const mockMemberDashboard: MemberDashboard = {
     review_conclusion: '认可',
   },
   annual_plan_status: '执行中',
+  follow_up: {
+    assessment_id: 1,
+    assessment_status: '已归档',
+    required_incomplete: 0,
+    advanced_unassessed: 1,
+    gaps_waiting_planning: 2,
+    review_return: false,
+  },
   summary: {
     annual_actual_hours: 68,
     annual_planned_hours: 120,

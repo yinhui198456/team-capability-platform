@@ -1928,6 +1928,63 @@ def get_member_dashboard(
             review_status = review_row[0]
             review_conclusion = review_row[1]
 
+    # Staged self-assessment follow-up (#81 round 1): the four personal-
+    # workspace categories derived from the latest assessment of the year.
+    # required_incomplete blocks submission (草稿/建议调整 only); unassessed
+    # ADVANCED items are "complete later" work; positive-gap items not
+    # selected into the plan are the growth backlog waiting for planning;
+    # review_return covers 待复核/建议调整 (review or return work).
+    follow_up: dict[str, object] = {
+        "assessment_id": None,
+        "assessment_status": None,
+        "required_incomplete": 0,
+        "advanced_unassessed": 0,
+        "gaps_waiting_planning": 0,
+        "review_return": False,
+    }
+    if latest_assessment is not None:
+        follow_up["assessment_id"] = latest_assessment["id"]
+        follow_up["assessment_status"] = latest_assessment["status"]
+        follow_up["review_return"] = latest_assessment["status"] in (
+            "待复核",
+            "建议调整",
+        )
+        follow_up_rows = connection.execute(
+            """
+            SELECT scope_type, current_level, target_level, gap_value,
+                   include_in_plan
+            FROM assessment_detail
+            WHERE assessment_id = %s
+            """,
+            (latest_assessment["id"],),
+        ).fetchall()
+        required_incomplete = 0
+        advanced_unassessed = 0
+        gaps_waiting = 0
+        for (
+            scope_type,
+            current_level,
+            target_level,
+            gap_value,
+            include_in_plan,
+        ) in follow_up_rows:
+            if scope_type == "target_progressive":
+                if current_level is None:
+                    advanced_unassessed += 1
+                continue
+            # current_required, or legacy rows without a scope snapshot.
+            if current_level is None or target_level is None:
+                required_incomplete += 1
+            if (
+                gap_value is not None
+                and int(gap_value) > 0
+                and include_in_plan is not True
+            ):
+                gaps_waiting += 1
+        follow_up["required_incomplete"] = required_incomplete
+        follow_up["advanced_unassessed"] = advanced_unassessed
+        follow_up["gaps_waiting_planning"] = gaps_waiting
+
     # Applicable completion of the current (latest) assessment: of the
     # detail rows it carries, how many already reach their effective target.
     applicable_completion: dict[str, object] = {
@@ -2265,6 +2322,7 @@ def get_member_dashboard(
         "year": year,
         "assessment": assessment_out,
         "annual_plan_status": annual_plan_status,
+        "follow_up": follow_up,
         "summary": {
             "annual_actual_hours": int(total_hours_row[0]) if total_hours_row else 0,
             "annual_planned_hours": annual_hours["min_hours"] or 0,

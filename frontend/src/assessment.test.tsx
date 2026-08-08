@@ -15,6 +15,7 @@ import {
   monthToQuarter,
   planMonthFromValue,
   planMonthValue,
+  submitProblemDetails,
 } from './AssessmentGapPage'
 import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
@@ -1278,14 +1279,15 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(screen.queryByText(/invalid quarter-month/)).toBeNull()
   })
 
-  it('submit is blocked client-side before the request when plan time missing', async () => {
+  it('submit is blocked client-side when a REQUIRED item is unassessed', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
-          current_level: 2,
-          member_priority: '高',
-          include_in_plan: true,
+          scope_type: 'current_required',
+          current_level: null,
+          member_priority: null,
+          include_in_plan: null,
         },
       ],
     })
@@ -1300,22 +1302,43 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(screen.getByText(/尚无法提交/)).toBeTruthy())
-    expect(screen.getByText(/已纳入计划的能力项请选择计划月份/)).toBeTruthy()
+    // The blocking UX: the submit button is disabled and the sticky bar
+    // reports the precise REQUIRED-scope count.
+    const submitButton = screen.getByRole('button', {
+      name: '提交自评',
+    }) as HTMLButtonElement
+    expect(submitButton.disabled).toBe(true)
+    expect(screen.getByText(/还有 1 项未完成/)).toBeTruthy()
+    fireEvent.click(submitButton)
     expect(submit).not.toHaveBeenCalled()
-    // The offending row is located (row id receives focus target).
-    expect(
-      document.getElementById('row-1') as HTMLElement | null,
-    ).not.toBeNull()
   })
 
-  it('submit is blocked client-side when priority is missing on a positive gap', async () => {
+  it('submitProblemDetails blocks only REQUIRED-scope incompleteness', () => {
+    const base = mockDraft().details![0]
+    const problems = submitProblemDetails([
+      { ...base, scope_type: 'current_required', current_level: null },
+      { ...base, scope_type: 'target_progressive', current_level: null },
+      {
+        ...base,
+        scope_type: 'current_required',
+        current_level: 2,
+        member_priority: null,
+        include_in_plan: null,
+      },
+    ])
+    expect(problems).toHaveLength(1)
+    expect(problems[0].reason).toBe('requires_current_level')
+  })
+
+  it('submit proceeds when plan decisions are missing and shows the backlog note', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
+          scope_type: 'current_required',
           current_level: 2,
+          member_priority: null,
+          include_in_plan: null,
         },
       ],
     })
@@ -1331,12 +1354,66 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() =>
-      expect(
-        screen.getByText(/该能力项存在正 Gap，请先选择优先级/),
-      ).toBeTruthy(),
+    await waitFor(() => expect(submit).toHaveBeenCalled())
+    // Undecided Gaps are non-blocking and announced as growth backlog.
+    expect(screen.getByText(/等待 Buddy 复核/)).toBeTruthy()
+    expect(screen.getAllByText(/成长积压/).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('submit proceeds with unassessed ADVANCED items', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          scope_type: 'target_progressive',
+          current_level: null,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const submit = vi
+      .spyOn(assessmentApi, 'submitAssessment')
+      .mockResolvedValue({ ok: true, revision: 2 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
     )
-    expect(submit).not.toHaveBeenCalled()
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
+    await waitFor(() => expect(submit).toHaveBeenCalled())
+    expect(screen.queryByText(/尚无法提交/)).toBeNull()
+  })
+
+  it('applies the ?focus=required-incomplete deep link from the workspace', async () => {
+    const draft = {
+      ...mockDraft(),
+      assessment_scope_version: 'scope-v1',
+      details: [
+        {
+          ...mockDraft().details![0],
+          scope_type: 'current_required',
+          current_level: null,
+        },
+      ],
+    }
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter
+        initialEntries={['/capability/assessment?focus=required-incomplete']}
+      >
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const statusFilter = screen.getByLabelText('状态筛选') as HTMLSelectElement
+    const scopeFilter = screen.getByLabelText('范围筛选') as HTMLSelectElement
+    await waitFor(() => {
+      expect(statusFilter.value).toBe('未评估')
+    })
+    expect(scopeFilter.value).toBe('current_required')
   })
 
   it('submit proceeds when plan fields are complete', async () => {

@@ -12,6 +12,7 @@ import {
   getMemberDashboard,
   type MemberDashboard,
   type MemberDashboardAssessment,
+  type MemberFollowUp,
 } from './planning'
 import {
   mockMemberDashboard,
@@ -99,6 +100,60 @@ function plannedHours(
           has_unparsed: hasUnparsed ?? false,
         })
   return hasUnparsed ? `${value}（部分计划项耗时为文本，未计入汇总）` : value
+}
+
+function FollowUpCard({
+  followUp,
+  year,
+}: {
+  followUp: MemberFollowUp
+  year: number
+}) {
+  // Staged self-assessment follow-up (#81 round 1): REQUIRED items still
+  // blocking submission, ADVANCED items that can be completed later, Gap
+  // items waiting for planning (growth backlog), and review/return work.
+  // Each active category deep-links into the assessment page's matching view.
+  const items = [
+    {
+      label: '当前职级必备能力未完成评估（阻塞提交）',
+      count: followUp.required_incomplete,
+      href: '/capability/assessment?focus=required-incomplete',
+      active: followUp.required_incomplete > 0,
+    },
+    {
+      label: '进阶能力待评估（可稍后完成）',
+      count: followUp.advanced_unassessed,
+      href: '/capability/assessment?focus=advanced-unassessed',
+      active: followUp.advanced_unassessed > 0,
+    },
+    {
+      label: 'Gap 待规划（成长积压）',
+      count: followUp.gaps_waiting_planning,
+      href: '/capability/assessment?focus=gaps-waiting-planning',
+      active: followUp.gaps_waiting_planning > 0,
+    },
+    {
+      label: '自评待复核 / 建议调整',
+      href: '/capability/assessment',
+      active: followUp.review_return,
+    },
+  ].filter((item) => item.active)
+  if (items.length === 0) return null
+  return (
+    <article className={`card ${styles.todoCard}`} data-testid="follow-up-card">
+      <h2>成长待办</h2>
+      <ul className={styles.followUpList}>
+        {items.map((item) => (
+          <li key={item.label}>
+            <a className="primary-link" href={`${item.href}?year=${year}`}>
+              {item.label}
+            </a>
+            {item.count != null && <strong>{item.count}</strong>}
+          </li>
+        ))}
+      </ul>
+    </article>
+  )
 }
 
 function TodoItem({
@@ -847,6 +902,9 @@ export function MemberDashboardPage() {
         </p>
       )}
       {!dashboard && !error && <p className="muted">正在加载成长数据…</p>}
+      {dashboard?.follow_up && (
+        <FollowUpCard followUp={dashboard.follow_up} year={year} />
+      )}
       {dashboard && stage && (
         <>
           {stage === 'self-assessment' && (

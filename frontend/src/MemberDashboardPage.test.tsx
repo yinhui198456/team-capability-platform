@@ -25,6 +25,14 @@ const baseDashboard: planningApi.MemberDashboard = {
     applicable_completion: { total: 3, completed: 1, ratio: 1 / 3 },
   },
   annual_plan_status: '执行中' as const,
+  follow_up: {
+    assessment_id: 1,
+    assessment_status: '已归档',
+    required_incomplete: 0,
+    advanced_unassessed: 1,
+    gaps_waiting_planning: 2,
+    review_return: false,
+  },
   summary: {
     annual_actual_hours: 5,
     annual_planned_hours: 20,
@@ -175,6 +183,55 @@ describe('MemberDashboardPage', () => {
     expect(
       screen.getAllByRole('link', { name: '查看年度计划' }).length,
     ).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders the follow-up card with backlog counts and deep links', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('成长待办')).toBeTruthy()
+    })
+    expect(screen.getByRole('link', { name: /进阶能力待评估/ })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Gap 待规划/ })).toBeTruthy()
+    // required_incomplete is 0 in the fixture: the blocking category is
+    // absent, the non-blocking categories render with deep links.
+    expect(
+      screen.queryByRole('link', { name: /当前职级必备能力未完成评估/ }),
+    ).toBeNull()
+    expect(
+      screen.getByRole('link', { name: /进阶能力待评估/ }).getAttribute('href'),
+    ).toContain('focus=advanced-unassessed')
+  })
+
+  it('hides the follow-up card when nothing is pending', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      follow_up: {
+        assessment_id: 1,
+        assessment_status: '已归档',
+        required_incomplete: 0,
+        advanced_unassessed: 0,
+        gaps_waiting_planning: 0,
+        review_return: false,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('计划执行中')).toBeTruthy()
+    })
+    expect(screen.queryByText('成长待办')).toBeNull()
   })
 
   it('filters gaps by domain and restores on 全部', async () => {

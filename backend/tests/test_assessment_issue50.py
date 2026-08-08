@@ -6,7 +6,6 @@ import pytest
 from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    AssessmentValidationError,
     _evidence_is_valid,
     batch_fill_l2,
     get_assessment,
@@ -581,7 +580,7 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert detail["gap_value"] == 0
 
 
-def test_submit_requires_priority_for_positive_gap(
+def test_submit_allows_positive_gap_without_priority(
     issue50_schema: psycopg.Connection,
 ) -> None:
     connection = issue50_schema
@@ -610,9 +609,9 @@ def test_submit_requires_priority_for_positive_gap(
             ],
         ),
     )
-    with pytest.raises(AssessmentValidationError) as error:
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
-    assert error.value.code == "assessment_validation_failed"
-    assert error.value.l3_code == codes[0]
-    assert error.value.reason == "priority_required"
-    assert error.value.field == "member_priority"
+    # Staged workflow (#81 round 1): a positive gap without priority submits;
+    # the strict plan-selection contract applies at Buddy approval instead.
+    result = submit_assessment(
+        connection, assessment_id, member_id, expected_revision=2
+    )
+    assert result["revision"] == 3
