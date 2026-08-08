@@ -86,8 +86,7 @@ def generate_plan_and_tasks_from_assessment(
             ad.l2_code, ad.l2_name, ad.l3_name,
             ad.scope_type, ad.standard_target_level,
             ad.adjusted_target_level, ad.target_level AS effective_target,
-            ad.standard_job_level_snapshot,
-            ad.planning_snapshot_id
+            ad.standard_job_level_snapshot
         FROM assessment_detail ad
         WHERE ad.assessment_id = %s
           AND ad.include_in_plan = TRUE
@@ -107,13 +106,29 @@ def generate_plan_and_tasks_from_assessment(
             gap_value, priority, plan_quarter, plan_month,
             l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
             scope_type, standard_target, adjusted_target, effective_target,
-            standard_job_snapshot,
-            planning_snapshot_id
+            standard_job_snapshot
         ) = detail
 
         # Constraint requires priority to be non-NULL when planning_source_type='assessment_approval'
         if priority is None:
             priority = '中'
+
+        # Get planning snapshot for this L3 capability
+        snapshot = connection.execute(
+            """
+            SELECT id, materials_text, expected_output, estimated_hours
+            FROM capability_standard_planning_snapshot
+            WHERE capability_standard_version_id = %s AND l3_node_id = %s
+            """,
+            (standard_version_id, l3_node_id),
+        ).fetchone()
+
+        if snapshot is None:
+            # Skip if no planning snapshot exists for this capability
+            skipped_items += 1
+            continue
+
+        planning_snapshot_id = int(snapshot[0])
 
         # Check if plan_item already exists for this L3
         existing_item = connection.execute(
