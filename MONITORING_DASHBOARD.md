@@ -9,16 +9,18 @@
 ## 活跃监控器
 
 ### 1. E2E测试完成监控
-- **任务ID**: b8jishsi4
-- **类型**: 一次性 (10分钟超时)
+- **任务ID**: bq3e14da6 (已重启，延长超时)
+- **类型**: 一次性 (30分钟超时)
 - **目标**: 监控266个Playwright E2E测试完成
 - **触发条件**: playwright进程全部退出
 - **输出**: 测试通过/失败统计
+- **状态**: 🔄 运行中 (~58/266 测试完成)
+- **备注**: 首次监控器(b8jishsi4)在10分钟超时，测试仍在运行中
 
 ```bash
-while ps aux | grep -q "[p]laywright"; do sleep 10; done && \
-echo "E2E tests completed" && \
-tail -30 /tmp/e2e-test.log 2>/dev/null | grep -E "passed|failed|Test Files"
+while ps aux | grep -q "[p]laywright"; do sleep 15; done && \
+echo "✅ E2E测试完成" && \
+tail -50 /tmp/e2e-test.log | grep -E "Test Files|passed|failed"
 ```
 
 ---
