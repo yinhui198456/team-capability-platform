@@ -6,20 +6,20 @@ import pytest
 import psycopg
 
 
-def test_submit_assessment_generates_plan_and_tasks(tcp_connection):
+def test_submit_assessment_generates_plan_and_tasks(connection):
     """
     Test that submitting an assessment immediately generates:
     - Annual growth plan
     - Plan items (for include_in_plan=TRUE details)
     - Learning tasks (1:1 with plan items)
     """
-    conn = tcp_connection
+    conn = connection
 
     with conn.transaction():
         # Create member
         member = conn.execute(
-            "INSERT INTO tcp_user (username, full_name, current_level, target_level) "
-            "VALUES ('test_member', 'Test Member', 'P5', 'P6') RETURNING id"
+            "INSERT INTO tcp_user (username, full_name, password_hash, current_level, target_level) "
+            "VALUES ('test_member', 'Test Member', 'dummy_hash', 'P5', 'P6') RETURNING id"
         ).fetchone()
         member_id = member[0]
 
@@ -98,11 +98,11 @@ def test_submit_assessment_generates_plan_and_tasks(tcp_connection):
         assert tasks[0][1] == '未开始'
 
 
-def test_submit_assessment_idempotent(tcp_connection):
+def test_submit_assessment_idempotent(connection):
     """
     Test that re-submitting the same assessment does not duplicate plan items or tasks.
     """
-    conn = tcp_connection
+    conn = connection
 
     with conn.transaction():
         # Setup (same as above)

@@ -54,6 +54,7 @@ def _clear_assessment(connection: psycopg.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS evidence")
         connection.execute("DROP TABLE IF EXISTS learning_progress_log")
         connection.execute("DROP TABLE IF EXISTS task_transition_history")
+        connection.execute("DROP TABLE IF EXISTS learning_task_audit_log")
         connection.execute("DROP TABLE IF EXISTS learning_task")
         connection.execute("DROP TABLE IF EXISTS plan_item")
         connection.execute("DROP TABLE IF EXISTS growth_goal")
