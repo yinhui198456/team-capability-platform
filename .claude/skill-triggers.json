@@ -1,0 +1,78 @@
+{
+  "description": "Third-party skill triggers for common development scenarios",
+  "triggers": [
+    {
+      "name": "Code Review for New Files",
+      "pattern": "backend/app/**/*.py",
+      "condition": {
+        "type": "new_lines",
+        "threshold": 100
+      },
+      "skill": "code-review",
+      "message": "检测到新增100+行Python代码，建议运行 code-review 进行安全审查",
+      "command": "/code-review {file_path}"
+    },
+    {
+      "name": "Planning Mode for Complex Issues",
+      "pattern": "**/*",
+      "condition": {
+        "type": "manual",
+        "keywords": ["complex", "multiple problems", ">3 issues"]
+      },
+      "skill": "planning-with-files",
+      "message": "检测到复杂任务，建议启用 Planning with Files 系统性规划",
+      "command": "/plan"
+    },
+    {
+      "name": "E2E Test Failure Analysis",
+      "pattern": "frontend/tests/e2e/**/*.spec.ts",
+      "condition": {
+        "type": "test_failure_rate",
+        "threshold": 0.5
+      },
+      "skill": "playwright",
+      "message": "E2E测试失败率>50%，建议使用 Playwright Skill 诊断",
+      "command": "/playwright analyze-failures"
+    },
+    {
+      "name": "UI/UX Review",
+      "pattern": "frontend/src/**/*.tsx",
+      "condition": {
+        "type": "user_interaction_change",
+        "keywords": ["onClick", "onSubmit", "user feedback", "toast", "message"]
+      },
+      "skill": "ui-ux-pro-max-skill",
+      "message": "检测到用户交互变更，建议运行 UI/UX 审查",
+      "command": "/ui-ux-review {file_path}"
+    },
+    {
+      "name": "Schema Validation",
+      "pattern": "backend/app/**/*.py",
+      "condition": {
+        "type": "keywords",
+        "keywords": ["connection.execute", "SELECT", "INSERT", "UPDATE", "FROM"]
+      },
+      "skill": "schema-check",
+      "message": "检测到数据库查询，建议先运行 Schema-First 检查",
+      "command": "/schema-check"
+    },
+    {
+      "name": "Pre-E2E Environment Check",
+      "pattern": "frontend/tests/e2e/**/*",
+      "condition": {
+        "type": "before_test_run"
+      },
+      "skill": "pre-test-check",
+      "message": "E2E测试前，建议运行环境验证",
+      "command": "/pre-test-check"
+    }
+  ],
+  "guidelines": [
+    "复杂任务(>3个技术问题) → Planning with Files",
+    "新增100+行代码 → code-review",
+    "E2E失败率>50% → Playwright Skill",
+    "UI交互变更 → ui-ux-pro-max-skill",
+    "数据库查询 → schema-check (自建)",
+    "E2E测试前 → pre-test-check (自建)"
+  ]
+}
