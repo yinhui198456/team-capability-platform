@@ -263,7 +263,7 @@ async function pickAndFill(
 }
 
 test.describe('Issue #62 Buddy Review atomic plan generation', () => {
-  test('E2E-62-01 建议调整闭环：调整后零计划写入，重新提交后认可生成计划', async ({
+  test('E2E-62-01 建议调整闭环：自评已生成计划，调整、重提和认可不重复写入', async ({
     page,
   }) => {
     const request = page.request
@@ -280,6 +280,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+    const planBeforeReviewResp = await request.get(
+      `${BACKEND}/api/planning/annual-plan?year=${year}`,
+    )
+    expect(planBeforeReviewResp.ok()).toBeTruthy()
+    const planBeforeReview = await planBeforeReviewResp.json()
+    expect(planBeforeReview.items.length).toBeGreaterThanOrEqual(1)
+
     await loginAs(page, 'buddy')
     const reviewId = await pendingReviewId(page, request, draft.id)
     const adjust = await submitReview(page, request, draft.id, reviewId, {
@@ -290,15 +297,18 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     expect(adjust.status).toBe(200)
     expect(adjust.body.assessment_status).toBe('建议调整')
     expect(adjust.body.plan).toBeNull()
-    // zero plan writes after 建议调整
+    // Weak management: the plan was already generated on self-submit.
+    // A Buddy adjustment must not delete or duplicate it.
+    await loginAs(page, 'member')
     const planResp = await request.get(
       `${BACKEND}/api/planning/annual-plan?year=${year}`,
     )
     const plan = await planResp.json()
-    expect(plan).toBeNull()
+    expect(plan.id).toBe(planBeforeReview.id)
+    expect(plan.items).toHaveLength(planBeforeReview.items.length)
 
-    // member resubmits after 建议调整 → #82 atomic generation creates plan
-    await loginAs(page, 'member')
+    // Resubmitting the same assessment reuses the existing plan without
+    // creating duplicate plan items or learning tasks.
     const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
     const afterAdjust = await getResp.json()
     const resubmitResp = await request.post(
@@ -307,9 +317,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     )
     expect(resubmitResp.ok()).toBeTruthy()
     const resubmitted = await resubmitResp.json()
-    // Issue #82: plan generated on self-submit
-    expect(resubmitted.plan_generation.created_items).toBeGreaterThanOrEqual(1)
-    expect(resubmitted.plan_generation.created_tasks).toBeGreaterThanOrEqual(1)
+    expect(resubmitted.plan_generation.created_items).toBe(0)
+    expect(resubmitted.plan_generation.created_tasks).toBe(0)
 
     // buddy approves the new round → plan already exists (created=false)
     await loginAs(page, 'buddy')
@@ -331,9 +340,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).json()
     expect(planAfter.source_assessment_id).toBe(draft.id)
     expect(planAfter.planning_source_type).toBe('assessment_approval')
-    expect(planAfter.items.length).toBe(
-      resubmitted.plan_generation.created_items,
-    )
+    expect(planAfter.id).toBe(planBeforeReview.id)
+    expect(planAfter.items).toHaveLength(planBeforeReview.items.length)
   })
 
   test('E2E-62-02 首次认可零纳入项生成计划壳', async ({ page }) => {

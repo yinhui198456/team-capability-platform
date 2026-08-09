@@ -803,6 +803,8 @@ def list_learning_tasks(
     member_id: int,
     year: int | None = None,
 ) -> list[dict[str, object]]:
+    year_filter = "" if year is None else "AND agp.year = %s"
+    params: tuple[object, ...] = (member_id,) if year is None else (member_id, year)
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_TASK_COLUMNS, "lt")},
@@ -813,10 +815,10 @@ def list_learning_tasks(
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s
-          AND (%s IS NULL OR agp.year = %s)
+          {year_filter}
         ORDER BY lt.l3_code
         """,
-        (member_id, year, year),
+        params,
     ).fetchall()
     tasks = _attach_l3_contexts(
         connection,
