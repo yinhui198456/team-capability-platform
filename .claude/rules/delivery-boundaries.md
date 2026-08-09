@@ -21,6 +21,15 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 - One session is the designated writer for a shared file, branch, or runtime object; parallel sessions may read but must not race writes.
 - Shared writes (runtime data, evidence artifacts, UAT records) need a single owner and serialization — see the tcp-uat-execution skill.
 
+## Toy-project fast loop
+
+- TCP has one stable test environment across Issues. Code worktrees isolate code; do not create a long-lived Issue-specific runtime, database, port set, or browser stack by default.
+- Use an isolated temporary stack only when a migration, destructive-risk boundary, shared-data conflict, or explicit live instruction requires it.
+- For routine changes, run the smallest relevant red test plus targeted and affected checks. Do not expand into unrelated historical full-suite failures unless they can invalidate the changed business path.
+- After one focused commit and normal push, stop. Codex owns independent review, authorized deployment, and the user-facing acceptance handoff.
+- For the three core journeys, Codex-controlled real Chrome interaction through visible page controls and screenshots is the primary acceptance evidence. API/database writes, backend-only tests, and CC self-report are supporting evidence only and cannot replace that browser flow.
+- Configured test identities are operated by Codex end to end. Do not ask the user to perform routine login or page steps, and never print credentials, password hashes, tokens, cookies, or connection strings.
+
 ## GitHub evidence
 
 - Commits and PRs reference the related Issue where one exists.

@@ -10,6 +10,8 @@
 
 TCP is not an LMS, not an exam platform, not a course manager, not a performance system.
 
+TCP is a personal self-study **toy project**. Optimize for a small visible workflow that can be tried in the test environment; do not introduce production-release process or enterprise governance unless a live task explicitly changes that positioning.
+
 Goal: continuous capability growth for engineering teams, driven by the capability model.
 
 Core business loop — every feature serves it:
@@ -29,6 +31,7 @@ Read order depends on the task: for design-affecting work read README.md → 01_
 - Understand first, design next, code last.
 - Never guess business rules — when information is missing, list the questions.
 - Design changes: update the Markdown first, then the code.
+- Prefer the smallest coherent change, targeted/affected checks, and a handoff for Codex-controlled real-Chrome verification of the three core journeys.
 - Do not restructure the repository layout.
 - Roles are fixed: Member, Buddy, Leader, Admin. Do not add roles.
 - Do not add core business objects without stating the reason.
@@ -70,6 +73,8 @@ Loaded automatically; read the relevant piece instead of duplicating it here:
 ## 8. Delivery Rules (summary — full text in `.claude/rules/delivery-boundaries.md`)
 
 - One writer per session/branch; never race writes on shared files or runtime data.
+- Keep one stable TCP test environment across Issues. Worktrees isolate code; do not create a long-lived runtime, database, port set, or browser stack for every Issue unless an explicit high-risk isolation need is proven.
+- Claude Code implements the bounded change, runs targeted/affected checks, creates one focused commit, pushes normally, and stops. Codex owns independent review, authorized deployment, and real-Chrome acceptance through visible page controls.
 - Durable governance never grants deployment, UAT, or merge authority. A verified live task instruction may authorize bounded edits, risk-proportionate tests, normal commit/push, Draft PR creation, UAT, or deployment within its explicit scope and stop conditions; routine steps covered by that authorization do not need re-confirmation. Without live authorization, stop before mutations.
 - Commits and PRs reference the related Issue where one exists. Evidence goes to the task's declared authoritative location — the GitHub PR/Issue when applicable, plus versioned artifacts and check outputs; an independent maintenance PR does not require Issue comments.
 - Never touch another Issue's branch/PR, runtime data, containers, or databases.
