@@ -689,7 +689,7 @@ export function AssessmentGapPage() {
       loadAssessment(await getAssessment(assessment.id))
 
       // Issue #82: Show plan generation result
-      const planGen = (result as any).plan_generation
+      const planGen = result.plan_generation
       if (planGen && planGen.created_tasks > 0) {
         const undecidedNote =
           undecidedGaps > 0

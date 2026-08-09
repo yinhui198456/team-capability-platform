@@ -346,11 +346,23 @@ export async function submitAssessment(
   ok: boolean
   revision?: number
   auto_cancelled_plan_candidates?: string[]
+  plan_generation?: {
+    annual_plan_id: number
+    created_items: number
+    skipped_items: number
+    created_tasks: number
+  }
 }> {
   return request<{
     ok: boolean
     revision?: number
     auto_cancelled_plan_candidates?: string[]
+    plan_generation?: {
+      annual_plan_id: number
+      created_items: number
+      skipped_items: number
+      created_tasks: number
+    }
   }>(
     `/api/assessments/${id}/submit`,
     { method: 'POST' },
