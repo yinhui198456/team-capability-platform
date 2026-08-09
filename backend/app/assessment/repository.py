@@ -3558,8 +3558,9 @@ def submit_assessment_review(
                     connection, assessment, member_id, year
                 )
             elif plan_row[1] is not None and int(plan_row[1]) == assessment_id:
-                # Plan already created by this assessment (e.g., via atomic generation on self-submit)
+                # Plan already created by this assessment
                 # Return success without creating duplicate plan
+                # (via atomic generation on self-submit)
                 plan_payload = {
                     "created": False,  # Plan was already created
                     "plan_id": int(plan_row[0]),

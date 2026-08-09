@@ -1,5 +1,6 @@
 """
-Issue #82 Implementation: Generate annual plan and learning tasks on assessment submission.
+Issue #82 Implementation: Generate annual plan and learning tasks
+on assessment submission.
 
 Core changes:
 1. Remove Buddy pre-approval gate for annual plan generation
@@ -7,8 +8,9 @@ Core changes:
 3. Ensure idempotency: do not duplicate tasks on repeated submissions
 """
 
-import psycopg
 from typing import Any
+
+import psycopg
 
 
 def generate_plan_and_tasks_from_assessment(
@@ -16,7 +18,8 @@ def generate_plan_and_tasks_from_assessment(
     assessment_id: int,
 ) -> dict[str, Any]:
     """
-    Atomically generate annual plan, plan items, and learning tasks from submitted assessment.
+    Atomically generate annual plan, plan items, and learning tasks
+    from submitted assessment.
 
     Called from submit_assessment() in the same transaction.
 
@@ -109,7 +112,8 @@ def generate_plan_and_tasks_from_assessment(
             standard_job_snapshot
         ) = detail
 
-        # Constraint requires priority to be non-NULL when planning_source_type='assessment_approval'
+        # Constraint requires priority to be non-NULL
+        # when planning_source_type='assessment_approval'
         if priority is None:
             priority = '中'
 
