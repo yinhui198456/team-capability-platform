@@ -240,10 +240,12 @@ function deriveStage(dashboard: MemberDashboard): DashboardStage {
   const status = dashboard.assessment?.status
   const planStatus = dashboard.annual_plan_status
   if (!status || status === '草稿') return 'self-assessment'
-  if (status === '待复核' || status === '建议调整') return 'pending-review'
+  // Issue #94: plan existence wins over the assessment review state — Buddy
+  // review is feedback and history (#82), never a plan-generation gate.
   if (planStatus === '已归档') return 'archived'
   if (planStatus === '制定中' || planStatus === '执行中') return 'plan'
   if (status === '已复核' || status === '已归档') return 'plan-pending'
+  if (status === '待复核' || status === '建议调整') return 'pending-review'
   return 'self-assessment'
 }
 
@@ -265,8 +267,9 @@ const stageMeta: Record<
   'pending-review': {
     label: '待 Buddy 复核',
     title: '自评已提交',
-    description: '自评正在等待 Buddy 复核，复核通过后即可生成年度计划。',
-    cta: { label: '查看复核状态', href: '/capability/assessment' },
+    description:
+      'Buddy 复核中，复核反馈不阻塞计划生成；可先基于已确认的 Gap 生成年度成长计划。',
+    cta: { label: '生成年度计划', href: '/growth/annual-plan' },
   },
   plan: {
     label: '计划执行中',
@@ -313,7 +316,7 @@ function ReviewStatusCard({
         </div>
       </dl>
       {isPending && (
-        <p className="muted">Buddy 复核通过后即可生成年度计划，请耐心等待。</p>
+        <p className="muted">复核反馈作为历史记录，不阻塞计划生成。</p>
       )}
       {isAdjustment && (
         <p className="muted">Review 建议调整，请根据反馈修改自评后重新提交。</p>
@@ -584,9 +587,17 @@ function PlanDashboard({
   const completionRate = total === 0 ? 0 : Math.round((completed / total) * 100)
   const overdueTasks =
     dashboard.current_tasks.filter((task) => task.status === '延期').length ?? 0
+  const reviewInProgress =
+    dashboard.assessment?.status === '待复核' ||
+    dashboard.assessment?.status === '建议调整'
 
   return (
     <>
+      {reviewInProgress && (
+        <p className="muted" data-testid="review-not-blocking-note">
+          自评正在 Buddy 复核中，复核反馈不阻塞当前计划执行。
+        </p>
+      )}
       <div className={styles.overview}>
         <article className={`card ${styles.progressCard}`}>
           <h2>年度计划进度</h2>

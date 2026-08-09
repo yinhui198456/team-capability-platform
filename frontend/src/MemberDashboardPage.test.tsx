@@ -394,6 +394,54 @@ describe('MemberDashboardPage', () => {
     expect(screen.getByText('P02.01.01')).toBeTruthy()
     expect(screen.queryByText('年度计划进度')).toBeNull()
     expect(screen.queryByTestId('todo-card')).toBeNull()
+    // Issue #94: Buddy review is feedback, not a plan-generation gate (#82) —
+    // the old "复核通过后即可生成年度计划" prerequisite copy must be gone.
+    expect(screen.queryByText(/复核通过后即可生成年度计划/)).toBeNull()
+    expect(
+      screen.getAllByRole('link', { name: '生成年度计划' }).length,
+    ).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows plan execution first when the plan already exists despite a pending review (#94)', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      assessment: {
+        id: 2,
+        status: '待复核' as const,
+        submitted_at: '2026-02-01T00:00:00Z',
+        archived_at: null,
+        review_status: '待复核' as const,
+        review_conclusion: null,
+      },
+      annual_plan_status: '制定中' as const,
+      follow_up: {
+        ...baseDashboard.follow_up,
+        assessment_status: '待复核',
+        review_return: true,
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('我的成长总览')).toBeTruthy()
+    })
+    expect(screen.getByLabelText('当前阶段').textContent).toBe('计划执行中')
+    expect(screen.getByText('年度计划进度')).toBeTruthy()
+    expect(screen.getByTestId('current-tasks-table')).toBeTruthy()
+    expect(
+      screen.getByTestId('review-not-blocking-note').textContent,
+    ).toContain('不阻塞当前计划执行')
+    // Pending review stays non-blocking info, never the blocking stage.
+    expect(screen.queryByText('自评已提交')).toBeNull()
+    expect(screen.queryByText('复核状态')).toBeNull()
+    expect(
+      screen.getAllByRole('link', { name: '查看年度计划' }).length,
+    ).toBeGreaterThanOrEqual(1)
   })
 
   it('renders plan-pending stage after reviewed assessment without plan', async () => {
