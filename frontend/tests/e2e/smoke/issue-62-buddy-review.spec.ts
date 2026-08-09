@@ -331,7 +331,9 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).json()
     expect(planAfter.source_assessment_id).toBe(draft.id)
     expect(planAfter.planning_source_type).toBe('assessment_approval')
-    expect(planAfter.items.length).toBe(resubmitted.plan_generation.items_created)
+    expect(planAfter.items.length).toBe(
+      resubmitted.plan_generation.items_created,
+    )
   })
 
   test('E2E-62-02 首次认可零纳入项生成计划壳', async ({ page }) => {
@@ -655,9 +657,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await page.getByLabel('反馈').first().fill('UI 认可')
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
     // Issue #82: plan already created by self-submit, success message may differ
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
+    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
   })
 
   // ── P1-5: frontend idempotency-key lifecycle ──────────────────────────────
@@ -830,9 +830,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await page.getByLabel('反馈').first().fill('修订后反馈')
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
     // Issue #82: plan already exists, success message may vary
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
+    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
     expect(keys.length).toBeGreaterThanOrEqual(2)
     expect(keys[0]).toBeTruthy()
     expect(keys[1]).not.toBe(keys[0])
@@ -906,9 +904,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     // ...and the resubmit uses a NEW key and succeeds
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
     // Issue #82: plan already exists, success message may vary
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
+    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
     expect(keys.length).toBeGreaterThanOrEqual(2)
     expect(keys[0]).toBeTruthy()
     expect(keys[1]).not.toBe(keys[0])
