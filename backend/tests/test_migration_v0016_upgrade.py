@@ -65,11 +65,19 @@ def _new_assessment_detail(
     l3_node_id: int,
     code: str,
 ) -> tuple[int, int]:
+    next_version = int(
+        connection.execute(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM assessment "
+            "WHERE member_id=%s AND year=%s",
+            (member_id, year),
+        ).fetchone()[0]
+    )
     assessment_id = int(
         connection.execute(
-            "INSERT INTO assessment (member_id, year, assessment_type, status) "
-            "VALUES (%s, %s, '年度', '草稿') RETURNING id",
-            (member_id, year),
+            "INSERT INTO assessment "
+            "(member_id, year, version, assessment_type, status) "
+            "VALUES (%s, %s, %s, '年度', '草稿') RETURNING id",
+            (member_id, year, next_version),
         ).fetchone()[0]
     )
     detail_id = int(

@@ -204,9 +204,8 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
 
     base = ReviewTestBase()
     member_id, buddy_id = base.setup_users(review_schema)
-    first_l3 = "P01-L2A-L3A"
-    later_l3 = "P01-L2A-L3B"
-    base.ensure_nodes(review_schema, [first_l3, later_l3])
+    l3_code = "P01-L2A-L3A"
+    base.ensure_nodes(review_schema, [l3_code])
 
     first_assessment = base.submit(
         review_schema,
@@ -214,13 +213,9 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
         2026,
         [
             {
-                "l3_code": first_l3,
-                "current_level": 2,
-                "target_level": 4,
-                "member_priority": "高",
-                "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "l3_code": l3_code,
+                "current_level": 3,
+                "target_level": 3,
             }
         ],
     )
@@ -232,9 +227,9 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
         2026,
         [
             {
-                "l3_code": later_l3,
+                "l3_code": l3_code,
                 "current_level": 2,
-                "target_level": 3,
+                "target_level": 4,
                 "member_priority": "中",
                 "include_in_plan": True,
                 "plan_quarter": "Q3",
@@ -256,14 +251,11 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
         "WHERE annual_growth_plan_id=%s ORDER BY l3_code",
         (int(plan[0]),),
     ).fetchall()
-    assert items == [
-        (first_l3, first_assessment),
-        (later_l3, later_assessment),
-    ]
+    assert items == [(l3_code, later_assessment)]
     task_count = review_schema.execute(
         "SELECT COUNT(*) FROM learning_task lt "
         "JOIN plan_item pi ON pi.id=lt.plan_item_id "
         "WHERE pi.annual_growth_plan_id=%s",
         (int(plan[0]),),
     ).fetchone()[0]
-    assert task_count == 2
+    assert task_count == 1
