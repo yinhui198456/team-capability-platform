@@ -1705,7 +1705,23 @@ def save_assessment_draft(
 
             if not can_plan:
                 # Gap<=0 / unassessed / target invalid / not applicable
-                # → ALL plan fields must be NULL
+                # → ALL plan fields must be NULL. An EXPLICIT include_in_plan
+                # request on such a row is rejected loudly (Issue #84: the
+                # include silently vanished on save, the submitted plan came
+                # out empty and the accepted annual plan showed nothing);
+                # a DB-carried TRUE (sparse PATCH) is auto-cleared below so
+                # retries stay idempotent. Mirrors the 暂缓 mutex below.
+                if include_in_plan is True and bool(
+                    detail.get("_include_in_plan_present", True)
+                ):
+                    raise DetailValidationError(
+                        "plan_validation",
+                        f"include_in_plan not allowed for {code}: no positive gap",
+                        l3_code=str(code),
+                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
+                        field="include_in_plan",
+                        reason="plan_not_applicable",
+                    )
                 member_priority = None
                 include_in_plan = None
                 plan_quarter = None

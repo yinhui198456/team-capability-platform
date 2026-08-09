@@ -215,6 +215,44 @@ describe('AssessmentGapPage', () => {
     expect(month.max).toBe('2026-12')
   })
 
+  it('clears a stale include decision when the gap vanishes (Issue #84)', async () => {
+    // UAT failure path: the row was included (是 + June 2026, gap 2), then
+    // the member raised current_level to the target — gap 0. The include
+    // must revert to 未选择 immediately instead of silently surviving into
+    // the save and producing an empty annual plan.
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    const includeSelect = screen.getByRole('combobox', {
+      name: '纳入计划 P01.01.01',
+    }) as HTMLSelectElement
+    expect(includeSelect.value).toBe('yes')
+    expect(screen.getByLabelText('计划月份 P01.01.01')).not.toBeNull()
+
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '4' },
+    })
+    await waitFor(() => expect(includeSelect.value).toBe(''))
+    expect(screen.queryByLabelText('计划月份 P01.01.01')).toBeNull()
+  })
+
   it('filters work: 未评估, 有Gap, 已纳入计划, 暂缓', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },

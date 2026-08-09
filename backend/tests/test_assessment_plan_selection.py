@@ -632,7 +632,9 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
 
 
 def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
-    """Gap=0 auto-clears plan fields in same transaction."""
+    """Gap=0 auto-clears a DB-carried include (sparse PATCH) in one
+    transaction — an explicit include request is rejected instead
+    (test_explicit_include_on_gap_zero_rejected_not_silently_cleared)."""
     member_id = _create_test_user(plan_schema, "m_gapzero", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -648,7 +650,92 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Set current_level = target → Gap=0
+    # First persist a real plan decision on a positive-gap row.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": max(std_target - 1, 0),
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q3",
+                    "plan_month": 8,
+                }
+            ],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"plan decision save failed: {body}"
+    assert body.get("auto_cleared") == []
+
+    # Sparse PATCH raises current_level to target → Gap=0. The request never
+    # sent include_in_plan, so the DB-carried TRUE is auto-cleared (200).
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": std_target,
+                }
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"gap-zero sparse patch failed: {body}"
+    cleared = [
+        item["fields"]
+        for item in body.get("auto_cleared", [])
+        if item.get("l3_code") == code
+    ]
+    assert cleared and "include_in_plan" in cleared[0], f"auto_cleared: {body}"
+
+    assessment = get_assessment(plan_schema, assessment_id)
+    gap_detail = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert gap_detail["gap_value"] == 0
+    assert gap_detail["member_priority"] is None
+    assert gap_detail["include_in_plan"] is None
+    assert gap_detail["plan_quarter"] is None
+    assert gap_detail["plan_month"] is None
+
+
+def test_explicit_include_on_gap_zero_rejected_not_silently_cleared(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """Issue #84: an explicit include_in_plan=TRUE on a zero-gap row must be
+    rejected loudly, not silently auto-cleared.
+
+    UAT failure path: the member included C01.01.01 in the plan, then the
+    current level was raised so the gap vanished; the save silently dropped
+    the include (200 + auto_cleared), the submit generated zero plan items,
+    and the accepted annual plan stayed empty.  An explicit plan decision
+    must never vanish without an error the member can see.
+    """
+    member_id = _create_test_user(plan_schema, "m_incnogap", ["Member"])
+    _enable_one_l3(plan_schema)
+    assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
+    cookies = _login(plan_schema, "m_incnogap")
+
+    detail = plan_schema.execute(
+        "SELECT l3_code, standard_target_level "
+        "FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        (assessment_id,),
+    ).fetchone()
+    code = detail[0]
+    std_target = int(detail[1])
+    node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
+    assert node_id is not None, "scope-v1 detail must have l3_node_id"
+
+    # current_level == target → gap 0, yet the request explicitly asks to
+    # include the row in the annual plan.
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -660,21 +747,22 @@ def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
                     "current_level": std_target,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q3",
-                    "plan_month": 8,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
-    # Gap=0 → plan fields should be auto-cleared. The PUT sends them but
-    # the server should clear them in the transaction. This may be 200 or 422
-    # depending on exact validation order.
+    assert status == 422, f"explicit include on zero-gap row: {status} {body}"
+    # Same reason code as the submit gate (repository._validate_submission)
+    # and the frontend copy 无正 Gap 的能力项不能纳入计划.
+    assert body["detail"]["reason"] == "plan_not_applicable"
+
+    # Nothing was written — the draft still has no plan decision.
     assessment = get_assessment(plan_schema, assessment_id)
     gap_detail = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert gap_detail["gap_value"] == 0 or gap_detail["gap_value"] is None
-    assert gap_detail["member_priority"] is None
     assert gap_detail["include_in_plan"] is None
 
 

@@ -259,3 +259,76 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
         (int(plan[0]),),
     ).fetchone()[0]
     assert task_count == 1
+
+
+def test_submitted_included_gap_with_buddy_acceptance_creates_plan_item_and_task(
+    review_schema: psycopg.Connection,
+) -> None:
+    """Issue #84 end-to-end: submit with an included positive gap must create
+    the annual plan item and learning task, and Buddy acceptance must not
+    duplicate them.
+
+    This reproduces the UAT failure path: the member included C01.01.01 in
+    the plan (是 + May 2026), submitted, and the Buddy accepted, yet
+    /growth/annual-plan?year=2026 was empty — the include had silently been
+    cleared on save (see test_explicit_include_on_gap_zero_...).
+    """
+    from tests.review_support import ReviewTestBase
+
+    base = ReviewTestBase()
+    member_id, buddy_id = base.setup_users(review_schema)
+    l3_code = "P01-L2A-L3A"
+    base.ensure_nodes(review_schema, [l3_code])
+
+    assessment_id = base.submit(
+        review_schema,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": l3_code,
+                "current_level": 2,
+                "target_level": 4,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
+            }
+        ],
+    )
+
+    # Atomic generation on self-submit: plan row + item + task all exist.
+    plan = review_schema.execute(
+        "SELECT id, source_assessment_id FROM annual_growth_plan "
+        "WHERE member_id=%s AND year=2026",
+        (member_id,),
+    ).fetchone()
+    assert plan is not None
+    assert int(plan[1]) == assessment_id
+
+    items = review_schema.execute(
+        "SELECT l3_code, source_assessment_id FROM plan_item "
+        "WHERE annual_growth_plan_id=%s ORDER BY l3_code",
+        (int(plan[0]),),
+    ).fetchall()
+    assert items == [(l3_code, assessment_id)]
+    task_count = review_schema.execute(
+        "SELECT COUNT(*) FROM learning_task lt "
+        "JOIN plan_item pi ON pi.id=lt.plan_item_id "
+        "WHERE pi.annual_growth_plan_id=%s",
+        (int(plan[0]),),
+    ).fetchone()[0]
+    assert task_count == 1
+
+    # Buddy acceptance detects the existing plan: no regeneration, no dupes.
+    result = base.approve(review_schema, assessment_id, buddy_id)
+    assert result["assessment_status"] == "已归档"
+    assert result["plan"]["created"] is False
+    assert result["plan"]["items_created"] == 0
+    assert result["plan"]["tasks_created"] == 0
+
+    items_after = review_schema.execute(
+        "SELECT COUNT(*) FROM plan_item WHERE annual_growth_plan_id=%s",
+        (int(plan[0]),),
+    ).fetchone()[0]
+    assert items_after == 1

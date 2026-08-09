@@ -477,9 +477,19 @@ export function AssessmentGapPage() {
 
   function updateDetail(index: number, patch: Partial<AssessmentDetail>) {
     setDetails((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        const merged = { ...item, ...patch }
+        // Issue #84: an include decision is meaningless without a positive
+        // gap — clear it the moment the gap vanishes instead of letting a
+        // stale 是 silently produce an empty annual plan on submit.
+        if (merged.include_in_plan === true && (computeGap(merged) ?? 0) <= 0) {
+          merged.include_in_plan = null
+          merged.plan_quarter = null
+          merged.plan_month = null
+        }
+        return merged
+      }),
     )
     const detail = details[index]
     if (detail?.id != null) {
