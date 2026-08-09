@@ -2342,6 +2342,7 @@ def submit_assessment(
 
         # Issue #82: Generate annual plan and learning tasks atomically on submit
         from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
+
         plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
 
         next_revision = int(revision) + 1

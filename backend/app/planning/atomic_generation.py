@@ -51,8 +51,14 @@ def generate_plan_and_tasks_from_assessment(
     if assessment is None:
         raise ValueError(f"Assessment {assessment_id} not found")
 
-    (member_id, year, standard_version_id, assessment_revision,
-     member_current_snapshot, member_target_snapshot) = assessment
+    (
+        member_id,
+        year,
+        standard_version_id,
+        assessment_revision,
+        member_current_snapshot,
+        member_target_snapshot,
+    ) = assessment
 
     # Get or create annual plan
     plan_row = connection.execute(
@@ -105,17 +111,31 @@ def generate_plan_and_tasks_from_assessment(
 
     for detail in details:
         (
-            detail_id, l3_code, current_level, target_level,
-            gap_value, priority, plan_quarter, plan_month,
-            l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
-            scope_type, standard_target, adjusted_target, effective_target,
-            standard_job_snapshot
+            detail_id,
+            l3_code,
+            current_level,
+            target_level,
+            gap_value,
+            priority,
+            plan_quarter,
+            plan_month,
+            l3_node_id,
+            l1_code,
+            l1_name,
+            l2_code,
+            l2_name,
+            l3_name,
+            scope_type,
+            standard_target,
+            adjusted_target,
+            effective_target,
+            standard_job_snapshot,
         ) = detail
 
         # Constraint requires priority to be non-NULL
         # when planning_source_type='assessment_approval'
         if priority is None:
-            priority = '中'
+            priority = "中"
 
         # Get planning snapshot for this L3 capability
         snapshot = connection.execute(
@@ -178,15 +198,32 @@ def generate_plan_and_tasks_from_assessment(
             RETURNING id
             """,
             (
-                annual_plan_id, l3_code, current_level, target_level, priority,
-                assessment_id, detail_id, standard_version_id,
+                annual_plan_id,
+                l3_code,
+                current_level,
+                target_level,
+                priority,
+                assessment_id,
+                detail_id,
+                standard_version_id,
                 planning_snapshot_id,
-                l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
-                scope_type, standard_target, adjusted_target, effective_target,
+                l3_node_id,
+                l1_code,
+                l1_name,
+                l2_code,
+                l2_name,
+                l3_name,
+                scope_type,
+                standard_target,
+                adjusted_target,
+                effective_target,
                 standard_job_snapshot,
-                member_current_snapshot, member_target_snapshot,
-                plan_quarter, plan_month, gap_value,
-                assessment_revision
+                member_current_snapshot,
+                member_target_snapshot,
+                plan_quarter,
+                plan_month,
+                gap_value,
+                assessment_revision,
             ),
         ).fetchone()
 
