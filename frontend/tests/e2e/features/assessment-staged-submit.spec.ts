@@ -17,9 +17,9 @@ const YEAR = 2029
 
 test('staged submit: undecided gaps + unassessed advanced submit and surface as follow-up', async ({
   page,
-  request,
 }) => {
   await loginAs(page, 'member')
+  const request = page.request
 
   // 1. Preview scope and ensure exactly one open draft for the year.
   const previewResp = await request.get(

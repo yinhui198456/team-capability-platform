@@ -408,8 +408,7 @@ describe('MonthlyReviewPage', () => {
     // click then runs against the previous render's draft closure — the
     // submit must still use the input's current value (E2E-64-02 CI fail).
     await act(async () => {
-      notes.value = tooLong
-      notes.dispatchEvent(new Event('input', { bubbles: true }))
+      fireEvent.input(notes, { target: { value: tooLong } })
       save.click()
     })
 
