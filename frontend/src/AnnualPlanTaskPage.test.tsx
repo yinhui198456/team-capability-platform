@@ -1410,6 +1410,53 @@ describe('plan item filters (issue #63)', () => {
   })
 })
 
+describe('start execution from 未开始 (issue #84 flow2)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('persists 未开始 → 进行中 and refreshes the panel to 进行中', async () => {
+    // In-memory store mirroring the backend contract: the transition POST
+    // mutates the row, the follow-up GET reads the mutated state back.
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '未开始', revision: 1 }),
+    ]
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockImplementation(async (taskId, payload) => {
+        const task = tasks.find((t) => t.id === taskId)
+        if (!task) throw new Error('not found')
+        const updated = {
+          ...task,
+          status: payload.to_status,
+          revision: task.revision + 1,
+        }
+        tasks[0] = updated
+        return updated
+      })
+    await renderMember([makeItem({ status: '未开始' })], tasks)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认开始执行' }))
+    await waitFor(() => expect(transition).toHaveBeenCalledTimes(1))
+    expect(transition.mock.calls[0][1]).toMatchObject({
+      to_status: '进行中',
+      expected_revision: 1,
+    })
+    expect(transition.mock.calls[0][1].idempotency_key).toBeTruthy()
+    // The panel must reflect the persisted transition, not the stale 未开始.
+    await waitFor(() => {
+      expect(screen.getAllByText('进行中').length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByRole('button', { name: '开始执行' })).toBeNull()
+    expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
+  })
+})
+
 describe('evidence draft link persistence (issue #63)', () => {
   afterEach(() => {
     cleanup()

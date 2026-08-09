@@ -71,6 +71,13 @@ function actionLabel(task: LearningTask, to: LearningTaskStatus): string {
   if (to === '进行中') return task.status === '未开始' ? '开始执行' : '恢复执行'
   return ACTION_LABELS[to]
 }
+function confirmLabel(task: LearningTask, to: LearningTaskStatus): string {
+  // Same source-vs-target rule as actionLabel: confirming the 进行中 target
+  // from 未开始 reads as "start", from any other state as "resume".
+  if (to === '进行中')
+    return task.status === '未开始' ? '确认开始执行' : '确认恢复执行'
+  return CONFIRM_LABELS[to]
+}
 const REASON_LABELS: Record<string, string> = {
   delay_reason: '延期原因',
   pause_reason: '暂停原因',
@@ -1072,7 +1079,7 @@ function TaskExecutionPanel({
             </label>
           )}
           <div className={s.actions}>
-            <button type="submit">{CONFIRM_LABELS[actionTo]}</button>
+            <button type="submit">{confirmLabel(task, actionTo)}</button>
             <button type="button" onClick={() => setActionTo(null)}>
               取消操作
             </button>
