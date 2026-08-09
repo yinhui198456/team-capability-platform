@@ -290,13 +290,26 @@ test.describe('Issue #61 — assessment field refactor', () => {
     }
   })
 
-  test('E2E-03: Gap-zero auto-clears plan fields', async ({ page }) => {
+  test('E2E-03: Explicit include on zero-gap row returns 422 plan_not_applicable', async ({
+    page,
+  }) => {
+    // Issue #84: an explicit include_in_plan=true on a gap-zero row must be
+    // a controlled 422 (previously 200 + silent auto_clear, which left the
+    // submitted annual plan empty). The DB-carried auto-clear (sparse PATCH)
+    // is covered by the backend test test_gap_zero_clears_plan_fields.
     const year = yearFor('E2E-03')
     await loginAs(page, 'member')
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
       expect(detail.target_level).not.toBeNull()
+
+      const before = await page.request.get(
+        `${BACKEND}/api/assessments/${state.id}`,
+      )
+      const beforeDetail = (await before.json()).details.find(
+        (d: { l3_code: string }) => d.l3_code === detail.l3_code,
+      )
 
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
@@ -317,18 +330,23 @@ test.describe('Issue #61 — assessment field refactor', () => {
           },
         },
       )
-      expect(patchResp.ok()).toBeTruthy()
+      expect(patchResp.status()).toBe(422)
+      const body = await patchResp.json()
+      expect(body.detail.reason).toBe('plan_not_applicable')
 
+      // zero writes: revision and stored detail state unchanged
       const verify = await page.request.get(
         `${BACKEND}/api/assessments/${state.id}`,
       )
-      const saved = (await verify.json()).details.find(
+      const saved = await verify.json()
+      expect(saved.revision).toBe(state.revision)
+      const savedDetail = saved.details.find(
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
-      expect(saved.member_priority).toBeNull()
-      expect(saved.include_in_plan).toBeNull()
-      expect(saved.plan_quarter).toBeNull()
-      expect(saved.plan_month).toBeNull()
+      expect(savedDetail.member_priority).toBe(beforeDetail.member_priority)
+      expect(savedDetail.include_in_plan).toBe(beforeDetail.include_in_plan)
+      expect(savedDetail.plan_quarter).toBe(beforeDetail.plan_quarter)
+      expect(savedDetail.plan_month).toBe(beforeDetail.plan_month)
     } finally {
       await cleanupDraft(page.request, state)
     }
