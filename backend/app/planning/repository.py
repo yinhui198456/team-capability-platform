@@ -799,7 +799,9 @@ def update_plan_item(
 
 
 def list_learning_tasks(
-    connection: psycopg.Connection, member_id: int
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int | None = None,
 ) -> list[dict[str, object]]:
     rows = connection.execute(
         f"""
@@ -811,9 +813,10 @@ def list_learning_tasks(
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE agp.member_id = %s
+          AND (%s IS NULL OR agp.year = %s)
         ORDER BY lt.l3_code
         """,
-        (member_id,),
+        (member_id, year, year),
     ).fetchall()
     tasks = _attach_l3_contexts(
         connection,

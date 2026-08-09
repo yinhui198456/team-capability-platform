@@ -488,8 +488,11 @@ export async function updatePlanItem(
   )
 }
 
-export async function listLearningTasks(): Promise<LearningTask[]> {
-  return request<LearningTask[]>('/api/planning/learning-tasks', {
+export async function listLearningTasks(
+  year?: number,
+): Promise<LearningTask[]> {
+  const suffix = year === undefined ? '' : `?year=${year}`
+  return request<LearningTask[]>(`/api/planning/learning-tasks${suffix}`, {
     method: 'GET',
   })
 }

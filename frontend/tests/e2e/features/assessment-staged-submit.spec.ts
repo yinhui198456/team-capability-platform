@@ -110,7 +110,7 @@ test('staged submit: undecided gaps + unassessed advanced submit and surface as 
   expect(dashboard.follow_up.required_incomplete).toBe(0)
   expect(dashboard.follow_up.advanced_unassessed).toBe(advanced.length)
   expect(dashboard.follow_up.gaps_waiting_planning).toBe(required.length)
-  expect(dashboard.follow_up.review_return).toBe(true)
+  expect(dashboard.follow_up.review_return).toBe(false)
 
   // 5. Visible UI: the member workspace renders the follow-up card with
   //    deep links for advanced work, backlog gaps and review/return work.

@@ -213,6 +213,7 @@ describe('AnnualPlanTaskPage display', () => {
 
   it('renders page with plan items', async () => {
     await renderMember([makeItem({})])
+    expect(planningApi.listLearningTasks).toHaveBeenCalledWith(2026)
     expect(
       screen.getByText((content) => content.includes('P01.01.01')),
     ).toBeTruthy()

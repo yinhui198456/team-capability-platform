@@ -214,7 +214,7 @@ export function AnnualPlanTaskPage() {
       try {
         const [p, taskList] = await Promise.all([
           getAnnualPlan(year),
-          listLearningTasks(),
+          listLearningTasks(year),
         ])
         if (cancelled) return
         setPlan(p)

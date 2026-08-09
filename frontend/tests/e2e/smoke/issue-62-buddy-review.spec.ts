@@ -308,8 +308,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     expect(resubmitResp.ok()).toBeTruthy()
     const resubmitted = await resubmitResp.json()
     // Issue #82: plan generated on self-submit
-    expect(resubmitted.plan_generation.created).toBe(true)
-    expect(resubmitted.plan_generation.items_created).toBeGreaterThanOrEqual(1)
+    expect(resubmitted.plan_generation.created_items).toBeGreaterThanOrEqual(1)
+    expect(resubmitted.plan_generation.created_tasks).toBeGreaterThanOrEqual(1)
 
     // buddy approves the new round → plan already exists (created=false)
     await loginAs(page, 'buddy')
@@ -332,7 +332,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     expect(planAfter.source_assessment_id).toBe(draft.id)
     expect(planAfter.planning_source_type).toBe('assessment_approval')
     expect(planAfter.items.length).toBe(
-      resubmitted.plan_generation.items_created,
+      resubmitted.plan_generation.created_items,
     )
   })
 
@@ -648,7 +648,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       .click()
     // summary grid + first-approval notice (Issue #82: notice may need update)
     await expect(
-      page.getByText(/首次认可将原子生成正式年度计划/).first(),
+      page.getByText(/已由本次评估生成.*复用已有计划/).first(),
     ).toBeVisible()
     // detail table shows the frozen facts
     await expect(page.getByText('高').first()).toBeVisible()
@@ -677,7 +677,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       .first()
       .click()
     await expect(
-      page.getByText(/首次认可将原子生成正式年度计划/).first(),
+      page.getByText(/已由本次评估生成.*复用已有计划/).first(),
     ).toBeVisible()
   }
 

@@ -446,6 +446,18 @@ def test_list_and_get_learning_tasks(
     assert fetched["id"] == task_id
     assert fetched["plan_item_target_month"] is None
 
+    status, year_tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks?year=2026", cookies=cookies
+    )
+    assert status == 200
+    assert {task["id"] for task in year_tasks} == {task["id"] for task in tasks}
+
+    status, other_year_tasks, _ = _request(
+        "GET", "/api/planning/learning-tasks?year=2025", cookies=cookies
+    )
+    assert status == 200
+    assert other_year_tasks == []
+
 
 def test_update_learning_task_success(
     learning_task_schema: psycopg.Connection,

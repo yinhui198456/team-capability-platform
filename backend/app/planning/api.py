@@ -449,10 +449,12 @@ def post_learning_task(
 
 @planning_router.get("/learning-tasks")
 def get_learning_tasks(
-    user: CurrentUser, connection: Connection
+    user: CurrentUser,
+    connection: Connection,
+    year: int | None = Query(default=None, ge=2000, le=9999),
 ) -> list[dict[str, object]]:
     _require_member(user)
-    return list_learning_tasks(connection, int(user["id"]))
+    return list_learning_tasks(connection, int(user["id"]), year)
 
 
 @planning_router.get("/learning-tasks/{task_id}")

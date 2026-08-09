@@ -743,17 +743,19 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     )
     expect(highUpdate.ok()).toBeTruthy()
     const highBody = (await highUpdate.json()) as { revision: number }
-    const rejected = await page.request.post(
+    const submittedCurrent = await page.request.post(
       `/api/assessments/${currentId}/submit`,
       {
         data: { expected_revision: highBody.revision },
       },
     )
-    expect(rejected.status()).toBe(422)
-    const rejectedBody = await rejected.text()
-    // unchanged inherited evidence is accepted; the submit is rejected only
-    // because positive-gap items still lack a member_priority decision
-    expect(rejectedBody).not.toContain('requires updated evidence')
-    expect(rejectedBody).toContain('priority_required')
+    expect(submittedCurrent.ok()).toBeTruthy()
+    const submittedBody = (await submittedCurrent.json()) as {
+      plan_generation?: { created_items: number; created_tasks: number }
+    }
+    // Weak management: unchanged inherited evidence and undecided positive
+    // Gaps are accepted. They stay in the backlog instead of becoming tasks.
+    expect(submittedBody.plan_generation?.created_items).toBe(0)
+    expect(submittedBody.plan_generation?.created_tasks).toBe(0)
   })
 })
