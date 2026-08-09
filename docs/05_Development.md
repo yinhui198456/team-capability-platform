@@ -60,6 +60,124 @@
 
 前端只能通过 API 访问后端；页面组件不得依赖 repositories；后端 policies 必须是授权最终裁决点；任何物理数据库设计在本阶段之外。
 
+## 2.3 测试策略
+
+新功能开发按以下顺序验证，确保快速反馈：
+
+### 测试金字塔
+```
+        E2E Tests (慢，全链路)
+           /\
+          /  \
+    Integration Tests (中速，API)
+         /      \
+        /        \
+  Unit Tests (快，逻辑/SQL)
+```
+
+### 开发顺序
+1. **单元测试** - 验证SQL查询、业务逻辑
+   - 快速反馈 (~秒级)
+   - 隔离问题定位
+   - 示例: `test_planning_snapshot_query()`
+   
+2. **集成测试** - 验证API端到端
+   - 中速反馈 (~30秒 Backend启动)
+   - 验证数据库集成
+   - 示例: `test_submit_assessment_creates_plan()`
+   
+3. **E2E测试** - 验证UI交互
+   - 慢速反馈 (~45分钟全量)
+   - 验证完整用户流程
+   - 仅在单元/集成测试通过后运行
+
+### Schema-First原则
+使用新表字段前必须：
+1. Read `backend/app/*/schema.py` 确认表结构
+2. 查看 `repository.py` 中的类似查询模式
+3. 写单元测试验证SQL查询
+4. 再运行集成测试
+
+详见: `.claude/skills/schema-check.md`
+
+### E2E测试前置检查
+运行E2E测试前必须验证：
+1. 环境变量完整性
+2. Backend健康检查
+3. 数据库seed数据
+4. Frontend可访问性
+
+详见: `.claude/skills/pre-test-check.md`
+
+### 反面案例 (Issue #82经验)
+❌ **错误做法**: 直接写代码 → 运行集成测试 → 发现字段不存在 → 修改 → 重复  
+结果: 3次失败尝试，浪费~1小时
+
+✅ **正确做法**: Read schema → 写单元测试 → 验证通过 → 运行集成测试  
+结果: 1次成功，耗时~15分钟
+
+### 测试环境管理
+- 使用 `.env.test` 管理测试环境变量
+- E2E测试前运行环境验证脚本
+- 维护独立的测试数据seed脚本
+
+## 2.4 第三方技能使用指南
+
+开发过程中主动使用以下技能提升效率和质量：
+
+### 规划阶段
+| 场景 | 技能 | 触发条件 | 预期收益 |
+|------|------|---------|---------|
+| 复杂功能 | Planning with Files | >3个技术问题 | 系统性规划，减少返工 |
+| 新技术栈 | GitHub Search | 使用不熟悉的库/框架 | 快速找到最佳实践 |
+
+### 开发阶段
+| 场景 | 技能 | 触发条件 | 预期收益 |
+|------|------|---------|---------|
+| 数据库查询 | schema-check | 新增表/字段使用 | 避免schema假设错误 |
+| 代码提交 | code-review | >100行新代码 | 发现安全和质量问题 |
+| UI变更 | ui-ux-pro-max-skill | 用户交互修改 | 验证体验一致性 |
+
+### 测试阶段
+| 场景 | 技能 | 触发条件 | 预期收益 |
+|------|------|---------|---------|
+| E2E测试前 | pre-test-check | 运行E2E前 | 提前发现环境问题 |
+| 测试失败 | Playwright | 失败率>50% | 快速诊断根因 |
+
+### 技能调用示例
+
+```bash
+# 规划复杂功能
+/plan
+
+# 搜索GitHub经验
+/github-search "atomic transaction fastapi"
+
+# 检查Schema
+/schema-check backend/app/planning/atomic_generation.py
+
+# 代码审查
+/code-review backend/app/planning/atomic_generation.py
+
+# 环境检查
+/pre-test-check
+
+# E2E故障诊断
+/playwright analyze-failures
+```
+
+### 技能触发配置
+项目已配置自动技能提示，见 `.claude/skill-triggers.json`。  
+在关键节点会提示可用技能。
+
+### GitHub经验复用流程
+1. 功能开始前搜索类似实现
+2. 参考高star项目的模式
+3. 查阅closed issues避免踩坑
+4. 适配到本项目架构
+
+详见: `.claude/skills/github-search.md`
+
 ## 3. 逻辑对象、API、权限与页面映射
 
 下表是高层契约，不是表结构。API 名称用于任务拆分，实际路径和字段需在开发前形成可审阅的 API 合同。
@@ -85,13 +203,31 @@
 | Capability Profile | 年度成长档案聚合查询 | Member 本人；Buddy 负责成员；Leader 团队；Admin 全量 | `/growth/profile` |
 | System Config | 年度窗口、首页待办、默认周期等参数查询/维护 | Admin 管理；不建设独立消息中心 | `/system/settings` |
 
-### 3.1 年度计划生成门禁
+### 3.1 年度计划生成门禁（Issue #82 已废弃）
 
-以下原文在前后端均作为同一业务策略使用：
+以下原文已被 Issue #82 废弃，保留供历史参考：
 
-**正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。**
+~~**正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。**~~
 
-门禁前 Gap 仍立即可见、可筛选、可设置优先级；门禁只约束正式纳入年度成长计划及生成 Plan Item。后端策略拒绝不满足条件的写入，前端同时展示原因；不得只依赖前端禁用。
+Issue #82 实施后，Member 提交自评时，系统在单一事务中原子生成：Gap 分析 → 年度成长计划（若不存在）→ 计划项（标记为「纳入计划」的 Gap）→ 学习任务（1:1）。Buddy 复核结果作为反馈，不阻塞计划生成。
+
+新 API 契约：
+
+- `POST /api/assessment/{assessment_id}/submit` 返回：
+  ```json
+  {
+    "revision": int,
+    "auto_cleared": [],
+    "plan_generation": {
+      "annual_plan_id": int,
+      "created_items": int,
+      "skipped_items": int,
+      "created_tasks": int
+    }
+  }
+  ```
+- 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_and_tasks_from_assessment(connection, assessment_id)`
+- 幂等性：重复提交时，已存在的计划项不再重复创建（按 `annual_growth_plan_id` + `l3_code` 去重）。
 
 ### 3.2 权限叠加
 

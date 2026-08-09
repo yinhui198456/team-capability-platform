@@ -240,7 +240,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             """,
             (member_id, year),
         ).fetchone()
-        assert plan_item is not None and review_result["plan"]["created"]
+        # Issue #82: Plan may already exist from atomic generation on self-submit
+        # Assert plan_item exists (created by either flow)
+        assert plan_item is not None
         task_id = connection.execute(
             "SELECT id FROM learning_task WHERE plan_item_id = %s",
             (plan_item[0],),

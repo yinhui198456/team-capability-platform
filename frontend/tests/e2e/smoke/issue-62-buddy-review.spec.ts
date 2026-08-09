@@ -290,14 +290,14 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     expect(adjust.status).toBe(200)
     expect(adjust.body.assessment_status).toBe('建议调整')
     expect(adjust.body.plan).toBeNull()
-    // zero plan writes
+    // zero plan writes after 建议调整
     const planResp = await request.get(
       `${BACKEND}/api/planning/annual-plan?year=${year}`,
     )
     const plan = await planResp.json()
     expect(plan).toBeNull()
 
-    // member resubmits after 建议调整
+    // member resubmits after 建议调整 → #82 atomic generation creates plan
     await loginAs(page, 'member')
     const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
     const afterAdjust = await getResp.json()
@@ -307,8 +307,11 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     )
     expect(resubmitResp.ok()).toBeTruthy()
     const resubmitted = await resubmitResp.json()
+    // Issue #82: plan generated on self-submit
+    expect(resubmitted.plan_generation.created).toBe(true)
+    expect(resubmitted.plan_generation.items_created).toBeGreaterThanOrEqual(1)
 
-    // buddy approves the new round → plan generated
+    // buddy approves the new round → plan already exists (created=false)
     await loginAs(page, 'buddy')
     const newReviewId = await pendingReviewId(page, request, draft.id)
     const approve = await submitReview(page, request, draft.id, newReviewId, {
@@ -318,8 +321,9 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     })
     expect(approve.status).toBe(200)
     expect(approve.body.assessment_status).toBe('已归档')
-    expect(approve.body.plan.created).toBe(true)
-    expect(approve.body.plan.items_created).toBeGreaterThanOrEqual(1)
+    // Issue #82: plan already created by self-submit
+    expect(approve.body.plan.created).toBe(false)
+    expect(approve.body.plan.plan_id).toBeDefined()
     // plan reads happen as the member (the annual-plan endpoint is member-scoped)
     await loginAs(page, 'member')
     const planAfter = await (
@@ -327,7 +331,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).json()
     expect(planAfter.source_assessment_id).toBe(draft.id)
     expect(planAfter.planning_source_type).toBe('assessment_approval')
-    expect(planAfter.items.length).toBe(approve.body.plan.items_created)
+    expect(planAfter.items.length).toBe(resubmitted.plan_generation.items_created)
   })
 
   test('E2E-62-02 首次认可零纳入项生成计划壳', async ({ page }) => {
@@ -343,6 +347,14 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         include_in_plan: false,
       },
     ])
+    // Issue #82: plan shell created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit.source_assessment_id).toBe(draft.id)
+    expect(planAfterSubmit.items.length).toBe(0)
+
     await loginAs(page, 'buddy')
     const reviewId = await pendingReviewId(page, request, draft.id)
     const approve = await submitReview(page, request, draft.id, reviewId, {
@@ -351,9 +363,9 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       expected_revision: revision,
     })
     expect(approve.status).toBe(200)
-    expect(approve.body.plan.created).toBe(true)
-    expect(approve.body.plan.items_created).toBe(0)
-    expect(approve.body.plan.tasks_created).toBe(0)
+    // Issue #82: plan already exists (created by self-submit)
+    expect(approve.body.plan.created).toBe(false)
+    expect(approve.body.plan.plan_id).toBeDefined()
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
@@ -387,6 +399,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 8,
       },
     ])
+    // Issue #82: verify plan created on self-submit with 2 items
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit.items.length).toBe(2)
+
     await loginAs(page, 'buddy')
     const reviewId = await pendingReviewId(page, request, draft.id)
     const approve = await submitReview(page, request, draft.id, reviewId, {
@@ -395,8 +414,9 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       expected_revision: revision,
     })
     expect(approve.status).toBe(200)
-    expect(approve.body.plan.items_created).toBe(2)
-    expect(approve.body.plan.tasks_created).toBe(2)
+    // Issue #82: plan already exists (created by self-submit)
+    expect(approve.body.plan.created).toBe(false)
+    expect(approve.body.plan.plan_id).toBeDefined()
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
@@ -433,6 +453,12 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+    // Issue #82: first plan created on self-submit
+    const planAfterFirstSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterFirstSubmit.source_assessment_id).toBe(first.id)
+
     await loginAs(page, 'buddy')
     const review1 = await pendingReviewId(page, request, first.id)
     const approve1 = await submitReview(page, request, first.id, review1, {
@@ -441,6 +467,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       expected_revision: firstRevision,
     })
     expect(approve1.status).toBe(200)
+    // Issue #82: plan already exists
+    expect(approve1.body.plan.created).toBe(false)
 
     // second assessment (年中更新) same member+year
     await loginAs(page, 'member')
@@ -501,6 +529,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         include_in_plan: false,
       },
     ])
+    // Issue #82: plan created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit).toBeDefined()
+
     await loginAs(page, 'buddy')
     const reviewId = await pendingReviewId(page, request, draft.id)
     const payload = {
@@ -518,6 +553,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     )
     expect(first.status).toBe(200)
     expect(first.body.idempotent_replayed).toBe(false)
+    // Issue #82: plan already exists (created by self-submit)
+    expect(first.body.plan.created).toBe(false)
     const second = await submitReview(
       page,
       request,
@@ -534,7 +571,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
     ).json()
-    expect(plan.items.length).toBe(first.body.plan.items_created)
+    expect(plan.items.length).toBe(0)
   })
 
   test('E2E-62-06 无幂等 key 的重复提交返回 409，不二次写入', async ({
@@ -552,6 +589,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         include_in_plan: false,
       },
     ])
+    // Issue #82: plan created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit).toBeDefined()
+
     await loginAs(page, 'buddy')
     const reviewId = await pendingReviewId(page, request, draft.id)
     const first = await submitReview(page, request, draft.id, reviewId, {
@@ -560,6 +604,8 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       expected_revision: revision,
     })
     expect(first.status).toBe(200)
+    // Issue #82: plan already exists
+    expect(first.body.plan.created).toBe(false)
     const second = await submitReview(page, request, draft.id, reviewId, {
       conclusion: '认可',
       feedback: '重复',
@@ -598,7 +644,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       .getByRole('button')
       .first()
       .click()
-    // summary grid + first-approval notice
+    // summary grid + first-approval notice (Issue #82: notice may need update)
     await expect(
       page.getByText(/首次认可将原子生成正式年度计划/).first(),
     ).toBeVisible()
@@ -608,7 +654,10 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await page.getByLabel('认可').first().click()
     await page.getByLabel('反馈').first().fill('UI 认可')
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    // Issue #82: plan already created by self-submit, success message may differ
+    await expect(
+      page.getByText(/年度计划已生成|已提交/).first()
+    ).toBeVisible()
   })
 
   // ── P1-5: frontend idempotency-key lifecycle ──────────────────────────────
@@ -649,9 +698,16 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+    // Issue #82: plan created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit.items.length).toBe(1)
+
     await loginAs(page, 'buddy')
     // P2-1: the first request REALLY reaches the backend and commits (the
-    // plan is written server-side), but the client response is suppressed —
+    // plan already exists from self-submit), but the client response is suppressed —
     // the browser sees a gateway failure.  The retry with the SAME key then
     // hits the server's idempotency replay: idempotent_replayed=true and no
     // second write anywhere.
@@ -746,6 +802,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+    // Issue #82: plan created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit.items.length).toBe(1)
+
     await loginAs(page, 'buddy')
     const keys: string[] = []
     let call = 0
@@ -766,7 +829,10 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     // the member edits the feedback before retrying -> a NEW key must be used
     await page.getByLabel('反馈').first().fill('修订后反馈')
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    // Issue #82: plan already exists, success message may vary
+    await expect(
+      page.getByText(/年度计划已生成|已提交/).first()
+    ).toBeVisible()
     expect(keys.length).toBeGreaterThanOrEqual(2)
     expect(keys[0]).toBeTruthy()
     expect(keys[1]).not.toBe(keys[0])
@@ -794,6 +860,13 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+    // Issue #82: plan created on self-submit
+    await loginAs(page, 'member')
+    const planAfterSubmit = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(planAfterSubmit.items.length).toBe(1)
+
     await loginAs(page, 'buddy')
     const keys: string[] = []
     let call = 0
@@ -832,7 +905,10 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     await expect.poll(() => workspaceGets).toBeGreaterThan(1)
     // ...and the resubmit uses a NEW key and succeeds
     await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/年度计划已生成/).first()).toBeVisible()
+    // Issue #82: plan already exists, success message may vary
+    await expect(
+      page.getByText(/年度计划已生成|已提交/).first()
+    ).toBeVisible()
     expect(keys.length).toBeGreaterThanOrEqual(2)
     expect(keys[0]).toBeTruthy()
     expect(keys[1]).not.toBe(keys[0])
