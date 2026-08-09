@@ -2309,12 +2309,20 @@ def submit_assessment(
 
         generate_gaps_for_assessment(connection, assessment_id)
 
+        # Issue #82: Generate annual plan and learning tasks atomically on submit
+        from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
+        plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
+
         next_revision = int(revision) + 1
         connection.execute(
             "UPDATE assessment SET revision = %s WHERE id = %s",
             (next_revision, assessment_id),
         )
-        return {"revision": next_revision, "auto_cleared": []}
+        return {
+            "revision": next_revision,
+            "auto_cleared": [],
+            "plan_generation": plan_result,
+        }
 
 
 def generate_gaps_for_assessment(
@@ -3515,10 +3523,15 @@ def submit_assessment_review(
                     connection, assessment, member_id, year
                 )
             elif plan_row[1] is not None and int(plan_row[1]) == assessment_id:
-                raise ReviewError(
-                    "inconsistent_plan_source",
-                    "a formal plan already exists for this assessment",
-                )
+                # Plan already created by this assessment (e.g., via atomic generation on self-submit)
+                # Return success without creating duplicate plan
+                plan_payload = {
+                    "created": False,  # Plan was already created
+                    "plan_id": int(plan_row[0]),
+                    "items_created": 0,
+                    "tasks_created": 0,
+                    "target_is_legacy": None,
+                }
             else:
                 proposal_payload = _approve_with_proposal(
                     connection,
