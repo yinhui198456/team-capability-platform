@@ -35,6 +35,9 @@ from .v0014_evidence_archive_backfill import (
 from .v0015_draft_partial_plan_time import (
     upgrade as upgrade_draft_partial_plan_time,
 )
+from .v0016_plan_item_later_assessment import (
+    upgrade as upgrade_plan_item_later_assessment,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -63,6 +66,10 @@ MIGRATIONS = [
     (
         "0015_draft_partial_plan_time",
         upgrade_draft_partial_plan_time,
+    ),
+    (
+        "0016_plan_item_later_assessment",
+        upgrade_plan_item_later_assessment,
     ),
 ]
 

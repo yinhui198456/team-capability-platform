@@ -237,10 +237,10 @@ Assessment Detail 可记录：
 | 业务字段 | 计划编码、Member 用户编码、年度、计划周期、计划状态、计划开始日期、计划截止日期、创建时间 |
 | 状态 | 制定中 / 执行中 / 已归档 |
 | 版本 / 年度 | 每年一份；跨年时不自动延续计划项 |
-| 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 Assessment |
+| 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 首次来源 Assessment；每个 Plan Item 另行记录自己的来源 Assessment Detail |
 | 唯一性约束 | 同一 Member、同一年度唯一 |
 | 维护角色 | Member |
-| 生成约束 | 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。 |
+| 生成约束 | Member 提交自评时立即原子生成；同一 Member 同一年度复用一份计划，后续自评只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。Buddy 复核提供反馈，不阻塞计划生成。 |
 
 ### 3.15 Plan Item
 
@@ -252,7 +252,7 @@ Assessment Detail 可记录：
 | 并发控制 | 单调递增 `revision`；写请求携带 `expected_revision`，过期返回 409 `plan_revision_conflict` |
 | 日期边界 | 计划开始日期须落在来源季度内，计划截止日期须落在来源计划月内（无来源月时同样限来源季度），且开始不晚于截止 |
 | 版本 / 年度 | 按 Annual Growth Plan 年度管理 |
-| 关联关系 | N:1 Annual Growth Plan；1:1 Growth Goal；N:1 Capability Item L3；1:1 Learning Task |
+| 关联关系 | N:1 Annual Growth Plan；1:1 Growth Goal；N:1 Capability Item L3；1:1 Learning Task；N:1 来源 Assessment；1:1 来源 Assessment Detail |
 | 唯一性约束 | 同一 Annual Growth Plan 内同一 L3 编码唯一 |
 | 维护角色 | Member |
 
