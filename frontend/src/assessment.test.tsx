@@ -970,7 +970,7 @@ describe('AssessmentGapPage', () => {
     )
 
     // Mock fetch to capture the actual HTTP payload
-    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           ok: true,
@@ -1001,9 +1001,10 @@ describe('AssessmentGapPage', () => {
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
 
-    const fetchCall = fetchSpy.mock.calls.find(call =>
-      call[0].toString().includes('/api/assessments/') &&
-      call[0].toString().includes('/draft')
+    const fetchCall = fetchSpy.mock.calls.find(
+      (call: [input: RequestInfo | URL, init?: RequestInit]) =>
+        call[0].toString().includes('/api/assessments/') &&
+        call[0].toString().includes('/draft'),
     )
     expect(fetchCall).toBeDefined()
 

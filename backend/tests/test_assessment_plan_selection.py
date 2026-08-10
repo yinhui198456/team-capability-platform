@@ -1504,7 +1504,13 @@ def test_tampered_personal_adjustment_rejected_422_before_write(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_node_id": node_id, "l3_code": code, "adjusted_target_level": 3}],
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "adjusted_target_level": 3,
+                }
+            ],
             "expected_revision": 1,
         },
         cookies=cookies,

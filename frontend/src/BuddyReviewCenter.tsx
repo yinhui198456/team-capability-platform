@@ -663,6 +663,7 @@ export function BuddyReviewCenter() {
                               <th>类型</th>
                               <th>当前</th>
                               <th>标准目标</th>
+                              <th>历史调整</th>
                               <th>生效目标</th>
                               <th>Gap</th>
                               <th>优先级</th>
@@ -700,6 +701,19 @@ export function BuddyReviewCenter() {
                                   {detail.standard_target_applicable === false
                                     ? '不适用'
                                     : (detail.standard_target_level ?? '—')}
+                                </td>
+                                <td>
+                                  {detail.target_adjusted ? (
+                                    <span className="adjustment-badge">
+                                      {detail.standard_target_level ?? '—'} →{' '}
+                                      {detail.adjusted_target_level ?? '—'}
+                                      {detail.target_adjustment_reason
+                                        ? `（${detail.target_adjustment_reason}）`
+                                        : ''}
+                                    </span>
+                                  ) : (
+                                    '—'
+                                  )}
                                 </td>
                                 <td>{detail.target_level ?? '—'}</td>
                                 <td>{detail.gap_value ?? '—'}</td>

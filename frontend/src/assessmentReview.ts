@@ -60,7 +60,6 @@ export type BuddyReviewSummary = {
   hold: number
   in_plan: number
   by_quarter: { Q1: number; Q2: number; Q3: number; Q4: number }
-  adjustments: number
   data_issues: number
   existing_formal_plan: boolean
   will_create_proposal: boolean

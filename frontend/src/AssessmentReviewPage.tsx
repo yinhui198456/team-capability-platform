@@ -158,7 +158,6 @@ export function AssessmentReviewPage() {
             <span>进阶 {workspace.summary.target_progressive}</span>
             <span>Gap {workspace.summary.gap_items}</span>
             <span>纳入计划 {workspace.summary.in_plan}</span>
-            <span>个人调整 {workspace.summary.adjustments}</span>
             <span>数据异常 {workspace.summary.data_issues}</span>
           </div>
           <div className="review-notices" role="status" aria-live="polite">
