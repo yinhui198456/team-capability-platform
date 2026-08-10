@@ -93,8 +93,7 @@ def ensure_capability_nodes(
                 %s, %s, 'L3', %s, %s, %s, 'P4',
                 'test.xlsx', 'sheet', %s
             )
-            ON CONFLICT (model_id, code) DO UPDATE
-            SET recommended_start_level = 'P4', enabled = TRUE
+            ON CONFLICT (model_id, code) DO NOTHING
             """,
             (model_id, l2_row[0], l3_code, l3_code, order, order),
         )

@@ -97,7 +97,8 @@ def _create_test_user(
     for role_code in roles:
         assign_role(connection, user_id, role_code)
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P5', target_level = 'P8' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id

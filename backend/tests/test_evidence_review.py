@@ -97,7 +97,8 @@ def _create_test_user(
     for role_code in roles:
         assign_role(connection, user_id, role_code)
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P5', target_level = 'P8' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id
@@ -280,7 +281,6 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         {
             "l3_code": "P01-L2A-L3A",
             "current_level": 2,
-            "target_level": 4,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
