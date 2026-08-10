@@ -88,7 +88,11 @@ async function fetchReview(
     main_output: string | null
     notes: string | null
   } | null
-  history: { revision: number; main_output: string | null }[]
+  history: {
+    revision: number
+    main_output: string | null
+    notes: string | null
+  }[]
 }> {
   const resp = await request.get(
     `${BACKEND}/api/planning/monthly-reviews?year=${year}&month=${month}`,
@@ -104,9 +108,14 @@ async function fetchReview(
         }
       : null,
     history: body.history.map(
-      (entry: { revision: number; main_output: string | null }) => ({
+      (entry: {
+        revision: number
+        main_output: string | null
+        notes: string | null
+      }) => ({
         revision: entry.revision,
         main_output: entry.main_output,
+        notes: entry.notes,
       }),
     ),
   }
@@ -190,7 +199,17 @@ test('E2E-64-02 字段超长 422：保留输入，修正后精确重试成功', 
   const year = await fetchActiveYear(request)
   const month = monthFor('E2E-64-02', testInfo.retry)
 
-  await openMonthlyReview(page, year, month)
+  // Month slots are best-effort isolation: a long-lived volume may already
+  // hold a review for this year+month (run 31410105797 collided on v1
+  // residue and saw a 409 instead of the expected 422).  Drive every
+  // assertion from the before state instead of assuming written=null.
+  const before = await fetchReview(request, year, month)
+  await page.goto(`/growth/review/monthly?year=${year}&month=${month}`)
+  await expect(page.getByRole('heading', { name: '月度复盘' })).toBeVisible()
+  await expect(page.getByTestId('current-revision')).toContainText(
+    before.written ? `v${before.written.revision}` : '未创建',
+  )
+
   const tooLong = 'a'.repeat(3001)
   await page.getByLabel('备注').fill(tooLong)
   await page.getByRole('button', { name: '保存月度复盘' }).click()
@@ -198,21 +217,26 @@ test('E2E-64-02 字段超长 422：保留输入，修正后精确重试成功', 
     'must be a string of at most 3000 characters',
   )
   await expect(page.getByLabel('备注')).toHaveValue(tooLong)
-  // No partial write happened.
-  expect((await fetchReview(request, year, month)).written).toBeNull()
+  // No partial write: written and history are exactly the before state.
+  expect(await fetchReview(request, year, month)).toEqual(before)
 
   // Fix the input; the exact retry succeeds with the same in-memory revision.
-  await page.getByLabel('备注').fill('E2E-64-02 修正')
+  const fixed = 'E2E-64-02 修正'
+  await page.getByLabel('备注').fill(fixed)
   await page.getByRole('button', { name: '保存月度复盘' }).click()
-  await expect(page.getByTestId('current-revision')).toContainText('v1')
+  const expectedRevision = (before.written?.revision ?? 0) + 1
+  await expect(page.getByTestId('current-revision')).toContainText(
+    `v${expectedRevision}`,
+  )
   await expect(page.getByRole('alert')).toBeHidden()
   const review = await fetchReview(request, year, month)
-  expect(review.written?.revision).toBe(1)
-  // The page always submits all four fields; the untouched ones land as
-  // empty strings, and the corrected field is stored verbatim.
-  expect(review.written?.main_output).toBe('')
-  expect(review.written?.notes).toBe('E2E-64-02 修正')
-  expect(review.history).toHaveLength(1)
+  expect(review.written?.revision).toBe(expectedRevision)
+  expect(review.written?.notes).toBe(fixed)
+  // Immutable history: exactly one entry appended, carrying the fixed notes.
+  expect(review.history).toHaveLength(before.history.length + 1)
+  expect(review.history.slice(0, before.history.length)).toEqual(before.history)
+  expect(review.history[before.history.length].revision).toBe(expectedRevision)
+  expect(review.history[before.history.length].notes).toBe(fixed)
 })
 
 const LEADER_RO = { username: 'e2e64_leader_ro', password: '123456' }
