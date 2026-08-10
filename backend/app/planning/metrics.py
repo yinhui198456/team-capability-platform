@@ -93,11 +93,16 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
     },
     "monthly_review.details": {
         "definition": (
-            "One row per plan_item with plan_month = month, carrying "
-            "plan_item_id / task_id / l3_code / status / estimated_hours "
-            "(raw value) / estimated_hours_parsed (raw / min_hours / "
-            "max_hours / is_valid / is_range) / actual_hours (valid logs "
-            "of that task recorded in that month)."
+            "Planned rows: one per plan_item with plan_month = month "
+            "(planned_in_month = TRUE); plus occurrence rows: tasks planned "
+            "in another month but with valid logs recorded in this month "
+            "(planned_in_month = FALSE, carrying their own plan_month).  "
+            "Every row carries plan_item_id / task_id / l3_code / status / "
+            "estimated_hours (raw value) / estimated_hours_parsed (raw / "
+            "min_hours / max_hours / is_valid / is_range) / actual_hours "
+            "(valid logs of that task recorded in that month).  Plan/state "
+            "counts and estimated_hours_summary reconcile over planned rows; "
+            "actual_hours reconciles over all rows."
         ),
         "scope": "本人 / buddy_assigned / leader_team",
         "phase": 1,
@@ -212,6 +217,49 @@ def valid_hours_by_task(
         (list(task_ids), year, month),
     ).fetchall()
     return {int(row[0]): int(row[1]) for row in rows}
+
+
+def logged_tasks_in_month(
+    connection: psycopg.Connection, member_id: int, year: int, month: int
+) -> list[dict[str, object]]:
+    """Plan items NOT planned in ``month`` whose tasks carry valid logs
+    recorded in ``month`` (Issue #86 occurrence-month attribution).
+
+    Each row keeps the item's own ``plan_month`` so the Monthly Review can
+    show "actual occurrence in this month, planned in another" without
+    disguising the row as planned here.
+    """
+    rows = connection.execute(
+        """
+        SELECT pi.id, pi.status, pi.l3_code, pi.estimated_hours,
+               pi.plan_month, lt.id
+        FROM plan_item pi
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        JOIN learning_task lt ON lt.plan_item_id = pi.id
+        WHERE agp.member_id = %s AND agp.year = %s
+          AND pi.plan_month IS DISTINCT FROM %s
+          AND EXISTS (
+              SELECT 1 FROM learning_progress_log lpl
+              WHERE lpl.task_id = lt.id
+                AND lpl.invalidated_at IS NULL
+                AND EXTRACT(YEAR FROM lpl.record_date) = %s
+                AND EXTRACT(MONTH FROM lpl.record_date) = %s
+          )
+        ORDER BY pi.l3_code
+        """,
+        (member_id, year, month, year, month),
+    ).fetchall()
+    return [
+        {
+            "plan_item_id": row[0],
+            "status": row[1],
+            "l3_code": row[2],
+            "estimated_hours": row[3],
+            "plan_month": row[4],
+            "task_id": row[5],
+        }
+        for row in rows
+    ]
 
 
 def grade_to_level(grade: Any) -> int | None:

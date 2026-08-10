@@ -535,6 +535,10 @@ export type MonthlyReviewDetail = {
   estimated_hours: string | null
   estimated_hours_parsed: EstimatedHours
   actual_hours: number
+  // Issue #86: planned rows belong to the viewed month; occurrence rows
+  // carry their own plan_month and only their occurrence-month hours.
+  planned_in_month: boolean
+  plan_month: number | null
 }
 
 export type MonthlyReviewSummary = {

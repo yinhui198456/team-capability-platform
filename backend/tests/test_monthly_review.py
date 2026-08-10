@@ -449,20 +449,70 @@ def test_monthly_review_details_are_month_scoped(
 def test_monthly_review_attributes_hours_to_occurrence_month_only(
     profile_schema: psycopg.Connection,
 ) -> None:
-    """Issue #86: plan count stays in the plan month; log hours are never
-    attributed to a month other than the log's record_date month."""
+    """Issue #86: plan count stays in the plan month; valid log hours are
+    counted in the log's record_date month, traceable to the task's own
+    plan month — never copied, never dropped, never disguised as planned.
+
+    Seed state: one plan item with plan_month=5; its task carries a single
+    March (2026-03-15) 5h log.
+    """
     member_id, member_cookies = _build_full_profile(profile_schema)
-    # Seed state: the plan item is planned for May; its task carries a March
-    # log (5h).  May must report the planned item with 0 March hours, and
-    # June (neither plan nor occurrence month) must stay empty.
+
+    # Plan month: the item is planned, the March hours are not May hours.
     status, body, _ = _get_review(profile_schema, member_cookies, month=5)
     assert status == 200
     assert body is not None
     assert body["summary"]["planned_count"] == 1
     assert body["summary"]["actual_hours"] == 0
     assert [d["actual_hours"] for d in body["details"]] == [0]
+    assert [d["planned_in_month"] for d in body["details"]] == [True]
 
+    # Occurrence month: nothing planned, but the 5h is real March work,
+    # traceable to the task planned for May — not a March plan item.
+    status, body, _ = _get_review(profile_schema, member_cookies, month=3)
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["planned_count"] == 0
+    assert body["summary"]["actual_hours"] == 5
+    assert len(body["details"]) == 1
+    occurrence = body["details"][0]
+    assert occurrence["planned_in_month"] is False
+    assert occurrence["plan_month"] == 5
+    assert occurrence["actual_hours"] == 5
+    # summary 可由明细复算
+    assert body["summary"]["actual_hours"] == sum(
+        d["actual_hours"] for d in body["details"]
+    )
+
+    # June is neither the plan month nor an occurrence month: fully empty.
     status, body, _ = _get_review(profile_schema, member_cookies, month=6)
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["planned_count"] == 0
+    assert body["summary"]["actual_hours"] == 0
+    assert body["details"] == []
+
+
+def test_monthly_review_invalidated_log_not_counted_in_occurrence_month(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """Issue #86: an invalidated log is excluded from its occurrence month."""
+    member_id, member_cookies = _build_full_profile(profile_schema)
+    row = profile_schema.execute(
+        """
+        SELECT lpl.id FROM learning_progress_log lpl
+        JOIN learning_task lt ON lt.id = lpl.task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE agp.member_id = %s
+        """,
+        (member_id,),
+    ).fetchone()
+    assert row is not None
+    _invalidate_log(profile_schema, int(row[0]), by=member_id)
+    profile_schema.commit()
+
+    status, body, _ = _get_review(profile_schema, member_cookies, month=3)
     assert status == 200
     assert body is not None
     assert body["summary"]["planned_count"] == 0

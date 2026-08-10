@@ -50,6 +50,8 @@ function reviewFixture(
           is_range: true,
         },
         actual_hours: 2,
+        planned_in_month: true,
+        plan_month: 5,
       },
       {
         plan_item_id: 12,
@@ -65,6 +67,8 @@ function reviewFixture(
           is_range: false,
         },
         actual_hours: 0,
+        planned_in_month: true,
+        plan_month: 5,
       },
       {
         plan_item_id: 13,
@@ -80,6 +84,8 @@ function reviewFixture(
           is_range: false,
         },
         actual_hours: 0,
+        planned_in_month: true,
+        plan_month: 5,
       },
       {
         plan_item_id: 14,
@@ -95,6 +101,8 @@ function reviewFixture(
           is_range: false,
         },
         actual_hours: 0,
+        planned_in_month: true,
+        plan_month: 5,
       },
     ],
     written: {
@@ -489,5 +497,67 @@ describe('MonthlyReviewPage', () => {
     // 计划数归计划月份、实际耗时归日志发生月份——页面必须可解释两种口径。
     expect(screen.getByText(/计划月份/)).toBeTruthy()
     expect(screen.getByText(/发生月份/)).toBeTruthy()
+  })
+
+  it('Issue #86: occurrence-only month shows actual hours traced to their plan month', async () => {
+    stubYear()
+    stubMember()
+    // 3 月无计划项，但有一条发生在 3 月的 5h 日志，来自计划月份 5 月的任务。
+    vi.spyOn(planningApi, 'getMonthlyReview').mockResolvedValue(
+      reviewFixture({
+        summary: {
+          planned_count: 0,
+          completed_count: 0,
+          in_progress_count: 0,
+          delayed_count: 0,
+          paused_count: 0,
+          cancelled_count: 0,
+          completion_rate: 0,
+          actual_hours: 5,
+          estimated_hours_summary: {
+            min_hours: 0,
+            max_hours: 0,
+            has_values: false,
+            has_unparsed: false,
+          },
+        },
+        details: [
+          {
+            plan_item_id: 11,
+            task_id: 21,
+            l3_code: 'C01.01.01',
+            status: '已完成',
+            estimated_hours: '10',
+            estimated_hours_parsed: {
+              raw: '10',
+              min_hours: 10,
+              max_hours: 10,
+              is_valid: true,
+              is_range: false,
+            },
+            actual_hours: 5,
+            planned_in_month: false,
+            plan_month: 5,
+          },
+        ],
+      }),
+    )
+    renderPage(3)
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '月度复盘', level: 1 }),
+      ).toBeTruthy()
+    })
+
+    const summary = screen.getByTestId('monthly-summary')
+    expect(summary.textContent).toContain('计划0')
+    expect(summary.textContent).toContain('实际耗时5 h')
+
+    // 不得显示“本月暂无计划项”而隐藏实际工时；须标明该工时来自计划月份 5 月。
+    const details = screen.getByTestId('monthly-details')
+    expect(details.textContent).toContain('C01.01.01')
+    expect(details.textContent).toContain('5 h')
+    expect(details.textContent).toContain('计划月份 5 月')
+    expect(screen.queryByText('本月暂无计划项')).toBeNull()
   })
 })

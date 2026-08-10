@@ -14,7 +14,7 @@
 
 ## 2. 共享查询层（reconciliation 保证）
 
-`plan_items_in_month(connection, member_id, year, month)` 与 `valid_hours_by_task(connection, task_ids, year, month)` 是唯一聚合入口：
+`plan_items_in_month(connection, member_id, year, month)`、`logged_tasks_in_month(...)` 与 `valid_hours_by_task(connection, task_ids, year, month)` 是唯一聚合入口：
 
 - Member Dashboard 的 `current_month` 块与 Monthly Review 的 summary/details 都由同一组语句构建 → 同一成员同一月份的口径**按构造一致**（可精确对账）。
 - 均为批量查询（`WHERE ... = ANY(%s)`），不做 per-row / N+1 加载。
@@ -36,8 +36,8 @@
 
 | 指标 | 定义 |
 |---|---|
-| `summary` | planned_count / completed_count / in_progress_count / delayed_count / paused_count / cancelled_count / completion_rate / actual_hours；**由 details 行计算**，summary 与 details 精确对账；completed 使用 actual 状态（六状态） |
-| `details` | 每 plan_item 一行（plan_month = 月）：plan_item_id / task_id / l3_code / status / actual_hours |
+| `summary` | planned_count / completed_count / in_progress_count / delayed_count / paused_count / cancelled_count / completion_rate / actual_hours；计划数与状态计数只统计 planned_in_month 行，actual_hours 统计全部明细行（含跨月实际发生行）；**由 details 行计算**，summary 与 details 精确对账；completed 使用 actual 状态（六状态） |
+| `details` | 计划行：每 plan_item 一行（plan_month = 月，planned_in_month = TRUE）；实际发生行：计划月份非本月但当月有有效日志的任务（planned_in_month = FALSE，携带自身 plan_month，不伪装成本月计划项）。行字段：plan_item_id / task_id / l3_code / status / actual_hours / planned_in_month / plan_month |
 | `written` / `history` | Member 写入 main_output / problems / next_month_focus / notes；history 不可变（每次修订追加 revision，不覆盖旧值） |
 | `meta` | as_of / year / scope / source |
 

@@ -13,6 +13,7 @@ from .gate import check_annual_plan_gate, get_latest_submitted_assessment
 from .hours import parse_estimated_hours, summarize_estimated_hours
 from .metrics import (
     grade_to_level,
+    logged_tasks_in_month,
     plan_items_in_month,
     valid_hours_by_task,
 )
@@ -1639,10 +1640,22 @@ def get_monthly_review(
     """
     now = _now(connection)
     items = plan_items_in_month(connection, member_id, year, month)
-    task_ids = [int(d["task_id"]) for d in items if d["task_id"] is not None]
+    # Issue #86: hours belong to the log's record_date month.  Tasks planned
+    # in another month but logged in this one surface as traceable
+    # occurrence rows (planned_in_month=False, carrying their own
+    # plan_month) — never dropped, never disguised as planned here.
+    occurrence_items = logged_tasks_in_month(connection, member_id, year, month)
+    task_ids = [
+        int(d["task_id"])
+        for d in (*items, *occurrence_items)
+        if d["task_id"] is not None
+    ]
     hours_by_task = valid_hours_by_task(connection, task_ids, year, month)
-    details = [
-        {
+
+    def _detail_row(
+        d: dict[str, object], *, planned_in_month: bool
+    ) -> dict[str, object]:
+        return {
             "plan_item_id": d["plan_item_id"],
             "task_id": d["task_id"],
             "l3_code": d["l3_code"],
@@ -1656,22 +1669,27 @@ def get_monthly_review(
                 if d["task_id"] is not None
                 else 0
             ),
+            "planned_in_month": planned_in_month,
+            "plan_month": month if planned_in_month else d["plan_month"],
         }
-        for d in items
+
+    planned_rows = [_detail_row(d, planned_in_month=True) for d in items]
+    details = planned_rows + [
+        _detail_row(d, planned_in_month=False) for d in occurrence_items
     ]
-    planned = len(details)
-    completed = sum(1 for d in details if d["status"] == "已完成")
+    planned = len(planned_rows)
+    completed = sum(1 for d in planned_rows if d["status"] == "已完成")
     summary = {
         "planned_count": planned,
         "completed_count": completed,
-        "in_progress_count": sum(1 for d in details if d["status"] == "进行中"),
-        "delayed_count": sum(1 for d in details if d["status"] == "延期"),
-        "paused_count": sum(1 for d in details if d["status"] == "暂停"),
-        "cancelled_count": sum(1 for d in details if d["status"] == "取消"),
+        "in_progress_count": sum(1 for d in planned_rows if d["status"] == "进行中"),
+        "delayed_count": sum(1 for d in planned_rows if d["status"] == "延期"),
+        "paused_count": sum(1 for d in planned_rows if d["status"] == "暂停"),
+        "cancelled_count": sum(1 for d in planned_rows if d["status"] == "取消"),
         "completion_rate": completed / planned if planned else 0,
         "actual_hours": sum(int(d["actual_hours"]) for d in details),
         "estimated_hours_summary": summarize_estimated_hours(
-            [d["estimated_hours"] for d in details]
+            [d["estimated_hours"] for d in planned_rows]
         ),
     }
 

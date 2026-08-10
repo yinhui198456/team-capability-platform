@@ -211,34 +211,75 @@ export function MonthlyReviewPage() {
           </section>
           <section className="card" data-testid="monthly-details">
             <h2>本月明细</h2>
-            {!summary || summary.planned_count === 0 ? (
+            {summary?.planned_count === 0 &&
+            !data.details.some((d) => !d.planned_in_month) ? (
               <p className="muted">本月暂无计划项</p>
             ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>L3 达成路径</th>
-                    <th>状态</th>
-                    <th>预计耗时</th>
-                    <th>实际耗时</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.details.map((detail) => (
-                    <tr key={detail.plan_item_id}>
-                      <td>{detail.l3_code}</td>
-                      <td>{detail.status}</td>
-                      <td>
-                        {formatEstimatedHours(
-                          detail.estimated_hours,
-                          detail.estimated_hours_parsed,
-                        )}
-                      </td>
-                      <td>{detail.actual_hours} h</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <>
+                {(summary?.planned_count ?? 0) > 0 && (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>L3 达成路径</th>
+                        <th>状态</th>
+                        <th>预计耗时</th>
+                        <th>实际耗时</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.details
+                        .filter((detail) => detail.planned_in_month)
+                        .map((detail) => (
+                          <tr key={detail.plan_item_id}>
+                            <td>{detail.l3_code}</td>
+                            <td>{detail.status}</td>
+                            <td>
+                              {formatEstimatedHours(
+                                detail.estimated_hours,
+                                detail.estimated_hours_parsed,
+                              )}
+                            </td>
+                            <td>{detail.actual_hours} h</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+                {data.details.some((d) => !d.planned_in_month) && (
+                  <>
+                    <p className="muted">
+                      以下任务实际发生在本月，计划月份非本月（不计入本月计划数）：
+                    </p>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>L3 达成路径</th>
+                          <th>状态</th>
+                          <th>计划月份</th>
+                          <th>实际耗时</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.details
+                          .filter((detail) => !detail.planned_in_month)
+                          .map((detail) => (
+                            <tr key={detail.plan_item_id}>
+                              <td>{detail.l3_code}</td>
+                              <td>{detail.status}</td>
+                              <td>
+                                计划月份{' '}
+                                {detail.plan_month
+                                  ? `${detail.plan_month} 月`
+                                  : '—'}
+                              </td>
+                              <td>{detail.actual_hours} h</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+              </>
             )}
           </section>
           <section className="card">
