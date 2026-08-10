@@ -91,7 +91,17 @@ test('staged submit: undecided gaps + unassessed advanced submit and surface as 
   expect(putResp.ok()).toBeTruthy()
   const saved = await putResp.json()
 
-  // 3. Submit: positive gaps with NO priority / plan decision and unassessed
+  // 3. Deep link contract while the draft is open: the assessment page only
+  //    loads open drafts (草稿/建议调整), so the focus-scoped filter state
+  //    must be verified before submit closes the draft.
+  await page.goto(
+    `/capability/assessment?year=${YEAR}&focus=advanced-unassessed`,
+  )
+  await expect(page).toHaveURL(/focus=advanced-unassessed/)
+  await expect(page.getByText('能力自评与 Gap 分析')).toBeVisible()
+  await expect(page.getByLabel('状态筛选')).toHaveValue('未评估')
+
+  // 4. Submit: positive gaps with NO priority / plan decision and unassessed
   //    ADVANCED items must not block.
   const submitResp = await request.post(
     `${BACKEND}/api/assessments/${assessmentId}/submit`,
@@ -99,7 +109,7 @@ test('staged submit: undecided gaps + unassessed advanced submit and surface as 
   )
   expect(submitResp.ok()).toBeTruthy()
 
-  // 4. Personal workspace follow-up: accurate counts per category.
+  // 5. Personal workspace follow-up: accurate counts per category.
   const dashResp = await request.get(
     `${BACKEND}/api/planning/member-dashboard?year=${YEAR}`,
   )
@@ -112,19 +122,11 @@ test('staged submit: undecided gaps + unassessed advanced submit and surface as 
   expect(dashboard.follow_up.gaps_waiting_planning).toBe(required.length)
   expect(dashboard.follow_up.review_return).toBe(true)
 
-  // 5. Visible UI: the member workspace renders the follow-up card with
+  // 6. Visible UI: the member workspace renders the follow-up card with
   //    deep links for advanced work, backlog gaps and review/return work.
   await page.goto(`/dashboard/member?year=${YEAR}`)
   await expect(page.getByText('成长待办')).toBeVisible()
   await expect(page.getByRole('link', { name: /进阶能力待评估/ })).toBeVisible()
   await expect(page.getByRole('link', { name: /Gap 待规划/ })).toBeVisible()
   await expect(page.getByRole('link', { name: /自评待复核/ })).toBeVisible()
-
-  // 6. The deep link lands on the assessment page scoped to the category.
-  await page.goto(
-    `/capability/assessment?year=${YEAR}&focus=advanced-unassessed`,
-  )
-  await expect(page).toHaveURL(/focus=advanced-unassessed/)
-  await expect(page.getByText('能力自评与 Gap 分析')).toBeVisible()
-  await expect(page.getByLabel('状态筛选')).toHaveValue('未评估')
 })

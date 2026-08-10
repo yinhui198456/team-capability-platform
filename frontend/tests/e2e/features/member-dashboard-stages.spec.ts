@@ -271,7 +271,7 @@ test.describe('Member 工作台成长阶段', () => {
     await expect(page.getByTestId('current-tasks-table')).not.toBeVisible()
   })
 
-  test('待复核阶段：主按钮为“查看复核状态”', async ({ page }) => {
+  test('待复核阶段：主按钮为“生成年度计划”', async ({ page }) => {
     await routeDashboard(page, pendingReviewPayload)
     await page.goto('/dashboard/member?year=2026')
     await expect(
@@ -279,12 +279,12 @@ test.describe('Member 工作台成长阶段', () => {
     ).toBeVisible()
     await expect(page.getByLabel('当前阶段')).toHaveText('待 Buddy 复核')
 
-    const cta = page.getByRole('link', { name: '查看复核状态' })
+    // Issue #94: Buddy review is feedback/history, never a plan-generation
+    // gate — the pending-review stage primary action goes straight to plan
+    // generation instead of the old review-status page.
+    const cta = page.getByRole('link', { name: '生成年度计划' }).first()
     await expect(cta).toBeVisible()
-    await expect(cta).toHaveAttribute(
-      'href',
-      '/capability/assessment?year=2026',
-    )
+    await expect(cta).toHaveAttribute('href', '/growth/annual-plan?year=2026')
 
     await expect(page.getByRole('heading', { name: '复核状态' })).toBeVisible()
     await expect(page.getByText('数据建模与设计')).toBeVisible()

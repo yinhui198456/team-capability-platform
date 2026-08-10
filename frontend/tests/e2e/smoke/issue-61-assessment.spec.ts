@@ -757,9 +757,12 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      expect(detail.target_level).not.toBeNull()
+      const standardTarget = detail.target_level as number
 
-      // Establish a deterministic positive gap (adjusted target 5) with a
-      // full plan selection.
+      // Establish a deterministic positive gap under the standard target
+      // (#100: targets come from the member's job level, no member-side
+      // adjustment) with a full plan selection.
       const first = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -792,7 +795,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 3,
+                current_level: standardTarget - 1,
               },
             ],
           },
@@ -800,7 +803,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       )
       expect(second.ok()).toBeTruthy()
       const secondBody = await second.json()
-      // gap stays positive (5-3=2) → no auto-clear may fire.
+      // gap stays positive (target − (target−1) = 1) → no auto-clear may fire.
       expect(secondBody.auto_cleared).toEqual([])
       state.revision++
 
@@ -810,7 +813,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const saved = (await verify.json()).details.find(
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
-      expect(saved.current_level).toBe(3)
+      expect(saved.current_level).toBe(standardTarget - 1)
       expect(saved.member_priority).toBe('中') // preserved from first PATCH
       expect(saved.include_in_plan).toBe(true)
       expect(saved.plan_quarter).toBe('Q2')
