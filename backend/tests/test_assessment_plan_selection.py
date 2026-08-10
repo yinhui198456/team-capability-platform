@@ -441,9 +441,6 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "target for positive gap",
                     "member_priority": "暂缓",
                     "include_in_plan": True,
                     "plan_quarter": "Q2",
@@ -490,10 +487,7 @@ def test_draft_allows_partial_plan_state_save_reload_submit(
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                 }
@@ -542,33 +536,41 @@ def test_draft_allows_partial_plan_state_save_reload_submit(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_node_id": node_id, "l3_code": code, "plan_month": 6}],
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "member_priority": "高",
+                    "plan_month": 6,
+                    "plan_quarter": "Q2",
+                }
+            ],
             "expected_revision": 3,
         },
         cookies=cookies,
     )
-    assert status == 200, f"month-only must save, got {status}: {body}"
+    assert status == 200, f"completing plan data must save, got {status}: {body}"
     saved = _saved()
     assert saved["plan_month"] == 6
-    assert saved["plan_quarter"] is None
+    assert saved["plan_quarter"] == "Q2"
+    assert saved["member_priority"] == "高"
 
-    # 4. The same partial draft submits: plan completeness is a plan-selection
-    #    contract enforced at Buddy approval, not a submission gate.  The
-    #    partial plan state is preserved through submit (backlog material).
+    # 4. The draft with complete plan data submits successfully.
     status, body = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
         {"expected_revision": 4},
         cookies=cookies,
     )
-    assert status == 200, f"partial draft must submit, got {status}: {body}"
+    assert status == 200, f"complete plan draft must submit, got {status}: {body}"
     assessment = get_assessment(plan_schema, assessment_id)
     assert assessment["status"] == "待复核"
     assert int(assessment["revision"]) == 5
     saved = _saved()
-    assert saved["member_priority"] is None
+    assert saved["member_priority"] == "高"
     assert saved["include_in_plan"] is True
     assert saved["plan_month"] == 6
+    assert saved["plan_quarter"] == "Q2"
 
 
 def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
@@ -596,9 +598,6 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "中",
                     "include_in_plan": True,
                     "plan_quarter": "Q1",
@@ -790,10 +789,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_quarter": "Q1",
@@ -1034,10 +1030,7 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "中",
                 }
             ],
@@ -1094,9 +1087,6 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 1,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "中",
                     "include_in_plan": True,
                     "plan_quarter": "Q2",
@@ -1114,7 +1104,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 1}],
             "expected_revision": 2,
         },
         cookies=cookies,
@@ -1124,7 +1114,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert body.get("auto_cleared") == []
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["current_level"] == 3
+    assert saved["current_level"] == 1
     assert saved["member_priority"] == "中"
     assert saved["include_in_plan"] is True
     assert saved["plan_quarter"] == "Q2"
@@ -1341,7 +1331,7 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     # First set plan=TRUE
-    status, _ = _request(
+    status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
@@ -1349,10 +1339,7 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_quarter": "Q3",
@@ -1412,10 +1399,7 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 4,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_quarter": "Q4",
@@ -1471,25 +1455,26 @@ def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:
     assert status == 422, f"gap_value tampering: {status}"
 
 
-def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
-    """Personal adjustment recalculates effective target and gap."""
-    member_id = _create_test_user(plan_schema, "m_adj", ["Member"])
+def test_tampered_personal_adjustment_rejected_422_before_write(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """#100: any personal target-adjustment parameter in PUT/PATCH is rejected
+    with 422 before any write — zero partial write."""
+    member_id = _create_test_user(plan_schema, "m_ptamper", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
-    cookies = _login(plan_schema, "m_adj")
+    cookies = _login(plan_schema, "m_ptamper")
 
     detail = plan_schema.execute(
-        "SELECT l3_code, standard_target_level "
-        "FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
+        "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
         (assessment_id,),
     ).fetchone()
     code = detail[0]
-    _std_target = int(detail[1])
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Set current_level far below target, with adjustment to make gap=0
-    status, _ = _request(
+    # PUT with all three adjustment parameters
+    status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
@@ -1497,23 +1482,44 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 1,
+                    "current_level": 0,
                     "target_adjusted": True,
                     "adjusted_target_level": 1,
-                    "target_adjustment_reason": "本年度不计划提升此能力",
+                    "target_adjustment_reason": "tampered",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 422, f"expected 422, got {status}: {body}"
+    assert body["detail"]["code"] == "personal_target_adjustment_disabled"
 
+    # PATCH with a single adjustment parameter
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_node_id": node_id, "l3_code": code, "adjusted_target_level": 3}],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, f"expected 422, got {status}: {body}"
+    assert body["detail"]["code"] == "personal_target_adjustment_disabled"
+
+    # zero partial write: nothing from either payload was persisted
     assessment = get_assessment(plan_schema, assessment_id)
+    assert int(assessment["revision"]) == 1
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["gap_value"] == 0
+    assert saved["current_level"] is None
     assert saved["member_priority"] is None
     assert saved["include_in_plan"] is None
+    assert saved["target_level"] == saved["standard_target_level"]
 
 
 def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> None:
@@ -1544,9 +1550,6 @@ def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> 
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 0,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_quarter": "Q2",

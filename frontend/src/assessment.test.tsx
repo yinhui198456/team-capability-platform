@@ -712,7 +712,7 @@ describe('AssessmentGapPage', () => {
     expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
   })
 
-  it('blocks incomplete personal adjustments and unblocks after canceling them', async () => {
+  it('does not expose adjustment controls (#100)', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -730,27 +730,24 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    const submit = screen.getByRole('button', { name: '提交自评' })
-    // Click the adjustment expand button
-    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
-    // Enable adjustment
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    expect(screen.getByText('需填写调整原因')).toBeTruthy()
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    // Cancel adjustment
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    await waitFor(() =>
-      expect((submit as HTMLButtonElement).disabled).toBe(false),
-    )
+    // No adjustment button, no checkbox, no inline controls
+    expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
+    expect(screen.queryByLabelText('启用个人调整 P01.01.01')).toBeNull()
+    expect(screen.queryByLabelText('调整目标 P01.01.01')).toBeNull()
+    expect(screen.queryByLabelText('调整原因 P01.01.01')).toBeNull()
   })
 
-  it('supports a valid personal adjustment target and reason', async () => {
+  it('shows historical adjustment with 历史规则 label (#100)', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
-          current_level: 2,
-          evidence_note: '已有依据',
+          current_level: 1,
+          standard_target_level: 2,
+          target_level: 4,
+          target_adjusted: true,
+          adjusted_target_level: 4,
+          target_adjustment_reason: '岗位项目要求',
         },
       ],
     })
@@ -762,15 +759,9 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
-      target: { value: '调整原因' },
-    })
-    expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false)
+    // Historical adjustment shown read-only with label
+    expect(screen.getByText('[已调整]')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
   })
 
   it('allows an unchanged inherited value with valid inherited evidence', async () => {
@@ -949,7 +940,7 @@ describe('AssessmentGapPage', () => {
     })
   })
 
-  it('sends canonical fields instead of plan_candidate in saveDraft', async () => {
+  it('excludes adjustment fields from saveDraft payload (#100)', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -970,13 +961,32 @@ describe('AssessmentGapPage', () => {
             ...mockDraft().details![0],
             current_level: 2,
             evidence_note: '已有依据',
+            target_adjusted: false,
+            adjusted_target_level: null,
+            target_adjustment_reason: null,
           },
         ],
       }),
     )
-    const save = vi
-      .spyOn(assessmentApi, 'saveDraft')
-      .mockResolvedValue({ ok: true })
+
+    // Mock fetch to capture the actual HTTP payload
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          revision: 2,
+          gap_summary: {
+            total_gaps: 1,
+            avg_gap: 1.0,
+            high_priority: 1,
+            medium_priority: 0,
+            low_priority: 0,
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -984,28 +994,23 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
 
-    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
-      target: { value: '5' },
-    })
-    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
-      target: { value: '晋升准备' },
+    fireEvent.change(screen.getByRole('combobox', { name: /优先级/ }), {
+      target: { value: '高' },
     })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
 
-    await waitFor(() => expect(save).toHaveBeenCalled())
-    const detail = save.mock.calls[0][1][0]
-    expect(detail).toMatchObject({
-      target_adjusted: true,
-      adjusted_target_level: 5,
-      target_adjustment_reason: '晋升准备',
-    })
-    // Must include canonical fields
-    expect(detail).toHaveProperty('member_priority')
-    expect(detail).toHaveProperty('include_in_plan')
-    expect(detail).toHaveProperty('plan_quarter')
-    expect(detail).toHaveProperty('plan_month')
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+
+    const fetchCall = fetchSpy.mock.calls.find(call =>
+      call[0].toString().includes('/api/assessments/') &&
+      call[0].toString().includes('/draft')
+    )
+    expect(fetchCall).toBeDefined()
+
+    const body = JSON.parse((fetchCall![1] as RequestInit).body as string)
+    expect(body.details[0]).not.toHaveProperty('target_adjusted')
+    expect(body.details[0]).not.toHaveProperty('adjusted_target_level')
+    expect(body.details[0]).not.toHaveProperty('target_adjustment_reason')
   })
 
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
@@ -1482,29 +1487,6 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     await screen.findByText('能力自评与 Gap 分析')
     fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
     await waitFor(() => expect(submit).toHaveBeenCalled())
-  })
-
-  it('adjust button explains the personal target override', async () => {
-    const draft = mockDraft({
-      details: [
-        {
-          ...mockDraft().details![0],
-          current_level: 2,
-          evidence_note: '已有依据',
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '调整个人目标' }))
-    expect(screen.getByText(/标准目标由你的目标职级与/)).toBeTruthy()
-    expect(screen.getByText(/能力标准自动生成、只读/)).toBeTruthy()
   })
 })
 
@@ -1998,9 +1980,6 @@ describe('assessment api helpers', () => {
     expect(body.details[0]).toEqual({
       l3_code: 'P01.01.01',
       current_level: 2,
-      target_adjusted: true,
-      adjusted_target_level: 5,
-      target_adjustment_reason: '晋升准备',
       evidence_note: null,
       member_priority: '高',
       include_in_plan: true,
@@ -2008,6 +1987,9 @@ describe('assessment api helpers', () => {
       plan_month: 3,
     })
     expect(body.details[0]).not.toHaveProperty('plan_candidate')
+    expect(body.details[0]).not.toHaveProperty('target_adjusted')
+    expect(body.details[0]).not.toHaveProperty('adjusted_target_level')
+    expect(body.details[0]).not.toHaveProperty('target_adjustment_reason')
     expect(body.expected_revision).toBe(1)
   })
 })

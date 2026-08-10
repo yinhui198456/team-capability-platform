@@ -1428,7 +1428,8 @@ def save_assessment_draft(
                    member_priority AS existing_priority,
                    include_in_plan AS existing_plan,
                    plan_quarter AS existing_quarter,
-                   plan_month AS existing_month
+                   plan_month AS existing_month,
+                   target_adjusted AS existing_adjusted
             FROM assessment_detail
             WHERE assessment_id = %s
             ORDER BY l3_code
@@ -1529,6 +1530,12 @@ def save_assessment_draft(
             "target_compatibility_error",
             "gap_value",
         }
+        # #100: reject personal target adjustment fields at repository boundary.
+        adjustment_fields = {
+            "target_adjusted",
+            "adjusted_target_level",
+            "target_adjustment_reason",
+        }
         auto_cleared: list[dict[str, object]] = []
         for detail in details:
             forbidden = forbidden_fields.intersection(detail)
@@ -1538,6 +1545,14 @@ def save_assessment_draft(
                     "member cannot set calculated target fields: "
                     + ", ".join(sorted(forbidden)),
                     field=sorted(forbidden)[0],
+                )
+            tampered = adjustment_fields.intersection(detail)
+            if tampered:
+                raise DetailValidationError(
+                    "personal_target_adjustment_disabled",
+                    "个人目标调整已移除，目标掌握度由 Leader 通过能力标准维护",
+                    field=sorted(tampered)[0],
+                    reason="adjustment_disabled",
                 )
             row = _snapshot_row(detail)
             (
@@ -1557,6 +1572,7 @@ def save_assessment_draft(
                 _existing_plan,
                 _existing_quarter,
                 _existing_month,
+                existing_adjusted,
             ) = row
             if compatibility_error and detail.get("_detail_present", True):
                 raise DetailValidationError(
@@ -1584,17 +1600,8 @@ def save_assessment_draft(
                     reason="invalid_range",
                 )
 
-            target_adjusted = detail.get("target_adjusted", False)
-            if not isinstance(target_adjusted, bool):
-                raise DetailValidationError(
-                    "plan_validation",
-                    "target_adjusted must be boolean",
-                    l3_code=str(code),
-                    field="target_adjusted",
-                    reason="invalid_type",
-                )
-            adjusted = detail.get("adjusted_target_level")
-            reason = detail.get("target_adjustment_reason")
+            # #100: member payloads must not carry adjustment fields at all.
+            # Historical adjustments stored in the DB are preserved.
 
             # ── Canonical plan fields ──────────────────────────
             member_priority = detail.get("member_priority")
@@ -1608,14 +1615,7 @@ def save_assessment_draft(
                 and existing_target is not None
             )
             if legacy_preserved:
-                if target_adjusted or adjusted is not None or reason is not None:
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"legacy preserved target {code} cannot be adjusted",
-                        l3_code=str(code),
-                        field="target_adjusted",
-                        reason="legacy_preserved_readonly",
-                    )
+                # Historical-rule data: stored adjustment preserved.
                 final_target = int(existing_target)
                 gap_value = (
                     max(final_target - current_level, 0)
@@ -1623,14 +1623,6 @@ def save_assessment_draft(
                     else existing_gap
                 )
             elif applicable is not True:
-                if target_adjusted or adjusted is not None or reason is not None:
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"not applicable item {code} cannot be adjusted or planned",
-                        l3_code=str(code),
-                        field="target_adjusted",
-                        reason="not_applicable",
-                    )
                 current_level = None
                 final_target = None
                 gap_value = None
@@ -1648,39 +1640,13 @@ def save_assessment_draft(
                         field="standard_target_level",
                         reason="missing_standard_target",
                     )
-                if target_adjusted:
-                    if (
-                        isinstance(adjusted, bool)
-                        or not isinstance(adjusted, int)
-                        or not 1 <= adjusted <= 5
-                    ):
-                        raise DetailValidationError(
-                            "plan_validation",
-                            "adjusted_target_level must be between 1 and 5",
-                            l3_code=str(code),
-                            field="adjusted_target_level",
-                            reason="invalid_range",
-                        )
-                    if not isinstance(reason, str) or not reason.strip():
-                        raise DetailValidationError(
-                            "plan_validation",
-                            "adjustment reason is required",
-                            l3_code=str(code),
-                            field="target_adjustment_reason",
-                            reason="missing_required",
-                        )
-                    final_target = adjusted
-                    reason = reason.strip()
-                else:
-                    if adjusted is not None or reason is not None:
-                        raise DetailValidationError(
-                            "plan_validation",
-                            "adjustment fields require target_adjusted",
-                            l3_code=str(code),
-                            field="target_adjusted",
-                            reason="adjustment_fields_without_flag",
-                        )
-                    final_target = int(standard_target)
+                # #100: final_target comes from existing_target when a
+                # historical adjustment was stored, else standard_target.
+                final_target = (
+                    int(existing_target)
+                    if existing_adjusted
+                    else int(standard_target)
+                )
                 gap_value = (
                     max(final_target - current_level, 0)
                     if current_level is not None
@@ -1824,9 +1790,6 @@ def save_assessment_draft(
                 UPDATE assessment_detail
                 SET current_level = %s,
                     current_level_explicitly_cleared = %s,
-                    target_adjusted = %s,
-                    adjusted_target_level = %s,
-                    target_adjustment_reason = %s,
                     target_level = %s,
                     gap_value = %s,
                     evidence_note = %s,
@@ -1839,9 +1802,6 @@ def save_assessment_draft(
                 (
                     current_level,
                     explicitly_cleared,
-                    target_adjusted,
-                    adjusted if target_adjusted else None,
-                    reason if target_adjusted else None,
                     final_target,
                     gap_value,
                     detail.get("evidence_note"),
@@ -1875,8 +1835,7 @@ def patch_assessment_draft(
 ) -> dict[str, object]:
     rows = connection.execute(
         """
-        SELECT l3_code, current_level, target_adjusted,
-               adjusted_target_level, target_adjustment_reason,
+        SELECT l3_code, current_level,
                evidence_note, member_priority, include_in_plan,
                plan_quarter, plan_month,
                current_level_explicitly_cleared, l3_node_id
@@ -1888,18 +1847,15 @@ def patch_assessment_draft(
     ).fetchall()
     merged = {
         row[0]: {
-            "l3_node_id": row[11],
+            "l3_node_id": row[8],
             "l3_code": row[0],
             "current_level": row[1],
-            "target_adjusted": row[2],
-            "adjusted_target_level": row[3],
-            "target_adjustment_reason": row[4],
-            "evidence_note": row[5],
-            "member_priority": row[6],
-            "include_in_plan": row[7],
-            "plan_quarter": row[8],
-            "plan_month": row[9],
-            "current_level_explicitly_cleared": row[10],
+            "evidence_note": row[2],
+            "member_priority": row[3],
+            "include_in_plan": row[4],
+            "plan_quarter": row[5],
+            "plan_month": row[6],
+            "current_level_explicitly_cleared": row[7],
             "_current_level_present": False,
             "_include_in_plan_present": False,
             "_detail_present": False,
@@ -1908,9 +1864,6 @@ def patch_assessment_draft(
     }
     allowed = {
         "current_level",
-        "target_adjusted",
-        "adjusted_target_level",
-        "target_adjustment_reason",
         "evidence_note",
         "member_priority",
         "include_in_plan",
@@ -1925,8 +1878,8 @@ def patch_assessment_draft(
     node_index: dict[int, str] = {}
     if scope_version is not None:
         for row in rows:
-            if row[11] is not None:
-                node_index[int(row[11])] = row[0]
+            if row[8] is not None:
+                node_index[int(row[8])] = row[0]
     seen_codes: set[str] = set()
     seen_nodes: set[int] = set()
     for detail in details:
@@ -1986,6 +1939,21 @@ def patch_assessment_draft(
                 "unknown_detail",
                 f"unknown assessment detail: {code}",
                 l3_code=code,
+            )
+        # #100: reject personal target adjustment fields.
+        adjustment_fields = {
+            "target_adjusted",
+            "adjusted_target_level",
+            "target_adjustment_reason",
+        }
+        tampered = adjustment_fields.intersection(detail)
+        if tampered:
+            raise DetailValidationError(
+                "personal_target_adjustment_disabled",
+                "个人目标调整已移除，目标掌握度由 Leader 通过能力标准维护",
+                l3_code=code,
+                field=sorted(tampered)[0],
+                reason="adjustment_disabled",
             )
         forbidden = set(detail) - (allowed | {"l3_code", "l3_node_id"})
         if forbidden:
@@ -3756,11 +3724,6 @@ def _detail_data_issue(detail: dict[str, object]) -> bool:
     if detail.get("member_priority") == "暂缓" and include is True:
         return True
     if (
-        detail.get("target_adjusted")
-        and not (detail.get("target_adjustment_reason") or "").strip()
-    ):
-        return True
-    if (
         quarter is not None
         and month is not None
         and not (
@@ -3804,15 +3767,12 @@ def get_buddy_review_workspace(
 
     by_quarter = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
     in_plan = 0
-    adjustments = 0
     for detail in details:
         if detail.get("include_in_plan") is True:
             in_plan += 1
             quarter = detail.get("plan_quarter")
             if quarter in by_quarter:
                 by_quarter[quarter] += 1
-        if detail.get("target_adjusted"):
-            adjustments += 1
 
     summary = {
         "total": len(assessment["details"]),
@@ -3834,7 +3794,6 @@ def get_buddy_review_workspace(
         "hold": sum(1 for d in details if d.get("member_priority") == "暂缓"),
         "in_plan": in_plan,
         "by_quarter": by_quarter,
-        "adjustments": adjustments,
         "data_issues": _frozen_data_issues(assessment["details"]),
         "existing_formal_plan": existing_formal_plan,
         "will_create_proposal": will_create_proposal,

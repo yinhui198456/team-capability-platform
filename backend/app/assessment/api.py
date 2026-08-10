@@ -31,6 +31,11 @@ from .scope import AssessmentScopeError, compute_assessment_scope
 
 _VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
 _DEPRECATED_FIELDS = frozenset({"plan_candidate"})
+_PERSONAL_TARGET_ADJUSTMENT_FIELDS = frozenset({
+    "target_adjusted",
+    "adjusted_target_level",
+    "target_adjustment_reason",
+})
 
 
 def _validate_assessment_type(assessment_type: str) -> None:
@@ -491,14 +496,25 @@ def save_draft(
                     ),
                 },
             )
+    # #100: reject personal target adjustment fields at service boundary.
+    for item in request.details:
+        adjustment_fields = _PERSONAL_TARGET_ADJUSTMENT_FIELDS & item.model_fields_set
+        if adjustment_fields:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "personal_target_adjustment_disabled",
+                    "field": sorted(adjustment_fields)[0],
+                    "message": (
+                        "个人目标调整已移除，目标掌握度由 Leader 通过能力标准维护"
+                    ),
+                },
+            )
     details: list[dict[str, object]] = [
         {
             "l3_node_id": item.l3_node_id,
             "l3_code": item.l3_code,
             "current_level": item.current_level,
-            "target_adjusted": item.target_adjusted,
-            "adjusted_target_level": item.adjusted_target_level,
-            "target_adjustment_reason": item.target_adjustment_reason,
             "evidence_note": item.evidence_note,
             "member_priority": item.member_priority,
             "include_in_plan": item.include_in_plan,
@@ -560,6 +576,20 @@ def patch_draft(
                     ),
                 },
             )
+    # #100: reject personal target adjustment fields at service boundary.
+    for item in request.details:
+        adjustment_fields = _PERSONAL_TARGET_ADJUSTMENT_FIELDS & item.model_fields_set
+        if adjustment_fields:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "personal_target_adjustment_disabled",
+                    "field": sorted(adjustment_fields)[0],
+                    "message": (
+                        "个人目标调整已移除，目标掌握度由 Leader 通过能力标准维护"
+                    ),
+                },
+            )
     # Distinguish unset vs explicit-null via model_fields_set.
     details: list[dict[str, object]] = []
     for item in request.details:
@@ -569,9 +599,6 @@ def patch_draft(
         }
         for key in (
             "current_level",
-            "target_adjusted",
-            "adjusted_target_level",
-            "target_adjustment_reason",
             "evidence_note",
             "member_priority",
             "include_in_plan",

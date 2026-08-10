@@ -42,7 +42,6 @@ function workspaceFixture(
       hold: 0,
       in_plan: 0,
       by_quarter: { Q1: 0, Q2: 0, Q3: 0, Q4: 0 },
-      adjustments: 0,
       data_issues: 0,
       existing_formal_plan: false,
       will_create_proposal: false,

@@ -10,7 +10,9 @@ from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.api import DetailItem
 from app.assessment.repository import (
+    DetailValidationError,
     get_assessment,
+    patch_assessment_draft,
     save_assessment_draft,
     submit_assessment,
 )
@@ -134,7 +136,7 @@ def test_snapshot_is_immutable_after_model_and_member_changes(
     assert detail["target_snapshot_source"].endswith(":legacy_derived")
 
 
-def test_save_uses_snapshot_and_requires_reason_for_adjustment(
+def test_save_rejects_tampered_personal_adjustment_with_zero_partial_write(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P4")
@@ -145,7 +147,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
     standard_target_schema.commit()
     assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
 
-    with pytest.raises(ValueError, match="adjustment reason is required"):
+    with pytest.raises(DetailValidationError) as excinfo:
         save_assessment_draft(
             standard_target_schema,
             assessment_id,
@@ -157,11 +159,82 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                     "current_level": 1,
                     "target_adjusted": True,
                     "adjusted_target_level": 4,
-                    "target_adjustment_reason": " ",
+                    "target_adjustment_reason": "岗位项目要求",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q2",
+                    "plan_month": 5,
                 }
             ],
             expected_revision=1,
         )
+    assert excinfo.value.code == "personal_target_adjustment_disabled"
+
+    # zero partial write: nothing from the tampered payload was persisted
+    detail = get_assessment(standard_target_schema, assessment_id)["details"][0]
+    assert detail["current_level"] is None
+    assert detail["member_priority"] is None
+    assert detail["include_in_plan"] is None
+    assert detail["target_level"] == 2  # published standard snapshot only
+    assert detail["target_adjusted"] is False
+    assert get_assessment(standard_target_schema, assessment_id)["revision"] == 1
+
+
+def test_patch_rejects_tampered_personal_adjustment_with_zero_partial_write(
+    standard_target_schema: psycopg.Connection,
+) -> None:
+    member_id = _member(standard_target_schema, "P4")
+    node_id, code = _node_at_start(standard_target_schema, "P4")
+    standard_target_schema.execute(
+        "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
+    )
+    standard_target_schema.commit()
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
+
+    with pytest.raises(DetailValidationError) as excinfo:
+        patch_assessment_draft(
+            standard_target_schema,
+            assessment_id,
+            member_id,
+            expected_revision=1,
+            details=[
+                {
+                    "l3_code": code,
+                    "l3_node_id": node_id,
+                    "adjusted_target_level": 4,
+                }
+            ],
+        )
+    assert excinfo.value.code == "personal_target_adjustment_disabled"
+
+    detail = get_assessment(standard_target_schema, assessment_id)["details"][0]
+    assert detail["current_level"] is None
+    assert detail["target_level"] == 2
+    assert get_assessment(standard_target_schema, assessment_id)["revision"] == 1
+
+
+def test_legacy_stored_adjustment_preserved_through_member_save(
+    standard_target_schema: psycopg.Connection,
+) -> None:
+    member_id = _member(standard_target_schema, "P4")
+    node_id, code = _node_at_start(standard_target_schema, "P4")
+    standard_target_schema.execute(
+        "UPDATE capability_node SET enabled = (id = %s)", (node_id,)
+    )
+    standard_target_schema.commit()
+    assessment_id = create_scoped_draft(standard_target_schema, member_id, 2026)
+    # historical-rule data (pre-#100): a stored personal adjustment. A member
+    # save must preserve it — not delete, overwrite or backfill it.
+    standard_target_schema.execute(
+        """
+        UPDATE assessment_detail
+        SET target_adjusted = TRUE, adjusted_target_level = 4,
+            target_adjustment_reason = '岗位项目要求', target_level = 4
+        WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    )
+    standard_target_schema.commit()
 
     save_assessment_draft(
         standard_target_schema,
@@ -172,9 +245,6 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                 "l3_code": code,
                 "l3_node_id": node_id,
                 "current_level": 1,
-                "target_adjusted": True,
-                "adjusted_target_level": 4,
-                "target_adjustment_reason": "岗位项目要求",
                 "evidence_note": "已完成基础练习",
                 "member_priority": "高",
                 "include_in_plan": True,
@@ -186,19 +256,20 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
     )
 
     detail = get_assessment(standard_target_schema, assessment_id)["details"][0]
-    assert detail["standard_target_level"] == 2
+    assert detail["target_adjusted"] is True
     assert detail["adjusted_target_level"] == 4
+    assert detail["target_adjustment_reason"] == "岗位项目要求"
     assert detail["target_level"] == 4
     assert detail["gap_value"] == 3
 
 
-def test_not_applicable_item_rejects_adjustment(
+def test_tampered_adjustment_rejected_even_on_legacy_not_applicable_item(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P5")
     _, code = _node_at_start(standard_target_schema, "P6")
-    # legacy (pre-#60) draft carrying a not-applicable detail; the save path
-    # must keep rejecting adjustments on it
+    # legacy (pre-#60) draft carrying a not-applicable detail; any personal
+    # adjustment parameter in the payload is rejected at the service boundary
     assessment_id = int(
         standard_target_schema.execute(
             """
@@ -220,7 +291,7 @@ def test_not_applicable_item_rejects_adjustment(
     )
     standard_target_schema.commit()
 
-    with pytest.raises(ValueError, match="not applicable"):
+    with pytest.raises(DetailValidationError) as excinfo:
         save_assessment_draft(
             standard_target_schema,
             assessment_id,
@@ -240,6 +311,16 @@ def test_not_applicable_item_rejects_adjustment(
             ],
             expected_revision=1,
         )
+    assert excinfo.value.code == "personal_target_adjustment_disabled"
+
+    row = standard_target_schema.execute(
+        """
+        SELECT current_level, target_level, member_priority, include_in_plan
+        FROM assessment_detail WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    ).fetchone()
+    assert row == (None, None, None, None)
 
 
 def test_batch_save_is_atomic_and_requires_every_snapshot_row(

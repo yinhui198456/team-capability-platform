@@ -49,7 +49,6 @@ type ReviewFilter =
   | '目标职级进阶且有Gap'
   | '已纳入计划'
   | '暂缓'
-  | '个人调整'
   | '数据异常'
 
 function formatDateTime(value: string | null | undefined) {
@@ -78,8 +77,6 @@ function matchesFilter(
       return detail.include_in_plan === true
     case '暂缓':
       return detail.member_priority === '暂缓'
-    case '个人调整':
-      return detail.target_adjusted === true
     case '数据异常':
       return detail.data_issue === true
   }
@@ -121,7 +118,6 @@ function workspaceFromMocks(
       hold: details.filter((d) => d.member_priority === '暂缓').length,
       in_plan: inPlan.length,
       by_quarter: byQuarter,
-      adjustments: details.filter((d) => d.target_adjusted === true).length,
       data_issues: 0,
       existing_formal_plan: false,
       will_create_proposal: false,
@@ -590,7 +586,6 @@ export function BuddyReviewCenter() {
                   {workspace.summary.by_quarter.Q3} · Q4{' '}
                   {workspace.summary.by_quarter.Q4}
                 </span>
-                <span>个人调整 {workspace.summary.adjustments}</span>
                 <span>数据异常 {workspace.summary.data_issues}</span>
               </div>
 
@@ -636,7 +631,6 @@ export function BuddyReviewCenter() {
                       '目标职级进阶且有Gap',
                       '已纳入计划',
                       '暂缓',
-                      '个人调整',
                       '数据异常',
                     ] as ReviewFilter[]
                   ).map((filter) => (
@@ -674,7 +668,6 @@ export function BuddyReviewCenter() {
                               <th>优先级</th>
                               <th>纳入计划</th>
                               <th>计划时间</th>
-                              <th>个人调整</th>
                               <th>数据</th>
                             </tr>
                           </thead>
@@ -722,19 +715,6 @@ export function BuddyReviewCenter() {
                                   {detail.plan_quarter && detail.plan_month
                                     ? `${detail.plan_quarter} ${detail.plan_month}月`
                                     : '—'}
-                                </td>
-                                <td>
-                                  {detail.target_adjusted ? (
-                                    <span className="adjustment-badge">
-                                      {detail.standard_target_level ?? '—'} →{' '}
-                                      {detail.adjusted_target_level ?? '—'}
-                                      {detail.target_adjustment_reason
-                                        ? `（${detail.target_adjustment_reason}）`
-                                        : ''}
-                                    </span>
-                                  ) : (
-                                    <span className="muted">无</span>
-                                  )}
                                 </td>
                                 <td>
                                   {detail.data_issue ? (

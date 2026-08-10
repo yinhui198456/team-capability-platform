@@ -83,9 +83,7 @@ function domainLabel(code: string) {
 
 function effectiveTarget(detail: AssessmentDetail): number | null {
   if (!isApplicableDetail(detail)) return null
-  return detail.target_adjusted
-    ? (detail.adjusted_target_level ?? null)
-    : (detail.standard_target_level ?? detail.target_level ?? null)
+  return detail.standard_target_level ?? detail.target_level ?? null
 }
 
 function isFilled(detail: AssessmentDetail) {
@@ -104,15 +102,6 @@ function normalizeEvidence(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function isValidLevel(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    value <= 5
-  )
-}
-
 function isEvidenceValid(detail: AssessmentDetail) {
   const current = detail.current_level
   if (current == null) return true
@@ -127,20 +116,6 @@ function isEvidenceValid(detail: AssessmentDetail) {
     )
   }
   return current < 3 || evidence.length > 0
-}
-
-function adjustmentReason(detail: AssessmentDetail) {
-  if (!detail.target_adjusted) {
-    return detail.adjusted_target_level != null ||
-      normalizeEvidence(detail.target_adjustment_reason)
-      ? '需取消个人调整'
-      : ''
-  }
-  if (!isValidLevel(detail.adjusted_target_level)) return '需填写调整目标'
-  if (!normalizeEvidence(detail.target_adjustment_reason)) {
-    return '需填写调整原因'
-  }
-  return ''
 }
 
 function isInheritedUpdate(detail: AssessmentDetail) {
@@ -173,8 +148,6 @@ function unfilledReason(detail: AssessmentDetail) {
   // ADVANCED capabilities may be assessed later (staged self-assessment,
   // #81 round 1); they never block submission or count as unfinished.
   if (detail.scope_type === 'target_progressive') return ''
-  const adjustment = adjustmentReason(detail)
-  if (adjustment) return adjustment
   if (detail.current_level == null || effectiveTarget(detail) == null) {
     return '需评估等级'
   }
@@ -330,7 +303,6 @@ export function AssessmentGapPage() {
   const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
-  const [adjustmentId, setAdjustmentId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -1511,10 +1483,6 @@ export function AssessmentGapPage() {
                               const gap = computeGap(detail)
                               const reason = unfilledReason(detail)
                               const applicable = isApplicableDetail(detail)
-                              const adjustable =
-                                applicable &&
-                                detail.standard_target_level != null &&
-                                !detail.target_compatibility_error
                               const inherited =
                                 detail.inherited_from_assessment_id != null
                               const updated =
@@ -1611,121 +1579,12 @@ export function AssessmentGapPage() {
                                               [已调整]
                                             </span>
                                           )}
-                                          {adjustable && editable && (
-                                            <button
-                                              type="button"
-                                              className={s.adjustBtn}
-                                              title="申请个人调整目标（1–5 级），需填写调整原因，由 Buddy 复核"
-                                              onClick={() =>
-                                                setAdjustmentId(
-                                                  adjustmentId === detail.id
-                                                    ? null
-                                                    : (detail.id ?? null),
-                                                )
-                                              }
-                                            >
-                                              调整个人目标
-                                            </button>
-                                          )}
                                           {detail.target_snapshot_source ===
                                             'legacy_preserved' && (
                                             <small className={s.snapshotTag}>
                                               历史保留
                                             </small>
                                           )}
-                                          {/* Inline adjustment editor */}
-                                          {adjustmentId === detail.id &&
-                                            editable && (
-                                              <div
-                                                className={s.adjustmentEditor}
-                                              >
-                                                <p className={s.adjustHelp}>
-                                                  标准目标由你的目标职级与
-                                                  能力标准自动生成、只读；如需
-                                                  个人调整，选择调整后目标（1–5）
-                                                  并填写原因，保存后由 Buddy
-                                                  复核。
-                                                </p>
-                                                <label className="checkbox">
-                                                  <input
-                                                    type="checkbox"
-                                                    aria-label={`启用个人调整 ${detail.l3_code}`}
-                                                    checked={
-                                                      detail.target_adjusted ??
-                                                      false
-                                                    }
-                                                    onChange={(event) =>
-                                                      updateDetail(index, {
-                                                        target_adjusted:
-                                                          event.target.checked,
-                                                        adjusted_target_level:
-                                                          event.target.checked
-                                                            ? (detail.adjusted_target_level ??
-                                                              detail.standard_target_level ??
-                                                              null)
-                                                            : null,
-                                                        target_adjustment_reason:
-                                                          event.target.checked
-                                                            ? (detail.target_adjustment_reason ??
-                                                              '')
-                                                            : null,
-                                                      })
-                                                    }
-                                                  />
-                                                  启用调整
-                                                </label>
-                                                {detail.target_adjusted && (
-                                                  <>
-                                                    <select
-                                                      value={
-                                                        detail.adjusted_target_level ??
-                                                        ''
-                                                      }
-                                                      onChange={(event) =>
-                                                        updateDetail(index, {
-                                                          adjusted_target_level:
-                                                            event.target.value
-                                                              ? Number(
-                                                                  event.target
-                                                                    .value,
-                                                                )
-                                                              : null,
-                                                        })
-                                                      }
-                                                      aria-label={`调整目标 ${detail.l3_code}`}
-                                                    >
-                                                      <option value="">
-                                                        选择
-                                                      </option>
-                                                      {LEVELS.filter(
-                                                        (l) => l >= 1,
-                                                      ).map((level) => (
-                                                        <option
-                                                          key={level}
-                                                          value={level}
-                                                        >
-                                                          {level}
-                                                        </option>
-                                                      ))}
-                                                    </select>
-                                                    <input
-                                                      aria-label={`调整原因 ${detail.l3_code}`}
-                                                      value={
-                                                        detail.target_adjustment_reason ??
-                                                        ''
-                                                      }
-                                                      placeholder="填写调整原因"
-                                                      onChange={(event) =>
-                                                        updateDetail(index, {
-                                                          target_adjustment_reason:
-                                                            event.target.value,
-                                                        })
-                                                      }
-                                                    />
-                                                  </>
-                                                )}
-                                              </div>
-                                            )}
                                         </div>
                                       ) : (
                                         '不适用'
