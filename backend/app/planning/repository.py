@@ -4628,26 +4628,9 @@ def _team_analytics_monthly_trends(
     domain_code: str | None,
 ) -> list[dict[str, object]]:
     if not member_ids:
-        return [
-            {
-                "month": month,
-                "planned_count": 0,
-                "actual_count": 0,
-                "cumulative_planned_rate": 0.0,
-                "cumulative_actual_rate": 0.0,
-                "planned_hours": 0,
-                "planned_hours_min": None,
-                "planned_hours_max": None,
-                "planned_hours_has_unparsed": False,
-                "actual_hours": 0,
-                "cumulative_planned_hours": 0,
-                "cumulative_planned_hours_min": 0,
-                "cumulative_planned_hours_max": 0,
-                "cumulative_planned_hours_has_unparsed": False,
-                "cumulative_actual_hours": 0,
-            }
-            for month in range(1, 13)
-        ]
+        # Empty filtered cohort: explicit no-data, distinguishable from a
+        # populated cohort with zero completions (Issue #87).
+        return []
     planned_rows = connection.execute(
         """
         SELECT pi.plan_month AS month,
@@ -4671,20 +4654,40 @@ def _team_analytics_monthly_trends(
         for month, values in planned_values_by_month.items()
     }
 
+    # Completed items come from the SAME population and predicate as the
+    # plan-completion KPI (plan_item.status = '已完成', non-cancelled,
+    # year/member/domain filters), so the year-end cumulative reconciles
+    # with the summary by construction (Issue #87).  Attribution month is
+    # the persisted completion month — actual_completed_at (v0010 gate),
+    # falling back to the legacy actual_end_date — when it lands inside the
+    # plan year; otherwise the item's saved plan_month.  Nothing is derived
+    # from updated_at.
     actual_count_rows = connection.execute(
         """
-        SELECT EXTRACT(MONTH FROM lt.actual_end_date)::INT AS month,
-               COUNT(*) AS actual_count
-        FROM learning_task lt
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE lt.status = '已完成' AND EXTRACT(YEAR FROM lt.actual_end_date) = %s
-          AND agp.member_id = ANY(%s)
-          AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        SELECT month, COUNT(*) AS actual_count
+        FROM (
+            SELECT CASE
+                       WHEN lt.actual_completed_at IS NOT NULL
+                            AND EXTRACT(YEAR FROM lt.actual_completed_at) = %s
+                           THEN EXTRACT(MONTH FROM lt.actual_completed_at)::INT
+                       WHEN lt.actual_end_date IS NOT NULL
+                            AND EXTRACT(YEAR FROM lt.actual_end_date) = %s
+                           THEN EXTRACT(MONTH FROM lt.actual_end_date)::INT
+                       ELSE pi.plan_month
+                   END AS month
+            FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id
+            WHERE pi.status = '已完成'
+              AND agp.year = %s
+              AND agp.member_id = ANY(%s)
+              AND (%s::TEXT IS NULL OR LEFT(pi.l3_code, 3) = %s::TEXT)
+        ) attributed
+        WHERE month IS NOT NULL
         GROUP BY month
         ORDER BY month
         """,
-        (year, member_ids, domain_code, domain_code),
+        (year, year, year, member_ids, domain_code, domain_code),
     ).fetchall()
     actual_count_by_month = {int(row[0]): int(row[1]) for row in actual_count_rows}
 
@@ -4719,6 +4722,10 @@ def _team_analytics_monthly_trends(
         (year, member_ids, domain_code, domain_code),
     ).fetchone()
     total_plan_items = int(total_row[0]) if total_row else 0
+    if total_plan_items == 0:
+        # No plan items in the filtered cohort: explicit no-data, not twelve
+        # zero months (Issue #87).
+        return []
 
     trends: list[dict[str, object]] = []
     cumulative_planned = 0

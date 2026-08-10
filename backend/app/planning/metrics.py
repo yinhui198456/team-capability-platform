@@ -142,6 +142,24 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
         "scope": "团队",
         "phase": 2,
     },
+    "team_analytics.monthly_trends": {
+        "definition": (
+            "Monthly plan vs actual over the filtered cohort's non-cancelled "
+            "plan items — the SAME population and 已完成 predicate as the "
+            "plan-completion KPI, so the month-12 cumulative count/rate "
+            "reconciles with the summary by construction (Issue #87).  "
+            "planned_count / planned hours bucket by plan_month.  "
+            "actual_count attributes each completed plan item to its "
+            "persisted completion month (learning_task.actual_completed_at, "
+            "legacy fallback actual_end_date) when it lands inside the plan "
+            "year, otherwise to the item's saved plan_month; never derived "
+            "from updated_at.  An empty plan-item population returns an "
+            "empty list (no-data), distinct from a populated cohort with "
+            "zero completions."
+        ),
+        "scope": "团队",
+        "phase": 2,
+    },
     "team_annual_plan.meta": {
         "definition": "as_of / year / scope / source for the Team Annual Plan.",
         "scope": "团队",

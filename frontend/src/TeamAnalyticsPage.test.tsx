@@ -142,6 +142,8 @@ describe('TeamAnalyticsPage', () => {
     ).toBeTruthy()
     expect(screen.getByRole('figure', { name: '计划完成组合图' })).toBeTruthy()
     expect(screen.getByRole('figure', { name: '学习时长组合图' })).toBeTruthy()
+    // Issue #87: the trend states its shared caliber with the summary KPI.
+    expect(screen.getByText(/当月实际与顶部计划完成率同口径/)).toBeTruthy()
     // 04_UI §4.5: the KPI row includes 自评完成率 with numerator/denominator.
     const completionCard = screen
       .getByText('自评完成率')
@@ -190,6 +192,66 @@ describe('TeamAnalyticsPage', () => {
     expect(within(card as HTMLElement).getByText('—')).toBeTruthy()
     expect(within(card as HTMLElement).getByText('暂无自评记录')).toBeTruthy()
     expect(within(card as HTMLElement).queryByText('0%')).toBeNull()
+  })
+
+  it('distinguishes no plan items from a genuine zero completion rate', async () => {
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    const getTeamAnalytics = vi.spyOn(planningApi, 'getTeamAnalytics')
+
+    // Genuine zero: plan items exist, none completed → 0% and 0 / N 项.
+    getTeamAnalytics.mockResolvedValue({
+      ...analytics,
+      kpis: {
+        ...analytics.kpis,
+        plan_completion_rate: 0,
+        plan_completed_count: 0,
+        plan_total_count: 2,
+      },
+      monthly_trends: analytics.monthly_trends.map((trend) => ({
+        ...trend,
+        actual_count: 0,
+        cumulative_actual_rate: 0,
+      })),
+    })
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('计划完成率')).toBeTruthy())
+    let card = screen.getByText('计划完成率').closest('article') as HTMLElement
+    expect(within(card).getByText('0%')).toBeTruthy()
+    expect(within(card).getByText('0 / 2 项')).toBeTruthy()
+    expect(within(card).queryByText('暂无计划项')).toBeNull()
+    unmount()
+
+    // No-data: empty plan-item population → — and 暂无计划项, never 0%.
+    getTeamAnalytics.mockResolvedValue({
+      ...analytics,
+      kpis: {
+        ...analytics.kpis,
+        plan_completion_rate: 0,
+        plan_completed_count: 0,
+        plan_total_count: 0,
+      },
+      monthly_trends: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('计划完成率')).toBeTruthy())
+    card = screen.getByText('计划完成率').closest('article') as HTMLElement
+    expect(within(card).getByText('—')).toBeTruthy()
+    expect(within(card).getByText('暂无计划项')).toBeTruthy()
+    expect(within(card).queryByText('0%')).toBeNull()
+    expect(screen.getAllByText('暂无趋势数据。')).toHaveLength(2)
   })
 
   it('keeps a min-height loading placeholder while the first request is in flight', async () => {

@@ -353,10 +353,15 @@ export function TeamAnalyticsPage() {
             </article>
             <article>
               <span>计划完成率</span>
-              <strong>{percent(analytics.kpis.plan_completion_rate)}</strong>
+              <strong>
+                {analytics.kpis.plan_total_count > 0
+                  ? percent(analytics.kpis.plan_completion_rate)
+                  : '—'}
+              </strong>
               <small>
-                {analytics.kpis.plan_completed_count} /{' '}
-                {analytics.kpis.plan_total_count} 项
+                {analytics.kpis.plan_total_count > 0
+                  ? `${analytics.kpis.plan_completed_count} / ${analytics.kpis.plan_total_count} 项`
+                  : '暂无计划项'}
               </small>
             </article>
             <article>
@@ -603,6 +608,9 @@ export function TeamAnalyticsPage() {
           <div className="dashboard-grid">
             <article className="dashboard-card">
               <h2>计划完成趋势</h2>
+              <p className="muted">
+                当月实际与顶部计划完成率同口径：已完成计划项按任务完成时间归属月份，无完成时间的按计划月归属。
+              </p>
               {analytics.monthly_trends.length === 0 ? (
                 <p className="muted">暂无趋势数据。</p>
               ) : (

@@ -571,7 +571,8 @@ def test_team_analytics_empty_data_returns_zero_aggregates(
     assert len(body["domain_averages"]) == 6
     assert all(entry["actual"] == 0 for entry in body["domain_averages"])
     assert body["member_attainment"] == []
-    assert len(body["monthly_trends"]) == 12
+    # Empty cohort is an explicit no-data state, not 12 zero months (Issue #87).
+    assert body["monthly_trends"] == []
     assert body["overdue_items"] == []
     assert body["distributions"] == {
         "priority": {"高": 0, "中": 0, "低": 0, "total": 0},
@@ -698,6 +699,154 @@ def test_team_analytics_aggregates_match_data(
         "total": 3,
     }
     assert distributions["pending_acceptance"] == {"count": 0}
+
+
+def test_team_analytics_trend_uses_persisted_completion_month(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    """Issue #87: the real v0010 completion path persists actual_completed_at,
+    never actual_end_date.  The trend must attribute the completed plan item
+    to that persisted completion month and reconcile with the summary KPI
+    under identical year/member/domain filters.
+    """
+    member_a_id, _, leader_cookies = _build_two_member_team(team_analytics_schema)
+    # Rewrite member A's completed P01 task to the shape the completion gate
+    # actually persists: actual_completed_at set, actual_end_date NULL.
+    team_analytics_schema.execute(
+        """
+        UPDATE learning_task
+        SET actual_completed_at = %s, actual_end_date = NULL
+        WHERE plan_item_id = (
+            SELECT pi.id FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s AND pi.l3_code = 'P01-L2A-L3A'
+        )
+        """,
+        ("2026-03-10T09:00:00+00:00", member_a_id),
+    )
+    team_analytics_schema.commit()
+
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=leader_cookies
+    )
+    assert status == 200
+    assert body is not None
+
+    kpis = body["kpis"]
+    assert kpis["plan_completed_count"] == 1
+    assert kpis["plan_total_count"] == 3
+
+    trends = {row["month"]: row for row in body["monthly_trends"]}
+    # Completed in March (persisted completion month), not in the plan month.
+    assert trends[3]["actual_count"] == 1
+    assert trends[5]["actual_count"] == 0
+    # Year-end cumulative reconciles to the summary numerator/rate.
+    assert sum(row["actual_count"] for row in trends.values()) == (
+        kpis["plan_completed_count"]
+    )
+    assert trends[12]["cumulative_actual_rate"] == pytest.approx(
+        kpis["plan_completion_rate"], rel=1e-3
+    )
+
+    # Member detail (member_id filter) explains the same count.
+    status, member_body, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_a_id}",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    member_trends = {row["month"]: row for row in member_body["monthly_trends"]}
+    assert member_body["kpis"]["plan_completed_count"] == 1
+    assert member_trends[3]["actual_count"] == 1
+    assert member_trends[12]["cumulative_actual_rate"] == pytest.approx(
+        member_body["kpis"]["plan_completion_rate"], rel=1e-3
+    )
+
+
+def test_team_analytics_trend_falls_back_to_plan_month(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    """Issue #87: a completed plan item without any persisted completion
+    timestamp is attributed to its saved plan_month (labeled in the UI as
+    completion by plan month), never derived from updated_at.
+    """
+    member_a_id, _, leader_cookies = _build_two_member_team(team_analytics_schema)
+    # Member A's P02 item (plan_month 5): complete it with no completion dates.
+    team_analytics_schema.execute(
+        """
+        UPDATE learning_task
+        SET status = '已完成', actual_completed_at = NULL, actual_end_date = NULL
+        WHERE plan_item_id = (
+            SELECT pi.id FROM plan_item pi
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            WHERE agp.member_id = %s AND pi.l3_code = 'P02-L2B-L3A'
+        )
+        """,
+        (member_a_id,),
+    )
+    team_analytics_schema.execute(
+        """
+        UPDATE plan_item SET status = '已完成'
+        WHERE l3_code = 'P02-L2B-L3A'
+          AND annual_growth_plan_id IN (
+              SELECT id FROM annual_growth_plan WHERE member_id = %s
+          )
+        """,
+        (member_a_id,),
+    )
+    team_analytics_schema.commit()
+
+    status, body, _ = _request(
+        "GET", "/api/planning/team-analytics?year=2026", cookies=leader_cookies
+    )
+    assert status == 200
+    assert body is not None
+
+    kpis = body["kpis"]
+    assert kpis["plan_completed_count"] == 2
+    trends = {row["month"]: row for row in body["monthly_trends"]}
+    # P01 in March (persisted), P02 in May (plan_month fallback).
+    assert trends[3]["actual_count"] == 1
+    assert trends[5]["actual_count"] == 1
+    assert trends[12]["cumulative_actual_rate"] == pytest.approx(
+        kpis["plan_completion_rate"], rel=1e-3
+    )
+
+
+def test_team_analytics_trend_distinguishes_no_data_from_zero(
+    team_analytics_schema: psycopg.Connection,
+) -> None:
+    """Issue #87: a populated cohort with zero completions renders twelve
+    months of genuine zeros; a cohort without any plan items is no-data.
+    """
+    _, member_b_id, leader_cookies = _build_two_member_team(team_analytics_schema)
+
+    # Member B has one planned item and zero completions → genuine zeros.
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2026&member_id={member_b_id}",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    assert body is not None
+    assert body["kpis"]["plan_total_count"] == 1
+    assert body["kpis"]["plan_completed_count"] == 0
+    trends = body["monthly_trends"]
+    assert len(trends) == 12
+    assert all(row["actual_count"] == 0 for row in trends)
+    assert all(row["cumulative_actual_rate"] == 0.0 for row in trends)
+    assert sum(row["planned_count"] for row in trends) == 1
+
+    # A year with no plan items at all → explicit no-data, not zeros.
+    status, body, _ = _request(
+        "GET",
+        f"/api/planning/team-analytics?year=2027&member_id={member_b_id}",
+        cookies=leader_cookies,
+    )
+    assert status == 200
+    assert body is not None
+    assert body["kpis"]["plan_total_count"] == 0
+    assert body["monthly_trends"] == []
 
 
 def test_team_analytics_keeps_estimated_hour_ranges_as_ranges(
