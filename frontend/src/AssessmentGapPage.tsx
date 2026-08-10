@@ -83,6 +83,17 @@ function domainLabel(code: string) {
 
 function effectiveTarget(detail: AssessmentDetail): number | null {
   if (!isApplicableDetail(detail)) return null
+  // #100: preserved historical adjustments keep their effective target for
+  // display and gap math (read-only); new/non-adjusted rows use the
+  // published standard target.
+  if (detail.target_adjusted) {
+    return (
+      detail.target_level ??
+      detail.adjusted_target_level ??
+      detail.standard_target_level ??
+      null
+    )
+  }
   return detail.standard_target_level ?? detail.target_level ?? null
 }
 

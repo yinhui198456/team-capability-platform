@@ -753,15 +753,52 @@ describe('AssessmentGapPage', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          revision: 2,
+          gap_summary: {
+            total_gaps: 1,
+            avg_gap: 3.0,
+            high_priority: 1,
+            medium_priority: 0,
+            low_priority: 0,
+          },
+        }),
+        { status: 200 },
+      ),
+    )
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    // Historical adjustment shown read-only with label
-    expect(screen.getByText('[已调整]')).toBeTruthy()
+    const row = document.getElementById('row-1') as HTMLElement
+    // Preserved effective target (4) and gap (4−1=3) are displayed — never
+    // the standard target (2) / standard gap (1) for an adjusted row.
+    expect(within(row).getByText('4')).toBeTruthy()
+    expect(within(row).getByText('3')).toBeTruthy()
+    // Historical adjustment shown read-only with label; no editor exists.
+    expect(within(row).getByText('[已调整]')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
+    // Plan save still omits every adjustment request field.
+    fireEvent.change(screen.getByRole('combobox', { name: /优先级/ }), {
+      target: { value: '高' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+    const fetchCall = fetchSpy.mock.calls.find(
+      (call: [input: RequestInfo | URL, init?: RequestInit]) =>
+        call[0].toString().includes('/api/assessments/') &&
+        call[0].toString().includes('/draft'),
+    )
+    expect(fetchCall).toBeDefined()
+    const body = JSON.parse((fetchCall![1] as RequestInit).body as string)
+    expect(body.details[0]).not.toHaveProperty('target_adjusted')
+    expect(body.details[0]).not.toHaveProperty('adjusted_target_level')
+    expect(body.details[0]).not.toHaveProperty('target_adjustment_reason')
   })
 
   it('allows an unchanged inherited value with valid inherited evidence', async () => {
