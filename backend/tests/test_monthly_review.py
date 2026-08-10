@@ -446,6 +446,30 @@ def test_monthly_review_details_are_month_scoped(
     assert body["summary"]["actual_hours"] == 0  # March log is not June hours
 
 
+def test_monthly_review_attributes_hours_to_occurrence_month_only(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """Issue #86: plan count stays in the plan month; log hours are never
+    attributed to a month other than the log's record_date month."""
+    member_id, member_cookies = _build_full_profile(profile_schema)
+    # Seed state: the plan item is planned for May; its task carries a March
+    # log (5h).  May must report the planned item with 0 March hours, and
+    # June (neither plan nor occurrence month) must stay empty.
+    status, body, _ = _get_review(profile_schema, member_cookies, month=5)
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["planned_count"] == 1
+    assert body["summary"]["actual_hours"] == 0
+    assert [d["actual_hours"] for d in body["details"]] == [0]
+
+    status, body, _ = _get_review(profile_schema, member_cookies, month=6)
+    assert status == 200
+    assert body is not None
+    assert body["summary"]["planned_count"] == 0
+    assert body["summary"]["actual_hours"] == 0
+    assert body["details"] == []
+
+
 def test_monthly_review_write_requires_member_owner(
     profile_schema: psycopg.Connection,
 ) -> None:

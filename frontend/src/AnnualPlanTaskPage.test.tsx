@@ -242,6 +242,44 @@ describe('AnnualPlanTaskPage display', () => {
     expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
   })
 
+  it('Issue #86: plan_month-only item counts in month axis, filter and row', async () => {
+    // Assessment-approved items carry plan_month/plan_quarter only; task
+    // start/end dates and legacy target_month are NULL.  The month axis,
+    // month filter and row summary must still attribute the item to its
+    // saved plan month.
+    await renderMember([
+      makeItem({
+        id: 1,
+        l3_code: 'P02.02.01',
+        l3_name: 'LLMOps 平台部署',
+        plan_start_date: null,
+        plan_end_date: null,
+        target_month: null,
+        plan_month: 9,
+        plan_quarter: 'Q3',
+      }),
+    ])
+
+    const timeline = screen.getByTestId('month-timeline')
+    const september = within(timeline)
+      .getAllByRole('button')
+      .find((b) => b.textContent?.startsWith('9 月'))
+    expect(september?.textContent).toContain('1 项')
+
+    const row = screen.getByTestId('plan-header')
+    expect(row.textContent).toContain('9 月')
+    expect(row.textContent).not.toContain('—')
+
+    // The row column is labeled as the plan month, distinct from actual
+    // hours/occurrence month (Issue #86 caliber separation).
+    expect(screen.getByText('计划月份')).toBeTruthy()
+
+    fireEvent.click(september!)
+    await waitFor(() => {
+      expect(screen.getByText('P02.02.01 · LLMOps 平台部署')).toBeTruthy()
+    })
+  })
+
   it('shows an estimated-hour range without coercing it to zero', async () => {
     await renderMember(
       [
@@ -1009,7 +1047,10 @@ describe('plan item source summary (issue #63)', () => {
     expect(screen.getByText('评估 #1')).toBeTruthy()
     expect(screen.getByText('计划季度')).toBeTruthy()
     expect(screen.getByText('Q2')).toBeTruthy()
-    expect(screen.getByText('计划月份')).toBeTruthy()
+    // Scoped: the column header is also labeled 计划月份 (Issue #86).
+    expect(
+      within(screen.getByTestId('task-detail-panel')).getByText('计划月份'),
+    ).toBeTruthy()
     // Scoped: the month timeline also renders a "6 月" button.
     expect(
       within(screen.getByTestId('task-detail-panel')).getByText('6 月'),

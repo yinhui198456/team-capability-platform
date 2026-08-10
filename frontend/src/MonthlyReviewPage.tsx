@@ -133,7 +133,8 @@ export function MonthlyReviewPage() {
           <p className="eyebrow">Member 工作台 · {year} 年</p>
           <h1>月度复盘</h1>
           <p className="muted">
-            按计划项聚合六态与预计/实际耗时；汇总与明细由同一查询计算，可复算。
+            计划项与状态按计划月份归属；实际耗时按学习日志 record_date
+            的发生月份统计；汇总与明细由同一查询计算，可复算。
           </p>
         </div>
         <label>

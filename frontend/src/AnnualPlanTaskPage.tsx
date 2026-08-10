@@ -130,6 +130,13 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
+// Plan-month caliber (Issue #86): the saved source plan month is
+// authoritative; legacy target_month is the fallback when plan_month is
+// absent.  Month axis, month filter and the row summary all use this.
+function planItemMonth(item: PlanItem): number | null {
+  return item.plan_month ?? item.target_month
+}
+
 export function AnnualPlanTaskPage() {
   const year = useYear()
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
@@ -249,7 +256,7 @@ export function AnnualPlanTaskPage() {
 
   const items = plan?.items ?? []
   const visibleItems = items
-    .filter((i) => !selectedMonth || i.target_month === selectedMonth)
+    .filter((i) => !selectedMonth || planItemMonth(i) === selectedMonth)
     .filter((i) => statusFilter === '全部状态' || i.status === statusFilter)
     .filter(
       (i) => priorityFilter === '全部优先级' || i.priority === priorityFilter,
@@ -560,7 +567,7 @@ export function AnnualPlanTaskPage() {
       {/* Monthly timeline */}
       <div className={s.timeline} data-testid="month-timeline">
         {MONTHS.map((m) => {
-          const count = items.filter((i) => i.target_month === m).length
+          const count = items.filter((i) => planItemMonth(i) === m).length
           return (
             <button
               key={m}
@@ -638,7 +645,7 @@ export function AnnualPlanTaskPage() {
           <strong>掌握度提升</strong>
           <strong>计划时长</strong>
           <strong>实际时长</strong>
-          <strong>月份</strong>
+          <strong>计划月份</strong>
           <strong>状态</strong>
           <span />
         </div>
@@ -683,7 +690,7 @@ export function AnnualPlanTaskPage() {
                 </span>
                 <span>{td ? td.task.actual_hours : 0} h</span>
                 <span>
-                  {item.target_month ? `${item.target_month} 月` : '—'}
+                  {planItemMonth(item) ? `${planItemMonth(item)} 月` : '—'}
                 </span>
                 <span className={`${s.status} ${statusClass(st)}`}>
                   {STATUS_LABELS[st] ?? st}

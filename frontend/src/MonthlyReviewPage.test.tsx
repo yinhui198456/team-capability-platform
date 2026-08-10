@@ -475,4 +475,19 @@ describe('MonthlyReviewPage', () => {
       '未创建',
     )
   })
+
+  it('Issue #86: explains plan-month vs log-occurrence-month calibers', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMonthlyReview').mockResolvedValue(reviewFixture())
+    renderPage()
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '月度复盘', level: 1 }),
+      ).toBeTruthy()
+    })
+    // 计划数归计划月份、实际耗时归日志发生月份——页面必须可解释两种口径。
+    expect(screen.getByText(/计划月份/)).toBeTruthy()
+    expect(screen.getByText(/发生月份/)).toBeTruthy()
+  })
 })
