@@ -196,31 +196,6 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
   })
 
-  test('personal adjustment requires a valid target and reason, and cancel unblocks submit', async ({
-    page,
-  }) => {
-    await fillAllApplicable(page)
-    const code = 'P01.01.01'
-    const search = page.getByLabel('搜索全部能力项')
-    await search.fill(code)
-    await search.press('Enter')
-    const current = page.getByLabel(`当前等级 ${code}`)
-    if ((await current.inputValue()) === '') await current.selectOption('1')
-    const row = current.locator('xpath=ancestor::tr')
-    await row.getByRole('button', { name: '调整个人目标' }).click()
-    const enable = page.getByLabel(`启用个人调整 ${code}`)
-    await enable.check()
-    await page.getByLabel(`调整目标 ${code}`).selectOption('')
-    await expect(page.getByText('需填写调整目标')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
-    await page.getByLabel(`调整目标 ${code}`).selectOption('4')
-    await expect(page.getByText('需填写调整原因')).toBeVisible()
-    await page.getByLabel(`调整原因 ${code}`).fill('合法调整原因')
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-    await enable.uncheck()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-  })
-
   test('structured submit validation switches domain and focuses the failing L3', async ({
     page,
   }) => {

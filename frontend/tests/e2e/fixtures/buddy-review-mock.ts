@@ -458,7 +458,6 @@ export async function mockBuddyReviewWorkspaceRoutes(
       hold: 0,
       in_plan: 1,
       by_quarter: { Q1: 0, Q2: 1, Q3: 0, Q4: 0 },
-      adjustments: 1,
       data_issues: 0,
       existing_formal_plan: false,
       will_create_proposal: false,

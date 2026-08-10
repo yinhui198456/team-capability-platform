@@ -296,26 +296,10 @@ def _submit_and_approve_assessment(
                 "member_priority": "低",
                 "include_in_plan": False,
             }
-            if snapshot["l3_code"] == "P02-L2B-L3A":
-                migrated.update(
-                    {
-                        "target_adjusted": True,
-                        "adjusted_target_level": 3,
-                        "target_adjustment_reason": "测试场景默认目标",
-                    }
-                )
         else:
             migrated = dict(detail)
             migrated.pop("l3_node_id", None)
             migrated.setdefault("l3_node_id", snapshot.get("l3_node_id"))
-            target_level = migrated.pop("target_level")
-            migrated.update(
-                {
-                    "target_adjusted": True,
-                    "adjusted_target_level": target_level,
-                    "target_adjustment_reason": "测试场景目标",
-                }
-            )
         migrated_details.append(migrated)
     save_assessment_draft(
         connection, assessment_id, member_id, migrated_details, expected_revision=1

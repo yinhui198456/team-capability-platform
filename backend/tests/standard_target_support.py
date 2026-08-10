@@ -122,6 +122,13 @@ def standard_target_payload(
     assessment_id: int,
     desired_details: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    """
+    Build a PATCH payload for the given assessment using standard targets.
+
+    Per #100, personal target adjustments are no longer allowed. Tests that
+    previously specified target_level in desired_details now use the standard
+    target computed from the member's job level.
+    """
     desired = {str(detail["l3_code"]): detail for detail in desired_details}
     rows = connection.execute(
         """
@@ -145,17 +152,10 @@ def standard_target_payload(
                 item["l3_node_id"] = int(node_id)
             payload.append(item)
             continue
+        # Use only fields allowed for member self-assessment.
+        # Exclude target_level (adjustment fields removed per #100).
         item = {key: value for key, value in old.items() if key != "target_level"}
         if node_id is not None:
             item.setdefault("l3_node_id", int(node_id))
-        requested_target = old.get("target_level")
-        if requested_target is not None:
-            item.update(
-                {
-                    "target_adjusted": True,
-                    "adjusted_target_level": requested_target,
-                    "target_adjustment_reason": "测试场景目标",
-                }
-            )
         payload.append(item)
     return payload

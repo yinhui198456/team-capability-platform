@@ -76,9 +76,8 @@ for (const viewport of VIEWPORTS) {
       await expect(workspace).toContainText('适用 3')
       await expect(workspace).toContainText('必备 2')
       await expect(workspace).toContainText('纳入计划 1')
-      await expect(workspace).toContainText('个人调整 1')
       await expect(workspace).toContainText('首次认可将原子生成正式年度计划')
-      // personal adjustment shown only when it happened
+      // personal adjustment shown only when it happened (historical read-only)
       await expect(workspace).toContainText('3 → 4（岗位项目要求：本年度负责')
       // No evidence-review surface leaks onto the assessment page.
       await expect(
