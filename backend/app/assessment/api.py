@@ -31,11 +31,13 @@ from .scope import AssessmentScopeError, compute_assessment_scope
 
 _VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
 _DEPRECATED_FIELDS = frozenset({"plan_candidate"})
-_PERSONAL_TARGET_ADJUSTMENT_FIELDS = frozenset({
-    "target_adjusted",
-    "adjusted_target_level",
-    "target_adjustment_reason",
-})
+_PERSONAL_TARGET_ADJUSTMENT_FIELDS = frozenset(
+    {
+        "target_adjusted",
+        "adjusted_target_level",
+        "target_adjustment_reason",
+    }
+)
 
 
 def _validate_assessment_type(assessment_type: str) -> None:

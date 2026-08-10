@@ -1643,9 +1643,7 @@ def save_assessment_draft(
                 # #100: final_target comes from existing_target when a
                 # historical adjustment was stored, else standard_target.
                 final_target = (
-                    int(existing_target)
-                    if existing_adjusted
-                    else int(standard_target)
+                    int(existing_target) if existing_adjusted else int(standard_target)
                 )
                 gap_value = (
                     max(final_target - current_level, 0)
