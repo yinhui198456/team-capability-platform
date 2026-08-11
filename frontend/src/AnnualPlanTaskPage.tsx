@@ -282,11 +282,11 @@ export function AnnualPlanTaskPage() {
     to: LearningTaskStatus,
     reason: string,
     revisedDueDate: string,
-  ) {
+  ): Promise<boolean> {
     const reasonField = STATUS_REASON_FIELDS[to]
     if (reasonField && !reason.trim()) {
       setError(`请填写${REASON_LABELS[reasonField]}后再提交。`)
-      return
+      return false
     }
     const fp = `${to}|${reason}|${revisedDueDate}`
     const { key } = keyFor(`task-${task.id}-${to}`, fp)
@@ -300,8 +300,14 @@ export function AnnualPlanTaskPage() {
       })
       clearKey(`task-${task.id}-${to}`)
       setConflictTask(null)
-      await refreshTask(task.id)
+      // Issue #164 (same caliber as #150): success must settle the whole
+      // screen at once — clear any stale error and refetch the plan alongside
+      // the task detail (the transition also flips the plan-item status), so
+      // the row, summary, detail and history agree without a manual reload.
+      setError('')
+      await Promise.all([refreshTask(task.id), reloadPlan()])
       setNotice(`任务已${actionLabel(task, to)}。`)
+      return true
     } catch (err) {
       const mapped = parseApiErrorDetail(err)
       if (mapped.isConflict) {
@@ -317,6 +323,7 @@ export function AnnualPlanTaskPage() {
         // Keep the key: an unchanged retry replays instead of double-writing.
         setError(mapped.message)
       }
+      return false
     }
   }
 
@@ -702,7 +709,7 @@ export function AnnualPlanTaskPage() {
                   year={year}
                   detail={td}
                   onTransition={(to, reason, date) =>
-                    void handleTransition(td.task, to, reason, date)
+                    handleTransition(td.task, to, reason, date)
                   }
                   onComplete={(fields) => handleComplete(td.task, fields)}
                   onCreateLog={(fields) =>
@@ -744,7 +751,7 @@ type PanelProps = {
     to: LearningTaskStatus,
     reason: string,
     revisedDueDate: string,
-  ) => void
+  ) => Promise<boolean>
   onComplete: (fields: {
     completionQuality: string
     reviewConclusion: string
@@ -803,6 +810,8 @@ function TaskExecutionPanel({
   const [submitting, setSubmitting] = useState(false)
   // Issue #150: block a second 确认完成 while the atomic request is in flight.
   const [completing, setCompleting] = useState(false)
+  // Issue #164: same in-flight guard for the shared transition path.
+  const [transitioning, setTransitioning] = useState(false)
   const [panelError, setPanelError] = useState('')
   // Plan-item schedule editing: only these two dates are editable, seeded
   // once from the item so a refresh (e.g. after a 409) never wipes input.
@@ -835,7 +844,15 @@ function TaskExecutionPanel({
       )
       return
     }
+    if (transitioning) return
+    setTransitioning(true)
     onTransition(actionTo, reason, revisedDueDate)
+      .then((ok) => {
+        // Only a confirmed success closes the panel; failures and conflicts
+        // keep it open with the typed input.
+        if (ok) setActionTo(null)
+      })
+      .finally(() => setTransitioning(false))
   }
 
   const reasonField = actionTo ? STATUS_REASON_FIELDS[actionTo] : undefined
@@ -1091,7 +1108,9 @@ function TaskExecutionPanel({
             </label>
           )}
           <div className={s.actions}>
-            <button type="submit">{confirmLabel(task, actionTo)}</button>
+            <button type="submit" disabled={transitioning}>
+              {confirmLabel(task, actionTo)}
+            </button>
             <button type="button" onClick={() => setActionTo(null)}>
               取消操作
             </button>

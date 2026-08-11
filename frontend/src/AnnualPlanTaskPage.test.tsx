@@ -1711,3 +1711,272 @@ describe('evidence draft link persistence (issue #63)', () => {
     })
   })
 })
+
+describe('task transition UI consistency (issue #164)', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  // One shared transition path drives all five actions; each case mirrors the
+  // backend contract — the transition POST mutates the task, flips the
+  // plan-item status and appends history, and the follow-up GETs read that
+  // mutated state back.
+  const CASES = [
+    {
+      name: 'start',
+      from: '未开始',
+      to: '进行中',
+      action: '开始执行',
+      confirm: '确认开始执行',
+      reasonLabel: null,
+      reason: null,
+      nextButton: '暂停',
+    },
+    {
+      name: 'delay',
+      from: '进行中',
+      to: '延期',
+      action: '申请延期',
+      confirm: '确认延期',
+      reasonLabel: '延期原因',
+      reason: '等待资源',
+      nextButton: '恢复执行',
+    },
+    {
+      name: 'resume',
+      from: '延期',
+      to: '进行中',
+      action: '恢复执行',
+      confirm: '确认恢复执行',
+      reasonLabel: null,
+      reason: null,
+      nextButton: '申请延期',
+    },
+    {
+      name: 'pause',
+      from: '进行中',
+      to: '暂停',
+      action: '暂停',
+      confirm: '确认暂停',
+      reasonLabel: '暂停原因',
+      reason: '本周出差',
+      nextButton: '恢复执行',
+    },
+    {
+      name: 'cancel',
+      from: '暂停',
+      to: '取消',
+      action: '取消任务',
+      confirm: '确认取消',
+      reasonLabel: '取消原因',
+      reason: '目标调整',
+      nextButton: null,
+    },
+  ] as const
+
+  for (const c of CASES) {
+    it(`${c.name}: a successful transition settles row, detail, history and closes the panel`, async () => {
+      const tasks = [
+        makeTask({ id: 1, plan_item_id: 1, status: c.from, revision: 1 }),
+      ]
+      vi.spyOn(planningApi, 'transitionLearningTask').mockImplementation(
+        async (taskId, payload) => {
+          const task = tasks.find((t) => t.id === taskId)
+          if (!task) throw new Error('not found')
+          const reasonField =
+            planningApi.STATUS_REASON_FIELDS[payload.to_status]
+          const updated = {
+            ...task,
+            status: payload.to_status,
+            revision: task.revision + 1,
+            ...(reasonField && payload.reason
+              ? { [reasonField]: payload.reason }
+              : {}),
+          }
+          tasks[0] = updated
+          // The backend also flips the plan-item status and appends history;
+          // the success path must refetch both.
+          vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+            makePlan([makeItem({ status: payload.to_status })]),
+          )
+          vi.mocked(planningApi.listTaskTransitionHistory).mockResolvedValue([
+            {
+              id: 1,
+              learning_task_id: 1,
+              from_status: c.from,
+              to_status: payload.to_status,
+              reason: payload.reason ?? null,
+              actor_id: 1,
+              occurred_at: '2026-08-10T02:29:54Z',
+              request_key: null,
+            },
+          ])
+          return updated
+        },
+      )
+      await renderMember([makeItem({ status: c.from })], tasks)
+      expandItem(1)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: c.action })).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: c.action }))
+      if (c.reasonLabel && c.reason) {
+        fireEvent.change(screen.getByLabelText(c.reasonLabel), {
+          target: { value: c.reason },
+        })
+      }
+      fireEvent.click(screen.getByRole('button', { name: c.confirm }))
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toContain('任务已'),
+      )
+      // The confirm/action panel closes itself on success.
+      expect(screen.queryByRole('button', { name: '取消操作' })).toBeNull()
+      // The collapsed row redraws from the refetched plan — no manual reload.
+      const row = screen.getAllByTestId('plan-header')[0]
+      expect(within(row).getByText(c.to)).toBeTruthy()
+      // The detail, the available buttons and the history agree.
+      const panel = screen.getByTestId('task-detail-panel')
+      expect(within(panel).getByText(c.to)).toBeTruthy()
+      if (c.nextButton) {
+        expect(screen.getByRole('button', { name: c.nextButton })).toBeTruthy()
+      }
+      expect(
+        screen.getByText(`${c.from} → ${c.to}`, { exact: false }),
+      ).toBeTruthy()
+      // Success never coexists with a stale failure.
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  }
+
+  it('clears a prior validation alert when the retried pause succeeds', async () => {
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 }),
+    ]
+    vi.spyOn(planningApi, 'transitionLearningTask').mockImplementation(
+      async (taskId, payload) => {
+        const updated = {
+          ...tasks[0],
+          status: payload.to_status,
+          revision: tasks[0].revision + 1,
+          pause_reason: payload.reason ?? null,
+        }
+        tasks[0] = updated
+        vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+          makePlan([makeItem({ status: payload.to_status })]),
+        )
+        return updated
+      },
+    )
+    await renderMember([makeItem({ status: '进行中' })], tasks)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }))
+    // Empty reason: local validation rejects without calling the API.
+    fireEvent.click(screen.getByRole('button', { name: '确认暂停' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('请填写暂停原因'),
+    )
+    // Fix the input; the retry succeeds and the stale alert must clear.
+    fireEvent.change(screen.getByLabelText('暂停原因'), {
+      target: { value: '本周出差' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认暂停' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('任务已暂停'),
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: '取消操作' })).toBeNull()
+  })
+
+  it('blocks a duplicate submit while a transition is in flight', async () => {
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '未开始', revision: 1 }),
+    ]
+    let resolveTransition: (task: LearningTask) => void = () => {}
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockImplementation(
+        () =>
+          new Promise<LearningTask>((resolve) => {
+            resolveTransition = resolve
+          }),
+      )
+    await renderMember([makeItem({ status: '未开始' })], tasks)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }))
+    const submit = screen.getByRole('button', { name: '确认开始执行' })
+    fireEvent.click(submit)
+    // A second click while the request is in flight must not re-send.
+    fireEvent.click(submit)
+    await waitFor(() => expect(transition).toHaveBeenCalledTimes(1))
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '确认开始执行',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+    vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+      makePlan([makeItem({ status: '进行中' })]),
+    )
+    resolveTransition(
+      makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 2 }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain(
+        '任务已开始执行',
+      ),
+    )
+    expect(screen.queryByRole('button', { name: '取消操作' })).toBeNull()
+  })
+
+  it('keeps state, panel and input with one error when a transition fails', async () => {
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 }),
+    ]
+    vi.spyOn(planningApi, 'transitionLearningTask').mockRejectedValue(
+      Object.assign(new Error('transition not allowed'), {
+        status: 422,
+        detail: {
+          code: 'invalid_transition',
+          message: 'transition not allowed',
+        },
+      }),
+    )
+    const planSpy = vi.spyOn(planningApi, 'getAnnualPlan')
+    await renderMember([makeItem({ status: '进行中' })], tasks)
+    const planCallsBefore = planSpy.mock.calls.length
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '申请延期' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '申请延期' }))
+    fireEvent.change(screen.getByLabelText('延期原因'), {
+      target: { value: '等待资源' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认延期' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        'transition not allowed',
+      ),
+    )
+    // No fabricated success, no partial update: the panel keeps the typed
+    // input, the row and detail keep the old status, the plan is not refetched.
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(
+      (screen.getByLabelText('延期原因') as HTMLTextAreaElement).value,
+    ).toBe('等待资源')
+    expect(screen.getByRole('button', { name: '确认延期' })).toBeTruthy()
+    const row = screen.getAllByTestId('plan-header')[0]
+    expect(within(row).getByText('进行中')).toBeTruthy()
+    const panel = screen.getByTestId('task-detail-panel')
+    expect(within(panel).getByText('进行中')).toBeTruthy()
+    expect(planSpy.mock.calls.length).toBe(planCallsBefore)
+  })
+})
