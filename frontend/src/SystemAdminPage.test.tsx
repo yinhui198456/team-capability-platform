@@ -569,3 +569,30 @@ it('regression: drawer uses module classes only — no global form classes, modu
     expect(label.classList.contains('checkbox')).toBe(false)
   })
 })
+
+it('Issue #93 — narrow shell offers a drawer nav and the user table keeps its scroll contract', async () => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation((media: string) => ({
+      matches: true,
+      media,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  )
+  renderAdmin()
+  await screen.findByRole('heading', { name: '系统管理' })
+  // The narrow shell replaces the fixed sidebar with an operable toggle.
+  expect(screen.getByRole('button', { name: '打开导航菜单' })).toBeTruthy()
+  // Filters wrap and the user table scrolls horizontally — readable at 768.
+  const toolbar = document.querySelector('[class*="toolbar"]') as HTMLElement
+  expect(window.getComputedStyle(toolbar).flexWrap).toBe('wrap')
+  const tableWrap = document.querySelector(
+    '[class*="tableWrap"]',
+  ) as HTMLElement
+  expect(window.getComputedStyle(tableWrap).overflowX).toBe('auto')
+})

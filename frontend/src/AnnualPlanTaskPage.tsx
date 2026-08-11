@@ -6,6 +6,7 @@ import {
 } from './estimatedHours'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
+import { useIsNarrow } from './shared/useIsNarrow'
 import {
   COMPLETION_QUALITY_VALUES,
   STATUS_REASON_FIELDS,
@@ -138,6 +139,8 @@ function planItemMonth(item: PlanItem): number | null {
 
 export function AnnualPlanTaskPage() {
   const year = useYear()
+  // Issue #93: fold the fixed 7-column plan rows at narrow widths.
+  const narrow = useIsNarrow(991)
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<Record<number, TaskDetail>>({})
   const [error, setError] = useState('')
@@ -658,7 +661,7 @@ export function AnnualPlanTaskPage() {
       </div>
 
       {/* Plan items */}
-      <div className={s.planList}>
+      <div className={s.planList} data-narrow={narrow ? 'true' : undefined}>
         <div
           className={`${s.planHeader} ${s.planHeaderLabel}`}
           style={{

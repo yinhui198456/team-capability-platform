@@ -2158,3 +2158,75 @@ describe('task transition UI consistency (issue #164)', () => {
     expect(transition).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('Issue #93 — AnnualPlanTaskPage responsive contracts', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps filter label text horizontal and lets the filter row wrap', async () => {
+    await renderMember([makeItem({})])
+    const row = document.querySelector('[class*="filterRow"]') as HTMLElement
+    expect(window.getComputedStyle(row).flexWrap).toBe('wrap')
+    for (const name of ['状态筛选', '优先级筛选', '能力域筛选']) {
+      const label = screen.getByText(name)
+      const style = window.getComputedStyle(label)
+      expect(style.whiteSpace).toBe('nowrap')
+      expect(style.flexShrink).toBe('0')
+    }
+    // Selects stop fighting for the full row width (global width:100%),
+    // which is what compressed the shared row down to one-char labels.
+    const statusSelect = document.querySelector(
+      '#status-filter',
+    ) as HTMLSelectElement
+    expect(window.getComputedStyle(statusSelect).width).toBe('auto')
+  })
+
+  it('folds plan rows into a readable grid at 768 while status and expand stay visible', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((media: string) => ({
+        matches: true,
+        media,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    )
+    await renderMember([
+      makeItem({ id: 1, l3_name: '任务A', target_month: 3 }),
+      makeItem({ id: 2, l3_name: '任务B', target_month: 3 }),
+    ])
+    const list = document.querySelector('[class*="planList"]') as HTMLElement
+    expect(list.getAttribute('data-narrow')).toBe('true')
+    const headers = document.querySelectorAll('[data-testid="plan-header"]')
+    expect(headers.length).toBeGreaterThan(0)
+    for (const header of Array.from(headers)) {
+      expect(window.getComputedStyle(header).gridTemplateColumns).toBe(
+        '1fr auto auto',
+      )
+    }
+    // Status and the expand entry are still on screen.
+    expect(screen.getAllByText('进行中').length).toBeGreaterThan(0)
+    expect(
+      document.querySelectorAll('[data-testid="plan-header"] span'),
+    ).toBeTruthy()
+  })
+
+  it('keeps the seven-column plan grid on desktop', async () => {
+    await renderMember([makeItem({ id: 1, l3_name: '任务A' })])
+    const list = document.querySelector('[class*="planList"]') as HTMLElement
+    expect(list.hasAttribute('data-narrow')).toBe(false)
+    const header = document.querySelector(
+      '[data-testid="plan-header"]',
+    ) as HTMLElement
+    expect(window.getComputedStyle(header).gridTemplateColumns).toBe(
+      '1.5fr 80px 80px 80px 120px 100px 40px',
+    )
+  })
+})

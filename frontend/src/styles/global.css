@@ -77,6 +77,37 @@ button {
   min-width: 0;
 }
 
+.app-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Narrow-shell nav toggle (Issue #93) */
+.app-nav-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: var(--radius-sm);
+  color: var(--color-white);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--text-lg);
+  height: 36px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 36px;
+}
+.app-nav-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+.app-nav-toggle:focus-visible {
+  outline: 2px solid var(--color-white);
+  outline-offset: 2px;
+}
+
 .app-topbar-brand {
   font-weight: 700;
   font-size: var(--text-lg);
@@ -222,6 +253,38 @@ button {
   grid-area: content;
   padding: var(--space-6);
   overflow-y: auto;
+  min-width: 0;
+}
+
+/* ── Narrow shell (Issue #93) — sidebar becomes an overlay drawer ── */
+.app-shell[data-narrow='true'] {
+  grid-template-areas:
+    'topbar'
+    'content';
+  grid-template-columns: 1fr;
+}
+
+.app-shell[data-narrow='true'] .app-sidebar {
+  border-right: 1px solid var(--color-gray-200);
+  bottom: 0;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  left: 0;
+  position: fixed;
+  top: var(--topbar-height);
+  width: min(280px, 85vw);
+  z-index: 30;
+}
+
+.app-nav-backdrop {
+  background: rgba(16, 24, 40, 0.32);
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  display: block;
+  inset: 0;
+  padding: 0;
+  position: fixed;
+  z-index: 25;
 }
 
 /* ── Shared Components ── */

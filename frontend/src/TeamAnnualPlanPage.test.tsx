@@ -537,6 +537,55 @@ describe('TeamAnnualPlanPage', () => {
 
     expect(screen.queryByText(/发布成功/)).toBeNull()
   })
+
+  it('Issue #93 — narrow shell offers a drawer nav and the items table keeps its scroll contract', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((media: string) => ({
+        matches: true,
+        media,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    )
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnnualPlan').mockResolvedValue(
+      publishedPlan(),
+    )
+    // A populated item list so the table (and its scroll wrapper) render.
+    vi.spyOn(planningApi, 'getTeamAnnualPlanItems').mockResolvedValue(
+      itemList(),
+    )
+    render(
+      <MemoryRouter initialEntries={['/operations/team-annual-plan']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '团队年度计划正式项' }),
+      ).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(document.querySelector('.table-scroll')).toBeTruthy()
+    })
+    // The narrow shell replaces the fixed sidebar with an operable toggle.
+    expect(screen.getByRole('button', { name: '打开导航菜单' })).toBeTruthy()
+    // Filters wrap and the table scrolls horizontally — readable at 768.
+    const filters = document.querySelector('.analytics-filters') as HTMLElement
+    expect(window.getComputedStyle(filters).flexWrap).toBe('wrap')
+    const scroll = document.querySelector('.table-scroll') as HTMLElement
+    expect(window.getComputedStyle(scroll).overflowX).toBe('auto')
+  })
 })
 
 describe('team annual plan api helpers', () => {

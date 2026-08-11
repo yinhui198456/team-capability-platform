@@ -5,10 +5,11 @@ import {
   useNavigate,
   useLocation,
 } from 'react-router-dom'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from './AuthContext'
 import { useYear, useYearState } from './YearContext'
 import { defaultRouteFor } from './access'
+import { useIsNarrow } from './shared/useIsNarrow'
 
 type NavItem = {
   label: string
@@ -163,6 +164,45 @@ export function Layout() {
   const [signOutError, setSignOutError] = useState('')
   const signOutInFlight = useRef(false)
 
+  // Issue #93: at ≤991px the sidebar becomes an overlay drawer behind a
+  // topbar toggle, so content never shares the row with a fixed 224px column.
+  const narrow = useIsNarrow(991)
+  const [navOpen, setNavOpen] = useState(false)
+  const sidebarRef = useRef<HTMLElement | null>(null)
+  const navToggleRef = useRef<HTMLButtonElement | null>(null)
+
+  // Growing back to desktop leaves the drawer state behind.
+  useEffect(() => {
+    if (!narrow && navOpen) setNavOpen(false)
+  }, [narrow, navOpen])
+
+  function closeNav() {
+    const focusInside = sidebarRef.current?.contains(document.activeElement)
+    setNavOpen(false)
+    if (focusInside) navToggleRef.current?.focus()
+  }
+
+  // Esc closes the drawer while it is open.
+  useEffect(() => {
+    if (!narrow || !navOpen) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      setNavOpen(false)
+      if (sidebarRef.current?.contains(document.activeElement)) {
+        navToggleRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [narrow, navOpen])
+
+  // Move focus into the drawer when it opens.
+  useEffect(() => {
+    if (narrow && navOpen) {
+      sidebarRef.current?.querySelector<HTMLElement>('a')?.focus()
+    }
+  }, [narrow, navOpen])
+
   function yHref(path: string): string {
     return `${path}?year=${yearForLinks}`
   }
@@ -187,12 +227,28 @@ export function Layout() {
   )
 
   return (
-    <div className="app-shell">
-      {/* Topbar — brand only, nav is sidebar-exclusive */}
+    <div className="app-shell" data-narrow={narrow ? 'true' : undefined}>
+      {/* Topbar — brand only, nav is sidebar-exclusive (drawer at ≤991px) */}
       <header className="app-topbar">
-        <NavLink to={yHref(homePath)} className="app-topbar-brand">
-          Team Capability Platform
-        </NavLink>
+        <div className="app-topbar-left">
+          {narrow && (
+            <button
+              ref={navToggleRef}
+              type="button"
+              className="app-nav-toggle"
+              aria-label={navOpen ? '关闭导航菜单' : '打开导航菜单'}
+              aria-expanded={navOpen}
+              aria-controls="app-sidebar"
+              data-testid="nav-toggle"
+              onClick={() => setNavOpen((open) => !open)}
+            >
+              {navOpen ? '×' : '☰'}
+            </button>
+          )}
+          <NavLink to={yHref(homePath)} className="app-topbar-brand">
+            Team Capability Platform
+          </NavLink>
+        </div>
         <div className="app-topbar-right">
           {roles.includes('Member') && <YearSelector />}
           {!isPublicStandard && (
@@ -219,27 +275,40 @@ export function Layout() {
         </div>
       </header>
 
-      {/* Sidebar */}
-      <aside className="app-sidebar">
-        {visibleSections.map((s) => (
-          <div className="app-sidebar-section" key={s.label}>
-            <div className="app-sidebar-section-label">{s.label}</div>
-            {s.items
-              .filter((item) => canAccess(item, roles))
-              .map((item) => (
-                <NavLink
-                  to={yHref(item.href)}
-                  className={({ isActive }: { isActive: boolean }) =>
-                    `app-sidebar-item${isActive ? ' active' : ''}`
-                  }
-                  key={item.href}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-          </div>
-        ))}
-      </aside>
+      {/* Sidebar — off-canvas drawer when narrow and closed */}
+      {(!narrow || navOpen) && (
+        <aside ref={sidebarRef} id="app-sidebar" className="app-sidebar">
+          {visibleSections.map((s) => (
+            <div className="app-sidebar-section" key={s.label}>
+              <div className="app-sidebar-section-label">{s.label}</div>
+              {s.items
+                .filter((item) => canAccess(item, roles))
+                .map((item) => (
+                  <NavLink
+                    to={yHref(item.href)}
+                    className={({ isActive }: { isActive: boolean }) =>
+                      `app-sidebar-item${isActive ? ' active' : ''}`
+                    }
+                    key={item.href}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+            </div>
+          ))}
+        </aside>
+      )}
+
+      {/* Drawer backdrop — closes the nav, keyboard accessible */}
+      {narrow && navOpen && (
+        <button
+          type="button"
+          className="app-nav-backdrop"
+          aria-label="关闭导航菜单"
+          data-testid="nav-backdrop"
+          onClick={closeNav}
+        />
+      )}
 
       {/* Content */}
       <main className="app-content">

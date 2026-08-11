@@ -374,4 +374,47 @@ describe('TeamAnalyticsPage', () => {
     await waitFor(() => expect(screen.getByText(/无权限/)).toBeTruthy())
     expect(getTeamAnalytics).not.toHaveBeenCalled()
   })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('Issue #93 — narrow shell keeps KPI/trend contracts and offers a drawer nav', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((media: string) => ({
+        matches: true,
+        media,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    )
+    vi.spyOn(accessApi, 'me').mockResolvedValue({
+      id: 1,
+      username: 'leader',
+      full_name: 'Leader',
+      roles: ['Leader'],
+    })
+    vi.spyOn(planningApi, 'getTeamAnalytics').mockResolvedValue(analytics)
+    render(
+      <MemoryRouter initialEntries={['/operations/analytics']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('延期计划项明细')).toBeTruthy())
+    // The narrow shell replaces the fixed sidebar with an operable toggle.
+    expect(screen.getByRole('button', { name: '打开导航菜单' })).toBeTruthy()
+    // KPI grid keeps auto-fit columns and the trend card scrolls instead of
+    // clipping — nothing disappears horizontally at 768.
+    const metricGrid = document.querySelector('.metric-grid') as HTMLElement
+    expect(window.getComputedStyle(metricGrid).gridTemplateColumns).toContain(
+      'auto-fit',
+    )
+    const card = document.querySelector('.dashboard-card') as HTMLElement
+    expect(window.getComputedStyle(card).overflowX).toBe('auto')
+  })
 })

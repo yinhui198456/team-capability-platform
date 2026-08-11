@@ -101,6 +101,11 @@
 .planHeader:hover {
   background: var(--color-gray-50);
 }
+/* Issue #93: ≤991px the fixed 7-column grid folds to readable rows —
+   path on the first row, status and the expand entry stay visible. */
+.planList[data-narrow='true'] .planHeader {
+  grid-template-columns: 1fr auto auto;
+}
 
 .code {
   font-weight: 600;
@@ -223,9 +228,17 @@
 .filterRow {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* Issue #93: let label+select pairs wrap instead of squeezing */
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   font-size: var(--text-sm);
+}
+.filterRow label {
+  flex-shrink: 0; /* Issue #93: label text never compresses to a one-char column */
+  white-space: nowrap;
+}
+.filterRow select {
+  width: auto; /* Issue #93: stop the global width:100% from compressing the row */
 }
 .actions {
   display: flex;

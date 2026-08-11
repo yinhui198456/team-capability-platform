@@ -10,6 +10,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Issue #93: responsive behavior lives in CSS, so unit tests must see the
+    // injected rules (computed styles); jsdom still has no layout engine.
+    css: true,
+    setupFiles: ['src/test-setup.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
   },
 })
