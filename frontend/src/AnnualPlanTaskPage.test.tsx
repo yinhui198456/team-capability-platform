@@ -1979,4 +1979,50 @@ describe('task transition UI consistency (issue #164)', () => {
     expect(within(panel).getByText('进行中')).toBeTruthy()
     expect(planSpy.mock.calls.length).toBe(planCallsBefore)
   })
+
+  it('treats a post-success refresh failure as committed, closes the panel and warns to refresh', async () => {
+    // Review B: the transition POST may commit while a follow-up GET rejects.
+    // That is NOT a transition failure — the panel must close, the action must
+    // not be resubmittable, and the user gets a distinct refresh-needed
+    // warning instead of a transition-failure state.
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '未开始', revision: 1 }),
+    ]
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockImplementation(async (taskId, payload) => {
+        const updated = {
+          ...tasks[0],
+          status: payload.to_status,
+          revision: tasks[0].revision + 1,
+        }
+        tasks[0] = updated
+        return updated
+      })
+    await renderMember([makeItem({ status: '未开始' })], tasks)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
+    )
+    // The committed transition is followed by a failing plan refetch.
+    vi.mocked(planningApi.getAnnualPlan).mockRejectedValue(
+      new Error('network down'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认开始执行' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain(
+        '状态已更新，但页面同步失败，请刷新确认',
+      ),
+    )
+    // The mutation fired exactly once and is reported as committed.
+    expect(transition).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status').textContent).toContain('任务已开始执行')
+    // The panel closed and the same action cannot be resubmitted from it.
+    expect(screen.queryByRole('button', { name: '取消操作' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认开始执行' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认恢复执行' })).toBeNull()
+    // No fabricated transition failure message.
+    expect(screen.getByRole('alert').textContent).not.toContain('network down')
+  })
 })

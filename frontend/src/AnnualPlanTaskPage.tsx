@@ -300,13 +300,20 @@ export function AnnualPlanTaskPage() {
       })
       clearKey(`task-${task.id}-${to}`)
       setConflictTask(null)
-      // Issue #164 (same caliber as #150): success must settle the whole
-      // screen at once — clear any stale error and refetch the plan alongside
-      // the task detail (the transition also flips the plan-item status), so
-      // the row, summary, detail and history agree without a manual reload.
+      // Issue #164 (same caliber as #150): once the POST resolves the
+      // transition is committed — only a rejected POST is a failure. Clear any
+      // stale error and report the committed state, then reconcile the screen:
+      // refetch the plan alongside the task detail (the transition also flips
+      // the plan-item status) so the row, summary, detail and history agree
+      // without a manual reload. A failed reconciliation never reopens the
+      // retry path for an already-committed transition — warn to refresh.
       setError('')
-      await Promise.all([refreshTask(task.id), reloadPlan()])
       setNotice(`任务已${actionLabel(task, to)}。`)
+      try {
+        await Promise.all([refreshTask(task.id), reloadPlan()])
+      } catch {
+        setError('状态已更新，但页面同步失败，请刷新确认。')
+      }
       return true
     } catch (err) {
       const mapped = parseApiErrorDetail(err)
