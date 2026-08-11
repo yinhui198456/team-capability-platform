@@ -2166,16 +2166,35 @@ describe('Issue #93 — AnnualPlanTaskPage responsive contracts', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps filter label text horizontal and lets the filter row wrap', async () => {
+  it('keeps each filter label glued to its control and wraps only between groups', async () => {
     await renderMember([makeItem({})])
     const row = document.querySelector('[class*="filterRow"]') as HTMLElement
     expect(window.getComputedStyle(row).flexWrap).toBe('wrap')
-    for (const name of ['状态筛选', '优先级筛选', '能力域筛选']) {
-      const label = screen.getByText(name)
-      const style = window.getComputedStyle(label)
-      expect(style.whiteSpace).toBe('nowrap')
-      expect(style.flexShrink).toBe('0')
-    }
+    // Three atomic label+control groups; a wrapping row never splits a pair.
+    const groups = Array.from(
+      row.querySelectorAll<HTMLElement>('[class*="filterGroup"]'),
+    )
+    const pairs: [string, string][] = [
+      ['状态筛选', 'status-filter'],
+      ['优先级筛选', 'priority-filter'],
+      ['能力域筛选', 'domain-filter'],
+    ]
+    expect(groups).toHaveLength(pairs.length)
+    pairs.forEach(([labelText, controlId], i) => {
+      const group = groups[i]
+      const label = group.querySelector('label')
+      const control = group.querySelector(`#${controlId}`)
+      expect(label?.textContent).toBe(labelText)
+      expect(control).toBeTruthy()
+      // The group contains exactly its own label and control.
+      expect(group.querySelectorAll('label, select').length).toBe(2)
+      // The group itself is the atomic wrapping unit: it never splits.
+      expect(window.getComputedStyle(group).flexWrap).toBe('nowrap')
+      expect(window.getComputedStyle(label as HTMLElement).whiteSpace).toBe(
+        'nowrap',
+      )
+      expect(window.getComputedStyle(label as HTMLElement).flexShrink).toBe('0')
+    })
     // Selects stop fighting for the full row width (global width:100%),
     // which is what compressed the shared row down to one-char labels.
     const statusSelect = document.querySelector(
@@ -2211,11 +2230,21 @@ describe('Issue #93 — AnnualPlanTaskPage responsive contracts', () => {
         '1fr auto auto',
       )
     }
-    // Status and the expand entry are still on screen.
-    expect(screen.getAllByText('进行中').length).toBeGreaterThan(0)
-    expect(
-      document.querySelectorAll('[data-testid="plan-header"] span'),
-    ).toBeTruthy()
+    // Every narrow row keeps its task path, current status and the
+    // expand/collapse entry — a legible contract, not just "some spans exist".
+    for (const header of Array.from(headers)) {
+      expect(
+        header.querySelector('[class*="l3name"]')?.textContent?.trim(),
+      ).toBeTruthy()
+      expect(header.querySelector('[class*="status"]')?.textContent).toBe(
+        '进行中',
+      )
+      expect(
+        Array.from(header.querySelectorAll('span')).some(
+          (span) => span.textContent === '▸' || span.textContent === '▾',
+        ),
+      ).toBe(true)
+    }
   })
 
   it('keeps the seven-column plan grid on desktop', async () => {

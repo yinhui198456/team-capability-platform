@@ -233,6 +233,14 @@
   margin-bottom: var(--space-3);
   font-size: var(--text-sm);
 }
+/* Issue #93: each label+select is one atomic wrapping unit; the row can
+   only break between groups, never between a label and its control. */
+.filterGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap; /* the pair never splits; the row wraps only between groups */
+}
 .filterRow label {
   flex-shrink: 0; /* Issue #93: label text never compresses to a one-char column */
   white-space: nowrap;

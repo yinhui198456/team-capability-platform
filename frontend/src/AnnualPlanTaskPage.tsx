@@ -612,52 +612,60 @@ export function AnnualPlanTaskPage() {
 
       {/* Filters: month timeline + status / priority / domain, combinable */}
       <div className={s.filterRow}>
-        <label htmlFor="status-filter">状态筛选</label>
-        <select
-          id="status-filter"
-          aria-label="状态筛选"
-          value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as PlanItemStatus | '全部状态')
-          }
-        >
-          <option value="全部状态">全部状态</option>
-          {Object.keys(STATUS_LABELS).map((st) => (
-            <option key={st} value={st}>
-              {st}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="priority-filter">优先级筛选</label>
-        <select
-          id="priority-filter"
-          aria-label="优先级筛选"
-          value={priorityFilter}
-          onChange={(event) =>
-            setPriorityFilter(
-              event.target.value as '全部优先级' | '高' | '中' | '低',
-            )
-          }
-        >
-          <option value="全部优先级">全部优先级</option>
-          <option value="高">高</option>
-          <option value="中">中</option>
-          <option value="低">低</option>
-        </select>
-        <label htmlFor="domain-filter">能力域筛选</label>
-        <select
-          id="domain-filter"
-          aria-label="能力域筛选"
-          value={domainFilter}
-          onChange={(event) => setDomainFilter(event.target.value)}
-        >
-          <option value="全部能力域">全部能力域</option>
-          {DOMAIN_OPTIONS.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        {/* Issue #93: each label+select is one atomic group so the wrapping
+            row can only break between filters, never inside one. */}
+        <span className={s.filterGroup}>
+          <label htmlFor="status-filter">状态筛选</label>
+          <select
+            id="status-filter"
+            aria-label="状态筛选"
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(event.target.value as PlanItemStatus | '全部状态')
+            }
+          >
+            <option value="全部状态">全部状态</option>
+            {Object.keys(STATUS_LABELS).map((st) => (
+              <option key={st} value={st}>
+                {st}
+              </option>
+            ))}
+          </select>
+        </span>
+        <span className={s.filterGroup}>
+          <label htmlFor="priority-filter">优先级筛选</label>
+          <select
+            id="priority-filter"
+            aria-label="优先级筛选"
+            value={priorityFilter}
+            onChange={(event) =>
+              setPriorityFilter(
+                event.target.value as '全部优先级' | '高' | '中' | '低',
+              )
+            }
+          >
+            <option value="全部优先级">全部优先级</option>
+            <option value="高">高</option>
+            <option value="中">中</option>
+            <option value="低">低</option>
+          </select>
+        </span>
+        <span className={s.filterGroup}>
+          <label htmlFor="domain-filter">能力域筛选</label>
+          <select
+            id="domain-filter"
+            aria-label="能力域筛选"
+            value={domainFilter}
+            onChange={(event) => setDomainFilter(event.target.value)}
+          >
+            <option value="全部能力域">全部能力域</option>
+            {DOMAIN_OPTIONS.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </span>
       </div>
 
       {/* Plan items */}
