@@ -343,7 +343,11 @@ export function AnnualPlanTaskPage() {
       })
       clearKey(`task-${task.id}-已完成`)
       setConflictTask(null)
-      await refreshTask(task.id)
+      // Issue #150: a retried success must clear the prior gate alert, and the
+      // transition also flips the plan-item status — refetch the plan so the
+      // top summary and item row agree with the detail without a reload.
+      setError('')
+      await Promise.all([refreshTask(task.id), reloadPlan()])
       setNotice('任务已完成，复盘已归档。')
     } catch (err) {
       const mapped = parseApiErrorDetail(err)

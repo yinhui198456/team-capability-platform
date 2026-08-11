@@ -563,6 +563,86 @@ describe('learning task execution (v0010)', () => {
     )
   })
 
+  it('clears a prior gate alert and redraws the summary when a retried completion succeeds', async () => {
+    // Issue #150 follow-up (real-Chrome UAT): a gate-rejected submit leaves an
+    // alert; once the input is fixed and the completion succeeds, the alert
+    // must clear and the plan summary / item row must redraw from the
+    // refetched plan — no manual reload.
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+    )
+    expect(screen.getByText('0/1')).toBeTruthy()
+    expect(screen.getByText('0%')).toBeTruthy()
+    const gateError: unknown = Object.assign(
+      new Error('next_action must be at most 200 characters'),
+      {
+        status: 422,
+        detail: {
+          code: 'completion_gate_failed',
+          entity_type: 'learning_task',
+          entity_id: 1,
+          field: 'next_action',
+          reason: 'completion_gate_failed',
+          message: 'next_action must be at most 200 characters',
+        },
+      },
+    )
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockRejectedValueOnce(gateError)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '完成任务' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '完成任务' }))
+    fireEvent.change(screen.getByLabelText('复盘结论'), {
+      target: { value: '完成了数据管道' },
+    })
+    fireEvent.change(screen.getByLabelText('完成质量'), {
+      target: { value: '达到预期' },
+    })
+    fireEvent.change(screen.getByLabelText('下一步行动'), {
+      target: { value: 'x'.repeat(201) },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('完成门禁未满足')
+    })
+    // The failed submit kept the typed input.
+    expect(
+      (screen.getByLabelText('下一步行动') as HTMLInputElement).value.length,
+    ).toBe(201)
+
+    // Fix the input; the retry succeeds server-side.
+    fireEvent.change(screen.getByLabelText('下一步行动'), {
+      target: { value: '继续优化' },
+    })
+    const completedTask = makeTask({
+      id: 1,
+      plan_item_id: 1,
+      status: '已完成',
+      revision: 2,
+      completion_quality: '达到预期',
+      review_conclusion: '完成了数据管道',
+      next_action: '继续优化',
+    })
+    transition.mockResolvedValueOnce(completedTask)
+    vi.mocked(planningApi.getLearningTask).mockResolvedValue(completedTask)
+    vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+      makePlan([makeItem({ status: '已完成' })]),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('任务已完成'),
+    )
+    // The stale gate alert is gone and the summary redraws without a reload.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('1/1')).toBeTruthy()
+    expect(screen.getByText('100%')).toBeTruthy()
+    expect(transition).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps input on revision 409, refreshes the task and retries with a new key', async () => {
     const task = makeTask({
       id: 1,
