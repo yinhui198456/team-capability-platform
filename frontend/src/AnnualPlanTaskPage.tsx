@@ -344,7 +344,7 @@ export function AnnualPlanTaskPage() {
       reviewConclusion: string
       nextAction: string
     },
-  ) {
+  ): Promise<'ok' | 'gate_evidence' | 'failed'> {
     const fp = 'complete'
     const { key } = keyFor(`task-${task.id}-已完成`, fp)
     try {
@@ -366,18 +366,27 @@ export function AnnualPlanTaskPage() {
       setError('')
       await Promise.all([refreshTask(task.id), reloadPlan()])
       setNotice('任务已完成，复盘已归档。')
+      return 'ok'
     } catch (err) {
       const mapped = parseApiErrorDetail(err)
       if (mapped.isConflict) {
         clearKey(`task-${task.id}-已完成`)
         setConflictTask(task.id)
         void refreshTask(task.id)
+        return 'failed'
       } else if (mapped.code === 'completion_gate_failed' && mapped.field) {
+        // Issue #150: the missing-approved-evidence gate opens the guidance
+        // dialog; other gate fields keep the inline alert.  The idempotency
+        // key is deliberately kept so a retry replays the same gate error
+        // instead of surfacing a CAS conflict.
+        if (mapped.field === 'evidence') return 'gate_evidence'
         setError(
           `完成门禁未满足：需要${GATE_FIELD_LABELS[mapped.field] ?? mapped.field}。`,
         )
+        return 'failed'
       } else {
         setError(mapped.message)
+        return 'failed'
       }
     }
   }
@@ -766,7 +775,7 @@ type PanelProps = {
     completionQuality: string
     reviewConclusion: string
     nextAction: string
-  }) => Promise<void>
+  }) => Promise<'ok' | 'gate_evidence' | 'failed'>
   onCreateLog: (fields: {
     recordDate: string
     hours: number
@@ -823,6 +832,9 @@ function TaskExecutionPanel({
   // Issue #164: same in-flight guard for the shared transition path.
   const [transitioning, setTransitioning] = useState(false)
   const [panelError, setPanelError] = useState('')
+  // Issue #150: the missing-approved-evidence gate opens this guidance dialog.
+  const [gateGuidanceOpen, setGateGuidanceOpen] = useState(false)
+  const evidenceSectionRef = useRef<HTMLDivElement | null>(null)
   // Plan-item schedule editing: only these two dates are editable, seeded
   // once from the item so a refresh (e.g. after a 409) never wipes input.
   const [startDate, setStartDate] = useState(item.plan_start_date ?? '')
@@ -849,9 +861,13 @@ function TaskExecutionPanel({
     if (actionTo === '已完成') {
       if (completing) return
       setCompleting(true)
-      onComplete({ completionQuality, reviewConclusion, nextAction }).finally(
-        () => setCompleting(false),
-      )
+      // Issue #150: an evidence-gate rejection opens the guidance dialog; the
+      // failure never fakes success, and the typed form input stays rendered.
+      onComplete({ completionQuality, reviewConclusion, nextAction })
+        .then((outcome) => {
+          if (outcome === 'gate_evidence') setGateGuidanceOpen(true)
+        })
+        .finally(() => setCompleting(false))
       return
     }
     if (transitioning) return
@@ -1291,7 +1307,12 @@ function TaskExecutionPanel({
       </div>
 
       {/* Evidence versions */}
-      <div className={s.logSection}>
+      <div
+        ref={evidenceSectionRef}
+        tabIndex={-1}
+        className={s.logSection}
+        data-testid="evidence-section"
+      >
         <h4>任务成果证明（版本链，历史只读）</h4>
         {evidences.length === 0 && <p className="muted">暂无任务成果证明。</p>}
         {evidences.map((ev) => {
@@ -1474,6 +1495,57 @@ function TaskExecutionPanel({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Issue #150: completion-gate guidance dialog (evidence field only). */}
+      {gateGuidanceOpen && (
+        <div className={s.gateMask} onClick={() => setGateGuidanceOpen(false)}>
+          <div
+            className={s.gateDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gate-dialog-title"
+            data-testid="completion-gate-dialog"
+          >
+            <h3 id="gate-dialog-title">暂时无法完成任务</h3>
+            <p>
+              该任务还没有通过评审的任务成果证明，暂时无法完成任务。请按以下步骤操作：
+            </p>
+            <ol>
+              <li>在下方“任务成果证明”区域提交你的成果证明并提交评审。</li>
+              <li>请你的伙伴在“伙伴评审中心”中对证明选择“通过”。</li>
+              <li>返回本页面，重新填写并再次点击“确认完成”。</li>
+            </ol>
+            <div className={s.actions}>
+              <button
+                type="button"
+                onClick={() => {
+                  setGateGuidanceOpen(false)
+                  // No reload: bring the current task's Evidence area into
+                  // view and focus it; the completion form keeps its input.
+                  // ponytail: jsdom has no scrollIntoView; type-guard it.
+                  if (
+                    typeof evidenceSectionRef.current?.scrollIntoView ===
+                    'function'
+                  ) {
+                    evidenceSectionRef.current.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'center',
+                    })
+                  }
+                  evidenceSectionRef.current?.focus({
+                    preventScroll: true,
+                  })
+                }}
+              >
+                查看任务成果证明
+              </button>
+              <button type="button" onClick={() => setGateGuidanceOpen(false)}>
+                知道了
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

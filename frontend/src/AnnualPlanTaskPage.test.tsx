@@ -458,7 +458,7 @@ describe('learning task execution (v0010)', () => {
     expect(payload.idempotency_key).toBeTruthy()
   })
 
-  it('maps a completion-gate 422 to the failing block and keeps the form', async () => {
+  it('Issue #150: an evidence-gate 422 opens the guidance dialog and keeps the form', async () => {
     await renderMember(
       [makeItem({})],
       [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
@@ -490,13 +490,85 @@ describe('learning task execution (v0010)', () => {
       target: { value: '继续优化' },
     })
     fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
+    // The exact gate error opens the Chinese guidance dialog; the raw English
+    // backend message is never exposed.
     await waitFor(() => {
-      const alert = screen.getByRole('alert')
-      expect(alert.textContent).toContain('通过评审的任务成果证明')
+      expect(
+        screen.getByRole('dialog', { name: '暂时无法完成任务' }),
+      ).toBeTruthy()
     })
-    // The unsubmitted inputs are preserved.
+    expect(screen.queryByText(/approved evidence/i)).toBeNull()
+    expect(
+      screen.getByText((content) =>
+        content.includes('提交你的成果证明并提交评审'),
+      ),
+    ).toBeTruthy()
+    expect(
+      screen.getByText((content) => content.includes('选择“通过”')),
+    ).toBeTruthy()
+    // The failed transition stays a failure: the unsubmitted completion-form
+    // inputs are preserved behind the dialog.
     const conclusion = screen.getByLabelText('复盘结论') as HTMLTextAreaElement
     expect(conclusion.value).toBe('完成了数据管道')
+    expect(
+      (screen.getByLabelText('下一步行动') as HTMLInputElement).value,
+    ).toBe('继续优化')
+  })
+
+  it('Issue #150: 查看任务成果证明 dismisses the guidance and focuses the evidence area', async () => {
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+    )
+    const gateError: unknown = Object.assign(
+      new Error('task requires at least one approved evidence'),
+      {
+        status: 422,
+        detail: {
+          code: 'completion_gate_failed',
+          entity_type: 'learning_task',
+          entity_id: 1,
+          field: 'evidence',
+          reason: 'completion_gate_failed',
+          message: 'task requires at least one approved evidence',
+        },
+      },
+    )
+    vi.spyOn(planningApi, 'transitionLearningTask').mockRejectedValue(gateError)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '完成任务' })).toBeTruthy(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '完成任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('dialog', { name: '暂时无法完成任务' }),
+      ).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '查看任务成果证明' }))
+    // Guidance closes without a reload and the task's evidence area is focused.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', { name: '暂时无法完成任务' }),
+      ).toBeNull()
+    })
+    const evidenceSection = screen.getByTestId('evidence-section')
+    expect(document.activeElement).toBe(evidenceSection)
+    // The completion form stayed open; a repeated rejected attempt replays
+    // the same gate error (no CAS conflict) and 知道了 closes the dialog.
+    fireEvent.click(screen.getByRole('button', { name: '确认完成' }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('dialog', { name: '暂时无法完成任务' }),
+      ).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }))
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', { name: '暂时无法完成任务' }),
+      ).toBeNull()
+    })
   })
 
   it('sends one atomic completion request and blocks repeat submits in flight', async () => {
