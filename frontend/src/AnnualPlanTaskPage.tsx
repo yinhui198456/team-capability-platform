@@ -25,7 +25,6 @@ import {
   submitEvidence,
   transitionLearningTask,
   updateEvidence,
-  updateLearningTask,
   updatePlanItem,
   type AnnualPlan,
   type Evidence,
@@ -332,18 +331,14 @@ export function AnnualPlanTaskPage() {
     const fp = 'complete'
     const { key } = keyFor(`task-${task.id}-已完成`, fp)
     try {
-      const updated = await updateLearningTask(
-        task.id,
-        {
-          completion_quality: fields.completionQuality || null,
-          review_conclusion: fields.reviewConclusion,
-          next_action: fields.nextAction,
-        },
-        task.revision,
-      )
-      await transitionLearningTask(updated.id, {
+      // Issue #150: one atomic request — a gate failure persists nothing and
+      // never advances the revision, so a retry replays the same gate error.
+      await transitionLearningTask(task.id, {
         to_status: '已完成',
-        expected_revision: updated.revision,
+        completion_quality: fields.completionQuality || null,
+        review_conclusion: fields.reviewConclusion,
+        next_action: fields.nextAction,
+        expected_revision: task.revision,
         idempotency_key: key,
       })
       clearKey(`task-${task.id}-已完成`)
@@ -705,7 +700,7 @@ export function AnnualPlanTaskPage() {
                   onTransition={(to, reason, date) =>
                     void handleTransition(td.task, to, reason, date)
                   }
-                  onComplete={(fields) => void handleComplete(td.task, fields)}
+                  onComplete={(fields) => handleComplete(td.task, fields)}
                   onCreateLog={(fields) =>
                     void handleCreateLog(td.task.id, fields)
                   }
@@ -750,7 +745,7 @@ type PanelProps = {
     completionQuality: string
     reviewConclusion: string
     nextAction: string
-  }) => void
+  }) => Promise<void>
   onCreateLog: (fields: {
     recordDate: string
     hours: number
@@ -802,6 +797,8 @@ function TaskExecutionPanel({
   const [newVersionOf, setNewVersionOf] = useState<Evidence | null>(null)
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // Issue #150: block a second 确认完成 while the atomic request is in flight.
+  const [completing, setCompleting] = useState(false)
   const [panelError, setPanelError] = useState('')
   // Plan-item schedule editing: only these two dates are editable, seeded
   // once from the item so a refresh (e.g. after a 409) never wipes input.
@@ -827,7 +824,11 @@ function TaskExecutionPanel({
   function confirmAction() {
     if (!actionTo) return
     if (actionTo === '已完成') {
-      onComplete({ completionQuality, reviewConclusion, nextAction })
+      if (completing) return
+      setCompleting(true)
+      onComplete({ completionQuality, reviewConclusion, nextAction }).finally(
+        () => setCompleting(false),
+      )
       return
     }
     onTransition(actionTo, reason, revisedDueDate)
@@ -1137,7 +1138,9 @@ function TaskExecutionPanel({
             />
           </label>
           <div className={s.actions}>
-            <button type="submit">确认完成</button>
+            <button type="submit" disabled={completing}>
+              确认完成
+            </button>
             <button type="button" onClick={() => setActionTo(null)}>
               取消操作
             </button>

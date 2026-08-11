@@ -896,6 +896,35 @@ def _task_row(connection: psycopg.Connection, task_id: int) -> dict[str, object]
     return _learning_task_row(row)
 
 
+def _validate_completion_fields(fields: dict[str, object], task_id: int) -> None:
+    """Shared format rules for member-supplied completion fields (PUT and the
+    已完成 transition payload enforce the identical contract)."""
+    if "completion_quality" in fields:
+        quality = fields["completion_quality"]
+        if quality is not None and quality not in _COMPLETION_QUALITY_VALUES:
+            raise CompletionGateError(
+                "invalid completion_quality",
+                entity_id=task_id,
+                field="completion_quality",
+            )
+    for key in ("review_conclusion", "next_action"):
+        value = fields.get(key)
+        if value is not None and not isinstance(value, str):
+            raise CompletionGateError(
+                f"{key} must be text", entity_id=task_id, field=key
+            )
+        if (
+            key == "next_action"
+            and isinstance(value, str)
+            and len(value) > _MAX_NEXT_ACTION_LENGTH
+        ):
+            raise CompletionGateError(
+                "next_action must be at most 200 characters",
+                entity_id=task_id,
+                field="next_action",
+            )
+
+
 def update_learning_task(
     connection: psycopg.Connection,
     member_id: int,
@@ -934,30 +963,7 @@ def update_learning_task(
             )
         updates[key] = value
 
-    if "completion_quality" in updates:
-        quality = updates["completion_quality"]
-        if quality is not None and quality not in _COMPLETION_QUALITY_VALUES:
-            raise CompletionGateError(
-                "invalid completion_quality",
-                entity_id=task_id,
-                field="completion_quality",
-            )
-    for key in ("review_conclusion", "next_action"):
-        value = updates.get(key)
-        if value is not None and not isinstance(value, str):
-            raise CompletionGateError(
-                f"{key} must be text", entity_id=task_id, field=key
-            )
-        if (
-            key == "next_action"
-            and isinstance(value, str)
-            and len(value) > _MAX_NEXT_ACTION_LENGTH
-        ):
-            raise CompletionGateError(
-                "next_action must be at most 200 characters",
-                entity_id=task_id,
-                field="next_action",
-            )
+    _validate_completion_fields(updates, task_id)
 
     if not updates:
         # Mirror the plan-item contract: a PUT with no writable business fields
@@ -1075,12 +1081,36 @@ def transition_learning_task(
     expected_revision: int | None,
     idempotency_key: str | None = None,
     revised_due_date: object = None,
+    completion_fields: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Service-enforced task state machine (v0010).  Zero partial writes."""
     if to_status not in _ALLOWED_TASK_STATUSES:
         raise InvalidTaskTransition(
             f"invalid status '{to_status}'", entity_id=task_id, field="status"
         )
+    # Issue #150: the retrospective payload rides the 已完成 transition so the
+    # gate verdict and the field/status write commit in one transaction; a
+    # gate failure persists nothing and never advances the revision.
+    if completion_fields and to_status != "已完成":
+        raise InvalidTaskTransition(
+            "completion fields are only accepted when completing a task",
+            entity_id=task_id,
+            field="status",
+        )
+    if completion_fields:
+        unknown = set(completion_fields) - {
+            "completion_quality",
+            "review_conclusion",
+            "next_action",
+        }
+        if unknown:
+            raise SourceFieldLocked(
+                f"field '{sorted(unknown)[0]}' is not updatable",
+                entity_type="learning_task",
+                entity_id=task_id,
+                field=sorted(unknown)[0],
+            )
+        _validate_completion_fields(completion_fields, task_id)
     if to_status == "延期" and revised_due_date is not None:
         if not isinstance(revised_due_date, str):
             raise InvalidStatusReason(
@@ -1097,7 +1127,12 @@ def transition_learning_task(
                 field="revised_due_date",
             ) from exc
 
-    fingerprint = _transition_fingerprint(to_status, reason)
+    # Fingerprint stays identical to the pre-#150 shape for requests without a
+    # completion payload, so recorded keys replay instead of false-conflicting.
+    fp_parts: list[object] = [to_status, reason]
+    if completion_fields:
+        fp_parts.append(completion_fields)
+    fingerprint = _transition_fingerprint(*fp_parts)
     with connection.transaction():
         owned = connection.execute(
             """
@@ -1169,6 +1204,16 @@ def transition_learning_task(
         if to_status == "进行中" and current["actual_started_at"] is None:
             side_effects["actual_started_at"] = _now(connection)
         if to_status == "已完成":
+            if completion_fields:
+                # Write the retrospective first (same transaction): the gate
+                # below then judges the effective post-write state, and any
+                # gate failure rolls this write back with everything else.
+                columns = list(completion_fields.keys())
+                set_clause = ", ".join(f"{column} = %s" for column in columns)
+                connection.execute(
+                    f"UPDATE learning_task SET {set_clause} WHERE id = %s",
+                    [*completion_fields.values(), task_id],
+                )
             _check_completion_gate(connection, task_id)
             side_effects["actual_completed_at"] = _now(connection)
             # Atomically archive all approved evidence for this task.

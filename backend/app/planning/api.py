@@ -540,6 +540,13 @@ def post_task_transition(
             },
         ) from exc
     expected = body.get("expected_revision")
+    # Issue #150: the retrospective payload may ride the 已完成 transition so
+    # the gate and the field/status write commit in one transaction.
+    completion_fields = {
+        key: body[key]
+        for key in ("completion_quality", "review_conclusion", "next_action")
+        if key in body
+    }
     try:
         return transition_learning_task(
             connection,
@@ -550,6 +557,7 @@ def post_task_transition(
             expected_revision=int(expected) if expected is not None else None,
             idempotency_key=body.get("idempotency_key"),
             revised_due_date=body.get("revised_due_date"),
+            completion_fields=completion_fields or None,
         )
     except PermissionError as exc:
         raise HTTPException(

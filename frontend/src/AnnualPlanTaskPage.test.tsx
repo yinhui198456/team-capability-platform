@@ -463,9 +463,6 @@ describe('learning task execution (v0010)', () => {
       [makeItem({})],
       [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
     )
-    vi.spyOn(planningApi, 'updateLearningTask').mockResolvedValue(
-      makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 2 }),
-    )
     const gateError: unknown = Object.assign(
       new Error('task requires at least one approved evidence'),
       {
@@ -500,6 +497,70 @@ describe('learning task execution (v0010)', () => {
     // The unsubmitted inputs are preserved.
     const conclusion = screen.getByLabelText('复盘结论') as HTMLTextAreaElement
     expect(conclusion.value).toBe('完成了数据管道')
+  })
+
+  it('sends one atomic completion request and blocks repeat submits in flight', async () => {
+    // Issue #150: the retrospective rides the transition POST — no prior PUT —
+    // and 确认完成 stays disabled while the request is in flight.
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+    )
+    const update = vi.spyOn(planningApi, 'updateLearningTask')
+    let resolveTransition: (task: LearningTask) => void = () => {}
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockImplementation(
+        () =>
+          new Promise<LearningTask>((resolve) => {
+            resolveTransition = resolve
+          }),
+      )
+    vi.mocked(planningApi.getLearningTask).mockResolvedValue(
+      makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 }),
+    )
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '完成任务' })).toBeTruthy(),
+    )
+    // The post-success refresh observes the completed task.
+    vi.mocked(planningApi.getLearningTask).mockResolvedValue(
+      makeTask({ id: 1, plan_item_id: 1, status: '已完成', revision: 2 }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '完成任务' }))
+    fireEvent.change(screen.getByLabelText('复盘结论'), {
+      target: { value: '完成了数据管道' },
+    })
+    fireEvent.change(screen.getByLabelText('完成质量'), {
+      target: { value: '达到预期' },
+    })
+    fireEvent.change(screen.getByLabelText('下一步行动'), {
+      target: { value: '继续优化' },
+    })
+    const submit = screen.getByRole('button', { name: '确认完成' })
+    fireEvent.click(submit)
+    // A second click while the request is in flight must not re-send.
+    fireEvent.click(submit)
+    await waitFor(() => expect(transition).toHaveBeenCalledTimes(1))
+    expect(update).not.toHaveBeenCalled()
+    expect(transition.mock.calls[0][1]).toMatchObject({
+      to_status: '已完成',
+      completion_quality: '达到预期',
+      review_conclusion: '完成了数据管道',
+      next_action: '继续优化',
+      expected_revision: 1,
+    })
+    expect(transition.mock.calls[0][1].idempotency_key).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: '确认完成' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+    resolveTransition(
+      makeTask({ id: 1, plan_item_id: 1, status: '已完成', revision: 2 }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('任务已完成'),
+    )
   })
 
   it('keeps input on revision 409, refreshes the task and retries with a new key', async () => {

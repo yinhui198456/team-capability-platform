@@ -489,6 +489,131 @@ def test_completion_does_not_update_member_mastery(
     assert after == before
 
 
+def _complete_with_payload(
+    cookies: dict[str, str],
+    task_id: int,
+    fields: dict[str, object],
+    expected_revision: int | None = None,
+) -> tuple[int, Any]:
+    """Issue #150: completion payload rides the transition request itself."""
+    body: dict[str, object] = {"to_status": "已完成", **fields}
+    if expected_revision is not None:
+        body["expected_revision"] = expected_revision
+    status, payload, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        body,
+        cookies=cookies,
+    )
+    return status, payload
+
+
+def _completion_snapshot(cookies: dict[str, str], task_id: int) -> dict[str, object]:
+    task = next(t for t in _get_tasks(cookies) if t["id"] == task_id)
+    return {
+        key: task[key]
+        for key in (
+            "status",
+            "revision",
+            "completion_quality",
+            "review_conclusion",
+            "next_action",
+        )
+    }
+
+
+def test_completion_payload_gate_failure_is_zero_write_and_repeatable(
+    seeded: dict[str, object],
+) -> None:
+    """Issue #150: a gate-rejected completion must persist nothing — not the
+    retrospective fields, not a revision bump — and resubmitting the identical
+    rejected request must return the same gate error, never a phantom CAS
+    conflict caused by the first failure."""
+    mc = seeded["member_cookies"]
+    task_id = int(seeded["task_id"])
+    _transition(mc, task_id, "进行中")
+    _add_log(mc, task_id, 5)
+    # Evidence submitted but still 待 Review — the evidence gate fails.
+    _create_and_submit_evidence(mc, task_id)
+    before = _completion_snapshot(mc, task_id)
+
+    payload = {
+        "completion_quality": "达到预期",
+        "review_conclusion": "UAT-20260810-B10：完成流程门禁组合测试",
+        "next_action": "UAT-20260810-B10：等待 Buddy 审核 Evidence",
+    }
+    status, body = _complete_with_payload(
+        mc, task_id, payload, expected_revision=int(before["revision"])
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "completion_gate_failed"
+    assert body["detail"]["field"] == "evidence"
+    assert _completion_snapshot(mc, task_id) == before
+
+    # Identical resubmission: same gate error, still zero writes, no 409.
+    status, body = _complete_with_payload(
+        mc, task_id, payload, expected_revision=int(before["revision"])
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "completion_gate_failed"
+    assert body["detail"]["field"] == "evidence"
+    assert _completion_snapshot(mc, task_id) == before
+
+
+def test_completion_payload_success_is_atomic_single_revision_bump(
+    seeded: dict[str, object],
+) -> None:
+    """Issue #150: a legal completion persists the retrospective fields and
+    the status change in one transaction; the revision advances exactly once
+    under the existing success semantics."""
+    mc, bc = seeded["member_cookies"], seeded["buddy_cookies"]
+    task_id = int(seeded["task_id"])
+    _transition(mc, task_id, "进行中")
+    _add_log(mc, task_id, 5)
+    evidence_id = _create_and_submit_evidence(mc, task_id)
+    _approve_evidence(bc, evidence_id)
+    before = _completion_snapshot(mc, task_id)
+    assert before["review_conclusion"] is None
+
+    status, task = _complete_with_payload(
+        mc,
+        task_id,
+        {
+            "completion_quality": "达到预期",
+            "review_conclusion": "整体达标，符合预期",
+            "next_action": "下一步深入 P5 场景",
+        },
+        expected_revision=int(before["revision"]),
+    )
+    assert status == 200
+    assert task["status"] == "已完成"
+    assert task["completion_quality"] == "达到预期"
+    assert task["review_conclusion"] == "整体达标，符合预期"
+    assert task["next_action"] == "下一步深入 P5 场景"
+    assert task["actual_completed_at"] is not None
+    assert int(task["revision"]) == int(before["revision"]) + 1
+
+
+def test_completion_fields_rejected_on_other_transitions(
+    seeded: dict[str, object],
+) -> None:
+    """Issue #150: completion fields only ride the 已完成 transition; sending
+    them with any other transition is a request error, not a silent no-op."""
+    mc = seeded["member_cookies"]
+    task_id = int(seeded["task_id"])
+    _transition(mc, task_id, "进行中")
+    before = _completion_snapshot(mc, task_id)
+    status, body, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/transitions",
+        {"to_status": "暂停", "reason": "请假一周", "review_conclusion": "复盘"},
+        cookies=mc,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "invalid_task_transition"
+    assert _completion_snapshot(mc, task_id) == before
+
+
 def test_concurrent_transitions_only_one_wins(seeded: dict[str, object]) -> None:
     mc = seeded["member_cookies"]
     task_id = int(seeded["task_id"])

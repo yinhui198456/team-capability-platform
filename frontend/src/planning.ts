@@ -623,6 +623,11 @@ export type TaskTransitionPayload = {
   expected_revision: number
   idempotency_key?: string
   revised_due_date?: string
+  // Issue #150: the retrospective rides the 已完成 transition so the gate
+  // verdict and the field/status write commit in one transaction.
+  completion_quality?: string | null
+  review_conclusion?: string
+  next_action?: string
 }
 
 export async function transitionLearningTask(
