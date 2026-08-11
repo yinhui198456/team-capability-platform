@@ -2025,4 +2025,64 @@ describe('task transition UI consistency (issue #164)', () => {
     // No fabricated transition failure message.
     expect(screen.getByRole('alert').textContent).not.toContain('network down')
   })
+
+  it('clears a prior success notice when a later genuine transition fails', async () => {
+    // Review follow-up: a successful transition leaves role=status on screen;
+    // a later failing transition must replace it with only its own role=alert,
+    // keeping the panel and typed input — never success+error together.
+    const tasks = [
+      makeTask({ id: 1, plan_item_id: 1, status: '未开始', revision: 1 }),
+    ]
+    const transition = vi
+      .spyOn(planningApi, 'transitionLearningTask')
+      .mockImplementation(async (taskId, payload) => {
+        if (payload.to_status === '暂停') {
+          throw Object.assign(new Error('pause rejected'), {
+            status: 422,
+            detail: { code: 'invalid_transition', message: 'pause rejected' },
+          })
+        }
+        const updated = {
+          ...tasks[0],
+          status: payload.to_status,
+          revision: tasks[0].revision + 1,
+        }
+        tasks[0] = updated
+        vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
+          makePlan([makeItem({ status: payload.to_status })]),
+        )
+        return updated
+      })
+    await renderMember([makeItem({ status: '未开始' })], tasks)
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
+    )
+    // First transition succeeds and leaves its success notice.
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认开始执行' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain(
+        '任务已开始执行',
+      ),
+    )
+    // Open the next allowed action, type the reason, and let the POST fail.
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }))
+    fireEvent.change(screen.getByLabelText('暂停原因'), {
+      target: { value: '本周出差' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确认暂停' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('pause rejected'),
+    )
+    // The stale success is gone; exactly the current error remains.
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    // Panel and typed input are preserved; no duplicate request fired.
+    expect(screen.getByRole('button', { name: '确认暂停' })).toBeTruthy()
+    expect(
+      (screen.getByLabelText('暂停原因') as HTMLTextAreaElement).value,
+    ).toBe('本周出差')
+    expect(transition).toHaveBeenCalledTimes(2)
+  })
 })

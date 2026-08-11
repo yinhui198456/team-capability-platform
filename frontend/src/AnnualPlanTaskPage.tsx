@@ -283,6 +283,9 @@ export function AnnualPlanTaskPage() {
     reason: string,
     revisedDueDate: string,
   ): Promise<boolean> {
+    // A new attempt supersedes any prior transition outcome: drop the stale
+    // success notice up front so a genuine failure never coexists with it.
+    setNotice('')
     const reasonField = STATUS_REASON_FIELDS[to]
     if (reasonField && !reason.trim()) {
       setError(`请填写${REASON_LABELS[reasonField]}后再提交。`)
