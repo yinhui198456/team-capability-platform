@@ -2054,7 +2054,9 @@ def get_member_dashboard(
         follow_up["gaps_waiting_planning"] = gaps_waiting
 
     # Applicable completion of the current (latest) assessment: of the
-    # detail rows it carries, how many already reach their effective target.
+    # detail rows it carries, how many carry a valid current_level (0–5).
+    # Issue #61 defines current_level 0–5 as valid and NULL as unassessed, so
+    # a row with current_level=0 is filled, not lost by a target comparison.
     applicable_completion: dict[str, object] = {
         "total": 0,
         "completed": 0,
@@ -2064,11 +2066,7 @@ def get_member_dashboard(
         completion_row = connection.execute(
             """
             SELECT COUNT(*),
-                   COUNT(*) FILTER (
-                       WHERE current_level >= COALESCE(
-                           adjusted_target_level, standard_target_level, target_level
-                       )
-                   )
+                   COUNT(*) FILTER (WHERE current_level IS NOT NULL)
             FROM assessment_detail
             WHERE assessment_id = %s
             """,

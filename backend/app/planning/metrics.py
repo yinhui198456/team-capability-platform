@@ -48,8 +48,8 @@ METRIC_DICTIONARY: dict[str, dict[str, object]] = {
     "member_dashboard.applicable_completion": {
         "definition": (
             "total / completed / ratio over the detail rows of the current "
-            "(latest) assessment; completed means current_level reaches the "
-            "effective target.  ratio is 0 when total is 0."
+            "(latest) assessment; completed means current_level is filled "
+            "(0–5, NULL = unassessed, #61).  ratio is 0 when total is 0."
         ),
         "scope": "本人",
         "phase": 1,

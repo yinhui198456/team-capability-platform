@@ -1,8 +1,11 @@
 import psycopg
 import pytest
 
+from tests.standard_target_support import ensure_capability_nodes
 from tests.test_capability_profile import (
     _build_full_profile,
+    _create_test_user,
+    _ensure_l3_node,
     _login,
     _request,
 )
@@ -266,6 +269,157 @@ def test_dashboard_applicable_completion_of_open_assessment(
     expected_ratio = completion["completed"] / total if total else 0
     assert abs(completion["ratio"] - expected_ratio) < 1e-9
     assert total <= len(body["gaps"])
+
+
+# ── Issue #152: submitted-assessment completion semantics ────────────────────
+
+
+def _create_two_detail_assessment(
+    profile_schema: psycopg.Connection, username: str
+) -> tuple[dict[str, str], int]:
+    """Member + two applicable L3 details in one fresh draft."""
+    _create_test_user(profile_schema, username, ["Member"])
+    _ensure_l3_node(profile_schema, "P01-L2A-L3A")
+    _ensure_l3_node(profile_schema, "P01-L2A-L3B")
+    profile_schema.commit()
+    ensure_capability_nodes(profile_schema, ["P01-L2A-L3A", "P01-L2A-L3B"])
+
+    cookies = _login(profile_schema, username)
+    status, preview, _ = _request(
+        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "POST",
+        "/api/assessments",
+        {"year": 2026, "scope_token": preview["scope_token"]},
+        cookies=cookies,
+    )
+    assert status == 200
+    assert body is not None
+    return cookies, int(body["id"])
+
+
+def _save_draft_levels(
+    profile_schema: psycopg.Connection,
+    cookies: dict[str, str],
+    assessment_id: int,
+    levels: dict[str, int | None],
+) -> None:
+    rows = profile_schema.execute(
+        """
+        SELECT l3_code, l3_node_id
+        FROM assessment_detail
+        WHERE assessment_id = %s
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    assert {str(row[0]) for row in rows} == set(levels)
+    details = []
+    for l3_code, l3_node_id in rows:
+        item: dict[str, object] = {
+            "l3_code": str(l3_code),
+            "current_level": levels[str(l3_code)],
+            "evidence_note": "测试",
+        }
+        if l3_node_id is not None:
+            item["l3_node_id"] = int(l3_node_id)
+        details.append(item)
+    status, body, _ = _request(
+        "PUT",
+        f"/api/assessments/{assessment_id}/draft",
+        {"details": details, "expected_revision": 1},
+        cookies=cookies,
+    )
+    assert status == 200, body
+
+
+def _applicable_detail_rows(
+    profile_schema: psycopg.Connection, assessment_id: int
+) -> list[tuple[str, bool, int | None, int | None, int | None]]:
+    rows = profile_schema.execute(
+        """
+        SELECT l3_code, standard_target_applicable, current_level,
+               standard_target_level, target_level
+        FROM assessment_detail
+        WHERE assessment_id = %s
+        ORDER BY l3_code
+        """,
+        (assessment_id,),
+    ).fetchall()
+    return [(str(r[0]), bool(r[1]), r[2], r[3], r[4]) for r in rows]
+
+
+def test_dashboard_applicable_completion_counts_zero_level_as_filled(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """Issue #152: a valid current_level=0 is filled; only NULL is unassessed.
+
+    A formally submitted assessment whose applicable details are all filled
+    (one of them with current_level=0, below its target) must show full
+    applicable completion on the Member dashboard — the dashboard, the Gap
+    page stats and the submission contract share the 0-vs-null rule.
+    """
+    member_cookies, assessment_id = _create_two_detail_assessment(
+        profile_schema, "member_completion_zero"
+    )
+    _save_draft_levels(
+        profile_schema,
+        member_cookies,
+        assessment_id,
+        {"P01-L2A-L3A": 0, "P01-L2A-L3B": 2},
+    )
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=member_cookies,
+    )
+    assert status == 200, body
+
+    # Preconditions: both details applicable and filled; the zero-level row
+    # has a positive effective target it does NOT reach (old predicate lost it).
+    rows = _applicable_detail_rows(profile_schema, assessment_id)
+    assert len(rows) == 2
+    assert all(applicable for _, applicable, *_ in rows)
+    zero_row = next(row for row in rows if row[0] == "P01-L2A-L3A")
+    assert zero_row[2] == 0
+    zero_target = next(level for level in zero_row[3:] if level is not None)
+    assert zero_target > 0
+
+    completion = _dashboard(profile_schema, member_cookies)["assessment"][
+        "applicable_completion"
+    ]
+    assert completion["total"] == 2
+    assert completion["completed"] == 2
+    assert completion["ratio"] == 1
+
+
+def test_dashboard_applicable_completion_keeps_null_unfilled(
+    profile_schema: psycopg.Connection,
+) -> None:
+    """Issue #152 negative boundary: NULL stays incomplete (draft); a valid
+    current_level=0 next to it still counts as filled."""
+    member_cookies, assessment_id = _create_two_detail_assessment(
+        profile_schema, "member_completion_null"
+    )
+    _save_draft_levels(
+        profile_schema,
+        member_cookies,
+        assessment_id,
+        {"P01-L2A-L3A": 0, "P01-L2A-L3B": None},
+    )
+
+    rows = _applicable_detail_rows(profile_schema, assessment_id)
+    assert len(rows) == 2
+    assert all(applicable for _, applicable, *_ in rows)
+
+    completion = _dashboard(profile_schema, member_cookies)["assessment"][
+        "applicable_completion"
+    ]
+    assert completion["total"] == 2
+    assert completion["completed"] == 1
 
 
 def test_dashboard_current_month_counts_reconcilable(
