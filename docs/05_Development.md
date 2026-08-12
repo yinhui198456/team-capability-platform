@@ -189,11 +189,11 @@
 | Buddy Relationship | 辅导关系查询/维护 | Admin 配置；Buddy 查看负责成员 | `/system/users`、`/mentoring/dashboard` |
 | Capability Model / Domain L1 / Item L2 / Item L3 | 模型查询、导入、Leader 维护 | Leader 维护；Member/Buddy 查看；Admin 全量查看 | `/capability/model` |
 | Learning Resource | 资源查询与维护 | Leader 维护；其他角色按范围查看 | `/operations/resources` |
-| Assessment / Assessment Detail | 草稿、提交、历史快照 | Member 维护本人；Buddy 复核负责成员；Leader 按团队查看；Admin 全量查看 | `/capability/assessment`、`/capability/assessment/history` |
-| Assessment Review | 自评复核记录创建、反馈、闭环查询 | Buddy 对负责成员指导、复核、反馈；Member 查看本人历史；Admin 全量查看但不因 Admin 身份自动获得 Buddy Review 权限 | `/mentoring/assessment-review`、`/mentoring/feedback` |
+| Assessment / Assessment Detail | 草稿、按所选能力项生成学习任务、历史快照 | Member 维护本人；Buddy 按范围查看（历史复核仅只读）；Leader 按团队查看；Admin 全量查看 | `/capability/assessment`、`/capability/assessment/history` |
+| Assessment Review | 自评复核记录查询（历史提交流程产物，#178 起仅只读兼容，不再创建） | Buddy 查看负责成员历史复核；Member 查看本人历史；Admin 全量查看但不因 Admin 身份自动获得 Buddy Review 权限 | `/mentoring/assessment-review`、`/mentoring/feedback` |
 | Gap | Gap 计算、优先级、纳入计划标记 | Member 维护本人；Buddy 提供指导；Leader 查看团队；Admin 全量查看 | `/capability/assessment`（原 `/capability/gap`、`/growth/goals` 已重定向并入） |
 | Growth Goal | Gap 纳入后的年度目标查询/维护 | Member 维护本人；其他角色按范围查看 | `/growth/annual-plan` |
-| Annual Growth Plan | 年度计划生成、状态、统计 | Member 维护本人；其他角色按范围查看；生成受统一门禁约束 | `/growth/annual-plan` |
+| Annual Growth Plan | 年度计划生成、状态、统计 | Member 维护本人；其他角色按范围查看；按所选 L3 生成（#178） | `/growth/annual-plan` |
 | Plan Item | L3 计划项查询与执行管理 | Member 维护本人；Buddy/Leader 按范围查看；一个 L3 计划项对应一个 Learning Task | `/growth/annual-plan` |
 | Learning Task | 任务状态、日期、完成判定 | Member 维护本人；Buddy/Leader 按范围查看 | `/growth/annual-plan`、`/growth/review/monthly` |
 | Learning Progress Log | 日志新增/作废/更正与时长聚合（追加写，无编辑） | 字段含 `task_id`、`record_date`、`actual_hours`、`note`、`recorder`、`invalidated_at`、`correction_of_log_id`；Member 维护本人，Buddy/Leader 按范围查看，Admin 全量查看；仅聚合时长，不改变任务关系或状态 | `/growth/annual-plan`、`/growth/review/monthly`、`/dashboard/member`、`/operations/analytics` |
@@ -210,6 +210,8 @@
 ~~**正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。**~~
 
 Issue #82 实施后，Member 提交自评时，系统在单一事务中原子生成：Gap 分析 → 年度成长计划（若不存在）→ 计划项（标记为「纳入计划」的 Gap）→ 学习任务（1:1）。Buddy 复核结果作为反馈，不阻塞计划生成。
+
+Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）后生成，批次原子（任一不合格整批零写入）、重复生成幂等；未选择项不阻塞，可增量选择；不创建 Assessment Review。
 
 新 API 契约：
 
@@ -279,16 +281,16 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 | UI-01 | `/dashboard/member` / 我的成长看板 | `docs/assets/ui-prototypes/UI-01-my-growth-dashboard.png` |
 | UI-02 | `/capability/assessment` / 能力自评与 Gap 分析（`/capability/gap` 重定向至此） | `docs/assets/ui-prototypes/UI-02-assessment-gap.png` |
 | UI-03 | `/growth/annual-plan` / 年度成长计划与学习任务（`/growth/tasks` 重定向至此） | `docs/assets/ui-prototypes/UI-03-annual-plan-task.png` |
-| UI-04 | `/mentoring/dashboard`、`/mentoring/evidence-review` / Buddy 复核中心（`/mentoring/assessment-review` 重定向至 `/mentoring/dashboard`） | `docs/assets/ui-prototypes/UI-04-buddy-review-center.png` |
+| UI-04 | `/mentoring/dashboard`、`/mentoring/evidence-review` / 辅导成员看板与 Evidence Review（`/mentoring/assessment-review` 重定向至 `/mentoring/dashboard`） | `docs/assets/ui-prototypes/UI-04-buddy-review-center.png` |
 | UI-05 | `/operations/analytics` / 团队能力分析 | `docs/assets/ui-prototypes/UI-05-team-capability-analysis.png` |
 
 ### 4.2 状态与交互契约
 
 | 对象 | 状态/转移 | 核心交互 |
 |---|---|---|
-| Assessment | 草稿 → 待复核 → 已复核或建议调整 → 已归档；调整后新提交产生新的 Review 记录 | 保存草稿、提交、查看 Gap、查看历史 |
-| Assessment Review | 待复核 → 已闭环；结论为认可/建议调整 | Buddy 复核、反馈、闭环；历史记录不重复流转 |
-| Annual Growth Plan | 制定中 → 执行中 → 已归档 | 通过门禁后生成/维护年度计划 |
+| Assessment | 主流程：草稿 → 已归档（#178）；历史提交流程保留 草稿 → 待复核 → 已复核或建议调整 → 已归档（submit_assessment，UI 已不再使用） | 保存草稿、按所选能力项生成学习任务、查看 Gap、查看历史 |
+| Assessment Review | 待复核 → 已闭环；结论为认可/建议调整（历史提交流程；#178 起不再创建） | 历史记录只读追溯，不重复流转 |
+| Annual Growth Plan | 制定中 → 执行中 → 已归档 | 按所选 L3 生成/维护年度计划（#178） |
 | Plan Item | 未开始、进行中、已完成、延期、暂停、取消 | 按 L3 维护计划月份、预计时长和状态；计划日期受来源季度/来源月边界约束；写携带 `expected_revision`，冲突返回 409 `plan_revision_conflict` |
 | Learning Task | 未开始、进行中、暂停、延期、已完成、取消；已完成、取消为终态 | 执行、填写日志、提交 Evidence；迁移经 `/transitions` 并带原因字段；完成判定（completion gate）不满足返回 422 |
 | Evidence | 草稿 → 待 Review → 通过/需补充；枚举保留「驳回」「已归档」但当前无代码路径产生 | 仅「需补充」可被新版本取代；旧版本只读，不直接回流 |
@@ -302,7 +304,7 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 - 组织：一个团队、8 名团队成员以内；另设 1 个 Admin 账号，合计仍少于 10 个账号。固定角色为 Member、Buddy、Leader、Admin，允许 Leader/Buddy 兼任 Member 以演示权限叠加。
 - 能力模型：六个启用域 P01 Data Infra、P02 AI Infra / Agent、P03 Coding、C01 基本办公、C02 沟通协作、C03 学习创新；每域准备可展开的 L2/L3 示例，未来扩展域不放入可操作数据。
 - 资源与规划：为 L3 准备少量 Learning Resource 索引，并准备一份 Leader 发布的 Team Annual Capability Plan；两者只用于演示页面和关联关系，不引入课程生命周期。
-- 评估：至少准备一个最新提交且 Assessment Review 已闭环、结论为认可的 Member；另准备一个待复核或建议调整的 Member，用于演示计划门禁阻塞。所有 Assessment 保留历史版本。
+- 评估：至少准备一个已填写多个适用 L3 的 Member（演示 #178 增量生成所选学习任务，覆盖 current_level=0 与未填写项）；保留历史 Assessment Review 记录用于只读兼容演示。所有 Assessment 保留历史版本。
 - Gap/Goal/Plan：认可成员准备多个不同优先级 Gap、Growth Goal、年度计划、L3 Plan Item；同一 Plan Item 只派生一个 Learning Task。
 - 任务/日志：准备未开始、进行中、已完成、延期等任务；每个任务准备多条 `Learning Progress Log`，覆盖不同月份与小时数，使 UI-01、UI-03、UI-05 能展示全年/当月计划与实际时长。
 - Evidence/Review：至少准备草稿、待 Review、通过、需补充版本；需补充必须对应新版本和新的 Review 历史。
@@ -316,14 +318,14 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 | 场景 | 前置条件 | 操作 | 预期结果 |
 |---|---|---|---|
-| Member 主线 | Member 有六域评估和 Gap；最新 Review 已认可 | 提交自评 → 查看 Gap → 选入计划 → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task |
-| Buddy 自评复核 | Buddy 负责该 Member，Assessment Review 待复核 | 打开 `/mentoring/dashboard`（自评复核队列），查看依据，提交认可或建议调整 | Review 形成闭环历史；建议调整不影响 Gap 查看，但阻止正式纳入计划 |
-| 计划门禁阻塞/解除 | 最新 Assessment Review 待复核或结论非认可 | 在 `/growth/annual-plan` 尝试纳入 Gap；完成 Buddy Review 认可后重试 | 阻塞时 API 拒绝并返回原因；解除后可生成 Annual Growth Plan/Plan Item |
+| Member 主线 | Member 有六域评估，已填写多个适用 L3 | 选择已填写的 L3 生成所选学习任务 → 查看 Gap → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task；未选择项不阻塞 |
+| Buddy 自评复核（历史） | 历史数据存在已闭环 Assessment Review | 打开 `/mentoring/dashboard`（辅导成员看板），查看历史复核记录 | 历史 Review 保持只读兼容，不再出现待办/队列；新流程不创建 |
+| 增量生成（#178） | Member 已填写部分适用 L3，部分未填写 | 在能力自评/Gap 页选择已填写的 L3 生成学习任务；多选含未填写项时整批拒绝；重复生成 | 已选择项生成计划项与任务；未填写项不阻塞；重复生成幂等；多选批次原子 |
 | 学习时长聚合 | Learning Task 关联多条日志 | 在 `/growth/annual-plan` 新增不同日期、小时数日志，查看看板/月度复盘 | 仅按 `record_date` 聚合 `actual_hours`；不创建子任务、不改变任务状态 |
 | Evidence Review | Evidence 已提交待 Review | Buddy 在 `/mentoring/evidence-review` 提交通过/需补充（需补充必须填反馈） | Review 闭环；需补充要求新 Evidence 版本，旧版本只读 |
 | Leader 团队分析 | 多成员有评估、计划、日志、Evidence、延期项 | 打开 `/operations/analytics`，切换年度/成员/能力域 | UI-05 四类图表和延期明细口径正确；Leader 不可编辑成员业务数据 |
 | Admin 范围 | Admin 账号可登录；是否附加业务角色分别准备两种数据 | 查看全量并进入系统管理；无 Buddy 角色时尝试 Review | Admin 可全量查看和管理用户/角色/配置；业务操作只由附加角色授权 |
-| 原型截图 | 种子数据已加载 | 对五条固定主路由截图并与实际 PNG 对照 | UI-01 四项时长+能力/GAP/任务；UI-02 L3+Gap+门禁；UI-03 计划项/月轴/详情/Evidence；UI-04 成员/队列/工作区/历史；UI-05 实际 vs 计划/达成率/月累计趋势/延期明细均可见 |
+| 原型截图 | 种子数据已加载 | 对五条固定主路由截图并与实际 PNG 对照 | UI-01 四项时长+能力/GAP/任务；UI-02 L3+Gap+选择生成；UI-03 计划项/月轴/详情/Evidence；UI-04 成员/待验收成果入口/Evidence Review；UI-05 实际 vs 计划/达成率/月累计趋势/延期明细均可见 |
 
 ## 7. 分迭代开发计划
 

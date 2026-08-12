@@ -367,6 +367,35 @@ export async function submitAssessment(
   )
 }
 
+export async function generatePlanItems(
+  id: number,
+  l3Codes: string[],
+): Promise<{
+  ok: boolean
+  plan_generation: {
+    annual_plan_id: number
+    created_items: number
+    skipped_items: number
+    created_tasks: number
+  }
+}> {
+  return request<{
+    ok: boolean
+    plan_generation: {
+      annual_plan_id: number
+      created_items: number
+      skipped_items: number
+      created_tasks: number
+    }
+  }>(
+    `/api/assessments/${id}/generate-plan-items`,
+    {
+      method: 'POST',
+    },
+    { l3_codes: l3Codes },
+  )
+}
+
 export async function getAssessmentHistory(
   id: number,
 ): Promise<AssessmentReview[]> {

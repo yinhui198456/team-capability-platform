@@ -16,10 +16,10 @@ import {
   getDraftTargetRepairPreview,
   listAssessments,
   newIdempotencyKey,
+  generatePlanItems,
   repairDraftTargetSnapshots,
   saveDraft,
   selectL2Requirement,
-  submitAssessment,
 } from './assessment'
 import { type ApiError } from './shared/api'
 import {
@@ -107,6 +107,17 @@ function isFilled(detail: AssessmentDetail) {
 
 function isApplicableDetail(detail: AssessmentDetail) {
   return detail.standard_target_applicable !== false
+}
+
+// Issue #178: a row may be selected for learning-task generation when it has
+// a filled outcome (current_level 0-5, 0 included), an effective target and a
+// positive gap — the same preconditions the backend validates per selection.
+function canSelectForPlan(detail: AssessmentDetail) {
+  return (
+    isFilled(detail) &&
+    detail.current_level != null &&
+    (computeGap(detail) ?? 0) > 0
+  )
 }
 
 function normalizeEvidence(value: unknown) {
@@ -312,6 +323,7 @@ export function AssessmentGapPage() {
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set())
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [message, setMessage] = useState('')
@@ -608,14 +620,14 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleSubmit() {
-    if (!assessment) return
+  async function handleGeneratePlanItems() {
+    if (!assessment || selectedCodes.size === 0) return
     setError('')
     setMessage('')
     try {
       if (isMockEnabled()) {
         setAssessment({ ...mockAssessmentSubmitted, details })
-        setMessage('已提交，Gap 即时生成。等待 Buddy 复核。')
+        setMessage(`已生成 ${selectedCodes.size} 个学习任务`)
         return
       }
       let revision = assessment.revision ?? 1
@@ -654,64 +666,28 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
-      // Client-side completeness check before the request, mirroring the
-      // server gate: only current-role REQUIRED capabilities missing an
-      // assessment outcome block submission (staged workflow, #81 round 1).
-      // Locates the first incomplete REQUIRED row, shows a top summary, and
-      // preserves every input — draft saves stay allowed regardless.  The
-      // server submit gate remains the final authority.
-      const problems = submitProblemDetails(details)
-      if (problems.length) {
-        const first = problems[0]
-        locateDetail(first.detail)
-        setError(
-          `尚无法提交：还有 ${problems.length} 项当前职级必备能力未完成评估。请先处理「${
-            first.detail.l3_name ?? first.detail.l3_code
-          }」——${assessmentErrorCopy(first.reason)}。`,
-        )
-        return
-      }
-      const undecidedGaps = details.filter(
-        (detail) =>
-          isApplicableDetail(detail) &&
-          detail.scope_type !== 'target_progressive' &&
-          (computeGap(detail) ?? 0) > 0 &&
-          detail.include_in_plan !== true,
-      ).length
-      const result = await submitAssessment(assessment.id, revision)
+      // Issue #178: generate/reuse learning tasks for exactly the selected,
+      // filled L3 rows.  Unselected rows (even unfilled ones) never block;
+      // the server validates only the selection, atomically and idempotently.
+      const result = await generatePlanItems(assessment.id, [...selectedCodes])
       loadAssessment(await getAssessment(assessment.id))
 
-      // Issue #82: Show plan generation result
       const planGen = result.plan_generation
-      if (planGen && planGen.created_tasks > 0) {
-        const undecidedNote =
-          undecidedGaps > 0
-            ? `\n📝 另有 ${undecidedGaps} 项 Gap 未决定规划：复核通过后将保留在成长积压中，可稍后在年度计划中选择。`
+      setMessage(
+        `✅ 已生成 ${planGen.created_tasks} 个学习任务${
+          planGen.skipped_items > 0
+            ? `（${planGen.skipped_items} 个已存在）`
             : ''
-        setMessage(
-          `✅ 自评已提交\n📋 已生成 ${planGen.created_tasks} 个学习任务${planGen.skipped_items > 0 ? `（${planGen.skipped_items} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看${undecidedNote}`,
-        )
-      } else {
-        setMessage(
-          `${
-            (result.auto_cancelled_plan_candidates ?? []).length
-              ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
-              : '已提交，Gap 即时生成。等待 Buddy 复核。'
-          }${
-            undecidedGaps > 0
-              ? ` 另有 ${undecidedGaps} 项 Gap 未决定规划：复核通过后将保留在成长积压中，可稍后在年度计划中选择。`
-              : ''
-          }`,
-        )
-      }
+        }\n💡 前往「成长计划与任务」查看`,
+      )
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
         status === 403
-          ? '仅评估本人可以提交自评，当前账号无提交权限，已保留本地输入。'
+          ? '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。'
           : status === 409
-            ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
+            ? '数据冲突：草稿已被其他操作更新，请重新加载后再生成。'
             : isStructuredAssessmentError(detail)
               ? (() => {
                   const target = details.find(
@@ -721,8 +697,8 @@ export function AssessmentGapPage() {
                   return assessmentErrorCopy(detail.reason)
                 })()
               : err instanceof Error
-                ? chineseMessage(err.message, '提交失败，请重新加载后再试。')
-                : '提交失败',
+                ? chineseMessage(err.message, '生成失败，请重新加载后再试。')
+                : '生成失败',
       )
     }
   }
@@ -1478,6 +1454,7 @@ export function AssessmentGapPage() {
                         >
                           <thead>
                             <tr>
+                              <th>生成任务</th>
                               <th>能力项</th>
                               <th>当前掌握度</th>
                               <th>目标掌握度</th>
@@ -1504,6 +1481,10 @@ export function AssessmentGapPage() {
                                 hasGap && detail.member_priority !== '暂缓'
                               const showPlanTime =
                                 detail.include_in_plan === true
+                              // Issue #178: only filled rows with a positive
+                              // gap can be selected for task generation.
+                              const selectable = canSelectForPlan(detail)
+                              const selected = selectedCodes.has(detail.l3_code)
                               return (
                                 <Fragment key={detail.id}>
                                   <tr
@@ -1513,6 +1494,26 @@ export function AssessmentGapPage() {
                                       gap && gap > 0 ? s.rowGap : undefined
                                     }
                                   >
+                                    {/* Column 0: 生成任务 */}
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked={selected}
+                                        disabled={!editable || !selectable}
+                                        aria-label={`选择 ${detail.l3_code}`}
+                                        onChange={() => {
+                                          setSelectedCodes((current) => {
+                                            const next = new Set(current)
+                                            if (next.has(detail.l3_code)) {
+                                              next.delete(detail.l3_code)
+                                            } else {
+                                              next.add(detail.l3_code)
+                                            }
+                                            return next
+                                          })
+                                        }}
+                                      />
+                                    </td>
                                     {/* Column 1: 能力项 */}
                                     <td>
                                       <strong>
@@ -1778,7 +1779,14 @@ export function AssessmentGapPage() {
         {/* Sticky action bar */}
         {editable && (
           <footer className={s.stickyActions}>
-            {unfilled > 0 && <span>还有 {unfilled} 项未完成</span>}
+            {unfilled > 0 && (
+              <span>
+                还有 {unfilled} 项未完成评估（未选择的能力项不阻塞生成）
+              </span>
+            )}
+            {selectedCodes.size > 0 && (
+              <span>已选择 {selectedCodes.size} 项</span>
+            )}
             {stickyStats.inPlanNoPriority > 0 && (
               <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
             )}
@@ -1787,7 +1795,8 @@ export function AssessmentGapPage() {
             )}
             {stickyStats.undecided > 0 && (
               <span>
-                {stickyStats.undecided} 项 Gap 未决定规划（提交后进入成长积压）
+                {stickyStats.undecided} 项 Gap
+                未决定规划（可稍后在年度计划中选择）
               </span>
             )}
             <button type="button" onClick={handleSave}>
@@ -1796,10 +1805,10 @@ export function AssessmentGapPage() {
             <button
               type="button"
               className="primary"
-              onClick={handleSubmit}
-              disabled={unfilled > 0}
+              onClick={handleGeneratePlanItems}
+              disabled={selectedCodes.size === 0}
             >
-              提交自评
+              生成所选学习任务
             </button>
           </footer>
         )}

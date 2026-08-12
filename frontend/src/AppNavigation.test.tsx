@@ -499,7 +499,7 @@ describe('evidence review route boundary', () => {
     ).toBeTruthy()
     expect(screen.getByText('Buddy')).toBeTruthy()
     expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Buddy 复核中心' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '辅导成员看板' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '待验收成果' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe(
       '/mentoring/evidence-review',

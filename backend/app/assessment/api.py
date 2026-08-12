@@ -3,6 +3,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.policies import Connection, CurrentUser, require_any_role
+from ..planning.atomic_generation import generate_plan_items_for_selection
 from . import policies
 from .repository import (
     AssessmentValidationError,
@@ -122,6 +123,10 @@ class BatchLevelRequest(BaseModel):
 
 class SubmitRequest(BaseModel):
     expected_revision: int = Field(ge=1)
+
+
+class GeneratePlanItemsRequest(BaseModel):
+    l3_codes: list[str] = Field(min_length=1)
 
 
 class DraftTargetRepairRequest(BaseModel):
@@ -714,6 +719,58 @@ def submit(
             detail=str(exc),
         ) from exc
     return {"ok": True, **result}
+
+
+@assessment_router.post(
+    "/{assessment_id}/generate-plan-items",
+    dependencies=[require_any_role("Member")],
+)
+def generate_plan_items(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+    request: GeneratePlanItemsRequest,
+) -> dict[str, object]:
+    """Issue #178: generate/reuse annual plan items and learning tasks for
+    exactly the selected, validated L3 rows.
+
+    Only the selected L3s are validated (current_level 0-5, 0 included;
+    unselected NULL rows never block).  The batch is atomic and idempotent,
+    creates no Assessment Review and never transitions the assessment status.
+    """
+    assessment = get_assessment(connection, assessment_id)
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="assessment not found",
+        )
+    if user["id"] != assessment["member_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient permissions",
+        )
+    if assessment["status"] not in ("草稿", "建议调整"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="assessment is not a rolling draft",
+        )
+    try:
+        result = generate_plan_items_for_selection(
+            connection, assessment_id, list(request.l3_codes)
+        )
+    except AssessmentValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": exc.code,
+                "l3_code": exc.l3_code,
+                "l3_node_id": exc.l3_node_id,
+                "field": exc.field,
+                "reason": exc.reason,
+                "message": str(exc),
+            },
+        ) from exc
+    return {"ok": True, "plan_generation": result}
 
 
 @assessment_router.get("/{assessment_id}/history")

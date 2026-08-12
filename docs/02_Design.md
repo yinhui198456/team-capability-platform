@@ -95,7 +95,7 @@ flowchart TD
 | 角色 | 默认首页 | 说明 |
 |---|---|---|
 | Member | 我的成长看板 | 展示年度进度、待办任务、待提交 Evidence |
-| Buddy | 辅导成员看板 | 展示负责成员列表、待 Review 的 Evidence、待复核的自评 |
+| Buddy | 辅导成员看板 | 展示负责成员列表、待 Review 的 Evidence |
 | Leader | 团队运营看板 | 展示团队能力分析、团队年度能力规划 |
 | Admin | 系统管理首页 | 展示用户、角色、系统配置入口 |
 
@@ -123,7 +123,6 @@ flowchart TD
 
 ```
 - 我的辅导成员
-- 自评复核
 - Evidence Review
 - 反馈记录
 ```
@@ -162,7 +161,7 @@ flowchart TD
 | 月度复盘 | /growth/review/monthly | Member / Buddy / Leader | Growth | 查看月度计划完成情况 | Plan Item / Learning Task |
 | 成长档案 | /growth/profile | Member | Growth | 查看个人完整成长记录 | Capability Profile |
 | 辅导成员看板 | /mentoring/dashboard | Buddy | Mentoring | 查看负责成员进度与待办 | Member / Learning Task / Evidence |
-| 自评复核（已并入辅导成员看板，/mentoring/assessment-review 重定向） | /mentoring/dashboard | Buddy | Mentoring | 复核 Member 自评结果并给出反馈 | Assessment / Assessment Review |
+| 自评复核（已并入辅导成员看板，/mentoring/assessment-review 重定向） | /mentoring/dashboard | Buddy | Mentoring | 历史自评复核仅只读追溯；新流程不再创建 Assessment Review | Assessment / Assessment Review |
 | Evidence Review | /mentoring/evidence-review | Buddy | Mentoring | 复核 Evidence 并填写反馈 | Evidence / Evidence Review |
 | 反馈记录（规划中，暂无路由） | /mentoring/feedback | Buddy / Member | Mentoring | 查看历史复核反馈 | Assessment Review / Evidence Review |
 | 学习资源 | /operations/resources | Leader | Operations | 维护学习材料索引 | Learning Resource |
@@ -185,45 +184,37 @@ flowchart LR
     B --> C[填写当前掌握度并查看标准目标]
     C --> C1{是否申请个人调整}
     C1 -->|是| C2[填写调整值与原因]
-    C1 -->|否| D[提交自评]
+    C1 -->|否| D[选择已填写的适用能力项]
     C2 --> D
-    D --> E[立即查看 Gap]
-    E --> F[等待 / 完成 Buddy 复核]
-    F --> G[选择纳入计划的能力项]
-    G --> H[生成年度成长计划]
-    H --> I[按月度执行学习任务]
-    I --> J[提交 Evidence]
-    J --> K[等待 Buddy Review]
-    K --> L{Review 结论}
-    L -->|通过| M[学习任务完成，计划项达成，进入成长档案]
-    L -->|需补充| N[补充后提交新版本 Evidence]
-    N --> K
-    M --> P[查看成长档案]
+    D --> E[生成所选学习任务]
+    E --> F[继续填写并增量选择其他能力项]
+    F --> G[按月度执行学习任务]
+    G --> H[提交 Evidence]
+    H --> I[等待 Buddy Review]
+    I --> J{Review 结论}
+    J -->|通过| K[学习任务完成，计划项达成，进入成长档案]
+    J -->|需补充| L[补充后提交新版本 Evidence]
+    L --> H
+    K --> M[查看成长档案]
 ```
 
 说明：
 
-- Member 提交自评时，系统立即原子生成：Gap 分析、年度成长计划、计划项和学习任务。
-- Buddy 复核结果作为反馈，不阻塞计划生成。
+- Member 选择已填写的适用 L3（current_level 0～5，含 0）后，系统在同一事务内原子生成：Gap 分析、年度成长计划（复用正式/可用年度计划）、计划项和学习任务；未选择的能力项不阻塞，可后续增量选择。
+- 重复选择同一能力项幂等，不重复创建；自评不再创建 Assessment Review，也不进入 Buddy 自评复核。
 
 ### 5.2 Buddy 辅导流程
 
 ```mermaid
 flowchart LR
-    A[查看辅导成员列表] --> B{存在待复核自评}
-    B -->|是| C[复核自评]
-    C --> D{复核结论}
-    D -->|认可| E[完成本次自评复核闭环]
-    D -->|建议调整| F[反馈给 Member 修改]
-    F --> B
-    B -->|否| G{存在待 Review Evidence}
-    G -->|是| H[Review Evidence]
-    H --> I{Review 结论}
-    I -->|通过| J[学习任务可标记完成]
-    I -->|需补充| K[要求 Member 补充]
-    K --> M[Member 创建并提交新版本 Evidence]
-    M --> G
-    G -->|否| N[跟踪成员成长进度]
+    A[查看辅导成员列表] --> B{存在待 Review Evidence}
+    B -->|是| C[Review Evidence]
+    C --> D{Review 结论}
+    D -->|通过| E[学习任务可标记完成]
+    D -->|需补充| F[要求 Member 补充]
+    F --> G[Member 创建并提交新版本 Evidence]
+    G --> B
+    B -->|否| H[跟踪成员成长进度]
 ```
 
 ### 5.3 Leader 运营流程
@@ -257,7 +248,7 @@ flowchart LR
 
 ### 6.1 Assessment 状态机
 
-Assessment 指一次完整的能力评估记录，按年度或晋升 / 转岗触发。每次 Assessment 可包含多条 Assessment Review 记录：Member 每次提交自评时生成一条待复核记录，Buddy 给出复核结论后该记录闭环；Member 调整后重新提交时创建新的 Assessment Review，历史记录不覆盖。
+Assessment 指一次完整的能力评估记录，按年度或晋升 / 转岗触发。历史提交流程下，每次提交自评会生成一条 Assessment Review 待复核记录，Buddy 给出结论后闭环；#178 起新流程（按所选能力项生成学习任务）不再创建 Assessment Review，历史 Review 记录保持只读兼容、仅供追溯。
 
 Assessment 创建时，系统按以下顺序为全部启用 L3 生成一次标准目标快照：
 
@@ -267,15 +258,15 @@ Assessment 创建时，系统按以下顺序为全部启用 L3 生成一次标�
 
 该快照创建后不再随能力模型、覆盖值或 Member 目标职级变化。Member 只能提交当前掌握度、自评依据、计划候选和个人调整；服务端从快照重新计算最终有效目标与 Gap。标准目标为「不适用」时禁止个人调整改变适用范围。
 
-Member 提交自评时，系统在单一事务中原子执行：生成 Gap 分析 → 创建年度成长计划（若不存在）→ 为标记「纳入计划」的 Gap 生成计划项 → 为每个计划项生成对应学习任务（1:1）。Buddy 复核结果作为反馈，不影响已生成的计划。
+Member 按所选能力项生成学习任务时，系统在单一事务中原子执行：校验所选 L3 → 生成 Gap 分析 → 复用/创建年度成长计划（若不存在）→ 为所选 Gap 生成计划项 → 为每个计划项生成对应学习任务（1:1）。批次中任一 L3 校验不合格则整批零写入；重复生成幂等。
 
 ```mermaid
 stateDiagram-v2
     [*] --> 草稿
-    草稿 --> 待复核 : Member 提交自评（原子生成计划）
-    待复核 --> 已复核 : Buddy 复核认可
-    待复核 --> 建议调整 : Buddy 建议调整
-    建议调整 --> 草稿 : Member 修改后重新提交
+    草稿 --> 待复核 : 历史提交流程（submit_assessment，UI 已不再使用）
+    待复核 --> 已复核 : Buddy 复核认可（历史）
+    待复核 --> 建议调整 : Buddy 建议调整（历史）
+    建议调整 --> 草稿 : Member 修改后重新提交（历史）
     已复核 --> 已归档 : 完成该评估版本归档
     已归档 --> [*]
 ```
@@ -284,32 +275,34 @@ stateDiagram-v2
 
 - Member 在执行过程中更新当前掌握度时，不修改已归档的 Assessment。
 - 系统基于当前年度 Assessment 生成一个新版本 Assessment。
-- 新版本 Assessment 重新进入「草稿 → 待复核 → 已复核 → 已归档」流程。
+- 新版本 Assessment 重新进入「草稿」状态，学习任务在草稿上按所选能力项增量生成；历史版本保持已归档，纳入评估历史。
 - 旧版本 Assessment 保持已归档状态，纳入评估历史。
 
 状态说明：
 
 | 状态 | 说明 |
 |---|---|
-| 草稿 | Member 正在填写自评，未提交 |
-| 待复核 | Member 已提交，系统已原子生成计划；等待 Buddy 复核给出反馈 |
-| 已复核 | Buddy 复核认可，该版本评估闭环归档 |
-| 建议调整 | Buddy 认为自评不合理，Member 可选择修改后重新提交 |
+| 草稿 | Member 正在填写自评；学习任务在草稿上按所选能力项增量生成（#178 主流程） |
+| 待复核 | 历史提交流程：Member 已提交，等待 Buddy 复核给出反馈（UI 已不再使用） |
+| 已复核 | 历史提交流程：Buddy 复核认可，该版本评估闭环归档 |
+| 建议调整 | 历史提交流程：Buddy 认为自评不合理，Member 可选择修改后重新提交 |
 | 已归档 | 该次评估已闭环，进入历史记录 |
 
 Gap 生成与计划创建时点：
 
-- Member 提交自评时，系统立即执行原子事务：生成 Gap（基于当前掌握度与最终有效目标）→ 创建年度成长计划 → 为标记「纳入计划」的 Gap 生成计划项 → 为每个计划项生成学习任务（1:1）。
+- Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）并触发「生成所选学习任务」时，系统立即执行原子事务：校验所选 L3 → 生成 Gap（基于当前掌握度与最终有效目标）→ 复用/创建年度成长计划 → 为所选 Gap 生成计划项 → 为每个计划项生成学习任务（1:1）。
+- 只有被选 L3 的 current_level=null（未填写）才阻断生成；未选择的能力项不阻塞，可后续增量选择。
 - 标准目标为「不适用」的 L3 不参与 Gap、不生成 Gap 记录、不能成为计划候选，也不允许个人调整改变适用范围。
-- 幂等性：重复提交时，已存在的计划项不再重复创建；仅为新增 Gap 项创建计划项和学习任务。
-- 同一 Member 同一年度始终复用一份年度成长计划；计划保留首次创建它的来源评估，后续自评新增的计划项分别保留各自准确的来源评估与明细。不得覆盖已经开始、完成或已有执行记录的计划项和任务。
-- Buddy 的复核结论（认可 / 建议调整）用于反馈与历史记录，不影响已生成的计划。
+- 批次原子性：任一所选 L3 校验不合格时整批零写入（assessment、history、plan、tasks 均不变）。
+- 幂等性：同一 Member / 年度 / L3 重复生成时，已存在的计划项不再重复创建（0 新增）。
+- 同一 Member 同一年度始终复用一份年度成长计划；计划保留首次创建它的来源评估，后续生成新增的计划项分别保留各自准确的来源评估与明细。不得覆盖已经开始、完成或已有执行记录的计划项和任务。
+- 新流程不创建 Assessment Review；历史 Review 记录保持只读兼容，仅供追溯。
 
-Assessment Review 是 Buddy 对一次 Assessment 的复核记录。
+Assessment Review 是 Buddy 对一次 Assessment 的复核记录（历史提交流程产物；#178 起新流程不再创建，记录保持只读兼容）。
 
 | 属性 | 说明 |
 |---|---|
-| 关联对象 | 一个 Assessment 对应多条 Assessment Review（每次提交生成一条） |
+| 关联对象 | 一个 Assessment 对应多条 Assessment Review（历史流程每次提交生成一条） |
 | 复核结论 | 认可 / 建议调整 |
 | 复核反馈 | Buddy 的具体意见与建议 |
 | 复核人 | 负责该 Member 的 Buddy |
@@ -455,7 +448,7 @@ Evidence Review 是 Buddy 对一个已提交 Evidence 版本作出的历史反�
 | 角色 | 职责定位 |
 |---|---|
 | Member | 执行自评、制定计划、完成任务、提交 Evidence |
-| Buddy | 辅导成员、复核自评、Review Evidence、跟踪进度 |
+| Buddy | 辅导成员、Review Evidence（成果验收）、跟踪进度 |
 | Leader | 维护能力模型与学习资源、团队分析、团队年度能力规划 |
 | Admin | 用户、角色、权限、系统配置管理 |
 
@@ -465,11 +458,11 @@ Evidence Review 是 Buddy 对一个已提交 Evidence 版本作出的历史反�
 |---|---|---|
 | capability.model.view | 查看能力模型 | 查看能力域、能力项、等级描述 |
 | capability.model.manage | 维护能力模型 | 编辑能力域、能力项、等级描述、导入导出 |
-| assessment.self | 完成自评 | Member 填写并提交自评 |
+| assessment.self | 完成自评 | Member 填写自评并按所选能力项生成学习任务 |
 | assessment.view.own | 查看自己的评估 | Member 查看个人评估历史 |
 | assessment.view.assigned | 查看负责成员的评估 | Buddy 查看辅导成员评估 |
 | assessment.view.team | 查看团队评估 | Leader 查看团队整体评估 |
-| assessment.review | 复核自评 | Buddy 复核自评结果 |
+| assessment.review | 复核自评（历史） | Buddy 复核自评结果；新流程不再创建自评复核 |
 | gap.view.own | 查看自己的 Gap | Member 查看个人 Gap 分析 |
 | gap.view.assigned | 查看负责成员的 Gap | Buddy 查看辅导成员 Gap |
 | gap.view.team | 查看团队 Gap | Leader 查看团队 Gap 分布 |
@@ -645,7 +638,7 @@ flowchart TD
 | 月度复盘 | Plan Item / Learning Task | 查看月度统计、填写复盘 |
 | 成长档案 | Capability Profile / Assessment / Annual Growth Plan / Plan Item / Learning Task / Evidence | 查看年度成长记录 |
 | 辅导成员看板 | Member / Learning Task / Evidence | 查看负责成员进度与待办 |
-| 自评复核 | Assessment / Assessment Review | 复核自评、给出反馈 |
+| 自评复核（历史） | Assessment / Assessment Review | 复核自评、给出反馈；新流程不再创建 |
 | Evidence Review | Evidence / Evidence Review | 复核 Evidence、填写反馈 |
 | 反馈记录 | Assessment Review / Evidence Review | 查看历史复核反馈 |
 | 学习资源 | Learning Resource / Capability Item L3 | 新增、编辑、关联能力项 |
@@ -664,7 +657,7 @@ flowchart TD
 2. **MVP 边界**：页面与流程优先覆盖单团队、技术架构与开发专业线、四类角色的核心闭环。
 3. **无代码 / 无 API / 无数据模型**：本阶段不描述具体实现、接口或数据库表结构。
 4. **计划对象层级**：年度成长计划、计划项、学习任务、Evidence 为四层独立对象，状态各自维护，避免将计划项与学习任务完全等同。
-5. **Buddy 定位**：Buddy 负责指导、自评复核、Evidence Review、反馈与跟踪，不承担行政决策职责；自评复核结果作为反馈，不阻塞计划生成；Evidence Review 结论用于反馈与跟踪，不影响成员继续学习。
+5. **Buddy 定位**：Buddy 负责指导、Evidence Review（成果验收）、反馈与跟踪，不承担行政决策职责；不再承担新的自评审核/批准，历史自评复核记录仅只读追溯；Evidence Review 结论用于反馈与跟踪，不影响成员继续学习。
 6. **状态机闭环**：Review 记录按次闭环；Evidence 结论为「需补充」后由 Member 创建新版本，原版本记录保留。
 7. **MVP 能力域收敛**：MVP 仅启用 P01、P02、P03、C01、C02、C03 六个能力域；架构与工程、咨询与方案、DevOps 与稳定性三个域仅保留扩展占位，不导入有效 L3，不参与自评、Gap、计划、学习任务、Evidence、团队分析，也不在页面中作为可操作能力域展示。
 ## Issue #50 页面与流程补充

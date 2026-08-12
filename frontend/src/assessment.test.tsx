@@ -85,7 +85,7 @@ describe('AssessmentGapPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders 7-column table', async () => {
+  it('renders 8-column table', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -109,8 +109,9 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     const headers = screen.getAllByRole('columnheader')
-    expect(headers.length).toBe(7)
+    expect(headers.length).toBe(8)
     expect(headers.map((h) => h.textContent)).toEqual([
+      '生成任务',
       '能力项',
       '当前掌握度',
       '目标掌握度',
@@ -518,7 +519,7 @@ describe('AssessmentGapPage', () => {
     expect(levelSelects.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('submit disabled when null levels', async () => {
+  it('generate button disabled when nothing selectable', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -539,11 +540,16 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
+      expect(
+        screen.getByRole('button', { name: '生成所选学习任务' }),
+      ).toBeTruthy()
     })
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true)
   })
 
@@ -572,13 +578,9 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      // evidence is no longer a submit gate
+      // evidence is no longer a gate for the selected-row generation flow
       await screen.findByText('能力自评与 Gap 分析')
       expect(screen.queryByText('需更新依据')).toBeNull()
-      expect(
-        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false)
     },
   )
 
@@ -610,10 +612,6 @@ describe('AssessmentGapPage', () => {
       )
       await screen.findByText('能力自评与 Gap 分析')
       expect(screen.queryByText('需更新依据')).toBeNull()
-      expect(
-        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false)
     },
   )
 
@@ -638,10 +636,6 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('本次已更新')
-    expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false)
     expect(
       (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
         .disabled,
@@ -823,10 +817,6 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('沿用上次评估')
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false)
-    expect(
       (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
         .disabled,
     ).toBe(false)
@@ -856,12 +846,14 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByRole('button', { name: '批量填 2' })).toBeNull()
   })
 
-  it('saves dirty details with PATCH before direct submit', async () => {
+  it('saves dirty details with PATCH before generating selected tasks', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           current_level: 1,
+          target_level: 4,
+          gap_value: 3,
           member_priority: '中',
           include_in_plan: true,
           plan_quarter: 'Q2',
@@ -874,9 +866,17 @@ describe('AssessmentGapPage', () => {
     const save = vi
       .spyOn(assessmentApi, 'saveDraft')
       .mockResolvedValue({ ok: true, revision: 2 })
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 3 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -886,13 +886,14 @@ describe('AssessmentGapPage', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '2' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(submit).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
     expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
-      submit.mock.invocationCallOrder[0],
+      generate.mock.invocationCallOrder[0],
     )
-    expect(submit).toHaveBeenCalledWith(7, 2)
+    expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'])
   })
 
   it('replaces the Gap summary after draft save', async () => {
@@ -1087,9 +1088,12 @@ describe('AssessmentGapPage', () => {
     // The adjust button should not appear for non-applicable items
     expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false)
+      (
+        screen.getByRole('checkbox', {
+          name: '选择 P01.01.01',
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(true)
   })
 
   it('keeps a legacy-preserved target visible but not adjustable', async () => {
@@ -1360,7 +1364,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(screen.queryByText(/invalid quarter-month/)).toBeNull()
   })
 
-  it('submit is blocked client-side when a REQUIRED item is unassessed', async () => {
+  it('an unassessed REQUIRED row is not selectable; generation stays disabled', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1374,24 +1378,36 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 2 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 0,
+          skipped_items: 0,
+          created_tasks: 0,
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    // The blocking UX: the submit button is disabled and the sticky bar
-    // reports the precise REQUIRED-scope count.
-    const submitButton = screen.getByRole('button', {
-      name: '提交自评',
-    }) as HTMLButtonElement
-    expect(submitButton.disabled).toBe(true)
+    // The row is not selectable, so generation stays disabled and the sticky
+    // bar still reports the unassessed count (informational, non-blocking).
+    const rowCheckbox = screen.getByRole('checkbox', {
+      name: '选择 P01.01.01',
+    }) as HTMLInputElement
+    expect(rowCheckbox.disabled).toBe(true)
     expect(screen.getByText(/还有 1 项未完成/)).toBeTruthy()
-    fireEvent.click(submitButton)
-    expect(submit).not.toHaveBeenCalled()
+    const generateButton = screen.getByRole('button', {
+      name: '生成所选学习任务',
+    }) as HTMLButtonElement
+    expect(generateButton.disabled).toBe(true)
+    fireEvent.click(generateButton)
+    expect(generate).not.toHaveBeenCalled()
   })
 
   it('submitProblemDetails blocks only REQUIRED-scope incompleteness', () => {
@@ -1411,13 +1427,15 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(problems[0].reason).toBe('requires_current_level')
   })
 
-  it('submit proceeds when plan decisions are missing and shows the backlog note', async () => {
+  it('generation proceeds without plan decisions; no Buddy 复核 message', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           scope_type: 'current_required',
           current_level: 2,
+          target_level: 4,
+          gap_value: 2,
           member_priority: null,
           include_in_plan: null,
         },
@@ -1425,23 +1443,32 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 2 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(submit).toHaveBeenCalled())
-    // Undecided Gaps are non-blocking and announced as growth backlog.
-    expect(screen.getByText(/等待 Buddy 复核/)).toBeTruthy()
-    expect(screen.getAllByText(/成长积压/).length).toBeGreaterThanOrEqual(1)
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
+    // The new flow never routes through Buddy self-review.
+    expect(screen.queryByText(/等待 Buddy 复核/)).toBeNull()
+    expect(screen.getByText(/已生成 1 个学习任务/)).toBeTruthy()
   })
 
-  it('submit proceeds with unassessed ADVANCED items', async () => {
+  it('unassessed ADVANCED items never block the generation flow', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1453,18 +1480,39 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 2 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 0,
+          skipped_items: 0,
+          created_tasks: 0,
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(submit).toHaveBeenCalled())
     expect(screen.queryByText(/尚无法提交/)).toBeNull()
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: '选择 P01.01.01',
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(true)
+    expect(
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true)
+    expect(generate).not.toHaveBeenCalled()
   })
 
   it('applies the ?focus=required-incomplete deep link from the workspace', async () => {
@@ -1499,12 +1547,14 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(scopeFilter.value).toBe('current_required')
   })
 
-  it('submit proceeds when plan fields are complete', async () => {
+  it('generation proceeds when plan fields are complete', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           current_level: 2,
+          target_level: 4,
+          gap_value: 2,
           member_priority: '高',
           include_in_plan: true,
           plan_quarter: 'Q2',
@@ -1514,17 +1564,26 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 2 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(submit).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
   })
 })
 
@@ -1711,7 +1770,7 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
     vi.restoreAllMocks()
   })
 
-  it('a non-owner viewer sees the draft read-only: no edit/save/submit controls', async () => {
+  it('a non-owner viewer sees the draft read-only: no edit/save/generate controls', async () => {
     // Viewer session in the same Member workspace whose id differs from the
     // draft owner — e.g. the assigned buddy viewing the member's draft.
     vi.mocked(accessApi.me).mockResolvedValue({
@@ -1733,7 +1792,9 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     expect(screen.queryByRole('button', { name: '保存草稿' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '提交自评' })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: '生成所选学习任务' }),
+    ).toBeNull()
     expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
     expect(
       (screen.getByRole('combobox', { name: /当前等级/ }) as HTMLSelectElement)
@@ -1750,8 +1811,8 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
       '仅评估本人可以保存草稿，当前账号无修改权限，已保留本地输入。',
     ],
     [
-      '提交自评',
-      '仅评估本人可以提交自评，当前账号无提交权限，已保留本地输入。',
+      '生成所选学习任务',
+      '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。',
     ],
   ])(
     'maps a %s 403 to a specific Chinese permission message and preserves inputs',
@@ -1761,6 +1822,8 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
           {
             ...mockDraft().details![0],
             current_level: 2,
+            target_level: 4,
+            gap_value: 2,
             member_priority: '高',
             include_in_plan: true,
             plan_quarter: 'Q2',
@@ -1783,6 +1846,11 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
       fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
         target: { value: '3' },
       })
+      if (action === '生成所选学习任务') {
+        fireEvent.click(
+          screen.getByRole('checkbox', { name: '选择 P01.01.01' }),
+        )
+      }
       fireEvent.click(screen.getByRole('button', { name: action }))
       expect(await screen.findByText(expected)).toBeTruthy()
       // No generic reload copy, no raw backend English.
@@ -1955,6 +2023,62 @@ describe('R2-B filter/search', () => {
     await waitFor(() => {
       expect(screen.getByText('P01.01.02')).toBeTruthy()
     })
+  })
+
+  it('generates learning tasks for selected filled L3 rows only (#178)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          id: 1,
+          l3_code: 'P01.01.01',
+          l3_name: '数据管道',
+          current_level: 2,
+          target_level: 4,
+          gap_value: 2,
+          standard_target_applicable: true,
+        },
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_code: 'P01.01.02',
+          l3_name: '管道监控',
+          current_level: null,
+          target_level: 4,
+          gap_value: null,
+          standard_target_applicable: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+        },
+      })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    // The filled row is selectable; the unassessed row is not.
+    const filled = screen.getByRole('checkbox', { name: '选择 P01.01.01' })
+    const unassessed = screen.getByRole('checkbox', {
+      name: '选择 P01.01.02',
+    }) as HTMLInputElement
+    expect(unassessed.disabled).toBe(true)
+    fireEvent.click(filled)
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(7, ['P01.01.01']))
+    expect(screen.getByText(/已生成 1 个学习任务/)).toBeTruthy()
   })
 })
 

@@ -59,7 +59,7 @@ Assessment Detail 可记录：
 
 ### Issue #50 保存与候选一致性
 
-草稿允许部分完成，未提交的明细保持原值；正式提交必须重新读取全部明细并完成等级、依据、适用性和完整性校验。1–2 级依据可为空，3–5 级提交需有效依据；相对认可基准任意提升时必须更新依据。
+草稿允许部分完成，未提交的明细保持原值；生成所选学习任务时（#178）只重新读取并校验被选 L3 的等级、依据、适用性和完整性。1–2 级依据可为空，3–5 级提交需有效依据；相对认可基准任意提升时必须更新依据。
 
 计划字段的中间状态可保存：正 Gap 行允许「已纳入计划（include_in_plan=TRUE）但未填优先级/计划月份」等部分填写并原样保留（v0015 起）；完整校验（优先级、纳入决定、计划月份及派生季度）由提交门禁在提交时统一执行，互斥冲突（暂缓+纳入）与季度-月份矛盾在保存时即拒绝。
 
@@ -170,11 +170,11 @@ Assessment Detail 可记录：
 |---|---|
 | 业务定义 | Member 对一组 L3 能力项的自评记录，按年度或晋升 / 转岗触发 |
 | 业务字段 | 评估编码、Member 用户编码、年度、评估类型（年度 / 年中更新 / 晋升复核）、状态、单调 revision、创建时间、提交时间、归档时间 |
-| 状态 | 草稿 / 待复核 / 已复核 / 建议调整 / 已归档 |
+| 状态 | 草稿 / 待复核 / 已复核 / 建议调整 / 已归档（待复核 / 已复核 / 建议调整为历史提交流程状态；#178 新流程仅使用草稿与已归档） |
 | 版本 / 年度 | 每个年度可存在多个版本；年中更新或晋升复核创建新版本，旧版本保持已归档 |
-| 关联关系 | N:1 User；1:N Assessment Detail；1:N Assessment Review（每次提交生成一条）；1:N Gap |
+| 关联关系 | N:1 User；1:N Assessment Detail；1:N Assessment Review（历史提交流程每次提交生成一条；#178 新流程不再创建）；1:N Gap |
 | 唯一性约束 | 同一 Member、同一年度、同一版本号唯一 |
-| 维护角色 | Member 创建与提交；Buddy 复核 |
+| 维护角色 | Member 创建与填写；Buddy 复核（历史流程） |
 
 ### 3.10 Assessment Detail
 
@@ -196,10 +196,10 @@ Assessment Detail 可记录：
 
 | 项目 | 说明 |
 |---|---|
-| 业务定义 | Buddy 对一次 Assessment 提交的复核记录，属于辅导性反馈，不是行政审批；同一 Assessment 可有多条历史 Review 记录 |
+| 业务定义 | Buddy 对一次 Assessment 提交的复核记录，属于辅导性反馈，不是行政审批；同一 Assessment 可有多条历史 Review 记录（历史提交流程产物；#178 起新流程不再创建，仅只读兼容） |
 | 业务字段 | Review 编码、评估编码、提交次序号、Buddy 用户编码、复核结论、复核反馈、复核时间 |
 | 状态 | 待复核 / 已闭环 |
-| 版本 / 年度 | 每次 Member 提交 Assessment 时创建一条待复核记录；Buddy 反馈后闭环；Member 调整后重新提交创建新记录，历史记录保留 |
+| 版本 / 年度 | 历史提交流程：每次 Member 提交 Assessment 时创建一条待复核记录；Buddy 反馈后闭环；Member 调整后重新提交创建新记录，历史记录保留 |
 | 关联关系 | N:1 Assessment；N:1 User（Buddy） |
 | 唯一性约束 | 同一 Assessment 版本内同一提交次序号唯一 |
 | 维护角色 | Buddy |
@@ -209,7 +209,7 @@ Assessment Detail 可记录：
 
 | 项目 | 说明 |
 |---|---|
-| 业务定义 | Assessment Detail 中服务端确认的最终有效目标与当前掌握度的差距；Member 提交自评后立即生成，无需等待 Buddy 复核；不适用项不生成 Gap |
+| 业务定义 | Assessment Detail 中服务端确认的最终有效目标与当前掌握度的差距；Member 生成所选学习任务时按被选 L3 生成（#178），未选择项不生成；不适用项不生成 Gap |
 | 业务字段 | Gap 编码、评估编码、L3 编码、当前掌握度、目标掌握度、Gap 值、优先级、是否纳入计划 |
 | 状态 | 无独立状态；以是否纳入计划作为计划判定依据 |
 | 版本 / 年度 | 随 Assessment 版本化；新 Assessment 版本可能产生新的 Gap |
@@ -240,7 +240,7 @@ Assessment Detail 可记录：
 | 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 首次来源 Assessment；每个 Plan Item 另行记录自己的来源 Assessment Detail |
 | 唯一性约束 | 同一 Member、同一年度唯一 |
 | 维护角色 | Member |
-| 生成约束 | Member 提交自评时立即原子生成；同一 Member 同一年度复用一份计划，后续自评只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。Buddy 复核提供反馈，不阻塞计划生成。 |
+| 生成约束 | Member 按所选 L3 生成学习任务时原子生成（#178）；同一 Member 同一年度复用一份正式/可用计划，后续生成只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。 |
 
 ### 3.15 Plan Item
 
@@ -411,9 +411,9 @@ flowchart TD
 ### 5.1 Assessment 版本规则
 
 - 每年初或晋升 / 转岗时创建新版本 Assessment。
-- Member 提交自评后，Assessment 进入待复核状态，并创建一条待复核的 Assessment Review。
-- Buddy 复核认可后，Assessment 进入已复核状态，随后归档；该 Assessment Review 闭环。
-- Buddy 建议调整时，Assessment 进入建议调整状态；Member 修改后重新提交，创建新的 Assessment Review，历史 Review 保留。
+- 历史提交流程（submit_assessment，UI 已不再使用）：Member 提交自评后进入待复核状态，并创建一条待复核的 Assessment Review；#178 起新流程在草稿上按所选能力项生成学习任务，状态不变、不创建 Review。
+- （历史）Buddy 复核认可后，Assessment 进入已复核状态，随后归档；该 Assessment Review 闭环。
+- （历史）Buddy 建议调整时，Assessment 进入建议调整状态；Member 修改后重新提交，创建新的 Assessment Review，历史 Review 保留。
 - 年中更新当前掌握度时，基于最新已归档 Assessment 创建新版本，旧版本保持已归档不变。
 - 评估历史按年度保存多个 Assessment 版本。
 
@@ -436,7 +436,7 @@ flowchart TD
 - 使用轻量、版本化、幂等迁移执行器记录并按顺序执行迁移；不重新 seed、不删除历史数据。
 - 已有明细只要 `target_level` 非空，原目标和原 Gap 原样保留，快照来源标记为 `legacy_preserved`；不得声称还原了当时并未保存的标准目标来源。
 - 仅对状态仍可编辑且目标为空的旧草稿，在迁移时按当时数据库中可见的 Member 目标职级与当前能力模型生成一次快照，并标记迁移来源。
-- 缺少 Member 目标职级或建议起始职级无法解析时，记录明确兼容提示并阻止提交；读取草稿、待复核和已归档记录不得产生 500。
+- 缺少 Member 目标职级或建议起始职级无法解析时，记录明确兼容提示并阻止生成学习任务；读取草稿、待复核和已归档记录不得产生 500。
 - 后续能力模型、覆盖值或 Member 目标职级变化不得回写任何已有 Assessment Detail 快照。
 
 ---
@@ -452,17 +452,17 @@ flowchart TD
 | 未来扩展域保留占位，不参与 MVP 评估与计划 | Capability Domain L1 | 能力模型 |
 | 掌握度 0～5 分制 | Assessment Detail | 能力自评 |
 | 年度评估、年中复核、晋升 / 转岗前评估 | Assessment | 能力自评、评估历史 |
-| Member 自评后进入待复核，Buddy 复核 | Assessment / Assessment Review | 能力自评、自评复核 |
-| Buddy 复核结论：认可 / 建议调整 | Assessment Review | 自评复核 |
+| 历史流程：Member 提交自评后进入待复核，Buddy 复核（#178 新流程不再创建自评复核） | Assessment / Assessment Review | 能力自评 |
+| 历史流程：Buddy 复核结论：认可 / 建议调整 | Assessment Review | 评估历史 |
 | Gap = 目标掌握度 - 当前掌握度 | Gap | Gap 分析 |
 | 标准目标按目标职级生成，适用范围优先于 Leader 覆盖 | Capability Item L3 / Standard Target Override / Assessment Detail | 能力模型、能力自评 |
-| 个人调整仅适用于已适用项，需合法值与非空原因 | Assessment Detail / Assessment Review | 能力自评、自评复核 |
-| Assessment 保存标准、调整和最终有效目标快照，后续模型变化不回写 | Assessment / Assessment Detail | 能力自评、评估历史、自评复核 |
-| Member 提交自评后立即生成 Gap，无需等待 Buddy 复核 | Assessment / Gap | 能力自评、Gap 分析 |
+| 个人调整仅适用于已适用项，需合法值与非空原因 | Assessment Detail | 能力自评 |
+| Assessment 保存标准、调整和最终有效目标快照，后续模型变化不回写 | Assessment / Assessment Detail | 能力自评、评估历史 |
+| Member 生成所选学习任务时按被选 L3 生成 Gap（#178），无需等待复核 | Assessment / Gap | 能力自评、Gap 分析 |
 | Gap 分级与优先级设置 | Gap | Gap 分析 |
 | 纳入计划的 Gap 形成成长目标 | Gap / Growth Goal | 成长目标 |
 | 年度成长计划默认 12 个月 | Annual Growth Plan | 年度成长计划 |
-| 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。 | Annual Growth Plan / Assessment / Assessment Review | 年度成长计划 |
+| 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）：Member 在能力自评/Gap 页面选择已填写的适用 L3 后生成（#178）；批次原子、重复生成幂等，未选择项不阻塞 | Annual Growth Plan / Assessment | 年度成长计划、能力自评 |
 | 一个计划项对应一个学习任务，不拆分子任务 | Plan Item / Learning Task | 年度成长计划、学习任务 |
 | 学习任务执行跟踪与完成判定 | Learning Task | 学习任务 |
 | 学习执行日志仅用于学习时长聚合，追加写（新增 / 作废 / 更正），字段含 task_id、record_date、actual_hours、note、recorder、invalidated_at、correction_of_log_id | Learning Progress Log / Learning Task | 我的成长看板、学习任务、月度复盘、团队能力分析 |
@@ -471,7 +471,7 @@ flowchart TD
 | Evidence Review 结论：通过 / 需补充 | Evidence Review | Evidence Review |
 | 「需补充」后提交新版本 Evidence | Evidence / Evidence Review | 学习任务、Evidence Review |
 | 按年度归档保留历史记录 | Assessment / Evidence / Capability Profile | 评估历史、成长档案 |
-| Buddy 负责成员的指导、复核、Review、反馈 | Buddy Relationship / Assessment Review / Evidence Review | 辅导成员看板、自评复核、Evidence Review、反馈记录 |
+| Buddy 负责成员的指导、Evidence Review、反馈 | Buddy Relationship / Evidence Review | 辅导成员看板、Evidence Review、反馈记录 |
 | MVP 中每个 Member 仅有 1 名主 Buddy | Buddy Relationship | 用户管理、角色权限 |
 | Leader 维护能力模型与学习资源 | Capability Model / L1 / L2 / L3 / Learning Resource | 能力模型、学习资源 |
 | Leader 发布团队年度能力规划 | Team Annual Capability Plan | 团队年度能力规划 |
