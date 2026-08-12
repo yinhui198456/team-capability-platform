@@ -128,6 +128,14 @@ def _create_plan_item_and_task(
     if priority is None:
         priority = "中"
 
+    # Selection-only rows (Issue #178 partial save) may never pick a plan
+    # quarter/month; plan_item_approval_completeness requires both, so fall
+    # back to Q1 / month 1 instead of failing the batch.
+    if plan_quarter is None:
+        plan_quarter = "Q1"
+    if plan_month is None:
+        plan_month = 1
+
     # Get planning snapshot for this L3 capability
     snapshot = connection.execute(
         """

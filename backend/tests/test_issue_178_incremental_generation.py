@@ -175,6 +175,38 @@ def test_single_selected_filled_l3_generates_task_and_ignores_unfilled(review_sc
     assert b_level is None
 
 
+def test_selection_only_row_without_plan_time_defaults_to_q1_month1(review_schema):
+    """A row filled with only the outcome levels (current_level/target — no
+    plan quarter/month ever picked, the #178 partial-save scenario) still
+    generates: the plan item falls back to Q1 / month 1 instead of violating
+    plan_item_approval_completeness (RED on the current code, which copies
+    the NULLs straight into plan_item)."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-nulltime",
+        details=[(L3_A, 0, 2, 2)],
+    )
+    # The row was filled with only the outcome levels — no planning time.
+    review_schema.execute(
+        "UPDATE assessment_detail SET plan_quarter=NULL, plan_month=NULL "
+        "WHERE assessment_id=%s AND l3_code=%s",
+        (assessment_id, L3_A),
+    )
+
+    result = generate_plan_items_for_selection(review_schema, assessment_id, [L3_A])
+
+    assert result["created_items"] == 1
+    assert result["created_tasks"] == 1
+    item = review_schema.execute(
+        "SELECT plan_quarter, plan_month, priority FROM plan_item "
+        "WHERE annual_growth_plan_id=%s",
+        (_plan_ids(review_schema, member_id)[0],),
+    ).fetchone()
+    assert item == ("Q1", 1, "中")
+
+
 def test_batch_atomic_zero_writes_when_any_selected_invalid(review_schema):
     """Multi-select batch: one invalid (unassessed NULL) selected L3 makes
     the whole batch fail with zero writes — no plan, no items, no tasks, no

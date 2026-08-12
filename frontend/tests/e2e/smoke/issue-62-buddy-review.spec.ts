@@ -160,6 +160,66 @@ async function fillDetails(
   return submitted.revision
 }
 
+/** Issue #178 member-driven flow: fill ONLY the picked rows (others cleared
+ *  to unassessed NULL) and save WITHOUT submitting — no review is created. */
+async function fillSelectionOnly(
+  page: Parameters<Parameters<typeof test>[1]>[0]['page'],
+
+  request: ApiRequest,
+  draft: DraftState,
+  picks: Array<{
+    current_level: number
+    target_level: number
+    member_priority: string
+    include_in_plan: boolean
+    plan_quarter?: string
+    plan_month?: number
+  }>,
+): Promise<PickedDetail[]> {
+  const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
+  const assessment = await getResp.json()
+  const picked = await pickApplicableDetails(assessment, picks.length)
+  const details = assessment.details.map((snapshot: ScopeSnapshot) => {
+    const index = picked.findIndex(
+      (detail) => detail.l3_code === snapshot.l3_code,
+    )
+    if (index === -1) {
+      return {
+        l3_code: snapshot.l3_code,
+        l3_node_id: snapshot.l3_node_id,
+        current_level: null,
+      }
+    }
+    const pick = picks[index]
+    // Derive a current level that guarantees a positive gap against the
+    // frozen scope target, so the plan choice is not auto-cleared.
+    const target = snapshot.target_level ?? pick.target_level
+    const currentLevel = Math.min(
+      pick.current_level,
+      Math.max(0, target - 1),
+    )
+    return {
+      l3_code: snapshot.l3_code,
+      l3_node_id: snapshot.l3_node_id,
+      current_level: currentLevel,
+      member_priority: pick.member_priority,
+      include_in_plan: pick.include_in_plan,
+      plan_quarter: pick.plan_quarter ?? null,
+      plan_month: pick.plan_month ?? null,
+    }
+  })
+  const saveResp = await request.put(
+    `${BACKEND}/api/assessments/${draft.id}/draft`,
+    { data: { details, expected_revision: draft.revision } },
+  )
+  if (!saveResp.ok()) {
+    throw new Error(
+      `save draft failed: ${saveResp.status()} ${await saveResp.text()}`,
+    )
+  }
+  return picked
+}
+
 async function pendingReviewId(
   page: Parameters<Parameters<typeof test>[1]>[0]['page'],
 
@@ -627,12 +687,14 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     ).toBe('assessment_already_reviewed')
   })
 
-  test('E2E-62-07 Buddy 工作区 UI：汇总、提示与提交', async ({ page }) => {
+  test('E2E-62-07 按所选 L3 生成任务：Buddy 看板无自评复核队列', async ({
+    page,
+  }) => {
     const request = page.request
     const year = yearFor('E2E-62-07')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const [picked] = await fillSelectionOnly(page, request, draft, [
       {
         current_level: 2,
         target_level: 4,
@@ -642,61 +704,66 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
+
+    // Issue #178: the member generates tasks for the selected L3 on the
+    // assessment page — no full-form submit, no review queue entry.
+    await page.goto(`/capability/assessment?year=${year}`)
+    await expect(page.getByLabel(`选择 ${picked.l3_code}`)).toBeEnabled()
+    await page.getByLabel(`选择 ${picked.l3_code}`).check()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    const plan = await (
+      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    ).json()
+    expect(
+      plan.items.some(
+        (item: { l3_code: string }) => item.l3_code === picked.l3_code,
+      ),
+    ).toBe(true)
+    // generation creates no Assessment Review and never transitions status:
+    // the Buddy-only review queue is a #178-removed surface, so the member
+    // has no access to it (403) and the draft stays a draft.
+    const pendingResp = await request.get(
+      `${BACKEND}/api/assessments/reviews/pending`,
+    )
+    expect(pendingResp.status()).toBe(403)
+    const fresh = await (
+      await request.get(`${BACKEND}/api/assessments/${draft.id}`)
+    ).json()
+    expect(fresh.status).toBe('草稿')
+
+    // Buddy board: member overview + evidence entry, no assessment queue.
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '辅导成员看板' }),
     ).toBeVisible()
-    // select THIS scenario's pending review (other suites may leave pending
-    // reviews for other members/years in the shared queue)
-    await page
-      .locator('tr', { hasText: String(year) })
-      .getByRole('button')
-      .first()
-      .click()
-    // summary grid + first-approval notice (Issue #82: notice may need update)
     await expect(
-      page.getByText(/已由本次评估生成.*复用已有计划/).first(),
+      page.getByRole('heading', { name: '辅导成员', exact: true }),
     ).toBeVisible()
-    // detail table shows the frozen facts
-    await expect(page.getByText('高').first()).toBeVisible()
-    // submit approve via the UI with real API
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('UI 认可')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already created by self-submit, success message may differ
-    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
+    await expect(page.locator('.member-row').first()).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    await expect(page.getByText('待复核自评')).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: '提交复核反馈' }),
+    ).toHaveCount(0)
+    await page.getByRole('link', { name: '前往成果验收' }).click()
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
   })
 
-  // ── P1-5: frontend idempotency-key lifecycle ──────────────────────────────
-
-  /** Open the Buddy workspace and select THIS scenario's pending review. */
-  async function openWorkspaceForYear(
-    page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-    year: number,
-  ) {
-    await page.goto('/mentoring/dashboard')
-    await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
-    await page
-      .locator('tr', { hasText: String(year) })
-      .getByRole('button')
-      .first()
-      .click()
-    await expect(
-      page.getByText(/已由本次评估生成.*复用已有计划/).first(),
-    ).toBeVisible()
-  }
-
-  test('E2E-62-08 真实响应丢失：服务端已提交但浏览器未收到响应，同 key 重试幂等重放', async ({
+  test('E2E-62-08 生成响应丢失：服务端已提交但浏览器未收到响应，同选择重试幂等复用', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-08')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const [picked] = await fillSelectionOnly(page, request, draft, [
       {
         current_level: 2,
         target_level: 4,
@@ -706,79 +773,44 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
 
-    await loginAs(page, 'buddy')
-    // P2-1: the first request REALLY reaches the backend and commits (the
-    // plan already exists from self-submit), but the client response is suppressed —
-    // the browser sees a gateway failure.  The retry with the SAME key then
-    // hits the server's idempotency replay: idempotent_replayed=true and no
-    // second write anywhere.
-    const keys: string[] = []
-    let replayed = false
+    // P2-1: the first request REALLY reaches the backend and commits, but the
+    // client response is suppressed — the browser sees a gateway failure.
+    // The retry with the same selection then reuses the same plan items:
+    // no second write anywhere.
     let call = 0
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      const headers = route.request().headers()
-      keys.push(headers['idempotency-key'] ?? '')
-      call += 1
-      const response = await route.fetch()
-      if (call === 1) {
-        // Server committed; the response is dropped on the floor.
-        await route.fulfill({
-          status: 504,
-          contentType: 'application/json',
-          body: JSON.stringify({ detail: 'gateway timeout' }),
-        })
-        return
-      }
-      const body = (await response.json()) as {
-        idempotent_replayed?: boolean
-      }
-      if (body.idempotent_replayed === true) {
-        replayed = true
-      }
-      await route.fulfill({ response })
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('重试认可')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByRole('alert').first()).toBeVisible()
-    // same payload, unchanged input -> retry reuses the same idempotency key
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/已提交（幂等重放/).first()).toBeVisible()
-    // the server-side replay flag was observed on the real response
-    expect(replayed).toBe(true)
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).toBe(keys[0])
-    // queue decremented exactly once: no pending review remains
-    const pending = await (
-      await request.get(`${BACKEND}/api/assessments/reviews/pending`)
-    ).json()
-    expect(
-      pending.filter(
-        (r: { assessment_id: number }) => r.assessment_id === draft.id,
-      ),
-    ).toHaveLength(0)
-    // exactly 1 review closed, 1 plan, 1 item, 1 task, 0 proposals
-    const reviews = await (
-      await request.get(`${BACKEND}/api/assessments/${draft.id}/history`)
-    ).json()
-    expect(
-      reviews.filter((r: { status: string }) => r.status === '已闭环'),
-    ).toHaveLength(1)
+    await page.route(
+      '**/api/assessments/*/generate-plan-items',
+      async (route) => {
+        call += 1
+        if (call === 1) {
+          await route.fetch()
+          await route.fulfill({
+            status: 504,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'gateway timeout' }),
+          })
+          return
+        }
+        await route.continue()
+      },
+    )
+    await page.goto(`/capability/assessment?year=${year}`)
+    await page.getByLabel(`选择 ${picked.l3_code}`).check()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    // no success message yet — the response was lost
+    await expect(page.getByText(/已生成/)).toHaveCount(0)
+    // unchanged selection -> retry reuses the existing plan items
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    expect(call).toBeGreaterThanOrEqual(2)
+    // exactly one item and one task, no review, status untouched
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
     ).json()
     expect(plan.items.length).toBe(1)
-    // exactly one learning task exists for the plan item
+    expect(plan.items[0].l3_code).toBe(picked.l3_code)
     const tasks = await (
       await request.get(`${BACKEND}/api/planning/learning-tasks`)
     ).json()
@@ -787,20 +819,23 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan.items.some((i: { id: number }) => i.id === t.plan_item_id),
       ),
     ).toHaveLength(1)
-    const proposals = await (
-      await request.get(`${BACKEND}/api/planning/change-proposals?year=${year}`)
+    // The Buddy-only review queue is a #178-removed surface — no access.
+    const pendingResp = await request.get(
+      `${BACKEND}/api/assessments/reviews/pending`,
+    )
+    expect(pendingResp.status()).toBe(403)
+    const fresh = await (
+      await request.get(`${BACKEND}/api/assessments/${draft.id}`)
     ).json()
-    expect(proposals.length).toBe(0)
+    expect(fresh.status).toBe('草稿')
   })
 
-  test('E2E-62-09 失败后修改反馈：新 payload 用新 key，正常重新提交', async ({
-    page,
-  }) => {
+  test('E2E-62-09 生成请求失败后重试成功，不重复写入', async ({ page }) => {
     const request = page.request
     const year = yearFor('E2E-62-09')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const [picked] = await fillSelectionOnly(page, request, draft, [
       {
         current_level: 2,
         target_level: 4,
@@ -810,53 +845,50 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
 
-    await loginAs(page, 'buddy')
-    const keys: string[] = []
+    // The first request never reaches the server; the retry succeeds and
+    // writes exactly once.
     let call = 0
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      keys.push(route.request().headers()['idempotency-key'] ?? '')
-      call += 1
-      if (call === 1) {
-        await route.abort('failed')
-        return
-      }
-      await route.continue()
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('初版反馈')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByRole('alert').first()).toBeVisible()
-    // the member edits the feedback before retrying -> a NEW key must be used
-    await page.getByLabel('反馈').first().fill('修订后反馈')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already exists, success message may vary
-    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).not.toBe(keys[0])
+    await page.route(
+      '**/api/assessments/*/generate-plan-items',
+      async (route) => {
+        call += 1
+        if (call === 1) {
+          await route.abort('failed')
+          return
+        }
+        await route.continue()
+      },
+    )
+    await page.goto(`/capability/assessment?year=${year}`)
+    await page.getByLabel(`选择 ${picked.l3_code}`).check()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成/)).toHaveCount(0)
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    expect(call).toBeGreaterThanOrEqual(2)
+    // exactly one plan item for the selection — no duplicates
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
     ).json()
     expect(plan.items.length).toBe(1)
+    expect(plan.items[0].l3_code).toBe(picked.l3_code)
+    // No Assessment Review is created — the Buddy-only queue is #178-removed.
+    const pendingResp = await request.get(
+      `${BACKEND}/api/assessments/reviews/pending`,
+    )
+    expect(pendingResp.status()).toBe(403)
   })
 
-  test('E2E-62-10 409 版本冲突：输入保留、工作区刷新、新 key 重新提交成功', async ({
+  test('E2E-62-10 生成时草稿版本冲突：提示重新加载，刷新后重试成功', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-10')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const [picked] = await fillSelectionOnly(page, request, draft, [
       {
         current_level: 2,
         target_level: 4,
@@ -866,61 +898,54 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
         plan_month: 5,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
 
-    await loginAs(page, 'buddy')
-    const keys: string[] = []
-    let call = 0
-    let workspaceGets = 0
-    await page.route('**/api/assessments/*/buddy-review', async (route) => {
-      workspaceGets += 1
-      await route.continue()
-    })
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      keys.push(route.request().headers()['idempotency-key'] ?? '')
-      call += 1
-      if (call === 1) {
-        // A stale revision: the server would answer 409 revision_conflict.
-        await route.fulfill({
-          status: 409,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            detail: { code: 'revision_conflict', message: 'revision conflict' },
-          }),
-        })
-        return
-      }
-      await route.continue()
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('冲突后保留')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // 409 keeps the input and explains the situation
-    await expect(page.getByRole('alert').first()).toContainText(
-      '复核版本已更新，请确认后重新提交。',
+    await page.goto(`/capability/assessment?year=${year}`)
+    // A dirty edit in the UI: generation first persists the changed row.
+    await page
+      .getByLabel(`当前等级 ${picked.l3_code}`)
+      .selectOption('0')
+    // Meanwhile another writer bumps the draft revision behind the page.
+    const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
+    const fresh = await getResp.json()
+    const other = fresh.details.find(
+      (detail: { l3_code: string; standard_target_applicable: boolean }) =>
+        detail.l3_code !== picked.l3_code &&
+        detail.standard_target_applicable === true,
+    )!
+    const bumped = await request.patch(
+      `${BACKEND}/api/assessments/${draft.id}/draft`,
+      {
+        data: {
+          expected_revision: fresh.revision,
+          details: [
+            {
+              l3_node_id: other.l3_node_id,
+              l3_code: other.l3_code,
+              current_level: 1,
+            },
+          ],
+        },
+      },
     )
-    await expect(page.getByLabel('反馈').first()).toHaveValue('冲突后保留')
-    await expect(page.getByLabel('认可').first()).toBeChecked()
-    // the workspace was refreshed (fresh expected_revision)...
-    await expect.poll(() => workspaceGets).toBeGreaterThan(1)
-    // ...and the resubmit uses a NEW key and succeeds
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already exists, success message may vary
-    await expect(page.getByText(/年度计划已生成|已提交/).first()).toBeVisible()
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).not.toBe(keys[0])
-    // exactly one plan; no duplicates anywhere
+    expect(bumped.ok()).toBeTruthy()
+    // Generation hits the stale revision -> 409 with a reload hint.
+    await page.getByLabel(`选择 ${picked.l3_code}`).check()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(
+      page.getByText('数据冲突：草稿已被其他操作更新，请重新加载后再生成。'),
+    ).toBeVisible()
+    // Reload brings a fresh revision; retry succeeds and writes once.
+    await page.reload()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
+    await page.getByLabel(`选择 ${picked.l3_code}`).check()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    // exactly one plan item for the selection; no duplicates anywhere
     await loginAs(page, 'member')
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
     ).json()
     expect(plan.items.length).toBe(1)
+    expect(plan.items[0].l3_code).toBe(picked.l3_code)
   })
 })

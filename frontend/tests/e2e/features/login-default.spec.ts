@@ -8,7 +8,7 @@ test.describe('登录后默认路由', () => {
     await expect(page).toHaveURL(/\/dashboard\/member/)
   })
 
-  test('Buddy 兼任 Member 仍进入 Buddy 复核中心', async ({ page }) => {
+  test('Buddy 兼任 Member 仍进入辅导成员看板', async ({ page }) => {
     await loginAs(page, 'buddy')
     await expect(page).toHaveURL(/\/mentoring\/dashboard/)
   })

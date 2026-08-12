@@ -1,8 +1,8 @@
 /** Issue #61 — assessment page visual regression tests.
  *
- * Verifies 7-column table layout at three common viewport sizes,
- * checking that no horizontal overflow occurs and the plan-time
- * column is visible.
+ * Verifies the 8-column table layout (Issue #178 adds the 生成任务
+ * checkbox column) at three common viewport sizes, checking that no
+ * horizontal overflow occurs and the plan-time column is visible.
  *
  * Determinism contract:
  * - AssessmentGapPage ignores the URL year and always loads the NEWEST
@@ -132,7 +132,7 @@ async function canonicalizeVisualDraft(page: Page, draftId: number) {
 
 test.describe('Issue #61 — assessment page visual', () => {
   for (const vp of VIEWPORTS) {
-    test(`7-column table at ${vp.label} — no horizontal overflow`, async ({
+    test(`8-column table at ${vp.label} — no horizontal overflow`, async ({
       page,
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height })
@@ -148,21 +148,21 @@ test.describe('Issue #61 — assessment page visual', () => {
       const scopeHeader = page.getByTestId('scope-header')
       await expect(scopeHeader).toContainText(`${VISUAL_YEAR} 年度`)
 
-      // Verify 7-column headers
+      // Verify 8-column headers (Issue #178: 生成任务 checkbox column)
       const headers = page.locator('thead th')
-      await expect(headers).toHaveCount(7)
+      await expect(headers).toHaveCount(8)
 
       // Verify no horizontal overflow on the page
       const bodyWidth = await page.evaluate(() => document.body.scrollWidth)
       const viewportWidth = await page.evaluate(() => window.innerWidth)
       expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 1)
 
-      // Verify plan time column (column 7) is visible
+      // Verify plan time column (column 8) is visible
       const planTimeHeader = page.getByText('计划时间')
       await expect(planTimeHeader).toBeVisible()
 
       // Take screenshot
-      await expect(page).toHaveScreenshot(`assessment-7col-${vp.label}.png`, {
+      await expect(page).toHaveScreenshot(`assessment-8col-${vp.label}.png`, {
         fullPage: false,
       })
     })

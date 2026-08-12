@@ -1,10 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import {
-  mockBuddyReviewData,
-  mockBuddyReviewWorkspaceRoutes,
-} from '../fixtures/buddy-review-mock'
+import { mockBuddyReviewData } from '../fixtures/buddy-review-mock'
 import { mockTeamAnalyticsData } from '../fixtures/team-analytics-mock'
 
 const rangeHours = {
@@ -18,21 +15,46 @@ const rangeHours = {
 const unparsedHours = '约半天'
 
 test.describe('Issue #52 P1 regressions', () => {
-  test('keeps an unmapped historic L3 in the Buddy review workspace', async ({
+  test('Buddy board is a member overview; evidence review stays reachable and isolated', async ({
     page,
   }) => {
     await mockBuddyReviewData(page)
-    await mockBuddyReviewWorkspaceRoutes(page)
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
 
-    // Issue #62 workspace: frozen facts in the summary grid and grouped table
-    await expect(page.getByText('适用 3')).toBeVisible()
-    await expect(page.getByText('未映射历史项')).toBeVisible()
-    await expect(page.getByText(/unknown-legacy-l3/).first()).toBeVisible()
-    await expect(page.getByText('数据管道基础', { exact: true })).toBeVisible()
-    // personal adjustment shown only when it happened
-    await expect(page.getByText(/3 → 4（岗位项目要求/)).toBeVisible()
+    // Issue #178: the board is a member overview with an evidence entry —
+    // no assessment-review workspace, no review queue, no frozen-facts grid.
+    await expect(
+      page.getByRole('heading', { name: '辅导成员看板' }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '辅导成员', exact: true }),
+    ).toBeVisible()
+    await expect(page.getByText('Member User')).toBeVisible()
+    await expect(page.getByText('Member Two')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('link', { name: '前往成果验收' }),
+    ).toBeVisible()
+    // The legacy workspace DTO (unmapped historic L3 included) renders nowhere.
+    await expect(page.getByText('适用 3')).toHaveCount(0)
+    await expect(page.getByText('未映射历史项')).toHaveCount(0)
+    await expect(page.getByText(/unknown-legacy-l3/)).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: '提交复核反馈' }),
+    ).toHaveCount(0)
+
+    // Evidence Review stays reachable from the board and shows its queue.
+    await page.getByRole('link', { name: '前往成果验收' }).click()
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: /^member / }),
+    ).toBeVisible()
   })
 
   test('labels team aggregates as L3 mastery rather than job-level attainment', async ({

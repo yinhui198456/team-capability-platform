@@ -163,7 +163,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
     }
   })
 
-  test('unassessed level 3 is visibly incomplete before submit', async ({
+  test('unassessed rows never block generation; current_level=0 is a valid selection', async ({
     page,
   }) => {
     const current = page.getByRole('combobox', { name: /当前等级/ }).first()
@@ -172,12 +172,28 @@ test.describe('Issue #50 assessment gap workflow', () => {
     if ((await current.inputValue()) !== '') await current.selectOption('')
     const row = current.locator('xpath=ancestor::tr')
     await expect(row.getByText('需评估等级')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
-    await current.selectOption('3')
+    // Issue #178: unselected (unassessed) rows never block task generation
+    await expect(
+      page.getByText(/项未完成评估（未选择的能力项不阻塞生成）/),
+    ).toBeVisible()
+    // current_level=0 is a legal filled outcome and can be selected
+    await current.selectOption('0')
     await expect(row.getByText('需评估等级')).toHaveCount(0)
-    await current.selectOption('')
-    await expect(row.getByText('需评估等级')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+    const code = (await current.getAttribute('aria-label'))!.replace(
+      '当前等级 ',
+      '',
+    )
+    await page.getByLabel(`选择 ${code}`).check()
+    await expect(page.getByText('已选择 1 项')).toBeVisible()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    // the annual plan now carries the selected L3
+    const plan = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    expect(
+      plan.items.some((item: { l3_code: string }) => item.l3_code === code),
+    ).toBe(true)
   })
 
   test('excludes N/A items from progress and unfinished-item location', async ({
@@ -196,133 +212,122 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
   })
 
-  test('structured submit validation switches domain and focuses the failing L3', async ({
+  test('multiple selected L3s generate atomically; an invalid batch fails whole', async ({
     page,
   }) => {
-    const draft = await fillAllApplicable(page)
-    const target = draft.details.find(
-      (detail) =>
-        detail.standard_target_applicable !== false &&
-        (detail.l1_code ?? detail.l3_code.split('.')[0]) !== 'P01',
-    )!
-    // Clear the client-side completeness check (mirrors the server gate) so
-    // the request reaches the server, whose structured 422 drives the
-    // domain switch and row locate below.
-    const gapDetails = draft.details.filter(
-      (detail) =>
-        detail.standard_target_applicable !== false &&
-        (detail.gap_value ?? 0) > 0,
+    await fillAllApplicable(page)
+    const draft = await currentDraft(page)
+    const applicable = draft.details.filter(
+      (detail) => detail.standard_target_applicable !== false,
     )
-    if (gapDetails.length) {
-      const patched = await page.request.patch(
-        `/api/assessments/${draft.id}/draft`,
-        {
-          data: {
-            expected_revision: draft.revision,
-            details: gapDetails.map((detail) => ({
-              l3_node_id: detail.l3_node_id,
-              l3_code: detail.l3_code,
-              member_priority: '低',
-              include_in_plan: false,
-            })),
-          },
-        },
-      )
-      expect(patched.ok()).toBeTruthy()
-      await page.reload()
-      await expect(page.getByLabel('评估摘要')).toBeVisible()
+    // pick applicable rows that are not already in the annual plan, so the
+    // created counts stay deterministic across runs
+    const planResp = await page.request.get(
+      '/api/planning/annual-plan?year=2026',
+    )
+    // No plan yet: the endpoint returns JSON null (not an error) — treat it
+    // as an empty item list so the pre-generation pick stays deterministic.
+    const planBody = (await planResp.json()) as {
+      items: Array<{ l3_code: string }>
+    } | null
+    const existing = planBody ? planBody.items.map((item) => item.l3_code) : []
+    const picks = applicable
+      .filter((detail) => !existing.includes(detail.l3_code))
+      .slice(0, 2)
+    expect(picks).toHaveLength(2)
+    for (const pick of picks) {
+      await page.getByLabel(`选择 ${pick.l3_code}`).check()
     }
-    await page
-      .getByRole('navigation', { name: '一级能力域导航' })
-      .getByRole('button', { name: /^P01 · / })
-      .click()
-    await page.route('**/api/assessments/*/submit', async (route) => {
-      await route.fulfill({
-        status: 422,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          detail: {
-            code: target.l3_code,
-            l3_code: target.l3_code,
-            l3_node_id: target.l3_node_id,
-            field: 'member_priority',
-            reason: 'priority_required',
-            message: `${target.l3_code} requires member_priority`,
-          },
-        }),
-      })
-    })
-    await page.getByRole('button', { name: '提交自评' }).click()
-    // Raw backend English is never shown: the structured reason maps to
-    // Chinese copy that still identifies the failing L3 row by name.
-    await expect(
-      page.getByText('该能力项存在正 Gap，请先选择优先级（高/中/低/暂缓）'),
-    ).toBeVisible()
-    await expect(page.locator(`#row-${target.id}`)).toBeFocused()
-    await expect(
-      page
-        .getByRole('navigation', { name: '一级能力域导航' })
-        .getByRole('button', {
-          name: new RegExp(`^${target.l1_code ?? 'P02'} · `),
-        }),
-    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByText('已选择 2 项')).toBeVisible()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
+    const after = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    for (const pick of picks) {
+      expect(
+        after.items.some(
+          (item: { l3_code: string }) => item.l3_code === pick.l3_code,
+        ),
+      ).toBe(true)
+    }
+    // an invalid batch (a still-unplanned row + an unknown code) fails as a
+    // whole: nothing is created for the valid row in the same request
+    const third = applicable.find(
+      (detail) =>
+        !existing.includes(detail.l3_code) &&
+        detail.l3_code !== picks[0].l3_code &&
+        detail.l3_code !== picks[1].l3_code,
+    )!
+    const invalid = await page.request.post(
+      `/api/assessments/${draft.id}/generate-plan-items`,
+      {
+        data: { l3_codes: [third.l3_code, 'NOPE.NOPE.NOPE'] },
+      },
+    )
+    expect(invalid.status()).toBe(422)
+    const planAfter = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    expect(
+      planAfter.items.some(
+        (item: { l3_code: string }) => item.l3_code === third.l3_code,
+      ),
+    ).toBe(false)
   })
 
-  test('first evaluation fills all domains and submits dirty input', async ({
+  test('repeated generation idempotently reuses tasks and creates no review', async ({
     page,
   }) => {
-    test.setTimeout(120_000)
-    const firstCurrent = page
-      .getByRole('combobox', { name: /当前等级/ })
-      .first()
-    if ((await firstCurrent.inputValue()) === '') {
-      await firstCurrent.selectOption('1')
-    }
-    for (const domain of await page
-      .getByRole('navigation', { name: '一级能力域导航' })
-      .getByRole('button')
-      .all()) {
-      await domain.click()
-      while (await page.getByRole('button', { name: '批量填 1' }).count()) {
-        await page.getByRole('button', { name: '批量填 1' }).first().click()
-        const responsePromise = page.waitForResponse(
-          (response) =>
-            response.url().includes('/batch-level') &&
-            response.request().method() === 'POST',
-        )
-        await page.getByRole('button', { name: '确认填 1' }).click()
-        expect((await responsePromise).status()).toBe(200)
-      }
-    }
-    // positive-Gap items need an explicit plan decision before submit
     const draft = await currentDraft(page)
-    const gapDetails = draft.details.filter(
-      (detail) =>
-        detail.standard_target_applicable !== false &&
-        (detail.gap_value ?? 0) > 0,
-    )
-    if (gapDetails.length) {
-      const patched = await page.request.patch(
-        `/api/assessments/${draft.id}/draft`,
-        {
-          data: {
-            expected_revision: draft.revision,
-            details: gapDetails.map((detail) => ({
-              l3_node_id: detail.l3_node_id,
-              l3_code: detail.l3_code,
-              member_priority: '低',
-              include_in_plan: false,
-            })),
-          },
-        },
-      )
-      expect(patched.ok()).toBeTruthy()
-      await page.reload()
-      await expect(page.getByLabel('评估摘要')).toBeVisible()
+    const planBefore = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    const codes = (
+      planBefore.items as Array<{ l3_code: string }>
+    ).map((item) => item.l3_code)
+    expect(codes.length).toBeGreaterThanOrEqual(2)
+    for (const code of codes.slice(0, 2)) {
+      await page.getByLabel(`选择 ${code}`).check()
     }
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-    await page.getByRole('button', { name: '提交自评' }).click()
-    await expect(page.getByText(/已提交/)).toBeVisible({ timeout: 15000 })
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    // Issue #178: the same selection reuses the existing plan items/tasks
+    await expect(
+      page.getByText(/已生成 0 个学习任务（\d+ 个已存在）/),
+    ).toBeVisible()
+    const planAfter = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    expect(planAfter.items.length).toBe(planBefore.items.length)
+    const tasks = await (
+      await page.request.get('/api/planning/learning-tasks')
+    ).json()
+    const itemIds = new Set(
+      (
+        planAfter.items as Array<{ id: number; l3_code: string }>
+      )
+        .filter((item) => codes.slice(0, 2).includes(item.l3_code))
+        .map((item) => item.id),
+    )
+    expect(
+      tasks.filter((task: { plan_item_id: number }) =>
+        itemIds.has(task.plan_item_id),
+      ),
+    ).toHaveLength(2)
+    // generation creates no Assessment Review and never transitions status:
+    // the Buddy-only review queue is a #178-removed surface (403 for members)
+    const pendingResp = await page.request.get(
+      '/api/assessments/reviews/pending',
+    )
+    expect(pendingResp.status()).toBe(403)
+    const history = await (
+      await page.request.get(`/api/assessments/${draft.id}/history`)
+    ).json()
+    expect(history).toHaveLength(0)
+    const fresh = await (
+      await page.request.get(`/api/assessments/${draft.id}`)
+    ).json()
+    expect(fresh.status).toBe('草稿')
   })
 
   test('partial save keeps the page dense and avoids viewport overflow', async ({

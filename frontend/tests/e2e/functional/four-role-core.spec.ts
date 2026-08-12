@@ -46,23 +46,30 @@ test.describe('four-role core read paths', () => {
     await expect(page.getByText('数据范围：本人')).toBeVisible()
   })
 
-  test('Buddy: assessment review stays on the review center; evidence review is a standalone page', async ({
+  test('Buddy: member overview board; evidence review is a standalone page', async ({
     page,
   }) => {
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
 
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '辅导成员看板' }),
     ).toBeVisible()
-    await expect(page.getByText('数据范围：负责成员')).toBeVisible()
-    await expect(page.getByRole('heading', { name: '辅导成员' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '辅导成员', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('link', { name: '前往成果验收' }),
+    ).toBeVisible()
 
-    // Legacy assessment-review alias still resolves to the review center.
+    // Legacy assessment-review alias still resolves to the Buddy board.
     await page.goto('/mentoring/assessment-review')
     await expect(page).toHaveURL(/\/mentoring\/dashboard$/)
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '辅导成员看板' }),
     ).toBeVisible()
 
     // Evidence review is its own route now — it must NOT redirect to the
@@ -73,7 +80,7 @@ test.describe('four-role core read paths', () => {
       page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '辅导成员看板' }),
     ).toHaveCount(0)
   })
 

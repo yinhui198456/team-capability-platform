@@ -70,7 +70,7 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '辅导成员看板' }),
     ).toBeVisible()
 
     await logout(page)
