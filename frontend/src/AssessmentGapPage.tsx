@@ -246,6 +246,10 @@ const ASSESSMENT_ERROR_COPY: Record<string, string> = {
   plan_decision_required: '该能力项存在正 Gap，请明确是否纳入年度计划',
   hold_plan_conflict: '已暂缓的能力项不能纳入年度计划，请先调整优先级',
   plan_time_required: '已纳入计划的能力项请选择计划月份',
+  plan_quarter_required:
+    '缺少计划季度：请在「纳入年度计划」选择"是"并填写计划月份',
+  plan_month_required:
+    '缺少计划月份：请在「纳入年度计划」选择"是"并填写计划月份',
   priority_not_applicable: '无正 Gap 的能力项不能设置优先级，已自动清除',
   plan_not_applicable: '无正 Gap 的能力项不能纳入计划，已自动清除',
   requires_current_level: '该能力项请先评估当前掌握度',
@@ -688,6 +692,29 @@ export function AssessmentGapPage() {
           ? '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。'
           : status === 409
             ? '数据冲突：草稿已被其他操作更新，请重新加载后再生成。'
+            : detail &&
+                Array.isArray((detail as { issues?: unknown }).issues)
+              ? (() => {
+                  // Corrected #178 contract: batch plan-time rejection lists
+                  // every selected L3 missing its plan quarter/month, in
+                  // Chinese, with how to fix each.  Selection and all entered
+                  // inputs stay intact for retry.
+                  const issues = (detail as {
+                    issues: Array<{ l3_code: string; reason: string }>
+                  }).issues
+                  for (const issue of issues) {
+                    const target = details.find(
+                      (item) => item.l3_code === issue.l3_code,
+                    )
+                    if (target) locateDetail(target)
+                  }
+                  return issues
+                    .map(
+                      (issue) =>
+                        `【${issue.l3_code}】${assessmentErrorCopy(issue.reason)}`,
+                    )
+                    .join('\n')
+                })()
             : isStructuredAssessmentError(detail)
               ? (() => {
                   const target = details.find(

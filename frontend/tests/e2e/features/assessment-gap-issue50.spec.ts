@@ -185,6 +185,11 @@ test.describe('Issue #50 assessment gap workflow', () => {
     )
     await page.getByLabel(`选择 ${code}`).check()
     await expect(page.getByText('已选择 1 项')).toBeVisible()
+    // Corrected #178 contract: explicit generation requires the selected L3
+    // to carry an explicit plan quarter/month — no default exists, so pick
+    // 纳入年度计划=是 and a plan month before generating.
+    await page.getByLabel(`纳入计划 ${code}`).selectOption('yes')
+    await page.getByLabel(`计划月份 ${code}`).fill('2026-05')
     await page.getByRole('button', { name: '生成所选学习任务' }).click()
     await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
     // the annual plan now carries the selected L3
@@ -194,6 +199,58 @@ test.describe('Issue #50 assessment gap workflow', () => {
     expect(
       plan.items.some((item: { l3_code: string }) => item.l3_code === code),
     ).toBe(true)
+  })
+
+  test('generation without plan time fails atomically with per-item Chinese errors', async ({
+    page,
+  }) => {
+    await fillAllApplicable(page)
+    const draft = await currentDraft(page)
+    const planResp = await page.request.get(
+      '/api/planning/annual-plan?year=2026',
+    )
+    const planBody = (await planResp.json()) as {
+      items: Array<{ l3_code: string }>
+    } | null
+    const existing = planBody ? planBody.items.map((item) => item.l3_code) : []
+    const picks = draft.details
+      .filter(
+        (detail) =>
+          detail.standard_target_applicable !== false &&
+          !existing.includes(detail.l3_code) &&
+          (detail.target_level ?? 0) > 1,
+      )
+      .slice(0, 2)
+    expect(picks).toHaveLength(2)
+    // one row gets complete plan time; the other stays plan-time-less
+    await page.getByLabel(`纳入计划 ${picks[0].l3_code}`).selectOption('yes')
+    await page.getByLabel(`计划月份 ${picks[0].l3_code}`).fill('2026-05')
+    await page.getByLabel(`选择 ${picks[0].l3_code}`).check()
+    await page.getByLabel(`选择 ${picks[1].l3_code}`).check()
+    await expect(page.getByText('已选择 2 项')).toBeVisible()
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    // per-item Chinese error: the incomplete row is named for quarter AND
+    // month, with how to fix it
+    await expect(
+      page.getByText(`【${picks[1].l3_code}】缺少计划季度`),
+    ).toBeVisible()
+    await expect(
+      page.getByText(`【${picks[1].l3_code}】缺少计划月份`),
+    ).toBeVisible()
+    // batch atomicity: the complete row got no task either
+    const planAfter = await (
+      await page.request.get('/api/planning/annual-plan?year=2026')
+    ).json()
+    expect(
+      planAfter.items.some(
+        (item: { l3_code: string }) => item.l3_code === picks[0].l3_code,
+      ),
+    ).toBe(false)
+    // selection and all entered inputs are preserved for retry
+    await expect(page.getByText('已选择 2 项')).toBeVisible()
+    await expect(page.getByLabel(`计划月份 ${picks[0].l3_code}`)).toHaveValue(
+      '2026-05',
+    )
   })
 
   test('excludes N/A items from progress and unfinished-item location', async ({
@@ -237,6 +294,10 @@ test.describe('Issue #50 assessment gap workflow', () => {
     expect(picks).toHaveLength(2)
     for (const pick of picks) {
       await page.getByLabel(`选择 ${pick.l3_code}`).check()
+      // corrected #178 contract: no default plan time exists — each selected
+      // L3 must carry explicit 纳入年度计划=是 + 计划月份
+      await page.getByLabel(`纳入计划 ${pick.l3_code}`).selectOption('yes')
+      await page.getByLabel(`计划月份 ${pick.l3_code}`).fill('2026-05')
     }
     await expect(page.getByText('已选择 2 项')).toBeVisible()
     await page.getByRole('button', { name: '生成所选学习任务' }).click()
@@ -283,12 +344,17 @@ test.describe('Issue #50 assessment gap workflow', () => {
     const planBefore = await (
       await page.request.get('/api/planning/annual-plan?year=2026')
     ).json()
-    const codes = (
-      planBefore.items as Array<{ l3_code: string }>
-    ).map((item) => item.l3_code)
+    const codes = (planBefore.items as Array<{ l3_code: string }>).map(
+      (item) => item.l3_code,
+    )
     expect(codes.length).toBeGreaterThanOrEqual(2)
     for (const code of codes.slice(0, 2)) {
       await page.getByLabel(`选择 ${code}`).check()
+      // Corrected #178 contract: explicit generation re-validates the
+      // selected L3s' plan quarter/month — no default exists, so (re)fill
+      // plan time for rows whose details predate the explicit-time contract.
+      await page.getByLabel(`纳入计划 ${code}`).selectOption('yes')
+      await page.getByLabel(`计划月份 ${code}`).fill('2026-05')
     }
     await page.getByRole('button', { name: '生成所选学习任务' }).click()
     // Issue #178: the same selection reuses the existing plan items/tasks
@@ -303,9 +369,7 @@ test.describe('Issue #50 assessment gap workflow', () => {
       await page.request.get('/api/planning/learning-tasks')
     ).json()
     const itemIds = new Set(
-      (
-        planAfter.items as Array<{ id: number; l3_code: string }>
-      )
+      (planAfter.items as Array<{ id: number; l3_code: string }>)
         .filter((item) => codes.slice(0, 2).includes(item.l3_code))
         .map((item) => item.id),
     )

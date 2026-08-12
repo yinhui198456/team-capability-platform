@@ -325,6 +325,7 @@ button {
   padding: var(--space-3);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
+  white-space: pre-line;
 }
 
 .warning {

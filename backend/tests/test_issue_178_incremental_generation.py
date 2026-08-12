@@ -59,6 +59,10 @@ def _create_draft(
     ).fetchone()
     assessment_id = assessment[0]
     for index, (code, current, target, gap) in enumerate(details, start=1):
+        # High fake node ids: the real seeded catalog's L3 node (P01-L2A-L3A)
+        # gets a low id captured into v0009's planning snapshots, so 1..N can
+        # collide with the fixture's own snapshot inserts.
+        l3_node_id = 9000 + index
         connection.execute(
             """
             INSERT INTO assessment_detail (
@@ -72,7 +76,7 @@ def _create_draft(
                     'P01', 'P01', 'P01-01', 'P01-01', %s,
                     'P5', 'Q1', 1)
             """,
-            (assessment_id, code, current, target, gap, index, target, code),
+            (assessment_id, code, current, target, gap, l3_node_id, target, code),
         )
         # Planning snapshot for this detail's node, mirroring v0009's captured
         # rows; the immutable guard is bypassed like test_review_plan_atomic.
@@ -85,7 +89,7 @@ def _create_draft(
             )
             VALUES (%s, %s, %s, %s, 'legacy_catalog_capture_v0009', 'test-hash')
             """,
-            (version_id, index, code, code),
+            (version_id, l3_node_id, code, code),
         )
         connection.execute("SET session_replication_role = origin")
     return member_id, assessment_id
@@ -175,36 +179,152 @@ def test_single_selected_filled_l3_generates_task_and_ignores_unfilled(review_sc
     assert b_level is None
 
 
-def test_selection_only_row_without_plan_time_defaults_to_q1_month1(review_schema):
+def _set_plan_time(
+    connection: psycopg.Connection,
+    assessment_id: int,
+    l3_code: str,
+    quarter: object | None,
+    month: object | None,
+) -> None:
+    connection.execute(
+        "UPDATE assessment_detail SET plan_quarter=%s, plan_month=%s "
+        "WHERE assessment_id=%s AND l3_code=%s",
+        (quarter, month, assessment_id, l3_code),
+    )
+
+
+def test_selection_without_plan_time_rejected_atomically(review_schema):
     """A row filled with only the outcome levels (current_level/target — no
-    plan quarter/month ever picked, the #178 partial-save scenario) still
-    generates: the plan item falls back to Q1 / month 1 instead of violating
-    plan_item_approval_completeness (RED on the current code, which copies
-    the NULLs straight into plan_item)."""
-    from app.planning.atomic_generation import generate_plan_items_for_selection
+    plan quarter/month ever picked, the #178 partial-save scenario) can never
+    generate: explicit generation rejects the batch with per-item plan-time
+    issues and zero writes.  No default quarter/month may ever be invented
+    (supersedes the pre-correction Q1/1 fallback contract)."""
+    from app.planning.atomic_generation import (
+        PlanTimeValidationError,
+        generate_plan_items_for_selection,
+    )
 
     member_id, assessment_id = _create_draft(
         review_schema,
         "tcp178-nulltime",
         details=[(L3_A, 0, 2, 2)],
     )
-    # The row was filled with only the outcome levels — no planning time.
-    review_schema.execute(
-        "UPDATE assessment_detail SET plan_quarter=NULL, plan_month=NULL "
-        "WHERE assessment_id=%s AND l3_code=%s",
-        (assessment_id, L3_A),
+    _set_plan_time(review_schema, assessment_id, L3_A, None, None)
+
+    plans_before = _plan_ids(review_schema, member_id)
+
+    try:
+        generate_plan_items_for_selection(review_schema, assessment_id, [L3_A])
+    except PlanTimeValidationError as exc:
+        reasons = sorted((issue.reason, issue.l3_code) for issue in exc.issues)
+        assert reasons == [
+            ("plan_month_required", L3_A),
+            ("plan_quarter_required", L3_A),
+        ]
+        assert {issue.field for issue in exc.issues} == {
+            "plan_month",
+            "plan_quarter",
+        }
+    else:
+        raise AssertionError("expected PlanTimeValidationError for NULL plan time")
+
+    # Zero writes: no plan, no item, no task; draft untouched.
+    assert _plan_ids(review_schema, member_id) == plans_before
+    assert _item_task_counts(review_schema, member_id) == (0, 0)
+    status = review_schema.execute(
+        "SELECT status FROM assessment WHERE id=%s", (assessment_id,)
+    ).fetchone()[0]
+    assert status == "草稿"
+
+
+def test_batch_missing_plan_time_lists_every_issue_zero_writes(review_schema):
+    """Multi-select batch: any selected row missing plan quarter and/or month
+    rejects the WHOLE batch — no partial writes even for complete rows — and
+    every missing field across every selected row is listed at once."""
+    from app.planning.atomic_generation import (
+        PlanTimeValidationError,
+        generate_plan_items_for_selection,
     )
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-batchtime",
+        details=[
+            (L3_A, 1, 3, 2),
+            (L3_B, 1, 3, 2),
+            (L3_C, 1, 3, 2),
+        ],
+    )
+    _set_plan_time(review_schema, assessment_id, L3_A, "Q2", 5)  # complete
+    _set_plan_time(review_schema, assessment_id, L3_B, "Q3", None)  # month missing
+    _set_plan_time(review_schema, assessment_id, L3_C, None, 8)  # quarter missing
+
+    try:
+        generate_plan_items_for_selection(
+            review_schema, assessment_id, [L3_A, L3_B, L3_C]
+        )
+    except PlanTimeValidationError as exc:
+        reasons = sorted((issue.reason, issue.l3_code) for issue in exc.issues)
+        assert reasons == [
+            ("plan_month_required", L3_B),
+            ("plan_quarter_required", L3_C),
+        ]
+    else:
+        raise AssertionError("expected PlanTimeValidationError for missing plan time")
+
+    # Batch atomicity: even the complete row (L3_A) got no write.
+    assert _plan_ids(review_schema, member_id) == []
+    assert _item_task_counts(review_schema, member_id) == (0, 0)
+
+
+def test_selection_with_explicit_plan_time_generates_exact_values(review_schema):
+    """Explicit plan quarter/month are copied verbatim — never defaulted."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-explicittime",
+        details=[(L3_A, 0, 2, 2)],
+    )
+    _set_plan_time(review_schema, assessment_id, L3_A, "Q2", 5)
 
     result = generate_plan_items_for_selection(review_schema, assessment_id, [L3_A])
 
     assert result["created_items"] == 1
-    assert result["created_tasks"] == 1
     item = review_schema.execute(
         "SELECT plan_quarter, plan_month, priority FROM plan_item "
         "WHERE annual_growth_plan_id=%s",
         (_plan_ids(review_schema, member_id)[0],),
     ).fetchone()
-    assert item == ("Q1", 1, "中")
+    assert item == ("Q2", 5, "中")
+
+
+def test_submit_path_skips_rows_without_plan_time(review_schema):
+    """Rating save / submit decoupled from generation: the Issue #82
+    submit-time generation only creates items for rows with explicit plan
+    time.  A row saved with include_in_plan=TRUE but no plan quarter/month
+    generates nothing (no invented default)."""
+    from app.planning.atomic_generation import generate_plan_and_tasks_from_assessment
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-submitnotime",
+        details=[(L3_A, 1, 3, 2)],
+    )
+    _set_plan_time(review_schema, assessment_id, L3_A, None, None)
+
+    result = generate_plan_and_tasks_from_assessment(review_schema, assessment_id)
+
+    assert result["created_items"] == 0
+    assert result["created_tasks"] == 0
+    # The annual plan shell is part of the submit contract (issue-62-02);
+    # the decoupling guarantee is: no items, no learning tasks.
+    assert _item_task_counts(review_schema, member_id) == (0, 0)
+    items = review_schema.execute(
+        "SELECT COUNT(*) FROM plan_item WHERE annual_growth_plan_id=%s",
+        (_plan_ids(review_schema, member_id)[0],),
+    ).fetchone()[0]
+    assert int(items) == 0
 
 
 def test_batch_atomic_zero_writes_when_any_selected_invalid(review_schema):

@@ -3,7 +3,10 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.policies import Connection, CurrentUser, require_any_role
-from ..planning.atomic_generation import generate_plan_items_for_selection
+from ..planning.atomic_generation import (
+    PlanTimeValidationError,
+    generate_plan_items_for_selection,
+)
 from . import policies
 from .repository import (
     AssessmentValidationError,
@@ -758,6 +761,23 @@ def generate_plan_items(
         result = generate_plan_items_for_selection(
             connection, assessment_id, list(request.l3_codes)
         )
+    except PlanTimeValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "plan_time_validation_failed",
+                "issues": [
+                    {
+                        "l3_code": issue.l3_code,
+                        "l3_node_id": issue.l3_node_id,
+                        "field": issue.field,
+                        "reason": issue.reason,
+                        "message": str(issue),
+                    }
+                    for issue in exc.issues
+                ],
+            },
+        ) from exc
     except AssessmentValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

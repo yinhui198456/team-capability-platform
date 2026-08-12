@@ -209,6 +209,7 @@ dd {
 
 .error {
   color: #b42318;
+  white-space: pre-line;
 }
 
 .filters {

@@ -18,6 +18,27 @@ import psycopg
 
 from ..assessment.repository import AssessmentValidationError
 
+
+class PlanTimeValidationError(AssessmentValidationError):
+    """Batch plan-time validation failure (Issue #178 corrected contract).
+
+    Every selected L3 missing an explicit plan quarter and/or plan month is
+    listed in ``issues``; the batch generates nothing.  No default quarter or
+    month is ever invented.
+    """
+
+    def __init__(self, issues: list[AssessmentValidationError]) -> None:
+        self.issues = issues
+        first = issues[0]
+        super().__init__(
+            first.l3_code,
+            first.reason,
+            str(first),
+            l3_node_id=first.l3_node_id,
+            field=first.field,
+        )
+
+
 # assessment detail columns shared by both generation paths.
 _DETAIL_COLUMNS = """
     ad.id, ad.l3_code, ad.current_level, ad.target_level,
@@ -128,13 +149,12 @@ def _create_plan_item_and_task(
     if priority is None:
         priority = "中"
 
-    # Selection-only rows (Issue #178 partial save) may never pick a plan
-    # quarter/month; plan_item_approval_completeness requires both, so fall
-    # back to Q1 / month 1 instead of failing the batch.
-    if plan_quarter is None:
-        plan_quarter = "Q1"
-    if plan_month is None:
-        plan_month = 1
+    # Issue #178 corrected contract: never invent a plan quarter/month.
+    # Rows without explicit plan time are skipped here; the explicit
+    # generation path rejects such selections up front (PlanTimeValidationError)
+    # and the approval path is guarded by validate_plan_selection.
+    if plan_quarter is None or plan_month is None:
+        return (0, 0)
 
     # Get planning snapshot for this L3 capability
     snapshot = connection.execute(
@@ -330,7 +350,7 @@ def _validate_selected_details(
 
     # Fetch the full detail rows for the validated selection, in stable order.
     placeholders = ", ".join("%s" for _ in l3_codes)
-    return list(
+    details = list(
         connection.execute(
             f"""
             SELECT {_DETAIL_COLUMNS}
@@ -342,6 +362,38 @@ def _validate_selected_details(
             (assessment_id, *l3_codes),
         ).fetchall()
     )
+
+    # Plan-time completeness (corrected #178 contract): every selected L3 must
+    # carry an explicit plan quarter AND month — no default quarter/month may
+    # be invented.  Collect every missing field across the whole selection so
+    # the member sees each L3 and what to fill in one response.
+    plan_time_issues: list[AssessmentValidationError] = []
+    for detail in details:
+        code = detail[1]
+        l3_node_id = detail[8]
+        if detail[6] is None:
+            plan_time_issues.append(
+                AssessmentValidationError(
+                    code,
+                    "plan_quarter_required",
+                    f"assessment detail {code} requires an explicit plan quarter",
+                    l3_node_id=l3_node_id,
+                    field="plan_quarter",
+                )
+            )
+        if detail[7] is None:
+            plan_time_issues.append(
+                AssessmentValidationError(
+                    code,
+                    "plan_month_required",
+                    f"assessment detail {code} requires an explicit plan month",
+                    l3_node_id=l3_node_id,
+                    field="plan_month",
+                )
+            )
+    if plan_time_issues:
+        raise PlanTimeValidationError(plan_time_issues)
+    return details
 
 
 def generate_plan_items_for_selection(
