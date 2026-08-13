@@ -71,6 +71,7 @@ async def _asgi_request(
     path: str,
     body: dict[str, object] | None = None,
     cookies: dict[str, str] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any | None, dict[str, list[str]]]:
     messages: list[dict[str, Any]] = []
     headers: list[tuple[bytes, bytes]] = []
@@ -84,6 +85,10 @@ async def _asgi_request(
     if cookies:
         cookie_header = "; ".join(f"{name}={value}" for name, value in cookies.items())
         headers.append((b"cookie", cookie_header.encode("utf-8")))
+
+    if extra_headers:
+        for name, value in extra_headers.items():
+            headers.append((name.encode("utf-8"), value.encode("utf-8")))
 
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": body_bytes, "more_body": False}
@@ -131,8 +136,9 @@ def _request(
     path: str,
     body: dict[str, object] | None = None,
     cookies: dict[str, str] | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any | None, dict[str, list[str]]]:
-    return asyncio.run(_asgi_request(method, path, body, cookies))
+    return asyncio.run(_asgi_request(method, path, body, cookies, extra_headers))
 
 
 def _cookie_attributes(headers: dict[str, list[str]]) -> dict[str, str]:

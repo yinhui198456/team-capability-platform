@@ -320,10 +320,14 @@ test.describe('Issue #50 assessment gap workflow', () => {
         detail.l3_code !== picks[0].l3_code &&
         detail.l3_code !== picks[1].l3_code,
     )!
+    const current = await currentDraft(page)
     const invalid = await page.request.post(
-      `/api/assessments/${draft.id}/generate-plan-items`,
+      `/api/assessments/${current.id}/generate-plan-items`,
       {
-        data: { l3_codes: [third.l3_code, 'NOPE.NOPE.NOPE'] },
+        data: {
+          l3_codes: [third.l3_code, 'NOPE.NOPE.NOPE'],
+          expected_revision: current.revision,
+        },
       },
     )
     expect(invalid.status()).toBe(422)

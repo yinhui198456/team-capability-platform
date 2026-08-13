@@ -275,6 +275,8 @@ const ASSESSMENT_ERROR_COPY: Record<string, string> = {
   duplicate_detail: '明细数据重复，请重新加载',
   batch_coverage: '明细数据不完整，请重新加载',
   forbidden_field: '包含不可编辑字段，请重新加载',
+  planning_snapshot_missing:
+    '该能力项缺少计划依据快照，无法生成学习任务，请联系管理员',
 }
 
 export function assessmentErrorCopy(reason: string): string {
@@ -673,7 +675,11 @@ export function AssessmentGapPage() {
       // Issue #178: generate/reuse learning tasks for exactly the selected,
       // filled L3 rows.  Unselected rows (even unfilled ones) never block;
       // the server validates only the selection, atomically and idempotently.
-      const result = await generatePlanItems(assessment.id, [...selectedCodes])
+      const result = await generatePlanItems(
+        assessment.id,
+        [...selectedCodes],
+        revision,
+      )
       loadAssessment(await getAssessment(assessment.id))
 
       const planGen = result.plan_generation

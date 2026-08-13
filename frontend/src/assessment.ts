@@ -237,7 +237,7 @@ export async function createAssessment(
   scope_token: string
 }> {
   const headers: HeadersInit = {}
-  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+  if (idempotencyKey) headers['idempotency-key'] = idempotencyKey
   return request(
     '/api/assessments',
     { method: 'POST', headers },
@@ -370,6 +370,7 @@ export async function submitAssessment(
 export async function generatePlanItems(
   id: number,
   l3Codes: string[],
+  expectedRevision: number,
 ): Promise<{
   ok: boolean
   plan_generation: {
@@ -377,6 +378,10 @@ export async function generatePlanItems(
     created_items: number
     skipped_items: number
     created_tasks: number
+    revision: number
+    idempotent_replayed: boolean
+    items: Array<{ l3_code: string; status: 'created' | 'existing' }>
+    summary: string
   }
 }> {
   return request<{
@@ -386,13 +391,17 @@ export async function generatePlanItems(
       created_items: number
       skipped_items: number
       created_tasks: number
+      revision: number
+      idempotent_replayed: boolean
+      items: Array<{ l3_code: string; status: 'created' | 'existing' }>
+      summary: string
     }
   }>(
     `/api/assessments/${id}/generate-plan-items`,
     {
       method: 'POST',
     },
-    { l3_codes: l3Codes },
+    { l3_codes: l3Codes, expected_revision: expectedRevision },
   )
 }
 

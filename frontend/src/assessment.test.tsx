@@ -875,6 +875,10 @@ describe('AssessmentGapPage', () => {
           created_items: 1,
           skipped_items: 0,
           created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.01', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -893,7 +897,7 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
       generate.mock.invocationCallOrder[0],
     )
-    expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'])
+    expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'], 2)
   })
 
   it('replaces the Gap summary after draft save', async () => {
@@ -1387,6 +1391,10 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
           created_items: 0,
           skipped_items: 0,
           created_tasks: 0,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [],
+          summary: '本批新建 0 个计划项、0 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -1452,6 +1460,10 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
           created_items: 1,
           skipped_items: 0,
           created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.01', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -1489,6 +1501,10 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
           created_items: 0,
           skipped_items: 0,
           created_tasks: 0,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [],
+          summary: '本批新建 0 个计划项、0 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -1573,6 +1589,10 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
           created_items: 1,
           skipped_items: 0,
           created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.01', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -2061,6 +2081,10 @@ describe('R2-B filter/search', () => {
           created_items: 1,
           skipped_items: 0,
           created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.01', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
         },
       })
     render(
@@ -2077,7 +2101,9 @@ describe('R2-B filter/search', () => {
     expect(unassessed.disabled).toBe(true)
     fireEvent.click(filled)
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
-    await waitFor(() => expect(generate).toHaveBeenCalledWith(7, ['P01.01.01']))
+    await waitFor(() =>
+      expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'], 1),
+    )
     expect(screen.getByText(/已生成 1 个学习任务/)).toBeTruthy()
   })
 })

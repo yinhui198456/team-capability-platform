@@ -291,10 +291,11 @@ stateDiagram-v2
 Gap 生成与计划创建时点：
 
 - Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）并触发「生成所选学习任务」时，系统立即执行原子事务：校验所选 L3（含逐项校验计划季度与计划月份，任一选中项缺失则整批拒绝，无默认季度/月份）→ 生成 Gap（基于当前掌握度与最终有效目标）→ 复用/创建年度成长计划 → 为所选 Gap 生成计划项 → 为每个计划项生成学习任务（1:1）。
-- 被选 L3 的 current_level=null（未填写）或缺计划季度/月份都会阻断整批生成；未选择的能力项不阻塞，可后续增量选择。
+- 被选 L3 的 current_level=null（未填写）、缺计划季度/月份或缺少计划依据快照（v0009 捕获）都会阻断整批生成；未选择的能力项不阻塞，可后续增量选择。缺少快照返回 422 `selection_validation_failed`，逐 L3 给出 `planning_snapshot_missing` 及处置提示，绝不误报「已存在」。
 - 标准目标为「不适用」的 L3 不参与 Gap、不生成 Gap 记录、不能成为计划候选，也不允许个人调整改变适用范围。
 - 批次原子性：任一所选 L3 校验不合格时整批零写入（assessment、history、plan、tasks 均不变）。
-- 幂等性：同一 Member / 年度 / L3 重复生成时，已存在的计划项不再重复创建（0 新增）。
+- 乐观并发：生成请求必须携带 `expected_revision`；服务端锁定 Assessment 行后比对，过期（已被其他保存/生成推进）返回 409，零写入。成功响应携带最新 `revision` 与逐 L3 的 `items[]`（created / existing），前端据此如实刷新。
+- 幂等性：同一 Member / 年度 / L3 重复生成时，已存在的计划项不再重复创建（0 新增）。请求可携带 `Idempotency-Key`：同 key 同请求（assessment + l3_codes + expected_revision 指纹）重放返回首次响应（`idempotent_replayed=true`）且不重复写入；同 key 不同请求返回 409。并发同 key 请求由 Assessment 行锁串行化，恰好写入一份。
 - 同一 Member 同一年度始终复用一份年度成长计划；计划保留首次创建它的来源评估，后续生成新增的计划项分别保留各自准确的来源评估与明细。不得覆盖已经开始、完成或已有执行记录的计划项和任务。
 - 新流程不创建 Assessment Review；历史 Review 记录保持只读兼容，仅供追溯。
 
@@ -389,7 +390,7 @@ stateDiagram-v2
 以下语义对 Learning Task 迁移、计划项与 Evidence 更新、进度日志一致适用：
 
 - **乐观并发（CAS）**：计划项、学习任务与 Evidence 均维护单调递增 `revision`；写请求须携带 `expected_revision`，过期返回 409（`plan_revision_conflict` / `task_revision_conflict` / `evidence_revision_conflict`）。客户端保留输入、刷新最新 revision 后由用户确认重试。
-- **幂等写入**：进度日志、任务迁移与 Evidence Review 接受 `idempotency_key`；同 key 同 payload 重放返回首次响应，不重复写入；同 key 不同 payload 返回 409（`log_idempotency_conflict` / `transition_idempotency_conflict` / `review_idempotency_conflict`）。
+- **幂等写入**：进度日志、任务迁移、Evidence Review 与按所选 L3 生成学习任务（#178）接受 `idempotency_key`；同 key 同 payload 重放返回首次响应，不重复写入；同 key 不同 payload 返回 409（`log_idempotency_conflict` / `transition_idempotency_conflict` / `review_idempotency_conflict`；#178 生成路径复用 `assessment_idempotency_key` 表并返回 `idempotent_replayed`）。
 
 ### 6.5 Evidence 状态机
 

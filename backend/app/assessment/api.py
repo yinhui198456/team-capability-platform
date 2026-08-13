@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..access.policies import Connection, CurrentUser, require_any_role
 from ..planning.atomic_generation import (
     PlanTimeValidationError,
+    SelectionValidationError,
     generate_plan_items_for_selection,
 )
 from . import policies
@@ -130,6 +131,7 @@ class SubmitRequest(BaseModel):
 
 class GeneratePlanItemsRequest(BaseModel):
     l3_codes: list[str] = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
 
 
 class DraftTargetRepairRequest(BaseModel):
@@ -733,6 +735,7 @@ def generate_plan_items(
     user: CurrentUser,
     connection: Connection,
     request: GeneratePlanItemsRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
     """Issue #178: generate/reuse annual plan items and learning tasks for
     exactly the selected, validated L3 rows.
@@ -740,6 +743,11 @@ def generate_plan_items(
     Only the selected L3s are validated (current_level 0-5, 0 included;
     unselected NULL rows never block).  The batch is atomic and idempotent,
     creates no Assessment Review and never transitions the assessment status.
+
+    Optimistic concurrency: ``expected_revision`` must match the assessment's
+    current revision, otherwise 409 with zero writes.  An optional
+    ``Idempotency-Key`` header replays the stored response for the same
+    request (409 for a key reused with a different request).
     """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
@@ -759,13 +767,34 @@ def generate_plan_items(
         )
     try:
         result = generate_plan_items_for_selection(
-            connection, assessment_id, list(request.l3_codes)
+            connection,
+            assessment_id,
+            list(request.l3_codes),
+            expected_revision=request.expected_revision,
+            idempotency_key=idempotency_key,
         )
     except PlanTimeValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "code": "plan_time_validation_failed",
+                "issues": [
+                    {
+                        "l3_code": issue.l3_code,
+                        "l3_node_id": issue.l3_node_id,
+                        "field": issue.field,
+                        "reason": issue.reason,
+                        "message": str(issue),
+                    }
+                    for issue in exc.issues
+                ],
+            },
+        ) from exc
+    except SelectionValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "selection_validation_failed",
                 "issues": [
                     {
                         "l3_code": issue.l3_code,
@@ -789,6 +818,15 @@ def generate_plan_items(
                 "reason": exc.reason,
                 "message": str(exc),
             },
+        ) from exc
+    except ValueError as exc:
+        if str(exc) in ("revision conflict", "idempotency key reused"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
         ) from exc
     return {"ok": True, "plan_generation": result}
 

@@ -231,6 +231,30 @@ Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（
 - 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_and_tasks_from_assessment(connection, assessment_id)`
 - 幂等性：重复提交时，已存在的计划项不再重复创建（按 `annual_growth_plan_id` + `l3_code` 去重）。
 
+增量生成 API 契约（#178，`POST /api/assessments/{id}/generate-plan-items`）：
+
+- 请求体：`{ "l3_codes": string[], "expected_revision": int }`；请求头可携带 `idempotency-key`（服务端按 `Idempotency-Key` 别名读取，前端统一发送小写）。
+- 成功（200）响应：
+  ```json
+  {
+    "ok": true,
+    "plan_generation": {
+      "annual_plan_id": int,
+      "created_items": int,
+      "skipped_items": int,
+      "created_tasks": int,
+      "revision": int,
+      "idempotent_replayed": bool,
+      "items": [{ "l3_code": str, "status": "created" | "existing" }],
+      "summary": str
+    }
+  }
+  ```
+- 乐观并发：`expected_revision` 与 Assessment 当前 `revision` 不一致 → 409 `{"detail": "revision conflict"}`，零写入；响应中的 `revision` 供前端继续携带最新版本。
+- 幂等：同 `idempotency-key` 同请求（assessment_id + l3_codes + expected_revision 指纹，存入 `assessment_idempotency_key`）重放返回首次响应（`idempotent_replayed=true`），不重复写入；同 key 不同请求 → 409 `{"detail": "idempotency key reused"}`。并发同 key 请求由 Assessment 行锁（SELECT ... FOR UPDATE）串行化。
+- 缺失快照：任一选中 L3 缺少计划依据快照（v0009 `capability_standard_planning_snapshot`）→ 422 `{"detail": {"code": "selection_validation_failed", "issues": [{l3_code, l3_node_id, field: "planning_snapshot", reason: "planning_snapshot_missing", message}]}}`，整批零写入；计划季度/月份缺失同样整批拒绝（逐 L3 issues）。
+- 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_items_for_selection(connection, assessment_id, l3_codes, *, expected_revision, idempotency_key=None)`。
+
 ### 3.2 权限叠加
 
 Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复核、Review、反馈；Leader 查看团队数据并维护能力模型、资源和团队规划；Admin 拥有全量数据查看与系统管理权限。Admin 的业务操作权限仍按其附加的 Member、Buddy、Leader 角色叠加获得，不自动获得业务 Review 或计划维护权限。

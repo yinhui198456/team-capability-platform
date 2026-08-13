@@ -12,6 +12,8 @@ idempotent, creates no Assessment Review, and never touches historical
 reviews.
 """
 
+import hashlib
+import json
 from typing import Any
 
 import psycopg
@@ -25,6 +27,24 @@ class PlanTimeValidationError(AssessmentValidationError):
     Every selected L3 missing an explicit plan quarter and/or plan month is
     listed in ``issues``; the batch generates nothing.  No default quarter or
     month is ever invented.
+    """
+
+    def __init__(self, issues: list[AssessmentValidationError]) -> None:
+        self.issues = issues
+        first = issues[0]
+        super().__init__(
+            first.l3_code,
+            first.reason,
+            str(first),
+            l3_node_id=first.l3_node_id,
+            field=first.field,
+        )
+
+
+class SelectionValidationError(AssessmentValidationError):
+    """Batch selection validation failure (Issue #178): every selected L3
+    that cannot be planned (e.g. its planning snapshot is missing) is listed
+    in ``issues``; the batch generates nothing.
     """
 
     def __init__(self, issues: list[AssessmentValidationError]) -> None:
@@ -273,7 +293,10 @@ def _create_plan_item_and_task(
 
 
 def _validate_selected_details(
-    connection: psycopg.Connection, assessment_id: int, l3_codes: list[str]
+    connection: psycopg.Connection,
+    assessment_id: int,
+    l3_codes: list[str],
+    standard_version_id: int,
 ) -> list[tuple]:
     """Validate ONLY the selected L3s (Issue #178).
 
@@ -393,6 +416,32 @@ def _validate_selected_details(
             )
     if plan_time_issues:
         raise PlanTimeValidationError(plan_time_issues)
+
+    # Planning-snapshot existence (#178): every selected L3 must have the
+    # immutable v0009 snapshot its learning task is built from.  A missing
+    # snapshot is a structured per-L3 failure — never the old silent (0,0)
+    # 'skip' that the frontend mislabeled as 已存在.
+    snapshot_issues: list[AssessmentValidationError] = []
+    for detail in details:
+        code = detail[1]
+        l3_node_id = detail[8]
+        snapshot = connection.execute(
+            "SELECT 1 FROM capability_standard_planning_snapshot "
+            "WHERE capability_standard_version_id = %s AND l3_node_id = %s",
+            (standard_version_id, l3_node_id),
+        ).fetchone()
+        if snapshot is None:
+            snapshot_issues.append(
+                AssessmentValidationError(
+                    code,
+                    "planning_snapshot_missing",
+                    f"assessment detail {code} has no planning snapshot",
+                    l3_node_id=l3_node_id,
+                    field="planning_snapshot",
+                )
+            )
+    if snapshot_issues:
+        raise SelectionValidationError(snapshot_issues)
     return details
 
 
@@ -400,52 +449,165 @@ def generate_plan_items_for_selection(
     connection: psycopg.Connection,
     assessment_id: int,
     l3_codes: list[str],
+    *,
+    expected_revision: int,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """
     Issue #178: atomically generate/reuse annual plan items and learning
     tasks for exactly the selected, validated L3 rows.
 
-    Runs inside the caller's transaction.  Only the selected L3s are
-    validated; unselected rows with current_level=NULL never block.  Creates
-    no Assessment Review and never transitions the assessment status.
-    Idempotent per (annual_growth_plan_id, l3_code): existing plan items are
-    reused, existing tasks and their logs/evidence are untouched.
+    Owns its transaction.  The assessment row is locked (FOR UPDATE) and its
+    revision is compared to ``expected_revision`` — a mismatch raises
+    ValueError("revision conflict") with zero writes (mapped to 409 by the
+    route).  Only the selected L3s are validated; unselected rows with
+    current_level=NULL never block.  Creates no Assessment Review and never
+    transitions the assessment status.  Idempotent per
+    (annual_growth_plan_id, l3_code): existing plan items are reused,
+    existing tasks and their logs/evidence are untouched.
+
+    ``idempotency_key`` (optional, Idempotency-Key header) binds to the
+    request identity via a fingerprint; the check runs after the row lock so
+    concurrent same-key requests serialize and exactly one writes.  A replay
+    returns the stored response with ``idempotent_replayed=True``; reusing a
+    key for a different request raises ValueError("idempotency key reused").
 
     Returns:
     {
         "annual_plan_id": int,
         "created_items": int,
         "skipped_items": int,
-        "created_tasks": int
+        "created_tasks": int,
+        "revision": int,
+        "items": [{"l3_code": str, "status": "created" | "existing"}, ...],
+        "summary": str
     }
     """
     if not l3_codes:
         raise ValueError("l3_codes must not be empty")
 
-    assessment = _load_assessment(connection, assessment_id)
-    details = _validate_selected_details(connection, assessment_id, l3_codes)
+    with connection.transaction():
+        # Locked load: serializes concurrent generation for this assessment.
+        assessment = connection.execute(
+            """
+            SELECT member_id, year, capability_standard_version_id, revision,
+                   member_current_level_snapshot, member_target_level_snapshot
+            FROM assessment
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (assessment_id,),
+        ).fetchone()
+        if assessment is None:
+            raise ValueError(f"Assessment {assessment_id} not found")
+        if int(assessment[3]) != expected_revision:
+            raise ValueError("revision conflict")
 
-    created_items = 0
-    skipped_items = 0
-    created_tasks = 0
+        # Idempotency (established convention, cf. create_assessment): the
+        # key is scoped to the member and fingerprint-binds the request
+        # identity; the pre-check runs under the row lock so a concurrent
+        # same-key request replays instead of double-writing.
+        fingerprint: str | None = None
+        if idempotency_key is not None:
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {
+                        "assessment_id": assessment_id,
+                        "l3_codes": sorted(l3_codes),
+                        "expected_revision": expected_revision,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            stored = connection.execute(
+                """
+                SELECT request_fingerprint, response
+                FROM assessment_idempotency_key
+                WHERE member_id = %s AND idempotency_key = %s
+                """,
+                (assessment[0], idempotency_key),
+            ).fetchone()
+            if stored is not None:
+                if stored[0] != fingerprint:
+                    raise ValueError("idempotency key reused")
+                return {**stored[1], "idempotent_replayed": True}
 
-    for detail in details:
-        item_delta, task_delta = _create_plan_item_and_task(
-            connection, assessment_id, assessment, detail
+        details = _validate_selected_details(
+            connection, assessment_id, l3_codes, assessment[2]
         )
-        if item_delta:
-            created_items += 1
-            created_tasks += task_delta
-        else:
-            skipped_items += 1
 
-    annual_plan_id = _get_or_create_annual_plan(connection, assessment_id, assessment)
-    return {
-        "annual_plan_id": annual_plan_id,
-        "created_items": created_items,
-        "skipped_items": skipped_items,
-        "created_tasks": created_tasks,
-    }
+        created_items = 0
+        skipped_items = 0
+        created_tasks = 0
+        items: list[dict[str, Any]] = []
+
+        for detail in details:
+            item_delta, task_delta = _create_plan_item_and_task(
+                connection, assessment_id, assessment, detail
+            )
+            if item_delta:
+                created_items += 1
+                created_tasks += task_delta
+                status = "created"
+            else:
+                skipped_items += 1
+                status = "existing"
+            items.append({"l3_code": detail[1], "status": status})
+
+        annual_plan_id = _get_or_create_annual_plan(
+            connection, assessment_id, assessment
+        )
+        response = {
+            "annual_plan_id": annual_plan_id,
+            "created_items": created_items,
+            "skipped_items": skipped_items,
+            "created_tasks": created_tasks,
+            "revision": int(assessment[3]),
+            "items": items,
+            "summary": (
+                f"本批新建 {created_items} 个计划项、{created_tasks} 个学习任务，"
+                f"复用 {skipped_items} 个已有计划项"
+            ),
+            "idempotent_replayed": False,
+        }
+
+        if idempotency_key is not None:
+            # PK backstop: a key raced across different assessments (different
+            # lock rows) can only win once; the loser replays the winner.
+            connection.execute("SAVEPOINT save_generate_idempotency")
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO assessment_idempotency_key (
+                        member_id, idempotency_key, request_fingerprint,
+                        assessment_id, response
+                    )
+                    VALUES (%s, %s, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        assessment[0],
+                        idempotency_key,
+                        fingerprint,
+                        assessment_id,
+                        json.dumps(response, ensure_ascii=False),
+                    ),
+                )
+            except psycopg.errors.UniqueViolation:
+                connection.execute("ROLLBACK TO SAVEPOINT save_generate_idempotency")
+                winner = connection.execute(
+                    """
+                    SELECT request_fingerprint, response
+                    FROM assessment_idempotency_key
+                    WHERE member_id = %s AND idempotency_key = %s
+                    """,
+                    (assessment[0], idempotency_key),
+                ).fetchone()
+                if winner is None or winner[0] != fingerprint:
+                    raise ValueError("idempotency key reused") from None
+                return {**winner[1], "idempotent_replayed": True}
+
+        return response
 
 
 def generate_plan_and_tasks_from_assessment(
