@@ -13,6 +13,7 @@ from app.main import app
 from app.planning.schema import create_planning_schema
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    record_submitted_history_state,
     standard_target_payload,
 )
 
@@ -225,13 +226,10 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
+    # Submit is retired (#178); build the historical submitted state
+    # (待复核 + review row + revision bump + gaps/plan/tasks) directly.
+    record_submitted_history_state(connection, assessment_id)
+    connection.commit()
     return assessment_id
 
 

@@ -12,13 +12,13 @@ from app.access.schema import create_access_schema
 from app.assessment.repository import (
     get_assessment,
     save_assessment_draft,
-    submit_assessment,
     submit_assessment_review,
 )
 from app.assessment.schema import create_assessment_schema
 from tests.standard_target_support import (
     create_scoped_draft,
     ensure_capability_nodes,
+    record_submitted_history_state,
     standard_target_payload,
 )
 
@@ -132,7 +132,7 @@ class ReviewTestBase:
         save_assessment_draft(
             connection, assessment_id, member_id, payload, expected_revision=1
         )
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
+        record_submitted_history_state(connection, assessment_id)
         connection.commit()
         return assessment_id
 

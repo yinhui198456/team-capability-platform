@@ -336,37 +336,6 @@ export async function batchFillL2(
   )
 }
 
-export async function submitAssessment(
-  id: number,
-  expectedRevision: number,
-): Promise<{
-  ok: boolean
-  revision?: number
-  auto_cancelled_plan_candidates?: string[]
-  plan_generation?: {
-    annual_plan_id: number
-    created_items: number
-    skipped_items: number
-    created_tasks: number
-  }
-}> {
-  return request<{
-    ok: boolean
-    revision?: number
-    auto_cancelled_plan_candidates?: string[]
-    plan_generation?: {
-      annual_plan_id: number
-      created_items: number
-      skipped_items: number
-      created_tasks: number
-    }
-  }>(
-    `/api/assessments/${id}/submit`,
-    { method: 'POST' },
-    { expected_revision: expectedRevision },
-  )
-}
-
 export async function generatePlanItems(
   id: number,
   l3Codes: string[],

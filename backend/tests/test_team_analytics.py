@@ -16,7 +16,6 @@ from app.assessment.repository import (
     get_assessment,
     get_pending_reviews_for_buddy,
     save_assessment_draft,
-    submit_assessment,
     submit_assessment_review,
 )
 from app.assessment.schema import create_assessment_schema
@@ -28,7 +27,10 @@ from app.planning.repository import (
     list_plan_items,
 )
 from app.planning.schema import create_planning_schema
-from tests.standard_target_support import create_scoped_draft
+from tests.standard_target_support import (
+    create_scoped_draft,
+    record_submitted_history_state,
+)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -304,7 +306,9 @@ def _submit_and_approve_assessment(
     save_assessment_draft(
         connection, assessment_id, member_id, migrated_details, expected_revision=1
     )
-    submit_assessment(connection, assessment_id, member_id, expected_revision=2)
+    # The submit write path is retired (#178); build the historical
+    # submitted state directly, then review it as the old flow did.
+    record_submitted_history_state(connection, assessment_id)
     pending = get_pending_reviews_for_buddy(connection, buddy_id)
     review = next(r for r in pending if r["assessment_id"] == assessment_id)
     submit_assessment_review(

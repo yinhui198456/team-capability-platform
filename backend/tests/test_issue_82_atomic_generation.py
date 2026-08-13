@@ -1,194 +1,148 @@
 """
-Test for Issue #82: Atomic plan and task generation on assessment submit.
+Test for Issue #82: Atomic plan and task generation.
+
+The legacy submit write path is retired (#178): learning tasks are created
+only by explicit generation.  These tests exercise the atomic generator
+directly (the same function the old submit chain called and the fixture
+helpers use today).
 """
 
 import psycopg
 
+from app.assessment.repository import save_assessment_draft
+from tests.standard_target_support import create_scoped_draft, standard_target_payload
 
-def test_submit_assessment_generates_plan_and_tasks(connection):
+
+def _generation_setup(
+    review_schema: psycopg.Connection,
+) -> tuple[int, str, int]:
+    """Full-schema setup ending in an explicit draft save (no submit — the
+    write path under test is the generator itself, #178)."""
+    from tests.review_support import ReviewTestBase
+
+    base = ReviewTestBase()
+    member_id, _ = base.setup_users(review_schema)
+    l3_code = "P01-L2A-L3A"
+    base.ensure_nodes(review_schema, [l3_code])
+
+    assessment_id = create_scoped_draft(review_schema, member_id, 2026)
+    payload = standard_target_payload(
+        review_schema,
+        assessment_id,
+        [
+            {
+                "l3_code": l3_code,
+                "current_level": 1,
+                "target_level": 4,
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_quarter": "Q2",
+                "plan_month": 5,
+            }
+        ],
+    )
+    save_assessment_draft(
+        review_schema, assessment_id, member_id, payload, expected_revision=1
+    )
+    return member_id, l3_code, assessment_id
+
+
+def test_generate_plan_and_tasks_from_assessment(review_schema: psycopg.Connection):
     """
-    Test that submitting an assessment immediately generates:
+    The atomic generator creates:
     - Annual growth plan
     - Plan items (for include_in_plan=TRUE details)
     - Learning tasks (1:1 with plan items)
     """
-    conn = connection
+    member_id, l3_code, assessment_id = _generation_setup(review_schema)
 
-    with conn.transaction():
-        # Create member
-        member = conn.execute(
-            "INSERT INTO tcp_user (username, full_name, password_hash, "
-            "current_level, target_level) VALUES "
-            "('test_member', 'Test Member', 'dummy_hash', 'P5', 'P6') "
-            "RETURNING id"
-        ).fetchone()
-        member_id = member[0]
+    # Generate explicitly (the function the retired submit chain used)
+    from app.planning.atomic_generation import (
+        generate_plan_and_tasks_from_assessment,
+    )
 
-        # Create assessment draft
-        assessment = conn.execute(
-            """
-            INSERT INTO assessment (
-                member_id, year, version, assessment_type, status, revision,
-                member_current_level_snapshot, member_target_level_snapshot
-            )
-            VALUES (%s, 2026, 1, '年度', '草稿', 1, 'P5', 'P6')
-            RETURNING id
-            """,
-            (member_id,),
-        ).fetchone()
-        assessment_id = assessment[0]
+    result = generate_plan_and_tasks_from_assessment(review_schema, assessment_id)
+    review_schema.commit()
 
-        # Add assessment details with include_in_plan=TRUE
-        conn.execute(
-            """
-            INSERT INTO assessment_detail (
-                assessment_id, l3_code, current_level, target_level, gap_value,
-                include_in_plan, member_priority, plan_month,
-                l3_node_id, scope_type, standard_target_level
-            )
-            VALUES
-                (%s, 'P01-01-01', 2, 4, 2, TRUE, '高', 3, 1, 'current_required', 4),
-                (%s, 'P01-01-02', 1, 3, 2, TRUE, '中', 6, 2, 'current_required', 3),
-                (%s, 'P01-01-03', 3, 3, 0, FALSE, NULL, NULL, 3, 'current_required', 3)
-            """,
-            (assessment_id, assessment_id, assessment_id),
-        )
+    # Verify plan generation result in response
+    assert result["created_items"] == 1  # Only the include_in_plan=TRUE detail
+    assert result["created_tasks"] == 1  # 1:1 with plan items
+    assert result["skipped_items"] == 0
 
-        # Submit assessment
-        from backend.app.assessment.repository import submit_assessment
+    # Verify annual_growth_plan created
+    plan = review_schema.execute(
+        "SELECT id, status FROM annual_growth_plan " "WHERE member_id=%s AND year=2026",
+        (member_id,),
+    ).fetchone()
+    assert plan is not None
+    annual_plan_id = plan[0]
 
-        result = submit_assessment(conn, assessment_id, member_id, expected_revision=1)
+    # Verify plan_item created
+    items = review_schema.execute(
+        "SELECT l3_code, status FROM plan_item "
+        "WHERE annual_growth_plan_id=%s ORDER BY l3_code",
+        (annual_plan_id,),
+    ).fetchall()
+    assert items == [(l3_code, "未开始")]
 
-        # Verify plan generation result in response
-        assert "plan_generation" in result
-        plan_gen = result["plan_generation"]
-        assert plan_gen["created_items"] == 2  # Only include_in_plan=TRUE items
-        assert plan_gen["created_tasks"] == 2  # 1:1 with plan items
-        assert plan_gen["skipped_items"] == 0
-
-        # Verify annual_growth_plan created
-        plan = conn.execute(
-            "SELECT id, status FROM annual_growth_plan "
-            "WHERE member_id=%s AND year=2026",
-            (member_id,),
-        ).fetchone()
-        assert plan is not None
-        annual_plan_id = plan[0]
-
-        # Verify plan_items created
-        items = conn.execute(
-            "SELECT l3_code, status FROM plan_item "
-            "WHERE annual_growth_plan_id=%s ORDER BY l3_code",
-            (annual_plan_id,),
-        ).fetchall()
-        assert len(items) == 2
-        assert items[0][0] == "P01-01-01"
-        assert items[0][1] == "未开始"
-        assert items[1][0] == "P01-01-02"
-
-        # Verify learning_tasks created
-        tasks = conn.execute(
-            """
-            SELECT lt.l3_code, lt.status
-            FROM learning_task lt
-            JOIN plan_item pi ON pi.id = lt.plan_item_id
-            WHERE pi.annual_growth_plan_id = %s
-            ORDER BY lt.l3_code
-            """,
-            (annual_plan_id,),
-        ).fetchall()
-        assert len(tasks) == 2
-        assert tasks[0][0] == "P01-01-01"
-        assert tasks[0][1] == "未开始"
+    # Verify learning_task created
+    tasks = review_schema.execute(
+        """
+        SELECT lt.l3_code, lt.status
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        WHERE pi.annual_growth_plan_id = %s
+        ORDER BY lt.l3_code
+        """,
+        (annual_plan_id,),
+    ).fetchall()
+    assert tasks == [(l3_code, "未开始")]
 
 
-def test_submit_assessment_idempotent(connection):
+def test_generate_plan_and_tasks_idempotent(review_schema: psycopg.Connection):
     """
-    Test that re-submitting the same assessment does not duplicate plan items or tasks.
+    Test that re-running the atomic generator does not duplicate plan items or tasks.
     """
-    conn = connection
+    member_id, _, assessment_id = _generation_setup(review_schema)
 
-    with conn.transaction():
-        # Setup (same as above)
-        member = conn.execute(
-            "INSERT INTO tcp_user (username, full_name, current_level, target_level) "
-            "VALUES ('test_member2', 'Test Member 2', 'P5', 'P6') RETURNING id"
-        ).fetchone()
-        member_id = member[0]
+    from app.planning.atomic_generation import (
+        generate_plan_and_tasks_from_assessment,
+    )
 
-        assessment = conn.execute(
-            """
-            INSERT INTO assessment (
-                member_id, year, version, assessment_type, status, revision,
-                member_current_level_snapshot, member_target_level_snapshot
-            )
-            VALUES (%s, 2026, 1, '年度', '草稿', 1, 'P5', 'P6')
-            RETURNING id
-            """,
-            (member_id,),
-        ).fetchone()
-        assessment_id = assessment[0]
+    # First generation
+    result1 = generate_plan_and_tasks_from_assessment(review_schema, assessment_id)
+    review_schema.commit()
+    assert result1["created_items"] == 1
+    assert result1["created_tasks"] == 1
 
-        conn.execute(
-            """
-            INSERT INTO assessment_detail (
-                assessment_id, l3_code, current_level, target_level, gap_value,
-                include_in_plan, member_priority, plan_month,
-                l3_node_id, scope_type, standard_target_level
-            )
-            VALUES (%s, 'P02-01-01', 2, 4, 2, TRUE, '高', 3, 10, 'current_required', 4)
-            """,
-            (assessment_id,),
-        )
+    # Second generation - should skip the existing item
+    result2 = generate_plan_and_tasks_from_assessment(review_schema, assessment_id)
+    review_schema.commit()
+    assert result2["created_items"] == 0
+    assert result2["skipped_items"] == 1
+    assert result2["created_tasks"] == 0
 
-        from backend.app.assessment.repository import submit_assessment
+    # Verify still only 1 plan item and 1 task
+    plan = review_schema.execute(
+        "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
+        (member_id,),
+    ).fetchone()
+    assert plan is not None
 
-        # First submit
-        result1 = submit_assessment(conn, assessment_id, member_id, expected_revision=1)
-        assert result1["plan_generation"]["created_items"] == 1
-        assert result1["plan_generation"]["created_tasks"] == 1
+    item_count = review_schema.execute(
+        "SELECT COUNT(*) FROM plan_item WHERE annual_growth_plan_id=%s", (plan[0],)
+    ).fetchone()[0]
+    assert item_count == 1
 
-        # Change assessment back to draft for second submit (simulate resubmit scenario)
-        conn.execute(
-            "UPDATE assessment SET status='建议调整', revision=2 WHERE id=%s",
-            (assessment_id,),
-        )
-
-        conn.execute(
-            """
-            UPDATE assessment_detail
-            SET include_in_plan=TRUE, plan_month=6
-            WHERE assessment_id=%s AND l3_code='P02-01-01'
-            """,
-            (assessment_id,),
-        )
-
-        # Second submit - should skip existing items
-        result2 = submit_assessment(conn, assessment_id, member_id, expected_revision=2)
-        assert result2["plan_generation"]["created_items"] == 0
-        assert result2["plan_generation"]["skipped_items"] == 1
-        assert result2["plan_generation"]["created_tasks"] == 0
-
-        # Verify still only 1 plan item and 1 task
-        plan = conn.execute(
-            "SELECT id FROM annual_growth_plan WHERE member_id=%s AND year=2026",
-            (member_id,),
-        ).fetchone()
-
-        item_count = conn.execute(
-            "SELECT COUNT(*) FROM plan_item WHERE annual_growth_plan_id=%s", (plan[0],)
-        ).fetchone()[0]
-        assert item_count == 1
-
-        task_count = conn.execute(
-            """
-            SELECT COUNT(*) FROM learning_task lt
-            JOIN plan_item pi ON pi.id = lt.plan_item_id
-            WHERE pi.annual_growth_plan_id=%s
-            """,
-            (plan[0],),
-        ).fetchone()[0]
-        assert task_count == 1
+    task_count = review_schema.execute(
+        """
+        SELECT COUNT(*) FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        WHERE pi.annual_growth_plan_id=%s
+        """,
+        (plan[0],),
+    ).fetchone()[0]
+    assert task_count == 1
 
 
 def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
@@ -228,7 +182,7 @@ def test_later_assessment_adds_only_new_item_to_existing_annual_plan(
         [
             {
                 "l3_code": l3_code,
-                "current_level": 2,
+                "current_level": 1,
                 "target_level": 4,
                 "member_priority": "中",
                 "include_in_plan": True,
@@ -287,7 +241,7 @@ def test_submitted_included_gap_with_buddy_acceptance_creates_plan_item_and_task
         [
             {
                 "l3_code": l3_code,
-                "current_level": 2,
+                "current_level": 1,
                 "target_level": 4,
                 "member_priority": "高",
                 "include_in_plan": True,

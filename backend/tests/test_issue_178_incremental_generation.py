@@ -1272,3 +1272,77 @@ def test_http_generate_advances_revision_and_latest_state(review_schema):
     assert stale == {"detail": "revision conflict"}
     assert _item_task_counts(review_schema, member_id) == (1, 1)
     assert _assessment_revision(review_schema, assessment_id) == 3
+
+
+# ── #178 round 6: the old "提交自评 → 待复核 + 自动生成任务" write path is
+#    retired.  The only learning-task entry is explicit generate-plan-items.
+
+
+def test_submit_retired_repository_raises_and_writes_nothing(review_schema):
+    """The legacy submit entry (submit_assessment) must be an explicit,
+    understandable retirement error with zero writes: no status transition,
+    no review row, no plan/task generation, no revision bump."""
+    from app.assessment.repository import submit_assessment
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-submit-retired",
+        details=[(L3_A, 2, 4, 2)],
+    )
+    review_schema.commit()
+
+    try:
+        submit_assessment(review_schema, assessment_id, member_id, expected_revision=1)
+    except ValueError as exc:
+        assert getattr(exc, "code", "") == "legacy_assessment_submit_disabled"
+        assert "评估提交写路径已退役" in str(exc)
+    else:
+        raise AssertionError("expected retired submit to raise")
+
+    row = review_schema.execute(
+        "SELECT status, revision FROM assessment WHERE id = %s", (assessment_id,)
+    ).fetchone()
+    assert (row[0], int(row[1])) == ("草稿", 1)
+    assert (
+        review_schema.execute(
+            "SELECT COUNT(*) FROM assessment_review WHERE assessment_id = %s",
+            (assessment_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert _plan_ids(review_schema, member_id) == []
+    assert _item_task_counts(review_schema, member_id) == (0, 0)
+
+
+def test_submit_retired_http_returns_422_and_writes_nothing(review_schema):
+    """HTTP contract: POST /{id}/submit is an explicit, understandable,
+    zero-write retirement response (project convention: 422 + code) —
+    assessment status/revision, review, plan and task all unchanged."""
+    from tests.test_annual_plan_gate import _request
+
+    member_id, assessment_id, cookies = _create_http_draft(
+        review_schema, "tcp178-submit-http"
+    )
+
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 2},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
+
+    row = review_schema.execute(
+        "SELECT status, revision FROM assessment WHERE id = %s", (assessment_id,)
+    ).fetchone()
+    assert (row[0], int(row[1])) == ("草稿", 2)
+    assert (
+        review_schema.execute(
+            "SELECT COUNT(*) FROM assessment_review WHERE assessment_id = %s",
+            (assessment_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert _plan_ids(review_schema, member_id) == []
+    assert _item_task_counts(review_schema, member_id) == (0, 0)

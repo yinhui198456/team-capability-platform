@@ -14,11 +14,11 @@ from app.assessment.repository import (
     get_assessment,
     patch_assessment_draft,
     save_assessment_draft,
-    submit_assessment,
 )
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.migrations import run_migrations
+from app.planning.atomic_generation import generate_plan_items_for_selection
 from app.planning.schema import create_planning_schema
 from tests.conftest import TEST_DATABASE_URL
 from tests.standard_target_support import create_scoped_draft
@@ -403,7 +403,7 @@ def test_concurrent_save_waits_for_assessment_row_lock(
     assert detail["current_level"] == 2
 
 
-def test_unresolved_legacy_draft_cannot_be_submitted(
+def test_unresolved_legacy_draft_cannot_be_generated(
     standard_target_schema: psycopg.Connection,
 ) -> None:
     member_id = _member(standard_target_schema, "P4")
@@ -423,9 +423,12 @@ def test_unresolved_legacy_draft_cannot_be_submitted(
     )
     standard_target_schema.commit()
 
+    # The retired submission gate is gone; the compatibility repair guard
+    # now lives on the explicit generate-plan-items entry, which fails the
+    # whole selection with a locatable error and zero writes.
     with pytest.raises(ValueError, match="requires compatibility repair"):
-        submit_assessment(
-            standard_target_schema, assessment_id, member_id, expected_revision=1
+        generate_plan_items_for_selection(
+            standard_target_schema, assessment_id, [code], expected_revision=1
         )
 
     status = standard_target_schema.execute(

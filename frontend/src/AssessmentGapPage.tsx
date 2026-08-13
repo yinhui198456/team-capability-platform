@@ -1146,7 +1146,7 @@ export function AssessmentGapPage() {
 
         {assessment && !isOwner && (
           <p className="muted" data-testid="readonly-notice" role="note">
-            当前账号仅可查看本评估；只有评估本人可以编辑、保存草稿或提交自评。
+            当前账号仅可查看本评估；只有评估本人可以编辑、保存草稿。
           </p>
         )}
 

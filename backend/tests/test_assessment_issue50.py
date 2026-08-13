@@ -11,11 +11,11 @@ from app.assessment.repository import (
     get_assessment,
     get_latest_approved_assessment_for_member,
     patch_assessment_draft,
-    submit_assessment,
 )
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.migrations import run_migrations
+from app.planning.atomic_generation import generate_plan_items_for_selection
 from app.settings import settings
 from tests.standard_target_support import create_scoped_draft
 
@@ -574,15 +574,19 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert detail["gap_value"] == 0
 
 
-def test_submit_allows_positive_gap_without_priority(
+def test_generate_allows_positive_gap_without_priority(
     issue50_schema: psycopg.Connection,
 ) -> None:
     connection = issue50_schema
     member_id = _member(connection)
     codes = _enable_two_nodes(connection)
     assessment_id = create_scoped_draft(connection, member_id, 2026)
+    # Ratings save independently of any gate; the explicit generation entry
+    # still refuses an unassessed selected row with a locatable error.
     with pytest.raises(ValueError, match="requires current level"):
-        submit_assessment(connection, assessment_id, member_id, expected_revision=1)
+        generate_plan_items_for_selection(
+            connection, assessment_id, [codes[0]], expected_revision=1
+        )
     patch_assessment_draft(
         connection,
         assessment_id,
@@ -594,15 +598,19 @@ def test_submit_allows_positive_gap_without_priority(
             [
                 {
                     "l3_code": codes[0],
-                    "current_level": 3,
+                    "current_level": 1,
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 2,
                 },
                 {"l3_code": codes[1], "current_level": 2},
             ],
         ),
     )
-    # Staged workflow (#81 round 1): a positive gap without priority submits;
-    # the strict plan-selection contract applies at Buddy approval instead.
-    result = submit_assessment(
-        connection, assessment_id, member_id, expected_revision=2
+    # Issue #178: a positive gap without priority generates — the generator
+    # never invents plan quarter/month but supplies the neutral 中 priority.
+    result = generate_plan_items_for_selection(
+        connection, assessment_id, [codes[0]], expected_revision=2
     )
     assert result["revision"] == 3
+    assert result["created_items"] == 1

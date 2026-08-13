@@ -355,10 +355,10 @@ def plan_schema(connection: psycopg.Connection) -> psycopg.Connection:
 # ── Tests ────────────────────────────────────────────────────────
 
 
-def test_current_level_zero_submits_successfully(
+def test_current_level_zero_generates_successfully(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """0 is a valid current_level; submits without evidence gate."""
+    """0 is a valid current_level; explicit generation has no evidence gate."""
     member_id = _create_test_user(plan_schema, "m_zero", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -397,11 +397,12 @@ def test_current_level_zero_submits_successfully(
 
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200, f"submit with level=0 failed: {body}"
+    assert status == 200, f"generate with level=0 failed: {body}"
+    assert body["plan_generation"]["items"][0]["status"] == "created"
 
 
 def test_priority_not_auto_generated(plan_schema: psycopg.Connection) -> None:
@@ -454,16 +455,16 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_draft_allows_partial_plan_state_save_reload_submit(
+def test_draft_allows_partial_plan_state_save_reload_generate(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """Drafts save partially-completed plan state and submit (#81 round 1).
+    """Drafts save partially-completed plan state and generate (#178).
 
     A positive-gap row with include_in_plan=TRUE but missing
     member_priority / plan quarter / plan month is a legitimate draft
     intermediate state: it must save and survive reload untouched, and the
-    same draft now submits — plan completeness is enforced by the plan-
-    selection contract at Buddy approval, not by the submission gate.
+    same draft generates once the plan data is complete — plan
+    completeness is enforced by the explicit generate-plan-items contract.
     """
     member_id = _create_test_user(plan_schema, "m_partial", ["Member"])
     _enable_one_l3(plan_schema)
@@ -555,16 +556,17 @@ def test_draft_allows_partial_plan_state_save_reload_submit(
     assert saved["plan_quarter"] == "Q2"
     assert saved["member_priority"] == "高"
 
-    # 4. The draft with complete plan data submits successfully.
+    # 4. The draft with complete plan data generates explicitly.
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 4},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 4},
         cookies=cookies,
     )
-    assert status == 200, f"complete plan draft must submit, got {status}: {body}"
+    assert status == 200, f"complete plan draft must generate, got {status}: {body}"
+    assert body["plan_generation"]["items"][0]["status"] == "created"
     assessment = get_assessment(plan_schema, assessment_id)
-    assert assessment["status"] == "待复核"
+    assert assessment["status"] == "草稿"
     assert int(assessment["revision"]) == 5
     saved = _saved()
     assert saved["member_priority"] == "高"
@@ -1006,8 +1008,8 @@ def test_revision_conflict_409_zero_writes(plan_schema: psycopg.Connection) -> N
 
 
 def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None:
-    """include_in_plan=NULL represents 未决定 — the draft submits and the
-    undecided Gap stays in the backlog (staged workflow, #81 round 1)."""
+    """include_in_plan=NULL represents 未决定 — nothing blocks on it; only
+    the explicit generate-plan-items selection decides plan inclusion."""
     member_id = _create_test_user(plan_schema, "m_tri", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -1021,8 +1023,10 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Fill current_level, set priority, but leave include_in_plan=NULL
-    status, _ = _request(
+    # Fill current_level and priority, but leave include_in_plan=NULL: the
+    # NULL tri-state saves, and plan time does not survive (no include → the
+    # save clears quarter/month).
+    status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
@@ -1032,29 +1036,69 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
                     "l3_code": code,
                     "current_level": 0,
                     "member_priority": "中",
+                    "plan_quarter": "Q1",
+                    "plan_month": 1,
                 }
             ],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
-    assert status == 200
-
-    # Submit proceeds — include_in_plan=NULL no longer blocks; the undecided
-    # Gap enters the growth backlog after review (strict plan validation
-    # applies only to items the member selected into the annual plan).
-    status, body = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200, f"submit with NULL include_in_plan: {status} {body}"
+    assert status == 200, f"NULL include must save, got {status}: {body}"
     assessment = get_assessment(plan_schema, assessment_id)
-    assert assessment["status"] == "待复核"
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
     assert saved["include_in_plan"] is None
     assert saved["member_priority"] == "中"
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+    # The NULL tri-state never blocks, but explicit selection still needs
+    # decided plan time: the selection is the include decision, and the
+    # generator never invents quarter/month (#178).
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 2},
+        cookies=cookies,
+    )
+    assert status == 422, f"NULL include + no plan time must block: {status} {body}"
+    assert body["detail"]["code"] == "plan_time_validation_failed"
+
+    # Deciding the plan (include=TRUE + time) unblocks generation; the
+    # assessment itself stays a draft.
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 1,
+                }
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"include decision must save, got {status}: {body}"
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 3},
+        cookies=cookies,
+    )
+    assert status == 200, f"generate with decided plan: {status} {body}"
+    assert body["plan_generation"]["items"][0]["status"] == "created"
+    assessment = get_assessment(plan_schema, assessment_id)
+    assert assessment["status"] == "草稿"
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["include_in_plan"] is True
+    assert saved["member_priority"] == "中"
+    assert saved["plan_quarter"] == "Q1"
+    assert saved["plan_month"] == 1
 
 
 def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
@@ -1376,8 +1420,8 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
     assert saved["plan_month"] is None
 
 
-def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> None:
-    """#61 removes evidence gate: level≥3 without evidence → 200."""
+def test_generate_without_evidence_succeeds(plan_schema: psycopg.Connection) -> None:
+    """#61 removes evidence gate: generation without evidence → 200."""
     member_id = _create_test_user(plan_schema, "m_noev", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -1414,11 +1458,12 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
 
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200, f"submit without evidence should succeed: {body}"
+    assert status == 200, f"generate without evidence should succeed: {body}"
+    assert body["plan_generation"]["items"][0]["status"] == "created"
 
 
 def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:

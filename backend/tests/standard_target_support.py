@@ -158,3 +158,65 @@ def standard_target_payload(
             item.setdefault("l3_node_id", int(node_id))
         payload.append(item)
     return payload
+
+
+def record_submitted_history_state(
+    connection: psycopg.Connection, assessment_id: int
+) -> None:
+    """Fixture-only: build the historical 'submitted' state directly.
+
+    The submit write path is retired (#178): ratings land via draft save and
+    learning tasks only via explicit generate-plan-items.  Tests and seed
+    data that still need a submitted assessment with a pending review
+    (historical review/approval flows) construct that state with SQL plus
+    the planning helper instead of the retired business call.  Replicates the
+    old submit side effects exactly: status 待复核 + submitted_at, one
+    review row (sequence 1, buddy = the primary buddy at submit time),
+    revision +1, gaps projection, and Issue #82 plan/task generation for
+    include_in_plan rows.
+    """
+    connection.execute(
+        """
+        UPDATE assessment
+        SET status = '待复核', submitted_at = now(), revision = revision + 1
+        WHERE id = %s
+        """,
+        (assessment_id,),
+    )
+    # The retired submit resolved the member's primary buddy (assignment-time
+    # snapshot) and appended the next review sequence (review history
+    # accumulates per submission) — replicate both.
+    next_sequence = connection.execute(
+        """
+        SELECT COALESCE(MAX(sequence), 0) + 1
+        FROM assessment_review WHERE assessment_id = %s
+        """,
+        (assessment_id,),
+    ).fetchone()[0]
+    buddy_id = connection.execute(
+        """
+        SELECT u.id
+        FROM tcp_user u
+        JOIN buddy_relationship br ON br.buddy_id = u.id
+        WHERE br.member_id = (SELECT member_id FROM assessment WHERE id = %s)
+          AND br.is_primary = TRUE
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+          AND u.is_active = TRUE
+        """,
+        (assessment_id,),
+    ).fetchone()
+    connection.execute(
+        """
+        INSERT INTO assessment_review (assessment_id, sequence, buddy_id, status)
+        VALUES (%s, %s, %s, '待复核')
+        """,
+        (assessment_id, next_sequence, buddy_id[0] if buddy_id else None),
+    )
+    from app.assessment.repository import generate_gaps_for_assessment
+    from app.planning.atomic_generation import (
+        generate_plan_and_tasks_from_assessment,
+    )
+
+    generate_gaps_for_assessment(connection, assessment_id)
+    generate_plan_and_tasks_from_assessment(connection, assessment_id)

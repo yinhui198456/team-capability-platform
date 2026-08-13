@@ -84,7 +84,7 @@
 2. **集成测试** - 验证API端到端
    - 中速反馈 (~30秒 Backend启动)
    - 验证数据库集成
-   - 示例: `test_submit_assessment_creates_plan()`
+   - 示例: `test_generate_plan_items_creates_plan()`
    
 3. **E2E测试** - 验证UI交互
    - 慢速反馈 (~45分钟全量)
@@ -211,25 +211,13 @@
 
 Issue #82 实施后，Member 提交自评时，系统在单一事务中原子生成：Gap 分析 → 年度成长计划（若不存在）→ 计划项（标记为「纳入计划」的 Gap）→ 学习任务（1:1）。Buddy 复核结果作为反馈，不阻塞计划生成。
 
-Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）后生成，批次原子（任一不合格整批零写入）、重复生成幂等；未选择项不阻塞，可增量选择；不创建 Assessment Review。
+Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）后生成，批次原子（任一不合格整批零写入）、重复生成幂等；未选择项不阻塞，可增量选择；不创建 Assessment Review。提交自评写路径已退役：`POST /api/assessments/{assessment_id}/submit` 统一返回 `422 {"code": "legacy_assessment_submit_disabled", …}`，零写入（不创建 Review、不改变状态、不生成或复用任何计划/任务）；评级仅通过草稿保存落盘。
 
-新 API 契约：
+新 API 契约（#178）：
 
-- `POST /api/assessment/{assessment_id}/submit` 返回：
-  ```json
-  {
-    "revision": int,
-    "auto_cleared": [],
-    "plan_generation": {
-      "annual_plan_id": int,
-      "created_items": int,
-      "skipped_items": int,
-      "created_tasks": int
-    }
-  }
-  ```
-- 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_and_tasks_from_assessment(connection, assessment_id)`
-- 幂等性：重复提交时，已存在的计划项不再重复创建（按 `annual_growth_plan_id` + `l3_code` 去重）。
+- 增量生成入口：`POST /api/assessments/{assessment_id}/generate-plan-items`（见下节）。
+- 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_and_tasks_from_assessment(connection, assessment_id)`（种子数据与历史路径使用；业务写入入口为 generate-plan-items）。
+- 幂等性：重复生成时，已存在的计划项不再重复创建（按 `annual_growth_plan_id` + `l3_code` 去重）。
 
 增量生成 API 契约（#178，`POST /api/assessments/{id}/generate-plan-items`）：
 
@@ -253,6 +241,7 @@ Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（
 - 乐观并发：`expected_revision` 与 Assessment 当前 `revision` 不一致 → 409 `{"detail": "revision conflict"}`，零写入；本批有新增计划项时在同一事务内恰好推进一次 Assessment `revision`（纯已存在批保持不变，重放不推进），响应中的 `revision` 为最新值，供前端继续携带。
 - 幂等：同 `idempotency-key` 同请求（assessment_id + l3_codes + expected_revision 指纹，存入 `assessment_idempotency_key`）重放返回首次响应（`idempotent_replayed=true`），不重复写入、不推进 revision；同 key 不同请求 → 409 `{"detail": "idempotency key reused"}`。并发同 key 请求由 Assessment 行锁（SELECT ... FOR UPDATE）串行化。前端每次可见生成尝试生成一个 key（`frontend/src/assessment.ts:newIdempotencyKey`），相同 codes/revision 的不明确网络失败重试复用该 key，选择变更或收到确定响应（成功或任意 HTTP 错误）后轮换（`AssessmentGapPage.tsx` 的 `generationKeyRef`）。
 - 缺失快照：任一选中 L3 缺少计划依据快照（v0009 `capability_standard_planning_snapshot`）→ 422 `{"detail": {"code": "selection_validation_failed", "issues": [{l3_code, l3_node_id, field: "planning_snapshot", reason: "planning_snapshot_missing", message}]}}`，整批零写入；计划季度/月份缺失同样整批拒绝（逐 L3 issues）。
+- 旧版草稿（无 scope 快照）：选中行 `scope_type` 为 NULL → 422 `{"detail": {"code": "assessment_validation_failed", "reason": "legacy_scope_required", "field": "scope_type", …}}`，零写入；计划项写入需要作用域来源快照，旧版草稿的受支持路径是只读的 draft-target-repair 修复流程，而非生成。
 - 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_items_for_selection(connection, assessment_id, l3_codes, *, expected_revision, idempotency_key=None)`。
 
 ### 3.2 权限叠加

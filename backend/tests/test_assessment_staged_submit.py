@@ -1,27 +1,29 @@
-"""PR #81 round 1 — staged self-assessment workflow: backend contract tests.
+"""Issue #178 — staged self-assessment workflow: backend contract tests.
 
-The decoupling contract (confirmed business semantics):
+The decoupling contract (confirmed business semantics), re-expressed after
+the legacy submit write path was retired (#178):
 
-1. Formal submission requires a valid assessment outcome only for
-   current-role REQUIRED capabilities (``scope_type=current_required``).
-   ADVANCED (``scope_type=target_progressive``) items may stay unassessed;
-   they must not block submission and must appear as follow-up work.
-2. Submission never requires Gap plan decisions (member_priority /
-   include_in_plan / plan_quarter / plan_month): a fully-assessed REQUIRED
-   scope with undecided planning submits; undecided Gaps become the growth
-   backlog after review.
-3. The strict plan-selection contract still guards plan generation at Buddy
-   approval (``validate_plan_selection``), so items the member selected into
-   the annual plan keep priority and plan-time validation.
-4. Approval creates plan items only for selected items; unselected backlog
-   Gaps produce no plan items; idempotent retries create no duplicates.
+1. Ratings save independently via the draft: they never require plan
+   decisions (member_priority / include_in_plan / plan_quarter /
+   plan_month), never require every REQUIRED capability to be assessed,
+   and never create Reviews, plan items, or learning tasks.
+2. The strict plan-selection contract now guards the ONLY learning-task
+   entry, ``generate-plan-items`` (``validate_plan_selection`` +
+   ``_validate_selected_details``): undecided plan time, unassessed rows,
+   or incompatible targets fail that explicit call with a structured,
+   locatable error — and nothing else blocks.
+3. Explicit selection is the include decision: rows with an undecided
+   (NULL) include_in_plan generate when selected, and unselected NULL rows
+   never block.
+4. Approval of historical submissions creates plan items only for selected
+   items; unselected backlog Gaps produce no plan items; idempotent
+   retries create no duplicates.
 5. The member dashboard exposes accurate follow-up counts for the four
-   personal-workspace categories.
-6. Owner/non-owner boundaries and zero-write direct-API behaviour are kept.
-
-On the baseline (before the decoupling fix) tests 1, 3, 5, 7 are RED: the
-submit gate requires plan decisions for every positive gap and assesses
-every applicable item, so the same scenarios are rejected with 422.
+   personal-workspace categories; generation never transitions the
+   assessment out of 草稿, while historical 待复核 assessments still show
+   review/return work.
+6. The retired POST /submit responds 422 ``legacy_assessment_submit_disabled``
+   with zero writes for every caller, owner or not.
 """
 
 import json
@@ -40,7 +42,10 @@ from app.main import app
 from app.migrations import run_migrations
 from app.planning.schema import create_planning_schema
 from tests.review_support import ReviewTestBase
-from tests.standard_target_support import create_scoped_draft
+from tests.standard_target_support import (
+    create_scoped_draft,
+    record_submitted_history_state,
+)
 from tests.test_assessment_plan_selection import _login
 
 _L3 = "P01-L2A-L3A"
@@ -263,7 +268,7 @@ def _full_batch(
 # ── 1. Fully-assessed REQUIRED scope, undecided Gap planning → submits ───
 
 
-def test_submit_succeeds_with_required_assessed_and_undecided_gaps(
+def test_draft_undecided_plan_saves_and_generation_requires_plan_time(
     staged_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(staged_schema, "st_m_undecided", ["Member"])
@@ -287,8 +292,11 @@ def test_submit_succeeds_with_required_assessed_and_undecided_gaps(
                 staged_schema,
                 assessment_id,
                 {
-                    required_code: {"current_level": 3},
-                    advanced_code: {"current_level": 3},
+                    # level 1 keeps both gaps positive (P4-current members get
+                    # standard target 2 on start-P4 nodes — level 3 would make
+                    # the gap negative and trip plan_not_applicable instead).
+                    required_code: {"current_level": 1},
+                    advanced_code: {"current_level": 1},
                 },
             ),
             "expected_revision": 1,
@@ -298,24 +306,33 @@ def test_submit_succeeds_with_required_assessed_and_undecided_gaps(
     assert status == 200, f"draft save failed: {body}"
 
     # The 91-gap-style blocker: positive gaps with no priority / no plan
-    # decision / no plan month must NOT block submission.
+    # decision / no plan month never block ratings; they block only the
+    # explicit generate-plan-items entry.
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [required_code, advanced_code], "expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200, f"undecided-plan submit must succeed, got {status}: {body}"
+    assert status == 422, f"undecided plan must block generation, got {status}: {body}"
+    assert body["detail"]["code"] == "plan_time_validation_failed"
     assessment = get_assessment(staged_schema, assessment_id)
     assert assessment is not None
-    assert assessment["status"] == "待复核"
-    assert int(assessment["revision"]) == 3
+    assert assessment["status"] == "草稿"
+    assert int(assessment["revision"]) == 2
+    reviews = staged_schema.execute(
+        "SELECT COUNT(*) FROM assessment_review WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchone()[0]
+    assert reviews == 0
+    items = staged_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0]
+    assert items == 0
 
 
 # ── 2. Missing REQUIRED assessment blocks with precise location ──────────
 
 
-def test_submit_blocks_on_missing_required_with_precise_location(
+def test_missing_required_blocks_only_explicit_generation_with_precise_location(
     staged_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(staged_schema, "st_m_missing_req", ["Member"])
@@ -340,16 +357,21 @@ def test_submit_blocks_on_missing_required_with_precise_location(
     )
     assert status == 200, f"draft save failed: {body}"
 
+    # Ratings save independently: the unassessed REQUIRED row blocks nothing.
+    # Explicitly selecting it fails with the same structured, locatable error
+    # the old submission gate produced.
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [required_code, advanced_code], "expected_revision": 2},
         cookies=cookies,
     )
     assert status == 422, f"missing REQUIRED must block, got {status}: {body}"
-    assert body["detail"]["reason"] == "requires_current_level"
-    assert body["detail"]["l3_code"] == required_code
-    assert body["detail"]["field"] == "current_level"
+    detail = body["detail"]
+    assert detail["code"] == "assessment_validation_failed"
+    assert detail["reason"] == "requires_current_level"
+    assert detail["l3_code"] == required_code
+    assert detail["field"] == "current_level"
     assessment = get_assessment(staged_schema, assessment_id)
     assert assessment is not None
     assert assessment["status"] == "草稿"
@@ -359,7 +381,7 @@ def test_submit_blocks_on_missing_required_with_precise_location(
 # ── 3. Missing ADVANCED assessment does not block; becomes follow-up ──────
 
 
-def test_submit_allows_unassessed_advanced(
+def test_unassessed_advanced_never_blocks(
     staged_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(staged_schema, "st_m_adv_later", ["Member"])
@@ -368,7 +390,8 @@ def test_submit_allows_unassessed_advanced(
     assessment_id = create_scoped_draft(staged_schema, member_id, 2026)
     cookies = _login(staged_schema, "st_m_adv_later")
 
-    # REQUIRED assessed; the ADVANCED item stays unassessed.
+    # REQUIRED assessed with a decided plan; the ADVANCED item stays
+    # unassessed and never blocks the member's explicit generation.
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -376,7 +399,16 @@ def test_submit_allows_unassessed_advanced(
             "details": _full_batch(
                 staged_schema,
                 assessment_id,
-                {required_code: {"current_level": 3}},
+                {
+                    # level 1 → positive gap (std target 2 for P4 members)
+                    required_code: {
+                        "current_level": 1,
+                        "member_priority": "高",
+                        "include_in_plan": True,
+                        "plan_quarter": "Q1",
+                        "plan_month": 2,
+                    }
+                },
             ),
             "expected_revision": 1,
         },
@@ -386,20 +418,21 @@ def test_submit_allows_unassessed_advanced(
 
     status, body = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [required_code], "expected_revision": 2},
         cookies=cookies,
     )
     assert status == 200, f"unassessed ADVANCED must not block, got {status}: {body}"
+    assert body["plan_generation"]["items"][0]["status"] == "created"
     assessment = get_assessment(staged_schema, assessment_id)
     assert assessment is not None
-    assert assessment["status"] == "待复核"
+    assert assessment["status"] == "草稿"
 
 
-# ── 4. Legacy drafts (no scope_type) keep requiring every applicable item ──
+# ── 4. Legacy drafts (no scope_type): ratings save; generation refuses ────
 
 
-def test_legacy_draft_unassessed_applicable_still_blocks(
+def test_legacy_draft_unassessed_never_blocks(
     staged_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(staged_schema, "st_m_legacy", ["Member"])
@@ -409,6 +442,7 @@ def test_legacy_draft_unassessed_applicable_still_blocks(
         "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
         (assessment_id,),
     ).fetchone()[0]
+    node_id = _detail_l3_node_id(staged_schema, assessment_id, code)
     # Simulate a pre-scope draft: drop the scope snapshot and classification.
     staged_schema.execute(
         "UPDATE assessment SET assessment_scope_version = NULL, "
@@ -423,15 +457,51 @@ def test_legacy_draft_unassessed_applicable_still_blocks(
     )
     staged_schema.commit()
 
+    # The old every-applicable-item gate is retired: the member fills just
+    # one legacy row and the partial draft saves — unassessed legacy rows
+    # never block ratings.
     status, body = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 1},
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": 1,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 2,
+                }
+            ],
+            "expected_revision": 1,
+        },
         cookies=cookies,
     )
-    assert status == 422, f"legacy unassessed must still block, got {status}: {body}"
-    assert body["detail"]["reason"] == "requires_current_level"
-    assert body["detail"]["l3_code"] == code
+    assert status == 200, f"legacy partial draft must save, got {status}: {body}"
+
+    # Plan items require scope provenance, so a scope-less (legacy) selected
+    # row fails with a stable, locatable error instead of a 500 — the
+    # sanctioned path is the read-only draft-target-repair flow.
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [code], "expected_revision": 2},
+        cookies=cookies,
+    )
+    assert status == 422, f"legacy row must refuse generation: {status} {body}"
+    detail = body["detail"]
+    assert detail["code"] == "assessment_validation_failed"
+    assert detail["reason"] == "legacy_scope_required"
+    assert detail["l3_code"] == code
+    assert detail["field"] == "scope_type"
+    items = staged_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0]
+    assert items == 0
+    assessment = get_assessment(staged_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["status"] == "草稿"
+    assert int(assessment["revision"]) == 2
 
 
 # ── 5. Personal-workspace follow-up counts (draft → submitted) ────────────
@@ -446,8 +516,9 @@ def test_dashboard_follow_up_counts(
     assessment_id = create_scoped_draft(staged_schema, member_id, 2026)
     cookies = _login(staged_schema, "st_m_dash")
 
-    # Draft state: REQUIRED assessed at level 0 (guaranteed positive gap),
-    # ADVANCED unassessed, Gaps undecided.
+    # Draft state 1: REQUIRED assessed at level 0 (guaranteed positive gap)
+    # with plan undecided; ADVANCED unassessed.  The undecided gap shows as
+    # waiting-planning.
     status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -477,14 +548,54 @@ def test_dashboard_follow_up_counts(
     assert follow_up["gaps_waiting_planning"] >= 1
     assert follow_up["review_return"] is False
 
-    # After submit the same categories track review/return work.
+    # Draft state 2: the member decides the plan (include + time); the gap
+    # leaves the waiting pool once explicitly generated.
+    node_id = _detail_l3_node_id(staged_schema, assessment_id, required_code)
     status, body = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": required_code,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_quarter": "Q1",
+                    "plan_month": 2,
+                }
+            ],
+            "expected_revision": 2,
+        },
         cookies=cookies,
     )
-    assert status == 200, f"submit failed: {body}"
+    assert status == 200, f"plan decision failed: {body}"
+
+    # Explicit generation writes plan/tasks but never transitions the
+    # assessment: the same categories keep tracking a rolling draft.
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [required_code], "expected_revision": 3},
+        cookies=cookies,
+    )
+    assert status == 200, f"generate failed: {body}"
+    status, body = _request(
+        "GET",
+        "/api/planning/member-dashboard?year=2026",
+        cookies=cookies,
+    )
+    assert status == 200
+    follow_up = body["follow_up"]
+    assert follow_up["assessment_status"] == "草稿"
+    assert follow_up["review_return"] is False
+    assert follow_up["required_incomplete"] == 0
+    assert follow_up["advanced_unassessed"] == 1
+
+    # Historical 待复核 assessments (retired submit path) still surface
+    # review/return work on the dashboard.
+    record_submitted_history_state(staged_schema, assessment_id)
+    staged_schema.commit()
     status, body = _request(
         "GET",
         "/api/planning/member-dashboard?year=2026",
@@ -496,13 +607,12 @@ def test_dashboard_follow_up_counts(
     assert follow_up["review_return"] is True
     assert follow_up["required_incomplete"] == 0
     assert follow_up["advanced_unassessed"] == 1
-    assert follow_up["gaps_waiting_planning"] >= 1
 
 
-# ── 6. Non-owner direct submit → 403 with zero writes ─────────────────────
+# ── 6. Retired submit → 422 with zero writes for every caller ────────────
 
 
-def test_non_owner_submit_403_zero_write(
+def test_submit_retired_for_non_owner_zero_write(
     staged_schema: psycopg.Connection,
 ) -> None:
     owner_id = _create_test_user(staged_schema, "st_m_owner", ["Member"])
@@ -530,14 +640,16 @@ def test_non_owner_submit_403_zero_write(
     )
     assert status == 200, f"draft save failed: {body}"
 
-    # Intruder (Member, not the owner) must get 403 with zero writes.
+    # The retirement response is global and zero-write for every caller:
+    # the intruder gets the same stable 422 and nothing leaks ownership.
     status, body = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
         {"expected_revision": 2},
         cookies=intruder_cookies,
     )
-    assert status == 403, f"non-owner submit must be 403, got {status}: {body}"
+    assert status == 422, f"retired submit must be 422, got {status}: {body}"
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
     assessment = get_assessment(staged_schema, assessment_id)
     assert assessment is not None
     assert assessment["status"] == "草稿"

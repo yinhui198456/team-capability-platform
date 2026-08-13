@@ -4,10 +4,7 @@ from typing import Any
 
 import psycopg
 
-from ..access.repository import (
-    get_primary_buddy,
-    is_current_responsible_buddy,
-)
+from ..access.repository import is_current_responsible_buddy
 from ..catalog.repository import DOMAIN_CODES, get_l3_contexts
 from .scope import AssessmentScopeError, compute_assessment_scope
 
@@ -28,6 +25,18 @@ class AssessmentValidationError(ValueError):
         self.l3_node_id = l3_node_id
         self.field = field
         self.reason = reason
+
+
+class LegacyAssessmentSubmitDisabled(ValueError):
+    """The legacy submit write path is retired (Issue #178).
+
+    The new flow never creates an Assessment Review and never transitions to
+    待复核; learning tasks are created only by explicit
+    generate-plan-items.  Historical Assessment Reviews and their read APIs
+    remain.
+    """
+
+    code = "legacy_assessment_submit_disabled"
 
 
 class ReviewError(ValueError):
@@ -2256,87 +2265,18 @@ def submit_assessment(
     member_id: int,
     expected_revision: int,
 ) -> dict[str, object]:
-    with connection.transaction():
-        row = connection.execute(
-            """
-            SELECT status, member_id, revision
-            FROM assessment
-            WHERE id = %s
-            FOR UPDATE
-            """,
-            (assessment_id,),
-        ).fetchone()
-        if row is None:
-            raise ValueError("assessment not found")
-        status, owner_id, revision = row
-        if status not in ("草稿", "建议调整"):
-            raise ValueError("assessment is not submittable")
-        if owner_id != member_id:
-            raise ValueError("assessment does not belong to member")
-        if int(revision) != expected_revision:
-            raise ValueError("revision conflict")
+    """Retired: the legacy submit write path is closed (Issue #178).
 
-        _validate_submission(connection, assessment_id)
-
-        incompatible_detail = connection.execute(
-            """
-            SELECT l3_code, target_compatibility_error
-            FROM assessment_detail
-            WHERE assessment_id = %s
-              AND target_compatibility_error IS NOT NULL
-            ORDER BY l3_code
-            LIMIT 1
-            """,
-            (assessment_id,),
-        ).fetchone()
-        if incompatible_detail is not None:
-            code, compatibility_error = incompatible_detail
-            raise ValueError(
-                f"assessment detail {code} requires compatibility repair: "
-                f"{compatibility_error}"
-            )
-
-        submitted_at = _now(connection)
-        connection.execute(
-            """
-            UPDATE assessment
-            SET status = '待复核', submitted_at = %s
-            WHERE id = %s
-            """,
-            (submitted_at, assessment_id),
-        )
-
-        primary_buddy = get_primary_buddy(connection, member_id)
-        buddy_id = primary_buddy["id"] if primary_buddy else None
-        next_sequence = _next_review_sequence(connection, assessment_id)
-
-        connection.execute(
-            """
-            INSERT INTO assessment_review (
-                assessment_id, sequence, buddy_id, status
-            )
-            VALUES (%s, %s, %s, '待复核')
-            """,
-            (assessment_id, next_sequence, buddy_id),
-        )
-
-        generate_gaps_for_assessment(connection, assessment_id)
-
-        # Issue #82: Generate annual plan and learning tasks atomically on submit
-        from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
-
-        plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
-
-        next_revision = int(revision) + 1
-        connection.execute(
-            "UPDATE assessment SET revision = %s WHERE id = %s",
-            (next_revision, assessment_id),
-        )
-        return {
-            "revision": next_revision,
-            "auto_cleared": [],
-            "plan_generation": plan_result,
-        }
+    Zero writes, always.  Ratings are persisted by draft save; learning tasks
+    are created only by explicit generate-plan-items.  Historical Assessment
+    Reviews stay readable (and their approval path, ``submit_assessment_review``,
+    remains for history).  Old clients get the structured retirement error
+    mapped by the API to 422 ``legacy_assessment_submit_disabled``.
+    """
+    raise LegacyAssessmentSubmitDisabled(
+        "评估提交写路径已退役：评级通过草稿保存落盘，"
+        "学习任务仅通过显式生成所选学习任务入口创建"
+    )
 
 
 def generate_gaps_for_assessment(
@@ -2515,19 +2455,6 @@ def update_gap(
             """,
             (priority, plan_candidate, gap_id),
         )
-
-
-def _next_review_sequence(connection: psycopg.Connection, assessment_id: int) -> int:
-    row = connection.execute(
-        """
-        SELECT COALESCE(MAX(sequence), 0) + 1
-        FROM assessment_review
-        WHERE assessment_id = %s
-        """,
-        (assessment_id,),
-    ).fetchone()
-    assert row is not None
-    return row[0]
 
 
 def archive_assessment(

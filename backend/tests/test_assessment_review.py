@@ -16,6 +16,7 @@ from app.assessment.schema import create_assessment_schema
 from app.main import app
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    record_submitted_history_state,
     standard_target_payload,
 )
 
@@ -215,13 +216,10 @@ def _create_and_submit_assessment(
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
+    # Submit is retired (#178); build the historical submitted state
+    # (待复核 + review row + revision bump + gaps/plan/tasks) directly.
+    record_submitted_history_state(connection, assessment_id)
+    connection.commit()
     return assessment_id
 
 
@@ -329,13 +327,10 @@ def test_buddy_request_adjustment_and_resubmit(
     )
     assert status == 200
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
-        cookies=member_cookies,
-    )
-    assert status == 200
+    # The submit write path is retired (#178); rebuild the historical
+    # submitted state directly and re-review it.
+    record_submitted_history_state(assessment_schema, assessment_id)
+    assessment_schema.commit()
 
     status, pending, _ = _request(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
@@ -348,7 +343,7 @@ def test_buddy_request_adjustment_and_resubmit(
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/reviews/{review_id2}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 6},
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 7},
         cookies=buddy_cookies,
     )
     assert status == 200

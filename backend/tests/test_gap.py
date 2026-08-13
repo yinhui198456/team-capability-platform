@@ -13,6 +13,7 @@ from app.assessment.schema import create_assessment_schema
 from app.main import app
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    record_submitted_history_state,
     standard_target_payload,
 )
 
@@ -175,8 +176,11 @@ def _create_and_submit_assessment(
 ) -> int:
     desired_details = details or [
         {
+            # level 1 keeps the include positive-gap rule satisfied: P4
+            # members get standard target 2 on this start-P4 node, so
+            # current 2 would leave no positive gap and block the save.
             "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
+            "current_level": 1,
             "target_level": 4,
             "evidence_note": "测试中",
             "member_priority": "高",
@@ -216,17 +220,16 @@ def _create_and_submit_assessment(
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
+    # Submit is retired (#178); build the historical submitted state
+    # (待复核 + review row + revision bump + gaps/plan/tasks) directly.
+    record_submitted_history_state(connection, assessment_id)
+    connection.commit()
     return assessment_id
 
 
-def test_gap_generated_on_submit(assessment_schema: psycopg.Connection) -> None:
+def test_gap_generated_on_draft_save(assessment_schema: psycopg.Connection) -> None:
+    """#178: gaps project at draft save (the active write path); the helper
+    builds the same detail state the member's save produces."""
     member_id = _create_test_user(assessment_schema, "member_gap", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_gap", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
@@ -237,9 +240,11 @@ def test_gap_generated_on_submit(assessment_schema: psycopg.Connection) -> None:
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     assert len(gaps) == 1
     assert gaps[0]["l3_code"] == "P01-L2A-L3A"
-    assert gaps[0]["current_level"] == 2
-    assert gaps[0]["target_level"] == 4
-    assert gaps[0]["gap_value"] == 2
+    assert gaps[0]["current_level"] == 1
+    # The projected target is the resolved standard target (2 for a P4
+    # member on this start-P4 node), not the member's requested 4.
+    assert gaps[0]["target_level"] == 2
+    assert gaps[0]["gap_value"] == 1
     assert gaps[0]["priority"] == "高"
     assert gaps[0]["plan_candidate"] is True
 
@@ -391,7 +396,7 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
                 [
                     {
                         "l3_code": "P01-L2A-L3A",
-                        "current_level": 2,
+                        "current_level": 1,
                         "target_level": 5,
                         "evidence_note": "已补充",
                         "member_priority": "高",
@@ -407,15 +412,14 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
     )
     assert status == 200
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
-        cookies=member_cookies,
-    )
-    assert status == 200
+    # The submit write path is retired (#178); rebuild the historical
+    # submitted state directly.  Gaps are projected at draft save and
+    # regenerated here, staying a single row.
+    record_submitted_history_state(assessment_schema, assessment_id)
+    assessment_schema.commit()
 
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     assert len(gaps) == 1
-    assert gaps[0]["target_level"] == 5
-    assert gaps[0]["gap_value"] == 3
+    # Resolved standard target 2 for the P4 member, not the requested 5.
+    assert gaps[0]["target_level"] == 2
+    assert gaps[0]["gap_value"] == 1

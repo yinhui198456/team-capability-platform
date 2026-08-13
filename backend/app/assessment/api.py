@@ -28,7 +28,6 @@ from .repository import (
     patch_assessment_draft,
     repair_draft_target_snapshots,
     save_assessment_draft,
-    submit_assessment,
     submit_assessment_review,
     update_gap,
 )
@@ -122,10 +121,6 @@ class PatchSaveDraftRequest(BaseModel):
 class BatchLevelRequest(BaseModel):
     l2_code: str
     current_level: int = Field(ge=0, le=2)
-    expected_revision: int = Field(ge=1)
-
-
-class SubmitRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
@@ -678,52 +673,22 @@ def batch_level(
     "/{assessment_id}/submit",
     dependencies=[require_any_role("Member")],
 )
-def submit(
-    assessment_id: int,
-    user: CurrentUser,
-    connection: Connection,
-    request: SubmitRequest,
-) -> dict[str, object]:
-    assessment = get_assessment(connection, assessment_id)
-    if assessment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="assessment not found",
-        )
-    if user["id"] != assessment["member_id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="insufficient permissions",
-        )
-    try:
-        result = submit_assessment(
-            connection,
-            assessment_id,
-            int(user["id"]),
-            expected_revision=request.expected_revision,
-        )
-    except AssessmentValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": exc.code,
-                "l3_code": exc.l3_code,
-                "l3_node_id": exc.l3_node_id,
-                "field": exc.field,
-                "reason": exc.reason,
-                "message": str(exc),
-            },
-        ) from exc
-    except ValueError as exc:
-        if str(exc) == "revision conflict":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    return {"ok": True, **result}
+def submit() -> dict[str, object]:
+    """Retired (Issue #178): old clients must not resurrect the legacy
+    '提交自评 → 待复核 + 自动生成任务' write path.  Zero writes, always —
+    ratings land via draft save, learning tasks only via
+    generate-plan-items.  Follows the project's legacy-write retirement
+    convention (422 + stable code)."""
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": "legacy_assessment_submit_disabled",
+            "message": (
+                "评估提交写路径已退役：评级通过草稿保存落盘，"
+                "学习任务仅通过显式生成所选学习任务入口创建"
+            ),
+        },
+    )
 
 
 @assessment_router.post(

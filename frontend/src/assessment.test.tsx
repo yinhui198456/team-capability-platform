@@ -551,6 +551,11 @@ describe('AssessmentGapPage', () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true)
+    // #178: the retired 提交自评 write entry is not re-surfaced — explicit
+    // generation is the only plan-write action on the page.
+    expect(
+      screen.queryByRole('button', { name: /提交自评|提交评估/ }),
+    ).toBeNull()
   })
 
   it.each([

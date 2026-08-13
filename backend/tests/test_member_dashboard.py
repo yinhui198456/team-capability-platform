@@ -1,7 +1,10 @@
 import psycopg
 import pytest
 
-from tests.standard_target_support import ensure_capability_nodes
+from tests.standard_target_support import (
+    ensure_capability_nodes,
+    record_submitted_history_state,
+)
 from tests.test_capability_profile import (
     _build_full_profile,
     _create_test_user,
@@ -370,13 +373,8 @@ def test_dashboard_applicable_completion_counts_zero_level_as_filled(
         assessment_id,
         {"P01-L2A-L3A": 0, "P01-L2A-L3B": 2},
     )
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=member_cookies,
-    )
-    assert status == 200, body
+    record_submitted_history_state(profile_schema, assessment_id)
+    profile_schema.commit()
 
     # Preconditions: both details applicable and filled; the zero-level row
     # has a positive effective target it does NOT reach (old predicate lost it).

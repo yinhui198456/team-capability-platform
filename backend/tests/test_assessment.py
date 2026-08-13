@@ -16,7 +16,10 @@ from app.catalog.importer import import_catalog, resolve_workbook_dir
 from app.main import app
 from app.migrations import run_migrations
 from app.planning.schema import create_planning_schema
-from tests.standard_target_support import create_scoped_draft
+from tests.standard_target_support import (
+    create_scoped_draft,
+    record_submitted_history_state,
+)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -188,7 +191,7 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def test_create_draft_save_details_submit_review(
+def test_create_draft_save_details_submit_retired_review_history(
     assessment_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(assessment_schema, "member_a", ["Member"])
@@ -240,7 +243,7 @@ def test_create_draft_save_details_submit_review(
                 {
                     "l3_node_id": node_id,
                     "l3_code": l3_code,
-                    "current_level": 2,
+                    "current_level": 1,
                     "evidence_note": "测试中",
                     "member_priority": "高",
                     "include_in_plan": True,
@@ -259,15 +262,32 @@ def test_create_draft_save_details_submit_review(
     assert assessment["status"] == "草稿"
     details = assessment["details"]
     assert len(details) == 1
-    assert details[0]["gap_value"] == 2
+    assert details[0]["gap_value"] == 1
 
+    # The submit write path is retired (#178): zero writes with a stable code.
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["status"] == "草稿"
+    assert int(assessment["revision"]) == 2
+
+    # Historical submitted state is built directly (fixture-only helper);
+    # the review row carries the primary buddy, as the retired submit did.
+    record_submitted_history_state(assessment_schema, assessment_id)
+    assessment_schema.execute(
+        """
+        UPDATE assessment_review SET buddy_id = %s WHERE assessment_id = %s
+        """,
+        (buddy_id, assessment_id),
+    )
+    assessment_schema.commit()
 
     status, body, _ = _request(
         "GET", f"/api/assessments/{assessment_id}", cookies=cookies
@@ -427,17 +447,20 @@ def test_assessment_writes_require_expected_revision_token(
             cookies=cookies,
         )
         assert status == 422
-    status, _, _ = _request(
+    # The retired submit entry no longer accepts any write or token: the
+    # stable retirement response is returned regardless of the body.
+    status, body, _ = _request(
         "POST", f"/api/assessments/{assessment_id}/submit", {}, cookies=cookies
     )
     assert status == 422
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
     assert assessment["status"] == "草稿"
     assert assessment["revision"] == 1
 
 
-def test_submit_validation_returns_structured_l3_error(
+def test_generate_selection_returns_structured_l3_error(
     assessment_schema: psycopg.Connection,
 ) -> None:
     _create_test_user(assessment_schema, "member_structured_error", ["Member"])
@@ -465,17 +488,18 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
-    # Leave the REQUIRED item unassessed — submission must fail with a
-    # structured, locatable error (staged workflow: plan decisions no longer
-    # gate submission; missing REQUIRED assessment outcomes still do).
+    # The submission gate is retired (#178): ratings save independently and
+    # unassessed rows never block.  The structured, locatable error now
+    # surfaces when the member explicitly generates plan items for the
+    # unassessed REQUIRED row.
     l3_code = "C01.01.01"
     node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 1},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [l3_code], "expected_revision": 1},
         cookies=cookies,
     )
     assert status == 422

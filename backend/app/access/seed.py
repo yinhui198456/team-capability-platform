@@ -149,9 +149,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
 
     from ..assessment.repository import (
         create_assessment_draft,
+        generate_gaps_for_assessment,
         get_assessment,
         save_assessment_draft,
-        submit_assessment,
         submit_assessment_review,
     )
     from ..assessment.scope import compute_assessment_scope
@@ -214,9 +214,39 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             details,
             expected_revision=1,
         )
-        submitted = submit_assessment(
-            connection, assessment_id, member_id, expected_revision=2
+        # The submit write path is retired (#178); the demo member's
+        # historical closed-loop state is built directly: 待复核 + review
+        # row + revision bump (the gaps projection already ran at draft
+        # save; the approval below creates the plan/task).
+        connection.execute(
+            """
+            UPDATE assessment
+            SET status = '待复核', submitted_at = now(), revision = revision + 1
+            WHERE id = %s
+            """,
+            (assessment_id,),
         )
+        connection.execute(
+            """
+            INSERT INTO assessment_review (
+                assessment_id, sequence, buddy_id, status
+            )
+            VALUES (%s, 1, NULL, '待复核')
+            """,
+            (assessment_id,),
+        )
+        generate_gaps_for_assessment(connection, assessment_id)
+        from ..planning.atomic_generation import (
+            generate_plan_and_tasks_from_assessment,
+        )
+
+        _ = generate_plan_and_tasks_from_assessment(connection, assessment_id)
+        submitted = {
+            "revision": connection.execute(
+                "SELECT revision FROM assessment WHERE id = %s",
+                (assessment_id,),
+            ).fetchone()[0],
+        }
         assessment_review_id = connection.execute(
             "SELECT id FROM assessment_review WHERE assessment_id = %s",
             (assessment_id,),

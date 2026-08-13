@@ -309,7 +309,7 @@ def _validate_selected_details(
             """
             SELECT l3_code, current_level, target_level, gap_value,
                    standard_target_applicable, target_compatibility_error,
-                   l3_node_id
+                   l3_node_id, scope_type
             FROM assessment_detail
             WHERE assessment_id = %s AND l3_code = %s
             """,
@@ -329,6 +329,7 @@ def _validate_selected_details(
             applicable,
             compat_error,
             l3_node_id,
+            scope_type,
         ) = row
         if compat_error:
             raise AssessmentValidationError(
@@ -337,6 +338,17 @@ def _validate_selected_details(
                 f"assessment detail {code} requires compatibility repair",
                 l3_node_id=l3_node_id,
                 field="target_compatibility_error",
+            )
+        if scope_type is None:
+            # Pre-scope (legacy) drafts cannot be planned: the plan item
+            # write requires the scope provenance snapshots.  The sanctioned
+            # path is the read-only draft-target-repair flow, not generation.
+            raise AssessmentValidationError(
+                code,
+                "legacy_scope_required",
+                "旧版草稿缺少作用域信息，请先修复评估目标后再生成学习任务",
+                l3_node_id=l3_node_id,
+                field="scope_type",
             )
         if applicable is False:
             raise AssessmentValidationError(
@@ -640,7 +652,7 @@ def generate_plan_and_tasks_from_assessment(
     Atomically generate annual plan, plan items, and learning tasks
     from submitted assessment (Issue #82; full-form submit path).
 
-    Called from submit_assessment() in the same transaction.
+    Used by the retired submit chain, seed fixtures, and tests.
 
     Rules:
     - Only creates plan items for assessment_detail rows where include_in_plan=TRUE
