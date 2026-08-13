@@ -371,6 +371,7 @@ export async function generatePlanItems(
   id: number,
   l3Codes: string[],
   expectedRevision: number,
+  idempotencyKey?: string,
 ): Promise<{
   ok: boolean
   plan_generation: {
@@ -384,6 +385,8 @@ export async function generatePlanItems(
     summary: string
   }
 }> {
+  const headers: HeadersInit = {}
+  if (idempotencyKey) headers['idempotency-key'] = idempotencyKey
   return request<{
     ok: boolean
     plan_generation: {
@@ -400,6 +403,7 @@ export async function generatePlanItems(
     `/api/assessments/${id}/generate-plan-items`,
     {
       method: 'POST',
+      headers,
     },
     { l3_codes: l3Codes, expected_revision: expectedRevision },
   )

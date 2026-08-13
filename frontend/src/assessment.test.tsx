@@ -897,7 +897,12 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
       generate.mock.invocationCallOrder[0],
     )
-    expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'], 2)
+    expect(generate).toHaveBeenCalledWith(
+      7,
+      ['P01.01.01'],
+      2,
+      expect.any(String),
+    )
   })
 
   it('replaces the Gap summary after draft save', async () => {
@@ -2102,9 +2107,127 @@ describe('R2-B filter/search', () => {
     fireEvent.click(filled)
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await waitFor(() =>
-      expect(generate).toHaveBeenCalledWith(7, ['P01.01.01'], 1),
+      expect(generate).toHaveBeenCalledWith(
+        7,
+        ['P01.01.01'],
+        1,
+        expect.any(String),
+      ),
     )
     expect(screen.getByText(/已生成 1 个学习任务/)).toBeTruthy()
+  })
+
+  it('reuses the generation key for a same-payload retry and rotates on success (#178)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          id: 1,
+          l3_code: 'P01.01.01',
+          current_level: 2,
+          target_level: 4,
+          gap_value: 2,
+          standard_target_applicable: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockRejectedValueOnce(new Error('network'))
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.01', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
+        },
+      })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
+    const button = screen.getByRole('button', { name: '生成所选学习任务' })
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    // A visible generation attempt always carries a key.
+    expect(generate.mock.calls[0][3]).toBeDefined()
+
+    // Ambiguous network failure: the same payload retry reuses the same key.
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(generate.mock.calls[1][3]).toBe(generate.mock.calls[0][3])
+
+    // The success is still a same-payload retry: it reuses the key, and only
+    // then rotates — the next attempt starts with a fresh key.
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3))
+    expect(generate.mock.calls[2][3]).toBe(generate.mock.calls[0][3])
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(4))
+    expect(generate.mock.calls[3][3]).not.toBe(generate.mock.calls[0][3])
+  })
+
+  it('rotates the generation key when the selection changes (#178)', async () => {
+    const filled = (id: number, code: string) => ({
+      ...mockDraft().details![0],
+      id,
+      l3_code: code,
+      l3_name: code,
+      current_level: 2,
+      target_level: 4,
+      gap_value: 2,
+      standard_target_applicable: true,
+    })
+    const draft = mockDraft({
+      details: [filled(1, 'P01.01.01'), filled(2, 'P01.01.02')],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 1,
+          skipped_items: 0,
+          created_tasks: 1,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [{ l3_code: 'P01.01.02', status: 'created' }],
+          summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
+        },
+      })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
+    const button = screen.getByRole('button', { name: '生成所选学习任务' })
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    expect(generate.mock.calls[0][3]).toBeDefined()
+
+    // Widening the selection changes the payload: a fresh key is required.
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.02' }))
+    fireEvent.click(button)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(generate.mock.calls[1][1]).toEqual(['P01.01.01', 'P01.01.02'])
+    expect(generate.mock.calls[1][3]).not.toBe(generate.mock.calls[0][3])
   })
 })
 
@@ -2130,6 +2253,19 @@ describe('assessment api helpers', () => {
       year: 2026,
       assessment_type: '年度',
       scope_token: 'token-abc',
+    })
+  })
+
+  it('generatePlanItems sends the idempotency-key header and revision body', async () => {
+    await assessmentApi.generatePlanItems(7, ['P01.01.01'], 2, 'gen-key-1')
+    const options = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    expect((options.headers as Record<string, string>)['idempotency-key']).toBe(
+      'gen-key-1',
+    )
+    const body = JSON.parse(options.body as string)
+    expect(body).toEqual({
+      l3_codes: ['P01.01.01'],
+      expected_revision: 2,
     })
   })
 

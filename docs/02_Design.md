@@ -294,8 +294,8 @@ Gap 生成与计划创建时点：
 - 被选 L3 的 current_level=null（未填写）、缺计划季度/月份或缺少计划依据快照（v0009 捕获）都会阻断整批生成；未选择的能力项不阻塞，可后续增量选择。缺少快照返回 422 `selection_validation_failed`，逐 L3 给出 `planning_snapshot_missing` 及处置提示，绝不误报「已存在」。
 - 标准目标为「不适用」的 L3 不参与 Gap、不生成 Gap 记录、不能成为计划候选，也不允许个人调整改变适用范围。
 - 批次原子性：任一所选 L3 校验不合格时整批零写入（assessment、history、plan、tasks 均不变）。
-- 乐观并发：生成请求必须携带 `expected_revision`；服务端锁定 Assessment 行后比对，过期（已被其他保存/生成推进）返回 409，零写入。成功响应携带最新 `revision` 与逐 L3 的 `items[]`（created / existing），前端据此如实刷新。
-- 幂等性：同一 Member / 年度 / L3 重复生成时，已存在的计划项不再重复创建（0 新增）。请求可携带 `Idempotency-Key`：同 key 同请求（assessment + l3_codes + expected_revision 指纹）重放返回首次响应（`idempotent_replayed=true`）且不重复写入；同 key 不同请求返回 409。并发同 key 请求由 Assessment 行锁串行化，恰好写入一份。
+- 乐观并发：生成请求必须携带 `expected_revision`；服务端锁定 Assessment 行后比对，过期（已被其他保存/生成推进）返回 409，零写入。有新增的计划项时，同一事务内恰好推进一次 Assessment `revision`（仅当本批存在写入）；纯已存在批保持 `revision` 不变，重放不再推进。成功响应携带最新 `revision` 与逐 L3 的 `items[]`（created / existing），前端据此如实刷新。
+- 幂等性：同一 Member / 年度 / L3 重复生成时，已存在的计划项不再重复创建（0 新增）。请求可携带 `Idempotency-Key`：同 key 同请求（assessment + l3_codes + expected_revision 指纹）重放返回首次响应（`idempotent_replayed=true`）且不重复写入，也不再次推进 revision；同 key 不同请求返回 409。并发同 key 请求由 Assessment 行锁串行化，恰好写入一份。前端对每次可见生成尝试生成一个 key：相同 codes/revision 的网络失败重试复用该 key（幂等重放），选择变更或收到确定响应（成功或任意 HTTP 错误）后轮换。
 - 同一 Member 同一年度始终复用一份年度成长计划；计划保留首次创建它的来源评估，后续生成新增的计划项分别保留各自准确的来源评估与明细。不得覆盖已经开始、完成或已有执行记录的计划项和任务。
 - 新流程不创建 Assessment Review；历史 Review 记录保持只读兼容，仅供追溯。
 

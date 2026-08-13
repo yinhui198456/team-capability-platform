@@ -63,7 +63,7 @@ Assessment Detail 可记录：
 
 计划字段的中间状态可保存：正 Gap 行允许「已纳入计划（include_in_plan=TRUE）但未填优先级/计划月份」等部分填写并原样保留（v0015 起）；互斥冲突（暂缓+纳入）与季度-月份矛盾在保存时即拒绝。计划时间无任何默认值：显式生成学习任务（#178）时对每个选中 L3 逐项校验计划季度与计划月份，任一选中项缺失则整批拒绝并逐项提示；评级保存/提交不校验计划时间，也不生成或复用任何学习任务（提交门禁只校验评估结果）。
 
-显式生成（#178）为并发安全写操作：请求携带 `expected_revision`，服务端锁定 Assessment 行后校验版本，过期返回 409 且零写入；同时对整个选中批次校验计划依据快照（v0009），任一选中 L3 缺快照则返回 422 `selection_validation_failed`（逐 L3 给出 `planning_snapshot_missing`）并整批零写入，绝不误报「已存在」。请求可携带 `Idempotency-Key`（写入 `assessment_idempotency_key`）：同 key 同请求重放返回首次响应（`idempotent_replayed=true`）且不重复写入，同 key 不同请求返回 409；并发同 key 请求由 Assessment 行锁串行化，恰好创建一个计划项与学习任务。成功响应逐 L3 区分 `created` / `existing` 并返回最新 `revision` 与中文摘要。
+显式生成（#178）为并发安全写操作：请求携带 `expected_revision`，服务端锁定 Assessment 行后校验版本，过期返回 409 且零写入；同时对整个选中批次校验计划依据快照（v0009），任一选中 L3 缺快照则返回 422 `selection_validation_failed`（逐 L3 给出 `planning_snapshot_missing`）并整批零写入，绝不误报「已存在」。请求可携带 `Idempotency-Key`（写入 `assessment_idempotency_key`）：同 key 同请求重放返回首次响应（`idempotent_replayed=true`）且不重复写入、不再次推进 revision，同 key 不同请求返回 409；并发同 key 请求由 Assessment 行锁串行化，恰好创建一个计划项与学习任务。本批有新增计划项时在同一事务内恰好推进一次 Assessment `revision`（返回最新值供前端继续携带）；纯已存在批保持 `revision` 不变。成功响应逐 L3 区分 `created` / `existing` 并返回最新 `revision` 与中文摘要。
 
 计划候选由系统校验：未评估、不适用、无最终目标、Gap 不为正、兼容错误或依据不合格时主动提交候选属于非法请求；合法修改使已有 Gap 归零或不再适用时，系统在同一事务自动取消候选并同步 Gap。
 
@@ -242,7 +242,7 @@ Assessment Detail 可记录：
 | 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 首次来源 Assessment；每个 Plan Item 另行记录自己的来源 Assessment Detail |
 | 唯一性约束 | 同一 Member、同一年度唯一 |
 | 维护角色 | Member |
-| 生成约束 | Member 按所选 L3 生成学习任务时原子生成（#178，选中 L3 须显式填写计划季度与计划月份，且该 L3 存在计划依据快照，无默认值；任一选中项缺失则整批拒绝）；同一 Member 同一年度复用一份正式/可用计划，后续生成只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。生成请求以 `expected_revision` 做乐观并发控制（过期 409、零写入），可携带 `Idempotency-Key` 保证同请求重放幂等（同 key 同请求返回首次响应，同 key 不同请求 409）。 |
+| 生成约束 | Member 按所选 L3 生成学习任务时原子生成（#178，选中 L3 须显式填写计划季度与计划月份，且该 L3 存在计划依据快照，无默认值；任一选中项缺失则整批拒绝）；同一 Member 同一年度复用一份正式/可用计划，后续生成只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。生成请求以 `expected_revision` 做乐观并发控制（过期 409、零写入），本批有新增时恰好推进一次 Assessment `revision`，纯已存在批保持不变；可携带 `Idempotency-Key` 保证同请求重放幂等（同 key 同请求返回首次响应且不推进 revision，同 key 不同请求 409）。 |
 
 ### 3.15 Plan Item
 

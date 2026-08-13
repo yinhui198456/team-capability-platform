@@ -460,17 +460,24 @@ def generate_plan_items_for_selection(
     Owns its transaction.  The assessment row is locked (FOR UPDATE) and its
     revision is compared to ``expected_revision`` — a mismatch raises
     ValueError("revision conflict") with zero writes (mapped to 409 by the
-    route).  Only the selected L3s are validated; unselected rows with
-    current_level=NULL never block.  Creates no Assessment Review and never
-    transitions the assessment status.  Idempotent per
-    (annual_growth_plan_id, l3_code): existing plan items are reused,
-    existing tasks and their logs/evidence are untouched.
+    route).  A batch that creates at least one plan item/task advances the
+    authoritative assessment revision exactly once in the same transaction
+    (the response and the stored idempotency response carry the new
+    revision); an existing-only batch performs no effective write and keeps
+    the revision (repair-noop convention).  Only the selected L3s are
+    validated; unselected rows with current_level=NULL never block.  Creates
+    no Assessment Review and never transitions the assessment status.
+    Idempotent per (annual_growth_plan_id, l3_code): existing plan items are
+    reused, existing tasks and their logs/evidence are untouched.
 
     ``idempotency_key`` (optional, Idempotency-Key header) binds to the
     request identity via a fingerprint; the check runs after the row lock so
-    concurrent same-key requests serialize and exactly one writes.  A replay
-    returns the stored response with ``idempotent_replayed=True``; reusing a
-    key for a different request raises ValueError("idempotency key reused").
+    concurrent same-key requests serialize and exactly one writes.  The
+    idempotency pre-check runs BEFORE the revision CAS so a same-key replay
+    of the original payload is served with the stored response (revision
+    included) without advancing the revision again.  A replay returns the
+    stored response with ``idempotent_replayed=True``; reusing a key for a
+    different request raises ValueError("idempotency key reused").
 
     Returns:
     {
@@ -500,13 +507,13 @@ def generate_plan_items_for_selection(
         ).fetchone()
         if assessment is None:
             raise ValueError(f"Assessment {assessment_id} not found")
-        if int(assessment[3]) != expected_revision:
-            raise ValueError("revision conflict")
 
         # Idempotency (established convention, cf. create_assessment): the
         # key is scoped to the member and fingerprint-binds the request
         # identity; the pre-check runs under the row lock so a concurrent
-        # same-key request replays instead of double-writing.
+        # same-key request replays instead of double-writing.  It precedes
+        # the revision CAS so a replay of the original payload is served
+        # even after that payload advanced the revision.
         fingerprint: str | None = None
         if idempotency_key is not None:
             fingerprint = hashlib.sha256(
@@ -530,8 +537,11 @@ def generate_plan_items_for_selection(
             ).fetchone()
             if stored is not None:
                 if stored[0] != fingerprint:
-                    raise ValueError("idempotency key reused")
+                    raise ValueError("idempotency key reused") from None
                 return {**stored[1], "idempotent_replayed": True}
+
+        if int(assessment[3]) != expected_revision:
+            raise ValueError("revision conflict")
 
         details = _validate_selected_details(
             connection, assessment_id, l3_codes, assessment[2]
@@ -558,12 +568,24 @@ def generate_plan_items_for_selection(
         annual_plan_id = _get_or_create_annual_plan(
             connection, assessment_id, assessment
         )
+        # Issue #178: a batch that creates items advances the authoritative
+        # assessment revision exactly once, in this same transaction, so the
+        # generation writes are visible to optimistic version sequencing.
+        # The row is locked, so reading assessment[3] is race-free.
+        if created_items > 0:
+            connection.execute(
+                "UPDATE assessment SET revision = revision + 1 WHERE id = %s",
+                (assessment_id,),
+            )
+            new_revision = int(assessment[3]) + 1
+        else:
+            new_revision = int(assessment[3])
         response = {
             "annual_plan_id": annual_plan_id,
             "created_items": created_items,
             "skipped_items": skipped_items,
             "created_tasks": created_tasks,
-            "revision": int(assessment[3]),
+            "revision": new_revision,
             "items": items,
             "summary": (
                 f"本批新建 {created_items} 个计划项、{created_tasks} 个学习任务，"

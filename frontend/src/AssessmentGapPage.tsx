@@ -626,6 +626,8 @@ export function AssessmentGapPage() {
     }
   }
 
+  const generationKeyRef = useRef<{ key: string; payload: string } | null>(null)
+
   async function handleGeneratePlanItems() {
     if (!assessment || selectedCodes.size === 0) return
     setError('')
@@ -675,11 +677,26 @@ export function AssessmentGapPage() {
       // Issue #178: generate/reuse learning tasks for exactly the selected,
       // filled L3 rows.  Unselected rows (even unfilled ones) never block;
       // the server validates only the selection, atomically and idempotently.
+      // One Idempotency-Key per visible generation attempt: retained for a
+      // retry of the same codes/revision after an ambiguous network failure,
+      // rotated once the payload changes or a definitive response arrives
+      // (the catch below clears it for any HTTP response).
+      const codes = [...selectedCodes].sort()
+      const keyPayload = `${codes.join('|')}|${revision}`
+      let idempotencyKey: string | undefined
+      if (generationKeyRef.current?.payload === keyPayload) {
+        idempotencyKey = generationKeyRef.current.key
+      } else {
+        idempotencyKey = newIdempotencyKey()
+        generationKeyRef.current = { key: idempotencyKey, payload: keyPayload }
+      }
       const result = await generatePlanItems(
         assessment.id,
-        [...selectedCodes],
+        codes,
         revision,
+        idempotencyKey,
       )
+      generationKeyRef.current = null
       loadAssessment(await getAssessment(assessment.id))
 
       const planGen = result.plan_generation
@@ -693,6 +710,10 @@ export function AssessmentGapPage() {
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
+      // Any HTTP response is definitive (success or error): the key rotates.
+      // Only an ambiguous network failure (no status) retains it so a retry
+      // of the same payload replays instead of double-writing.
+      if (status != null) generationKeyRef.current = null
       setError(
         status === 403
           ? '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。'

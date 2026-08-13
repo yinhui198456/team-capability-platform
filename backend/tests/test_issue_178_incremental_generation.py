@@ -401,6 +401,8 @@ def test_repeat_generation_idempotent_preserves_existing_data(review_schema):
         review_schema, assessment_id, [L3_A], expected_revision=1
     )
     assert first["created_items"] == 1
+    # A batch that creates items advances the authoritative revision once.
+    assert first["revision"] == 2
 
     plans = _plan_ids(review_schema, member_id)
     task = review_schema.execute(
@@ -424,20 +426,23 @@ def test_repeat_generation_idempotent_preserves_existing_data(review_schema):
         (task_id, member_id),
     )
 
-    # Repeat the same selection: all skipped, nothing duplicated.
+    # Repeat the same selection: all skipped, nothing duplicated; the
+    # existing-only batch keeps the advanced revision.
     repeat = generate_plan_items_for_selection(
-        review_schema, assessment_id, [L3_A], expected_revision=1
+        review_schema, assessment_id, [L3_A], expected_revision=2
     )
     assert repeat["created_items"] == 0
     assert repeat["skipped_items"] == 1
     assert repeat["created_tasks"] == 0
+    assert repeat["revision"] == 2
 
     # Incremental addition of another L3 only adds that one.
     grow = generate_plan_items_for_selection(
-        review_schema, assessment_id, [L3_A, L3_B], expected_revision=1
+        review_schema, assessment_id, [L3_A, L3_B], expected_revision=2
     )
     assert grow["created_items"] == 1
     assert grow["created_tasks"] == 1
+    assert grow["revision"] == 3
 
     assert _item_task_counts(review_schema, member_id) == (2, 2)
 
@@ -713,7 +718,7 @@ def test_generate_success_reports_per_l3_status_revision_and_summary(review_sche
     first = generate_plan_items_for_selection(
         review_schema, assessment_id, [L3_A, L3_B], expected_revision=1
     )
-    assert first["revision"] == 1
+    assert first["revision"] == 2
     assert sorted(first["items"], key=lambda i: i["l3_code"]) == [
         {"l3_code": L3_A, "status": "created"},
         {"l3_code": L3_B, "status": "created"},
@@ -723,11 +728,13 @@ def test_generate_success_reports_per_l3_status_revision_and_summary(review_sche
     assert first["created_tasks"] == 2
     assert first["summary"]
 
-    # Repeat: every L3 truthfully reported as existing, counts intact.
+    # Repeat: every L3 truthfully reported as existing, counts intact; the
+    # existing-only batch performs no effective write, so the revision that
+    # the first generation advanced is preserved.
     repeat = generate_plan_items_for_selection(
-        review_schema, assessment_id, [L3_A, L3_B], expected_revision=1
+        review_schema, assessment_id, [L3_A, L3_B], expected_revision=2
     )
-    assert repeat["revision"] == 1
+    assert repeat["revision"] == 2
     assert sorted(repeat["items"], key=lambda i: i["l3_code"]) == [
         {"l3_code": L3_A, "status": "existing"},
         {"l3_code": L3_B, "status": "existing"},
@@ -795,9 +802,11 @@ def test_generate_concurrent_same_key_creates_exactly_one_item(review_schema):
 
 
 def test_generate_concurrent_distinct_requests_reuse_single_item(review_schema):
-    """Two concurrent requests WITHOUT a key for the same L3: the assessment
-    row lock serializes them — one creates, the other reuses; a single plan
-    item/task remains (create-or-reuse is concurrency-safe)."""
+    """Two concurrent requests WITHOUT a key for the same L3: the row lock
+    serializes them — the winner creates and advances the revision, the
+    loser's stale expected_revision is rejected (409-style conflict, no 500);
+    a retry with the latest revision reuses the single item (create-or-reuse
+    stays concurrency-safe)."""
     import threading
 
     import psycopg as psycopg_mod
@@ -837,14 +846,149 @@ def test_generate_concurrent_distinct_requests_reuse_single_item(review_schema):
     for thread in threads:
         thread.join(timeout=30)
 
-    assert errors == []
     assert all(not thread.is_alive() for thread in threads)
-    assert len(results) == 2
-    assert sorted(r["items"][0]["status"] for r in results) == [
-        "created",
-        "existing",
-    ]
+    # Exactly one request applied: it created the item and advanced revision.
+    assert len(results) == 1
+    assert results[0]["items"][0]["status"] == "created"
+    assert results[0]["revision"] == 2
+    assert len(errors) == 1
+    assert str(errors[0]) == "revision conflict"
     assert _item_task_counts(review_schema, member_id) == (1, 1)
+
+    # The loser retries with the latest revision: clean reuse, no extra write.
+    retry = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=2
+    )
+    assert retry["items"] == [{"l3_code": L3_A, "status": "existing"}]
+    assert retry["revision"] == 2
+    assert _item_task_counts(review_schema, member_id) == (1, 1)
+
+
+def _assessment_revision(connection: psycopg.Connection, assessment_id: int) -> int:
+    row = connection.execute(
+        "SELECT revision FROM assessment WHERE id = %s", (assessment_id,)
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_generate_created_batch_advances_revision_once(review_schema):
+    """A batch that creates plan items advances the authoritative assessment
+    revision exactly once and the response carries the new revision."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-revadv",
+        details=[(L3_A, 1, 3, 2), (L3_B, 1, 3, 2)],
+    )
+    assert _assessment_revision(review_schema, assessment_id) == 1
+
+    first = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=1
+    )
+    assert first["revision"] == 2
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+    second = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_B], expected_revision=2
+    )
+    assert second["revision"] == 3
+    assert _assessment_revision(review_schema, assessment_id) == 3
+
+
+def test_generate_existing_only_batch_keeps_revision(review_schema):
+    """Re-generating an already-existing selection performs no effective
+    write, so the revision stays put (repair-noop convention: no effective
+    change, no bump)."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-revkeep",
+        details=[(L3_A, 1, 3, 2)],
+    )
+
+    first = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=1
+    )
+    assert first["created_items"] == 1
+    assert first["revision"] == 2
+
+    repeat = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=2
+    )
+    assert repeat["created_items"] == 0
+    assert repeat["skipped_items"] == 1
+    assert repeat["revision"] == 2
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+
+def test_generate_same_key_replay_keeps_revision(review_schema):
+    """Same-key replay returns the stored response with the revision captured
+    at apply time and must not advance the revision again."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-revreplay",
+        details=[(L3_A, 1, 3, 2)],
+    )
+
+    first = generate_plan_items_for_selection(
+        review_schema,
+        assessment_id,
+        [L3_A],
+        expected_revision=1,
+        idempotency_key="gen-rev-1",
+    )
+    assert first["revision"] == 2
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+    replay = generate_plan_items_for_selection(
+        review_schema,
+        assessment_id,
+        [L3_A],
+        expected_revision=1,
+        idempotency_key="gen-rev-1",
+    )
+    assert replay["idempotent_replayed"] is True
+    assert replay["revision"] == 2
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+
+def test_generate_stale_old_revision_conflicts_after_generation(review_schema):
+    """After a generation advanced the revision, a request carrying the
+    pre-generation revision (fresh key) is rejected with a conflict and zero
+    writes — a stale operation cannot ride the old revision."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-revstale",
+        details=[(L3_A, 1, 3, 2)],
+    )
+
+    generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=1
+    )
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+    try:
+        generate_plan_items_for_selection(
+            review_schema,
+            assessment_id,
+            [L3_A],
+            expected_revision=1,
+            idempotency_key="gen-rev-stale",
+        )
+    except ValueError as exc:
+        assert str(exc) == "revision conflict"
+    else:
+        raise AssertionError("expected revision conflict")
+
+    assert _item_task_counts(review_schema, member_id) == (1, 1)
+    assert _assessment_revision(review_schema, assessment_id) == 2
 
 
 def _create_http_draft(
@@ -1072,3 +1216,59 @@ def test_http_generate_concurrent_same_key_no_500_single_item(review_schema):
         (member_id,),
     ).fetchone()[0]
     assert (int(items), int(tasks)) == (1, 1)
+
+
+def test_http_generate_advances_revision_and_latest_state(review_schema):
+    """HTTP contract: a generation that creates items advances the assessment
+    revision (visible via GET, so the frontend state uses the latest) and a
+    same-key replay returns that same revision without advancing again."""
+    from tests.test_annual_plan_gate import _request
+
+    member_id, assessment_id, cookies = _create_http_draft(
+        review_schema, "tcp178-httprev"
+    )
+    assert _assessment_revision(review_schema, assessment_id) == 2
+
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": ["P01-L2A-L3A"], "expected_revision": 2},
+        cookies=cookies,
+        extra_headers={"idempotency-key": "http-gen-rev-1"},
+    )
+    assert status == 200
+    assert body["plan_generation"]["revision"] == 3
+    assert body["plan_generation"]["idempotent_replayed"] is False
+    assert _assessment_revision(review_schema, assessment_id) == 3
+
+    # Frontend refresh reads the latest revision after generation.
+    status, draft, _ = _request(
+        "GET", f"/api/assessments/{assessment_id}", cookies=cookies
+    )
+    assert status == 200
+    assert draft["revision"] == 3
+
+    # Same-key replay returns the stored revision, no further advance.
+    status, replay, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": ["P01-L2A-L3A"], "expected_revision": 2},
+        cookies=cookies,
+        extra_headers={"idempotency-key": "http-gen-rev-1"},
+    )
+    assert status == 200
+    assert replay["plan_generation"]["idempotent_replayed"] is True
+    assert replay["plan_generation"]["revision"] == 3
+    assert _assessment_revision(review_schema, assessment_id) == 3
+
+    # A stale pre-generation revision is now a real 409 after generation.
+    status, stale, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": ["P01-L2A-L3A"], "expected_revision": 1},
+        cookies=cookies,
+    )
+    assert status == 409
+    assert stale == {"detail": "revision conflict"}
+    assert _item_task_counts(review_schema, member_id) == (1, 1)
+    assert _assessment_revision(review_schema, assessment_id) == 3
