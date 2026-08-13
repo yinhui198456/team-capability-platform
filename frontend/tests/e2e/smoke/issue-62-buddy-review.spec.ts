@@ -194,10 +194,7 @@ async function fillSelectionOnly(
     // Derive a current level that guarantees a positive gap against the
     // frozen scope target, so the plan choice is not auto-cleared.
     const target = snapshot.target_level ?? pick.target_level
-    const currentLevel = Math.min(
-      pick.current_level,
-      Math.max(0, target - 1),
-    )
+    const currentLevel = Math.min(pick.current_level, Math.max(0, target - 1))
     return {
       l3_code: snapshot.l3_code,
       l3_node_id: snapshot.l3_node_id,
@@ -901,9 +898,7 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
 
     await page.goto(`/capability/assessment?year=${year}`)
     // A dirty edit in the UI: generation first persists the changed row.
-    await page
-      .getByLabel(`当前等级 ${picked.l3_code}`)
-      .selectOption('0')
+    await page.getByLabel(`当前等级 ${picked.l3_code}`).selectOption('0')
     // Meanwhile another writer bumps the draft revision behind the page.
     const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
     const fresh = await getResp.json()

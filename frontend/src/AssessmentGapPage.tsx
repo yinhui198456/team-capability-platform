@@ -692,16 +692,17 @@ export function AssessmentGapPage() {
           ? '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。'
           : status === 409
             ? '数据冲突：草稿已被其他操作更新，请重新加载后再生成。'
-            : detail &&
-                Array.isArray((detail as { issues?: unknown }).issues)
+            : detail && Array.isArray((detail as { issues?: unknown }).issues)
               ? (() => {
                   // Corrected #178 contract: batch plan-time rejection lists
                   // every selected L3 missing its plan quarter/month, in
                   // Chinese, with how to fix each.  Selection and all entered
                   // inputs stay intact for retry.
-                  const issues = (detail as {
-                    issues: Array<{ l3_code: string; reason: string }>
-                  }).issues
+                  const issues = (
+                    detail as {
+                      issues: Array<{ l3_code: string; reason: string }>
+                    }
+                  ).issues
                   for (const issue of issues) {
                     const target = details.find(
                       (item) => item.l3_code === issue.l3_code,
@@ -715,17 +716,17 @@ export function AssessmentGapPage() {
                     )
                     .join('\n')
                 })()
-            : isStructuredAssessmentError(detail)
-              ? (() => {
-                  const target = details.find(
-                    (item) => item.l3_code === detail.l3_code,
-                  )
-                  if (target) locateDetail(target)
-                  return assessmentErrorCopy(detail.reason)
-                })()
-              : err instanceof Error
-                ? chineseMessage(err.message, '生成失败，请重新加载后再试。')
-                : '生成失败',
+              : isStructuredAssessmentError(detail)
+                ? (() => {
+                    const target = details.find(
+                      (item) => item.l3_code === detail.l3_code,
+                    )
+                    if (target) locateDetail(target)
+                    return assessmentErrorCopy(detail.reason)
+                  })()
+                : err instanceof Error
+                  ? chineseMessage(err.message, '生成失败，请重新加载后再试。')
+                  : '生成失败',
       )
     }
   }

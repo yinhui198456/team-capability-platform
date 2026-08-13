@@ -35,9 +35,7 @@ test.describe('Issue #52 P1 regressions', () => {
     await expect(
       page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
-    await expect(
-      page.getByRole('link', { name: '前往成果验收' }),
-    ).toBeVisible()
+    await expect(page.getByRole('link', { name: '前往成果验收' })).toBeVisible()
     // The legacy workspace DTO (unmapped historic L3 included) renders nowhere.
     await expect(page.getByText('适用 3')).toHaveCount(0)
     await expect(page.getByText('未映射历史项')).toHaveCount(0)
@@ -52,9 +50,7 @@ test.describe('Issue #52 P1 regressions', () => {
     await expect(
       page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
-    await expect(
-      page.getByRole('button', { name: /^member / }),
-    ).toBeVisible()
+    await expect(page.getByRole('button', { name: /^member / })).toBeVisible()
   })
 
   test('labels team aggregates as L3 mastery rather than job-level attainment', async ({

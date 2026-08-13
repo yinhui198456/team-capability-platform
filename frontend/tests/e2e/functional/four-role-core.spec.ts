@@ -61,9 +61,7 @@ test.describe('four-role core read paths', () => {
     await expect(
       page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
-    await expect(
-      page.getByRole('link', { name: '前往成果验收' }),
-    ).toBeVisible()
+    await expect(page.getByRole('link', { name: '前往成果验收' })).toBeVisible()
 
     // Legacy assessment-review alias still resolves to the Buddy board.
     await page.goto('/mentoring/assessment-review')
