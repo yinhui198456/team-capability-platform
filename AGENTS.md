@@ -26,5 +26,6 @@
 - Sol 与 Luna 保持只读：Sol 负责需求、审查和门禁；Luna 只做低成本状态核对。两者不得修改产品代码、运行状态型测试、操作容器或数据库。
 - Terra 是唯一写入者，只能通过带全局 `flock` 的 TCP worker 启动器进入一个明确的 Issue worktree；YOLO 仅可用于该独立 Terra 单次任务。
 - 同一时间只能有一个代码写入者和一个状态型测试/数据库栈。Claude Code 作为回退执行者时，不得与 Terra 同时写同一 worktree。
+- 共享 Linux 账号下禁止使用 `pkill`、`killall` 或模糊进程匹配清理 Codex；生命周期操作必须先核对归属，并精确指向本试点的 tmux session 或 PID。
 - 当前 Issue、SHA、检查状态和临时授权不写入本文件；以 GitHub Issue/PR/Actions 和当前任务合同为准。
 - 禁止自动生产、Ready、merge、close。浏览器/UAT、共享数据库写入和破坏性清理仍需当前任务合同明确授权。
