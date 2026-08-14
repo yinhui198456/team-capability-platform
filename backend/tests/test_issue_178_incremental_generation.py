@@ -197,9 +197,10 @@ def _set_plan_time(
 
 def test_selection_without_plan_time_rejected_atomically(review_schema):
     """A row filled with only the outcome levels (current_level/target — no
-    plan quarter/month ever picked, the #178 partial-save scenario) can never
-    generate: explicit generation rejects the batch with per-item plan-time
-    issues and zero writes.  No default quarter/month may ever be invented
+    plan month ever picked, the #178 partial-save scenario) can never
+    generate: explicit generation rejects the batch with per-item plan-month
+    issues and zero writes.  Quarter is internal derived data — never required
+    nor mentioned in user-facing validation; no default month may be invented
     (supersedes the pre-correction Q1/1 fallback contract)."""
     from app.planning.atomic_generation import (
         PlanTimeValidationError,
@@ -221,14 +222,8 @@ def test_selection_without_plan_time_rejected_atomically(review_schema):
         )
     except PlanTimeValidationError as exc:
         reasons = sorted((issue.reason, issue.l3_code) for issue in exc.issues)
-        assert reasons == [
-            ("plan_month_required", L3_A),
-            ("plan_quarter_required", L3_A),
-        ]
-        assert {issue.field for issue in exc.issues} == {
-            "plan_month",
-            "plan_quarter",
-        }
+        assert reasons == [("plan_month_required", L3_A)]
+        assert {issue.field for issue in exc.issues} == {"plan_month"}
     else:
         raise AssertionError("expected PlanTimeValidationError for NULL plan time")
 
@@ -242,9 +237,10 @@ def test_selection_without_plan_time_rejected_atomically(review_schema):
 
 
 def test_batch_missing_plan_time_lists_every_issue_zero_writes(review_schema):
-    """Multi-select batch: any selected row missing plan quarter and/or month
-    rejects the WHOLE batch — no partial writes even for complete rows — and
-    every missing field across every selected row is listed at once."""
+    """Multi-select batch: any selected row missing its plan month rejects the
+    WHOLE batch — no partial writes even for complete rows — and every missing
+    month across every selected row is listed at once.  A row with a valid
+    month but no explicit quarter is complete (quarter is derived internally)."""
     from app.planning.atomic_generation import (
         PlanTimeValidationError,
         generate_plan_items_for_selection,
@@ -261,7 +257,7 @@ def test_batch_missing_plan_time_lists_every_issue_zero_writes(review_schema):
     )
     _set_plan_time(review_schema, assessment_id, L3_A, "Q2", 5)  # complete
     _set_plan_time(review_schema, assessment_id, L3_B, "Q3", None)  # month missing
-    _set_plan_time(review_schema, assessment_id, L3_C, None, 8)  # quarter missing
+    _set_plan_time(review_schema, assessment_id, L3_C, None, 8)  # month only
 
     try:
         generate_plan_items_for_selection(
@@ -269,10 +265,8 @@ def test_batch_missing_plan_time_lists_every_issue_zero_writes(review_schema):
         )
     except PlanTimeValidationError as exc:
         reasons = sorted((issue.reason, issue.l3_code) for issue in exc.issues)
-        assert reasons == [
-            ("plan_month_required", L3_B),
-            ("plan_quarter_required", L3_C),
-        ]
+        assert reasons == [("plan_month_required", L3_B)]
+        assert {issue.field for issue in exc.issues} == {"plan_month"}
     else:
         raise AssertionError("expected PlanTimeValidationError for missing plan time")
 
@@ -303,6 +297,33 @@ def test_selection_with_explicit_plan_time_generates_exact_values(review_schema)
         (_plan_ids(review_schema, member_id)[0],),
     ).fetchone()
     assert item == ("Q2", 5, "中")
+
+
+def test_month_without_explicit_quarter_derives_quarter_internally(review_schema):
+    """#178: a selected L3 with a valid plan month and no explicit quarter is
+    accepted — plan_quarter is derived internally from the month, never a
+    required (or user-visible) input."""
+    from app.planning.atomic_generation import generate_plan_items_for_selection
+
+    member_id, assessment_id = _create_draft(
+        review_schema,
+        "tcp178-deriveq",
+        details=[(L3_A, 0, 2, 2)],
+    )
+    _set_plan_time(review_schema, assessment_id, L3_A, None, 5)
+
+    result = generate_plan_items_for_selection(
+        review_schema, assessment_id, [L3_A], expected_revision=1
+    )
+
+    assert result["created_items"] == 1
+    # Derived quarter stored on the plan item; month copied verbatim.
+    item = review_schema.execute(
+        "SELECT plan_quarter, plan_month FROM plan_item "
+        "WHERE annual_growth_plan_id=%s",
+        (_plan_ids(review_schema, member_id)[0],),
+    ).fetchone()
+    assert item == ("Q2", 5)
 
 
 def test_submit_path_skips_rows_without_plan_time(review_schema):

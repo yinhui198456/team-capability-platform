@@ -1339,7 +1339,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(screen.getByText('草稿已保存')).toBeTruthy()
   })
 
-  it('save 422 with structured reason shows Chinese copy and never raw English', async () => {
+  it('save 422 with unmapped reason falls back to Chinese copy, never raw English', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1376,9 +1376,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
     await waitFor(() =>
-      expect(
-        screen.getByText('计划季度与月份不一致，请重新选择计划月份'),
-      ).toBeTruthy(),
+      expect(screen.getByText('填写不完整，请按提示修正后再试')).toBeTruthy(),
     )
     expect(screen.queryByText(/invalid quarter-month/)).toBeNull()
   })

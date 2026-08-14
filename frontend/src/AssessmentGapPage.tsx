@@ -253,8 +253,6 @@ const ASSESSMENT_ERROR_COPY: Record<string, string> = {
   plan_decision_required: '该能力项存在正 Gap，请明确是否纳入年度计划',
   hold_plan_conflict: '已暂缓的能力项不能纳入年度计划，请先调整优先级',
   plan_time_required: '已纳入计划的能力项请选择计划月份',
-  plan_quarter_required:
-    '缺少计划季度：请在「纳入年度计划」选择"是"并填写计划月份',
   plan_month_required:
     '缺少计划月份：请在「纳入年度计划」选择"是"并填写计划月份',
   priority_not_applicable: '无正 Gap 的能力项不能设置优先级，已自动清除',
@@ -264,7 +262,6 @@ const ASSESSMENT_ERROR_COPY: Record<string, string> = {
   not_applicable_incomplete: '不适用项不应保留评估值，请检查后重试',
   compatibility_repair_required:
     '该能力项需先完成目标兼容性修复，请执行"修复草稿目标快照"',
-  invalid_quarter_month: '计划季度与月份不一致，请重新选择计划月份',
   hold_plan_mutex: '已暂缓的能力项不能纳入年度计划',
   requires_valid_priority: '纳入计划前请先选择优先级（高/中/低/暂缓）',
   requires_quarter_and_month: '已纳入计划的能力项请选择计划月份',

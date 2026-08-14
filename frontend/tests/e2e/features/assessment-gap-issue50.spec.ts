@@ -230,14 +230,15 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await page.getByLabel(`计划月份 ${picks[0].l3_code}`).fill('2026-05')
     await page.getByLabel(`纳入计划 ${picks[1].l3_code}`).selectOption('yes')
     await page.getByRole('button', { name: '生成学习任务' }).click()
-    // per-item Chinese error: the incomplete row is named for quarter AND
-    // month, with how to fix it
-    await expect(
-      page.getByText(`【${picks[1].l3_code}】缺少计划季度`),
-    ).toBeVisible()
+    // per-item Chinese error: the incomplete row is named for its missing
+    // plan month only (quarter is internal derived data, never user-facing),
+    // with how to fix it
     await expect(
       page.getByText(`【${picks[1].l3_code}】缺少计划月份`),
     ).toBeVisible()
+    await expect(
+      page.getByText(`【${picks[1].l3_code}】缺少计划季度`),
+    ).toHaveCount(0)
     // batch atomicity: the complete row got no task either
     const planAfter = await (
       await page.request.get('/api/planning/annual-plan?year=2026')

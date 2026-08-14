@@ -240,7 +240,7 @@ Issue #178 起：Member 在能力自评/Gap 页面将已填写的适用 L3（cur
   ```
 - 乐观并发：`expected_revision` 与 Assessment 当前 `revision` 不一致 → 409 `{"detail": "revision conflict"}`，零写入；本批有新增计划项时在同一事务内恰好推进一次 Assessment `revision`（纯已存在批保持不变，重放不推进），响应中的 `revision` 为最新值，供前端继续携带。
 - 幂等：同 `idempotency-key` 同请求（assessment_id + l3_codes + expected_revision 指纹，存入 `assessment_idempotency_key`）重放返回首次响应（`idempotent_replayed=true`），不重复写入、不推进 revision；同 key 不同请求 → 409 `{"detail": "idempotency key reused"}`。并发同 key 请求由 Assessment 行锁（SELECT ... FOR UPDATE）串行化。前端每次可见生成尝试生成一个 key（`frontend/src/assessment.ts:newIdempotencyKey`），相同 codes/revision 的不明确网络失败重试复用该 key，选择变更或收到确定响应（成功或任意 HTTP 错误）后轮换（`AssessmentGapPage.tsx` 的 `generationKeyRef`）。
-- 缺失快照：任一选中 L3 缺少计划依据快照（v0009 `capability_standard_planning_snapshot`）→ 422 `{"detail": {"code": "selection_validation_failed", "issues": [{l3_code, l3_node_id, field: "planning_snapshot", reason: "planning_snapshot_missing", message}]}}`，整批零写入；计划季度/月份缺失同样整批拒绝（逐 L3 issues）。
+- 缺失快照：任一选中 L3 缺少计划依据快照（v0009 `capability_standard_planning_snapshot`）→ 422 `{"detail": {"code": "selection_validation_failed", "issues": [{l3_code, l3_node_id, field: "planning_snapshot", reason: "planning_snapshot_missing", message}]}}`，整批零写入；计划月份缺失同样整批拒绝（逐 L3 issues；季度是内部派生数据，不再要求也不提示显式季度）。
 - 旧版草稿（无 scope 快照）：选中行 `scope_type` 为 NULL → 422 `{"detail": {"code": "assessment_validation_failed", "reason": "legacy_scope_required", "field": "scope_type", …}}`，零写入；计划项写入需要作用域来源快照，旧版草稿的受支持路径是只读的 draft-target-repair 修复流程，而非生成。
 - 原子生成函数：`backend/app/planning/atomic_generation.py:generate_plan_items_for_selection(connection, assessment_id, l3_codes, *, expected_revision, idempotency_key=None)`。
 

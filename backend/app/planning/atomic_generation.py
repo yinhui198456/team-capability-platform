@@ -21,6 +21,17 @@ import psycopg
 from ..assessment.repository import AssessmentValidationError
 
 
+def _month_to_quarter(month: int) -> str:
+    """Issue #178: quarter is internal derived data, never a user input."""
+    if month <= 3:
+        return "Q1"
+    if month <= 6:
+        return "Q2"
+    if month <= 9:
+        return "Q3"
+    return "Q4"
+
+
 class PlanTimeValidationError(AssessmentValidationError):
     """Batch plan-time validation failure (Issue #178 corrected contract).
 
@@ -169,11 +180,15 @@ def _create_plan_item_and_task(
     if priority is None:
         priority = "中"
 
-    # Issue #178 corrected contract: never invent a plan quarter/month.
-    # Rows without explicit plan time are skipped here; the explicit
-    # generation path rejects such selections up front (PlanTimeValidationError)
-    # and the approval path is guarded by validate_plan_selection.
-    if plan_quarter is None or plan_month is None:
+    # Issue #178 corrected contract: plan month is the only plan-time input —
+    # a missing month is never invented, while a missing quarter is derived
+    # internally from the month (quarter is never a user input).  Rows
+    # without a plan month are skipped here; the explicit generation path
+    # rejects such selections up front (PlanTimeValidationError) and the
+    # approval path is guarded by validate_plan_selection.
+    if plan_month is not None and plan_quarter is None:
+        plan_quarter = _month_to_quarter(plan_month)
+    if plan_month is None:
         return (0, 0)
 
     # Get planning snapshot for this L3 capability
@@ -399,23 +414,14 @@ def _validate_selected_details(
     )
 
     # Plan-time completeness (corrected #178 contract): every selected L3 must
-    # carry an explicit plan quarter AND month — no default quarter/month may
-    # be invented.  Collect every missing field across the whole selection so
-    # the member sees each L3 and what to fill in one response.
+    # carry an explicit plan month — quarter is internal derived data, never
+    # required nor mentioned in user-facing validation, and no default month
+    # may be invented.  Collect every missing month across the whole selection
+    # so the member sees each L3 and what to fill in one response.
     plan_time_issues: list[AssessmentValidationError] = []
     for detail in details:
         code = detail[1]
         l3_node_id = detail[8]
-        if detail[6] is None:
-            plan_time_issues.append(
-                AssessmentValidationError(
-                    code,
-                    "plan_quarter_required",
-                    f"assessment detail {code} requires an explicit plan quarter",
-                    l3_node_id=l3_node_id,
-                    field="plan_quarter",
-                )
-            )
         if detail[7] is None:
             plan_time_issues.append(
                 AssessmentValidationError(
