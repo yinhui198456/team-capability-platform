@@ -1,0 +1,4 @@
+interface:
+  display_name: "TCP UAT Execution"
+  short_description: "Run authorized TCP browser UAT safely"
+  default_prompt: "Use $tcp-uat-execution to execute this authorized TCP UAT."

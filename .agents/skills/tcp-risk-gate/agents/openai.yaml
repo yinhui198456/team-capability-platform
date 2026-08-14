@@ -1,0 +1,4 @@
+interface:
+  display_name: "TCP Risk Gate"
+  short_description: "Gate high-risk TCP changes safely"
+  default_prompt: "Use $tcp-risk-gate to validate this high-risk TCP change before delivery."

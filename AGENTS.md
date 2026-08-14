@@ -1,6 +1,20 @@
 # Team Capability Platform Delivery Rules
 
-本文件补充工作区 `../AGENTS.md` 和项目 `CLAUDE.md`；不重复其通用规则。
+本文件是 Codex 在本仓库的完整项目指令；`CLAUDE.md` 仅供 Claude Code 回退使用。
+
+## 产品与权威来源
+
+- TCP 不是 LMS、考试、课程管理或绩效系统；所有功能服务于：Capability Model → Assessment → Gap Analysis → Growth Plan → Learning Task → Evidence → Buddy Review → Capability Profile。
+- 权威顺序：`capability-model/`（业务规则）→ `docs/`（`01_Product.md`、`02_Design.md`、`03_Data.md`、`04_UI.md`、`05_Development.md`）→ `backend/` 与 `frontend/`。代码不得反向定义设计；规则缺失时停止并提问。
+- 固定角色：Member、Buddy、Leader、Admin；固定名称：Growth Plan、Learning Task、Evidence、Buddy Review、Capability Profile。不得猜测业务规则、增加角色或核心业务对象。
+
+## 布局与交付
+
+- `backend/` 是 FastAPI/SQLAlchemy 与 pytest；迁移在 `backend/app/migrations/versions/`，由 `runner.py` 顺序注册。`frontend/` 是 React/TypeScript/Ant Design Pro，Vitest 测试与源码同置，Playwright 在 `frontend/tests/e2e/`。`docs/` 是设计与验收映射；`runtime/` 不是事实来源；`compose.yaml` 仅供本地开发。
+- 后端命令（在 `backend/`）：`ruff check app tests && black --check app tests`、`pytest tests -q`、`pytest tests/test_<module>.py -v`。前端命令（在 `frontend/`）：`npm test`、`npm run test:e2e`，以及项目的 eslint/Prettier 脚本。
+- 先理解、再设计、后实现；设计变更先更新 Markdown。以最小能产生可见结果的改动交付，不重构目录，也不添加“以后可能需要”的抽象。
+- 一次仅一名写入者；提交、推送、PR、UAT 或部署仅在实时任务合同明确授权时执行。提交前核对本仓库 `origin`；不得 force-push 或跨 Issue/分支/运行时对象操作。
+- 遇到凭据/MFA 缺失、疑似生产、删除/重置/恢复、目标或所有权不明、业务规则不明确、范围扩张或配置模式无法验证时停止并询问。绝不自动 Ready、merge、close 或发布。
 
 ## UI/UX 验收
 
