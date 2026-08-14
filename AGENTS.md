@@ -25,6 +25,7 @@
 - Sol 控制者、Luna 监控者与 Terra 执行者必须作为独立 Codex 进程运行；禁止从开启 YOLO 的父会话派生子 Agent。
 - Sol 与 Luna 保持只读：Sol 负责需求、审查和门禁；Luna 只做低成本状态核对。两者不得修改产品代码、运行状态型测试、操作容器或数据库。
 - Luna 的常态监控由 `systemd --user` timer 调用独立、临时、只读的 Luna `codex exec --ephemeral`；持久 Luna TUI 仅用于明确的人工诊断，不作为默认常驻进程。
+- 每个自动化任务合同必须明确目标、允许写入路径、允许检查、commit/push 授权、停止条件和通知目标；合同缺失时，Terra 不得启动。
 - Terra 是唯一写入者，只能通过带全局 `flock` 的 TCP worker 启动器进入一个明确的 Issue worktree；YOLO 仅可用于该独立 Terra 单次任务。
 - 同一时间只能有一个代码写入者和一个状态型测试/数据库栈。Claude Code 作为回退执行者时，不得与 Terra 同时写同一 worktree。
 - 共享 Linux 账号下禁止使用 `pkill`、`killall` 或模糊进程匹配清理 Codex；生命周期操作必须先核对归属，并精确指向本试点的 tmux session 或 PID。
