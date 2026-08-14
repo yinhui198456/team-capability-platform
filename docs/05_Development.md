@@ -211,7 +211,7 @@
 
 Issue #82 实施后，Member 提交自评时，系统在单一事务中原子生成：Gap 分析 → 年度成长计划（若不存在）→ 计划项（标记为「纳入计划」的 Gap）→ 学习任务（1:1）。Buddy 复核结果作为反馈，不阻塞计划生成。
 
-Issue #178 起：Member 在能力自评/Gap 页面选择已填写的适用 L3（current_level 0～5，含 0）后生成，批次原子（任一不合格整批零写入）、重复生成幂等；未选择项不阻塞，可增量选择；不创建 Assessment Review。提交自评写路径已退役：`POST /api/assessments/{assessment_id}/submit` 统一返回 `422 {"code": "legacy_assessment_submit_disabled", …}`，零写入（不创建 Review、不改变状态、不生成或复用任何计划/任务）；评级仅通过草稿保存落盘。
+Issue #178 起：Member 在能力自评/Gap 页面将已填写的适用 L3（current_level 0～5，含 0）的「纳入年度计划」设为「是」（决策随草稿持久化，是唯一的选择来源）后生成，批次原子（任一不合格整批零写入）、重复生成幂等；未纳入项不阻塞，可增量纳入；不创建 Assessment Review。提交自评写路径已退役：`POST /api/assessments/{assessment_id}/submit` 统一返回 `422 {"code": "legacy_assessment_submit_disabled", …}`，零写入（不创建 Review、不改变状态、不生成或复用任何计划/任务）；评级仅通过草稿保存落盘。
 
 新 API 契约（#178）：
 
@@ -317,7 +317,7 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 - 组织：一个团队、8 名团队成员以内；另设 1 个 Admin 账号，合计仍少于 10 个账号。固定角色为 Member、Buddy、Leader、Admin，允许 Leader/Buddy 兼任 Member 以演示权限叠加。
 - 能力模型：六个启用域 P01 Data Infra、P02 AI Infra / Agent、P03 Coding、C01 基本办公、C02 沟通协作、C03 学习创新；每域准备可展开的 L2/L3 示例，未来扩展域不放入可操作数据。
 - 资源与规划：为 L3 准备少量 Learning Resource 索引，并准备一份 Leader 发布的 Team Annual Capability Plan；两者只用于演示页面和关联关系，不引入课程生命周期。
-- 评估：至少准备一个已填写多个适用 L3 的 Member（演示 #178 增量生成所选学习任务，覆盖 current_level=0 与未填写项）；保留历史 Assessment Review 记录用于只读兼容演示。所有 Assessment 保留历史版本。
+- 评估：至少准备一个已填写多个适用 L3 的 Member（演示 #178 增量生成学习任务：纳入年度计划=是 持久化计划草稿选择，覆盖 current_level=0 与未填写项）；保留历史 Assessment Review 记录用于只读兼容演示。所有 Assessment 保留历史版本。
 - Gap/Goal/Plan：认可成员准备多个不同优先级 Gap、Growth Goal、年度计划、L3 Plan Item；同一 Plan Item 只派生一个 Learning Task。
 - 任务/日志：准备未开始、进行中、已完成、延期等任务；每个任务准备多条 `Learning Progress Log`，覆盖不同月份与小时数，使 UI-01、UI-03、UI-05 能展示全年/当月计划与实际时长。
 - Evidence/Review：至少准备草稿、待 Review、通过、需补充版本；需补充必须对应新版本和新的 Review 历史。
@@ -331,9 +331,9 @@ Member 只能维护本人数据；Buddy 查看负责成员并执行指导、复�
 
 | 场景 | 前置条件 | 操作 | 预期结果 |
 |---|---|---|---|
-| Member 主线 | Member 有六域评估，已填写多个适用 L3 | 选择已填写的 L3 生成所选学习任务 → 查看 Gap → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task；未选择项不阻塞 |
+| Member 主线 | Member 有六域评估，已填写多个适用 L3 | 在「纳入年度计划」选择「是」持久化计划草稿 → 点击「生成学习任务」 → 查看 Gap → 补充计划信息 → 执行 Learning Task → 提交 Evidence | 计划项、任务、Evidence、档案关联完整；一个 Plan Item 仍只有一个 Learning Task；未纳入项不阻塞 |
 | Buddy 自评复核（历史） | 历史数据存在已闭环 Assessment Review | 打开 `/mentoring/dashboard`（辅导成员看板），查看历史复核记录 | 历史 Review 保持只读兼容，不再出现待办/队列；新流程不创建 |
-| 增量生成（#178） | Member 已填写部分适用 L3，部分未填写 | 在能力自评/Gap 页选择已填写的 L3 生成学习任务；多选含未填写项时整批拒绝；重复生成 | 已选择项生成计划项与任务；未填写项不阻塞；重复生成幂等；多选批次原子 |
+| 增量生成（#178） | Member 已填写部分适用 L3，部分未填写 | 在能力自评/Gap 页将部分适用 L3 的「纳入年度计划」设为「是」并生成学习任务；刷新后纳入决策保持，纳入项含未填写项时整批拒绝；重复生成 | 纳入项生成计划项与任务；未纳入/未填写项不阻塞；刷新后计划草稿选择保持；重复生成幂等；批次原子 |
 | 学习时长聚合 | Learning Task 关联多条日志 | 在 `/growth/annual-plan` 新增不同日期、小时数日志，查看看板/月度复盘 | 仅按 `record_date` 聚合 `actual_hours`；不创建子任务、不改变任务状态 |
 | Evidence Review | Evidence 已提交待 Review | Buddy 在 `/mentoring/evidence-review` 提交通过/需补充（需补充必须填反馈） | Review 闭环；需补充要求新 Evidence 版本，旧版本只读 |
 | Leader 团队分析 | 多成员有评估、计划、日志、Evidence、延期项 | 打开 `/operations/analytics`，切换年度/成员/能力域 | UI-05 四类图表和延期明细口径正确；Leader 不可编辑成员业务数据 |

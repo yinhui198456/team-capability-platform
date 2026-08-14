@@ -109,17 +109,6 @@ function isApplicableDetail(detail: AssessmentDetail) {
   return detail.standard_target_applicable !== false
 }
 
-// Issue #178: a row may be selected for learning-task generation when it has
-// a filled outcome (current_level 0-5, 0 included), an effective target and a
-// positive gap — the same preconditions the backend validates per selection.
-function canSelectForPlan(detail: AssessmentDetail) {
-  return (
-    isFilled(detail) &&
-    detail.current_level != null &&
-    (computeGap(detail) ?? 0) > 0
-  )
-}
-
 function normalizeEvidence(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -208,7 +197,8 @@ function computeGap(detail: AssessmentDetail): number | null {
   return null
 }
 
-// ── Plan time: natural year-month (YYYY-MM) input, month→quarter derived.
+// ── Plan time: one visible year-month (YYYY-MM) input, month→quarter
+//    derived.  Quarter is internal derived data — never a second input.
 export function monthToQuarter(month: number): 'Q1' | 'Q2' | 'Q3' | 'Q4' {
   if (month <= 3) return 'Q1'
   if (month <= 6) return 'Q2'
@@ -237,6 +227,23 @@ export function planMonthFromValue(
   // the assessment's own year only.
   if (valueYear !== year || month < 1 || month > 12) return null
   return { month, quarter: monthToQuarter(month) }
+}
+
+// Issue #178: the month control is one visible field whose whole surface
+// opens the picker.  Native showPicker when available (Chrome/Edge/Safari);
+// an accessible fallback keeps the control focusable everywhere else, and
+// browsers without showPicker still open their picker on the field itself.
+function openMonthPicker(event: React.MouseEvent<HTMLInputElement>) {
+  const el = event.currentTarget
+  if (typeof el.showPicker === 'function') {
+    try {
+      el.showPicker()
+    } catch {
+      el.focus()
+    }
+  } else {
+    el.focus()
+  }
 }
 
 // ── Chinese business copy for backend validation reasons.  Raw English
@@ -329,7 +336,6 @@ export function AssessmentGapPage() {
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set())
-  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [message, setMessage] = useState('')
@@ -629,13 +635,26 @@ export function AssessmentGapPage() {
   const generationKeyRef = useRef<{ key: string; payload: string } | null>(null)
 
   async function handleGeneratePlanItems() {
-    if (!assessment || selectedCodes.size === 0) return
+    if (!assessment) return
+    // Issue #178: the persisted include_in_plan decision is the only
+    // selection — the explicit generate action sends exactly the
+    // include=true rows.  Rows decided 否 or undecided never generate.
+    const codes = details
+      .filter((detail) => detail.include_in_plan === true)
+      .map((detail) => detail.l3_code)
+      .sort()
     setError('')
     setMessage('')
+    if (codes.length === 0) {
+      setError(
+        '尚未将任何能力项纳入年度计划。请先在需要生成学习任务的行的「纳入计划」中选择「是」。',
+      )
+      return
+    }
     try {
       if (isMockEnabled()) {
         setAssessment({ ...mockAssessmentSubmitted, details })
-        setMessage(`已生成 ${selectedCodes.size} 个学习任务`)
+        setMessage(`已生成 ${codes.length} 个学习任务`)
         return
       }
       let revision = assessment.revision ?? 1
@@ -674,14 +693,13 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
-      // Issue #178: generate/reuse learning tasks for exactly the selected,
-      // filled L3 rows.  Unselected rows (even unfilled ones) never block;
-      // the server validates only the selection, atomically and idempotently.
-      // One Idempotency-Key per visible generation attempt: retained for a
-      // retry of the same codes/revision after an ambiguous network failure,
-      // rotated once the payload changes or a definitive response arrives
-      // (the catch below clears it for any HTTP response).
-      const codes = [...selectedCodes].sort()
+      // Issue #178: generate/reuse learning tasks for exactly the persisted
+      // include=true rows.  Rows decided 否/undecided (even unfilled ones)
+      // never block; the server validates only the request, atomically and
+      // idempotently.  One Idempotency-Key per visible generation attempt:
+      // retained for a retry of the same codes/revision after an ambiguous
+      // network failure, rotated once the payload changes or a definitive
+      // response arrives (the catch below clears it for any HTTP response).
       const keyPayload = `${codes.join('|')}|${revision}`
       let idempotencyKey: string | undefined
       if (generationKeyRef.current?.payload === keyPayload) {
@@ -819,7 +837,7 @@ export function AssessmentGapPage() {
       const row = document.getElementById(
         `row-${detail.id}`,
       ) as HTMLElement | null
-      row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
       row?.focus()
     }, 50)
   }
@@ -1509,7 +1527,6 @@ export function AssessmentGapPage() {
                         >
                           <thead>
                             <tr>
-                              <th>生成任务</th>
                               <th>能力项</th>
                               <th>当前掌握度</th>
                               <th>目标掌握度</th>
@@ -1536,10 +1553,6 @@ export function AssessmentGapPage() {
                                 hasGap && detail.member_priority !== '暂缓'
                               const showPlanTime =
                                 detail.include_in_plan === true
-                              // Issue #178: only filled rows with a positive
-                              // gap can be selected for task generation.
-                              const selectable = canSelectForPlan(detail)
-                              const selected = selectedCodes.has(detail.l3_code)
                               return (
                                 <Fragment key={detail.id}>
                                   <tr
@@ -1549,27 +1562,7 @@ export function AssessmentGapPage() {
                                       gap && gap > 0 ? s.rowGap : undefined
                                     }
                                   >
-                                    {/* Column 0: 生成任务 */}
-                                    <td>
-                                      <input
-                                        type="checkbox"
-                                        checked={selected}
-                                        disabled={!editable || !selectable}
-                                        aria-label={`选择 ${detail.l3_code}`}
-                                        onChange={() => {
-                                          setSelectedCodes((current) => {
-                                            const next = new Set(current)
-                                            if (next.has(detail.l3_code)) {
-                                              next.delete(detail.l3_code)
-                                            } else {
-                                              next.add(detail.l3_code)
-                                            }
-                                            return next
-                                          })
-                                        }}
-                                      />
-                                    </td>
-                                    {/* Column 1: 能力项 */}
+                                    {/* Column 0: 能力项 */}
                                     <td>
                                       <strong>
                                         {detail.l3_name ?? detail.l3_code}
@@ -1728,7 +1721,7 @@ export function AssessmentGapPage() {
                                         <option value="no">否</option>
                                       </select>
                                     </td>
-                                    {/* Column 7: 计划时间 — natural YYYY-MM */}
+                                    {/* Column 6: 计划时间 — one visible YYYY-MM */}
                                     <td>
                                       {showPlanTime ? (
                                         <input
@@ -1740,6 +1733,7 @@ export function AssessmentGapPage() {
                                           )}
                                           min={`${assessment.year}-01`}
                                           max={`${assessment.year}-12`}
+                                          onClick={openMonthPicker}
                                           onChange={(event) => {
                                             const parsed = planMonthFromValue(
                                               assessment.year,
@@ -1836,11 +1830,8 @@ export function AssessmentGapPage() {
           <footer className={s.stickyActions}>
             {unfilled > 0 && (
               <span>
-                还有 {unfilled} 项未完成评估（未选择的能力项不阻塞生成）
+                还有 {unfilled} 项未完成评估（未纳入计划的能力项不阻塞生成）
               </span>
-            )}
-            {selectedCodes.size > 0 && (
-              <span>已选择 {selectedCodes.size} 项</span>
             )}
             {stickyStats.inPlanNoPriority > 0 && (
               <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
@@ -1861,9 +1852,8 @@ export function AssessmentGapPage() {
               type="button"
               className="primary"
               onClick={handleGeneratePlanItems}
-              disabled={selectedCodes.size === 0}
             >
-              生成所选学习任务
+              生成学习任务
             </button>
           </footer>
         )}

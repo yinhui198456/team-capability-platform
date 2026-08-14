@@ -85,7 +85,7 @@ describe('AssessmentGapPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders 8-column table', async () => {
+  it('renders 7-column table', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -109,9 +109,8 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     const headers = screen.getAllByRole('columnheader')
-    expect(headers.length).toBe(8)
+    expect(headers.length).toBe(7)
     expect(headers.map((h) => h.textContent)).toEqual([
-      '生成任务',
       '能力项',
       '当前掌握度',
       '目标掌握度',
@@ -519,7 +518,7 @@ describe('AssessmentGapPage', () => {
     expect(levelSelects.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('generate button disabled when nothing selectable', async () => {
+  it('generate with no include_in_plan rows is zero-write and explains how to start', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -534,23 +533,34 @@ describe('AssessmentGapPage', () => {
       },
     ])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(mockDraft())
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({
+        ok: true,
+        plan_generation: {
+          annual_plan_id: 9,
+          created_items: 0,
+          skipped_items: 0,
+          created_tasks: 0,
+          revision: 2,
+          idempotent_replayed: false,
+          items: [],
+          summary: '本批新建 0 个计划项、0 个学习任务',
+        },
+      })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: '生成所选学习任务' }),
-      ).toBeTruthy()
+      expect(screen.getByRole('button', { name: '生成学习任务' })).toBeTruthy()
     })
-    expect(
-      (
-        screen.getByRole('button', {
-          name: '生成所选学习任务',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true)
+    // The button stays available; clicking without a persisted include
+    // decision explains how to start and writes nothing.
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
+    expect(await screen.findByText(/尚未将任何能力项纳入年度计划/)).toBeTruthy()
+    expect(generate).not.toHaveBeenCalled()
     // #178: the retired 提交自评 write entry is not re-surfaced — explicit
     // generation is the only plan-write action on the page.
     expect(
@@ -895,8 +905,7 @@ describe('AssessmentGapPage', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '2' },
     })
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
-    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
     await waitFor(() => expect(generate).toHaveBeenCalled())
     expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1101,13 +1110,9 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('不适用')
     // The adjust button should not appear for non-applicable items
     expect(screen.queryByRole('button', { name: '调整个人目标' })).toBeNull()
-    expect(
-      (
-        screen.getByRole('checkbox', {
-          name: '选择 P01.01.01',
-        }) as HTMLInputElement
-      ).disabled,
-    ).toBe(true)
+    // No per-row generation checkbox exists (#178: include_in_plan is the
+    // only selection surface).
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
   })
 
   it('keeps a legacy-preserved target visible but not adjustable', async () => {
@@ -1378,7 +1383,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(screen.queryByText(/invalid quarter-month/)).toBeNull()
   })
 
-  it('an unassessed REQUIRED row is not selectable; generation stays disabled', async () => {
+  it('an unassessed REQUIRED row is not persisted as a plan choice; generation stays zero-write', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1413,18 +1418,17 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    // The row is not selectable, so generation stays disabled and the sticky
-    // bar still reports the unassessed count (informational, non-blocking).
-    const rowCheckbox = screen.getByRole('checkbox', {
-      name: '选择 P01.01.01',
-    }) as HTMLInputElement
-    expect(rowCheckbox.disabled).toBe(true)
+    // The unassessed row is not 纳入计划, so the persisted plan-draft
+    // selection is empty: generation explains how to start and writes
+    // nothing.  The sticky bar still reports the unassessed count
+    // (informational, non-blocking).
     expect(screen.getByText(/还有 1 项未完成/)).toBeTruthy()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
     const generateButton = screen.getByRole('button', {
-      name: '生成所选学习任务',
-    }) as HTMLButtonElement
-    expect(generateButton.disabled).toBe(true)
+      name: '生成学习任务',
+    })
     fireEvent.click(generateButton)
+    expect(await screen.findByText(/尚未将任何能力项纳入年度计划/)).toBeTruthy()
     expect(generate).not.toHaveBeenCalled()
   })
 
@@ -1445,7 +1449,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     expect(problems[0].reason).toBe('requires_current_level')
   })
 
-  it('generation proceeds without plan decisions; no Buddy 复核 message', async () => {
+  it('generation proceeds on the persisted include decision; no Buddy 复核 message', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1455,7 +1459,9 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
           target_level: 4,
           gap_value: 2,
           member_priority: null,
-          include_in_plan: null,
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
         },
       ],
     })
@@ -1482,8 +1488,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
-    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
     await waitFor(() => expect(generate).toHaveBeenCalled())
     // The new flow never routes through Buddy self-review.
     expect(screen.queryByText(/等待 Buddy 复核/)).toBeNull()
@@ -1524,20 +1529,11 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     expect(screen.queryByText(/尚无法提交/)).toBeNull()
-    expect(
-      (
-        screen.getByRole('checkbox', {
-          name: '选择 P01.01.01',
-        }) as HTMLInputElement
-      ).disabled,
-    ).toBe(true)
-    expect(
-      (
-        screen.getByRole('button', {
-          name: '生成所选学习任务',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true)
+    // The unassessed ADVANCED row is not 纳入计划: no checkbox exists and
+    // generation without a persisted include decision is zero-write.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
+    expect(await screen.findByText(/尚未将任何能力项纳入年度计划/)).toBeTruthy()
     expect(generate).not.toHaveBeenCalled()
   })
 
@@ -1611,8 +1607,7 @@ describe('AssessmentGapPage plan time & submit contracts', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
-    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
     await waitFor(() => expect(generate).toHaveBeenCalled())
   })
 })
@@ -1822,9 +1817,7 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
     )
     await screen.findByText('能力自评与 Gap 分析')
     expect(screen.queryByRole('button', { name: '保存草稿' })).toBeNull()
-    expect(
-      screen.queryByRole('button', { name: '生成所选学习任务' }),
-    ).toBeNull()
+    expect(screen.queryByRole('button', { name: '生成学习任务' })).toBeNull()
     expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
     expect(
       (screen.getByRole('combobox', { name: /当前等级/ }) as HTMLSelectElement)
@@ -1841,7 +1834,7 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
       '仅评估本人可以保存草稿，当前账号无修改权限，已保留本地输入。',
     ],
     [
-      '生成所选学习任务',
+      '生成学习任务',
       '仅评估本人可以生成学习任务，当前账号无操作权限，已保留本地输入。',
     ],
   ])(
@@ -1876,11 +1869,6 @@ describe('AssessmentGapPage ownership gate (#81)', () => {
       fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
         target: { value: '3' },
       })
-      if (action === '生成所选学习任务') {
-        fireEvent.click(
-          screen.getByRole('checkbox', { name: '选择 P01.01.01' }),
-        )
-      }
       fireEvent.click(screen.getByRole('button', { name: action }))
       expect(await screen.findByText(expected)).toBeTruthy()
       // No generic reload copy, no raw backend English.
@@ -2067,6 +2055,10 @@ describe('R2-B filter/search', () => {
           target_level: 4,
           gap_value: 2,
           standard_target_applicable: true,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
         },
         {
           ...mockDraft().details![0],
@@ -2077,6 +2069,7 @@ describe('R2-B filter/search', () => {
           target_level: 4,
           gap_value: null,
           standard_target_applicable: true,
+          include_in_plan: null,
         },
       ],
     })
@@ -2103,14 +2096,10 @@ describe('R2-B filter/search', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    // The filled row is selectable; the unassessed row is not.
-    const filled = screen.getByRole('checkbox', { name: '选择 P01.01.01' })
-    const unassessed = screen.getByRole('checkbox', {
-      name: '选择 P01.01.02',
-    }) as HTMLInputElement
-    expect(unassessed.disabled).toBe(true)
-    fireEvent.click(filled)
-    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    // Only the persisted include_in_plan=true row enters the request; the
+    // undecided unassessed row is never sent.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: '生成学习任务' }))
     await waitFor(() =>
       expect(generate).toHaveBeenCalledWith(
         7,
@@ -2133,6 +2122,10 @@ describe('R2-B filter/search', () => {
           target_level: 4,
           gap_value: 2,
           standard_target_applicable: true,
+          member_priority: '高',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
         },
       ],
     })
@@ -2161,8 +2154,7 @@ describe('R2-B filter/search', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
-    const button = screen.getByRole('button', { name: '生成所选学习任务' })
+    const button = screen.getByRole('button', { name: '生成学习任务' })
     fireEvent.click(button)
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
     // A visible generation attempt always carries a key.
@@ -2183,7 +2175,7 @@ describe('R2-B filter/search', () => {
     expect(generate.mock.calls[3][3]).not.toBe(generate.mock.calls[0][3])
   })
 
-  it('rotates the generation key when the selection changes (#178)', async () => {
+  it('rotates the generation key when the persisted selection changes (#178)', async () => {
     const filled = (id: number, code: string) => ({
       ...mockDraft().details![0],
       id,
@@ -2193,12 +2185,20 @@ describe('R2-B filter/search', () => {
       target_level: 4,
       gap_value: 2,
       standard_target_applicable: true,
+      member_priority: '高' as const,
+      include_in_plan: code === 'P01.01.01' ? true : null,
+      plan_quarter: 'Q2' as const,
+      plan_month: 6,
     })
     const draft = mockDraft({
       details: [filled(1, 'P01.01.01'), filled(2, 'P01.01.02')],
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({
+      ok: true,
+      revision: 2,
+    })
     const generate = vi
       .spyOn(assessmentApi, 'generatePlanItems')
       .mockRejectedValueOnce(new Error('network'))
@@ -2221,18 +2221,209 @@ describe('R2-B filter/search', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.01' }))
-    const button = screen.getByRole('button', { name: '生成所选学习任务' })
+    const button = screen.getByRole('button', { name: '生成学习任务' })
     fireEvent.click(button)
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
     expect(generate.mock.calls[0][3]).toBeDefined()
 
-    // Widening the selection changes the payload: a fresh key is required.
-    fireEvent.click(screen.getByRole('checkbox', { name: '选择 P01.01.02' }))
+    // Widening the persisted plan-draft selection (纳入计划 → 是) changes the
+    // payload: a fresh key is required.
+    fireEvent.change(
+      screen.getByRole('combobox', { name: '纳入计划 P01.01.02' }),
+      { target: { value: 'yes' } },
+    )
     fireEvent.click(button)
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
     expect(generate.mock.calls[1][1]).toEqual(['P01.01.01', 'P01.01.02'])
     expect(generate.mock.calls[1][3]).not.toBe(generate.mock.calls[0][3])
+  })
+})
+
+describe('Issue #178 persistent plan-draft selection and visible plan month', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([])
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  // A filled row with a positive gap: the persisted include_in_plan decision
+  // is the only source of truth for generation selection.
+  const base = () => ({
+    ...mockDraft().details![0],
+    current_level: 2,
+    target_level: 4,
+    gap_value: 2,
+    member_priority: '高' as const,
+  })
+
+  function renderDraft(draft: assessmentApi.Assessment) {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...draft, details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    return screen.findByText('能力自评与 Gap 分析')
+  }
+
+  const planOk = {
+    ok: true,
+    plan_generation: {
+      annual_plan_id: 9,
+      created_items: 1,
+      skipped_items: 0,
+      created_tasks: 1,
+      revision: 2,
+      idempotent_replayed: false,
+      items: [{ l3_code: 'P01.01.01', status: 'created' as const }],
+      summary: '本批新建 1 个计划项、1 个学习任务，复用 0 个已有计划项',
+    },
+  }
+
+  it('removes the transient generation checkbox; include_in_plan is the only selection', async () => {
+    await renderDraft(
+      mockDraft({
+        details: [
+          {
+            ...base(),
+            include_in_plan: true,
+            plan_quarter: 'Q2',
+            plan_month: 6,
+          },
+        ],
+      }),
+    )
+    // No per-row generation checkbox anywhere on the table.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    // The persisted include decision is still visible and editable.
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: '纳入计划 P01.01.01',
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('yes')
+  })
+
+  it('a persisted include_in_plan=true row generates after reload without re-checking', async () => {
+    const draft = mockDraft({
+      details: [
+        { ...base(), include_in_plan: true, plan_quarter: 'Q2', plan_month: 6 },
+      ],
+    })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue(planOk)
+    await renderDraft(draft)
+    // Re-entry with the persisted decision: no checkbox exists to re-check;
+    // the explicit generate action sends the persisted include=true row.
+    fireEvent.click(screen.getByRole('button', { name: /生成.*学习任务/ }))
+    await waitFor(() =>
+      expect(generate).toHaveBeenCalledWith(
+        7,
+        ['P01.01.01'],
+        1,
+        expect.any(String),
+      ),
+    )
+  })
+
+  it('include_in_plan=false and undecided rows never enter the generate request', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...base(),
+          id: 1,
+          l3_code: 'P01.01.01',
+          include_in_plan: true,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+        },
+        { ...base(), id: 2, l3_code: 'P01.01.02', include_in_plan: false },
+        { ...base(), id: 3, l3_code: 'P01.01.03', include_in_plan: null },
+      ],
+    })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue(planOk)
+    await renderDraft(draft)
+    fireEvent.click(screen.getByRole('button', { name: /生成.*学习任务/ }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0][1]).toEqual(['P01.01.01'])
+  })
+
+  it('clicking anywhere in the YYYY-MM month control opens the picker (focus fallback)', async () => {
+    await renderDraft(
+      mockDraft({
+        details: [
+          {
+            ...base(),
+            include_in_plan: true,
+            plan_quarter: 'Q2',
+            plan_month: 6,
+          },
+        ],
+      }),
+    )
+    const input = screen.getByLabelText(
+      '计划月份 P01.01.01',
+    ) as HTMLInputElement
+    const picker =
+      typeof input.showPicker === 'function'
+        ? vi.spyOn(input, 'showPicker')
+        : null
+    fireEvent.click(input)
+    // Whole-control activation: showPicker when the platform provides it,
+    // otherwise the control must at least take focus.
+    if (picker) expect(picker).toHaveBeenCalled()
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('a missing plan month blocks generation atomically and preserves the plan draft', async () => {
+    const draft = mockDraft({
+      details: [{ ...base(), include_in_plan: true }],
+    })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockRejectedValue({
+        status: 422,
+        detail: {
+          issues: [{ l3_code: 'P01.01.01', reason: 'plan_month_required' }],
+        },
+      })
+    await renderDraft(draft)
+    fireEvent.click(screen.getByRole('button', { name: /生成.*学习任务/ }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
+    // Per-row Chinese guidance naming the incomplete row and how to fix it.
+    await waitFor(() =>
+      expect(screen.getByText(/【P01.01.01】缺少计划月份/)).toBeTruthy(),
+    )
+    // The persisted include decision and plan-time inputs survive the
+    // failed batch — the plan draft is preserved for retry.
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: '纳入计划 P01.01.01',
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('yes')
+    const save = vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({
+      ok: true,
+      revision: 2,
+    })
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(save.mock.calls[0][1][0].include_in_plan).toBe(true)
   })
 })
 

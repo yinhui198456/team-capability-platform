@@ -59,9 +59,9 @@ Assessment Detail 可记录：
 
 ### Issue #50 保存与候选一致性
 
-草稿允许部分完成，未提交的明细保持原值；生成所选学习任务时（#178）只重新读取并校验被选 L3 的等级、依据、适用性、完整性及计划季度/月份，未选中的 L3 不参与校验。1–2 级依据可为空，3–5 级提交需有效依据；相对认可基准任意提升时必须更新依据。
+草稿允许部分完成，未提交的明细保持原值；生成学习任务时（#178）只重新读取并校验纳入计划（include_in_plan=TRUE）的 L3 的等级、依据、适用性、完整性及计划月份，未纳入的 L3 不参与校验。1–2 级依据可为空，3–5 级提交需有效依据；相对认可基准任意提升时必须更新依据。
 
-计划字段的中间状态可保存：正 Gap 行允许「已纳入计划（include_in_plan=TRUE）但未填优先级/计划月份」等部分填写并原样保留（v0015 起）；互斥冲突（暂缓+纳入）与季度-月份矛盾在保存时即拒绝。计划时间无任何默认值：显式生成学习任务（#178）时对每个选中 L3 逐项校验计划季度与计划月份，任一选中项缺失则整批拒绝并逐项提示；评级保存不校验计划时间，也不生成或复用任何学习任务（提交自评写路径已退役，评级仅通过草稿保存落盘）。
+计划字段的中间状态可保存：正 Gap 行允许「已纳入计划（include_in_plan=TRUE）但未填优先级/计划月份」等部分填写并原样保留（v0015 起）；互斥冲突（暂缓+纳入）与季度-月份矛盾在保存时即拒绝。计划时间无任何默认值，且只有计划月份是用户输入（季度由月份派生存储）：显式生成学习任务（#178）时对每个纳入 L3 逐项校验计划月份，任一纳入项缺失则整批拒绝并逐项提示；评级保存不校验计划时间，也不生成或复用任何学习任务（提交自评写路径已退役，评级仅通过草稿保存落盘）。
 
 显式生成（#178）为并发安全写操作：请求携带 `expected_revision`，服务端锁定 Assessment 行后校验版本，过期返回 409 且零写入；同时对整个选中批次校验计划依据快照（v0009），任一选中 L3 缺快照则返回 422 `selection_validation_failed`（逐 L3 给出 `planning_snapshot_missing`）并整批零写入，绝不误报「已存在」。请求可携带 `Idempotency-Key`（写入 `assessment_idempotency_key`）：同 key 同请求重放返回首次响应（`idempotent_replayed=true`）且不重复写入、不再次推进 revision，同 key 不同请求返回 409；并发同 key 请求由 Assessment 行锁串行化，恰好创建一个计划项与学习任务。本批有新增计划项时在同一事务内恰好推进一次 Assessment `revision`（返回最新值供前端继续携带）；纯已存在批保持 `revision` 不变。成功响应逐 L3 区分 `created` / `existing` 并返回最新 `revision` 与中文摘要。
 
@@ -211,7 +211,7 @@ Assessment Detail 可记录：
 
 | 项目 | 说明 |
 |---|---|
-| 业务定义 | Assessment Detail 中服务端确认的最终有效目标与当前掌握度的差距；Member 生成所选学习任务时按被选 L3 生成（#178），未选择项不生成；不适用项不生成 Gap |
+| 业务定义 | Assessment Detail 中服务端确认的最终有效目标与当前掌握度的差距；Member 生成学习任务时按纳入计划（include_in_plan=TRUE）的 L3 生成（#178），未纳入项不生成；不适用项不生成 Gap |
 | 业务字段 | Gap 编码、评估编码、L3 编码、当前掌握度、目标掌握度、Gap 值、优先级、是否纳入计划 |
 | 状态 | 无独立状态；以是否纳入计划作为计划判定依据 |
 | 版本 / 年度 | 随 Assessment 版本化；新 Assessment 版本可能产生新的 Gap |
@@ -242,7 +242,7 @@ Assessment Detail 可记录：
 | 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 首次来源 Assessment；每个 Plan Item 另行记录自己的来源 Assessment Detail |
 | 唯一性约束 | 同一 Member、同一年度唯一 |
 | 维护角色 | Member |
-| 生成约束 | Member 按所选 L3 生成学习任务时原子生成（#178，选中 L3 须显式填写计划季度与计划月份，且该 L3 存在计划依据快照，无默认值；任一选中项缺失则整批拒绝）；同一 Member 同一年度复用一份正式/可用计划，后续生成只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。生成请求以 `expected_revision` 做乐观并发控制（过期 409、零写入），本批有新增时恰好推进一次 Assessment `revision`，纯已存在批保持不变；可携带 `Idempotency-Key` 保证同请求重放幂等（同 key 同请求返回首次响应且不推进 revision，同 key 不同请求 409）。 |
+| 生成约束 | Member 按所选 L3 生成学习任务时原子生成（#178，选中 L3 须显式填写计划月份（YYYY-MM，唯一可见的计划时间输入；季度由月份派生，不提供季度输入），且该 L3 存在计划依据快照，无默认值；任一选中项缺失则整批拒绝）；同一 Member 同一年度复用一份正式/可用计划，后续生成只新增尚未存在的 L3 计划项和任务，不覆盖已有执行记录。生成请求以 `expected_revision` 做乐观并发控制（过期 409、零写入），本批有新增时恰好推进一次 Assessment `revision`，纯已存在批保持不变；可携带 `Idempotency-Key` 保证同请求重放幂等（同 key 同请求返回首次响应且不推进 revision，同 key 不同请求 409）。 |
 
 ### 3.15 Plan Item
 
@@ -460,11 +460,11 @@ flowchart TD
 | 标准目标按目标职级生成，适用范围优先于 Leader 覆盖 | Capability Item L3 / Standard Target Override / Assessment Detail | 能力模型、能力自评 |
 | 个人调整仅适用于已适用项，需合法值与非空原因 | Assessment Detail | 能力自评 |
 | Assessment 保存标准、调整和最终有效目标快照，后续模型变化不回写 | Assessment / Assessment Detail | 能力自评、评估历史 |
-| Member 生成所选学习任务时按被选 L3 生成 Gap（#178），无需等待复核 | Assessment / Gap | 能力自评、Gap 分析 |
+| Member 生成学习任务时按纳入计划（include_in_plan=TRUE）的 L3 生成 Gap（#178），无需等待复核 | Assessment / Gap | 能力自评、Gap 分析 |
 | Gap 分级与优先级设置 | Gap | Gap 分析 |
 | 纳入计划的 Gap 形成成长目标 | Gap / Growth Goal | 成长目标 |
 | 年度成长计划默认 12 个月 | Annual Growth Plan | 年度成长计划 |
-| 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）：Member 在能力自评/Gap 页面选择已填写的适用 L3 后生成（#178）；批次原子、重复生成幂等，未选择项不阻塞 | Annual Growth Plan / Assessment | 年度成长计划、能力自评 |
+| 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）：Member 在能力自评/Gap 页面将已填写的适用 L3 的「纳入年度计划」设为「是」后生成（#178）；批次原子、重复生成幂等，未选择项不阻塞 | Annual Growth Plan / Assessment | 年度成长计划、能力自评 |
 | 一个计划项对应一个学习任务，不拆分子任务 | Plan Item / Learning Task | 年度成长计划、学习任务 |
 | 学习任务执行跟踪与完成判定 | Learning Task | 学习任务 |
 | 学习执行日志仅用于学习时长聚合，追加写（新增 / 作废 / 更正），字段含 task_id、record_date、actual_hours、note、recorder、invalidated_at、correction_of_log_id | Learning Progress Log / Learning Task | 我的成长看板、学习任务、月度复盘、团队能力分析 |

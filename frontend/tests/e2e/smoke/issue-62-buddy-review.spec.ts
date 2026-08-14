@@ -702,12 +702,11 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       },
     ])
 
-    // Issue #178: the member generates tasks for the selected L3 on the
-    // assessment page — no full-form submit, no review queue entry.
+    // Issue #178: the member generates tasks for the included L3 on the
+    // assessment page — the persisted 纳入年度计划=是 decision is the only
+    // selection; no full-form submit, no review queue entry.
     await page.goto(`/capability/assessment?year=${year}`)
-    await expect(page.getByLabel(`选择 ${picked.l3_code}`)).toBeEnabled()
-    await page.getByLabel(`选择 ${picked.l3_code}`).check()
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
     const plan = await (
       await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
@@ -793,12 +792,11 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       },
     )
     await page.goto(`/capability/assessment?year=${year}`)
-    await page.getByLabel(`选择 ${picked.l3_code}`).check()
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     // no success message yet — the response was lost
     await expect(page.getByText(/已生成/)).toHaveCount(0)
-    // unchanged selection -> retry reuses the existing plan items
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    // unchanged persisted selection -> retry reuses the existing plan items
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
     expect(call).toBeGreaterThanOrEqual(2)
     // exactly one item and one task, no review, status untouched
@@ -858,10 +856,9 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       },
     )
     await page.goto(`/capability/assessment?year=${year}`)
-    await page.getByLabel(`选择 ${picked.l3_code}`).check()
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(page.getByText(/已生成/)).toHaveCount(0)
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
     expect(call).toBeGreaterThanOrEqual(2)
     // exactly one plan item for the selection — no duplicates
@@ -924,16 +921,15 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     )
     expect(bumped.ok()).toBeTruthy()
     // Generation hits the stale revision -> 409 with a reload hint.
-    await page.getByLabel(`选择 ${picked.l3_code}`).check()
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(
       page.getByText('数据冲突：草稿已被其他操作更新，请重新加载后再生成。'),
     ).toBeVisible()
-    // Reload brings a fresh revision; retry succeeds and writes once.
+    // Reload brings a fresh revision; the persisted selection survives and
+    // the retry succeeds and writes once.
     await page.reload()
     await expect(page.getByLabel('评估摘要')).toBeVisible()
-    await page.getByLabel(`选择 ${picked.l3_code}`).check()
-    await page.getByRole('button', { name: '生成所选学习任务' }).click()
+    await page.getByRole('button', { name: '生成学习任务' }).click()
     await expect(page.getByText(/已生成 \d+ 个学习任务/)).toBeVisible()
     // exactly one plan item for the selection; no duplicates anywhere
     await loginAs(page, 'member')
