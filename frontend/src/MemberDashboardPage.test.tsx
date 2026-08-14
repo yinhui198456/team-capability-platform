@@ -228,7 +228,7 @@ describe('MemberDashboardPage', () => {
               id: 1,
               task_id: 1,
               record_date: '2026-06-01',
-              actual_hours: 1,
+              actual_hours: 0.1,
               note: null,
               recorder_id: 1,
               created_at: '',
@@ -241,7 +241,7 @@ describe('MemberDashboardPage', () => {
               id: 2,
               task_id: 1,
               record_date: '2026-06-01',
-              actual_hours: 1.5,
+              actual_hours: 0.2,
               note: null,
               recorder_id: 1,
               created_at: '',
@@ -298,7 +298,8 @@ describe('MemberDashboardPage', () => {
         <App />
       </MemoryRouter>,
     )
-    expect(await screen.findByText('本周学习 2 天 · 共 4.5 小时')).toBeTruthy()
+    expect(await screen.findByText('本周学习 2 天 · 共 2.3 小时')).toBeTruthy()
+    expect(screen.queryByText(/0\.30000000000000004/)).toBeNull()
     expect(screen.getByText('6月1日周一')).toBeTruthy()
     expect(screen.getByText('6月3日周三')).toBeTruthy()
     expect(screen.queryByText('6月2日周二')).toBeNull()

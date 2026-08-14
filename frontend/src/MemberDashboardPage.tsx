@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   formatEstimatedHours,
   formatEstimatedHoursSummary,
+  formatHourValue,
 } from './estimatedHours'
 
 import { useYear } from './YearContext'
@@ -78,7 +79,7 @@ function formatHours(
   if (Number.isNaN(num)) return '暂未填写'
   return (
     <span className="hours-value">
-      <span className="hours-number">{num}</span>
+      <span className="hours-number">{formatHourValue(num)}</span>
       <span className="hours-unit"> h</span>
     </span>
   )
@@ -186,13 +187,16 @@ function WeeklyLearningRhythm({ dashboard }: { dashboard: MemberDashboard }) {
           <>
             <p className={styles.weeklySummary}>
               本周学习 {state.days.length} 天 · 共{' '}
-              {state.days.reduce((sum, day) => sum + day.hours, 0)} 小时
+              {formatHourValue(
+                state.days.reduce((sum, day) => sum + day.hours, 0),
+              )}{' '}
+              小时
             </p>
             <ul className={styles.weeklyDayList}>
               {state.days.map((day) => (
                 <li key={day.date}>
                   <span>{formatWeeklyDate(day.date)}</span>
-                  <strong>{day.hours} 小时</strong>
+                  <strong>{formatHourValue(day.hours)} 小时</strong>
                 </li>
               ))}
             </ul>
