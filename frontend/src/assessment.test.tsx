@@ -2425,6 +2425,48 @@ describe('Issue #178 persistent plan-draft selection and visible plan month', ()
     await waitFor(() => expect(save).toHaveBeenCalled())
     expect(save.mock.calls[0][1][0].include_in_plan).toBe(true)
   })
+
+  it('deemphasizes quarter: no Q1-Q4 summaries while the YYYY-MM month control stays', async () => {
+    await renderDraft(
+      mockDraft({
+        details: [
+          {
+            ...base(),
+            include_in_plan: true,
+            plan_quarter: 'Q2',
+            plan_month: 6,
+          },
+        ],
+        gap_summary: {
+          total_gaps: 1,
+          avg_gap: 2,
+          high_priority: 1,
+          medium_priority: 0,
+          low_priority: 0,
+          by_quarter: { Q1: 0, Q2: 1, Q3: 0, Q4: 0 },
+        },
+      }),
+    )
+    // Quarter is internal derived data only — never rendered as Q1-Q4.
+    expect(screen.queryByText(/Q[1-4]:/)).toBeNull()
+    // The Gap summary drawer must not show a by-quarter line either.
+    fireEvent.click(screen.getByRole('button', { name: '查看 Gap 摘要' }))
+    const drawer = screen.getByTestId('gap-drawer')
+    expect(within(drawer).queryByText(/纳入计划 · Q[1-4]:/)).toBeNull()
+    expect(within(drawer).getByText(/纳入计划：/)).toBeTruthy()
+    // The visible YYYY-MM month control and the persisted plan-draft
+    // selection remain unchanged.
+    expect(
+      screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement,
+    ).toBeTruthy()
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: '纳入计划 P01.01.01',
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('yes')
+  })
 })
 
 describe('assessment api helpers', () => {

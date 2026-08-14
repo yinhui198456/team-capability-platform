@@ -886,12 +886,8 @@ export function AssessmentGapPage() {
     ).length
     const inPlan = applicable.filter((d) => d.include_in_plan === true).length
     const onHold = applicable.filter((d) => d.member_priority === '暂缓').length
-    const byQ = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }
-    for (const d of applicable) {
-      if (d.plan_quarter && d.plan_quarter in byQ) {
-        byQ[d.plan_quarter as keyof typeof byQ] += 1
-      }
-    }
+    // Issue #178: quarter is internal derived data only — no Q1-Q4
+    // aggregation is computed or shown.
     return {
       unassessed,
       totalGap,
@@ -899,7 +895,6 @@ export function AssessmentGapPage() {
       progressive,
       inPlan,
       onHold,
-      byQ,
     }
   }, [assessedDetails])
 
@@ -1190,11 +1185,6 @@ export function AssessmentGapPage() {
           </span>
           <span>
             暂缓 <strong>{stats.onHold}</strong>
-          </span>
-          <span>
-            Q1:<strong>{stats.byQ.Q1}</strong> Q2:
-            <strong>{stats.byQ.Q2}</strong> Q3:<strong>{stats.byQ.Q3}</strong>{' '}
-            Q4:<strong>{stats.byQ.Q4}</strong>
           </span>
         </section>
 
@@ -1815,12 +1805,8 @@ export function AssessmentGapPage() {
               {summary.medium_priority} / {summary.low_priority} /{' '}
               {summary.on_hold ?? 0}
             </p>
-            {summary.by_quarter && (
-              <p>
-                纳入计划 · Q1:{summary.by_quarter.Q1} Q2:{summary.by_quarter.Q2}{' '}
-                Q3:{summary.by_quarter.Q3} Q4:{summary.by_quarter.Q4}
-              </p>
-            )}
+            {/* Issue #178: quarter is internal derived data only — the
+                drawer shows plan-draft totals without a by-quarter line. */}
             <p>纳入计划：{summary.in_plan ?? 0}</p>
           </aside>
         )}
