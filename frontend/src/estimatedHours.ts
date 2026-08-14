@@ -13,8 +13,8 @@ export type EstimatedHoursSummary = {
   has_unparsed: boolean
 }
 
-function number(value: number) {
-  return Number.isInteger(value) ? String(value) : String(value)
+export function formatHourValue(value: number) {
+  return Number(value.toFixed(10)).toString()
 }
 
 export function formatEstimatedHours(
@@ -30,8 +30,8 @@ export function formatEstimatedHours(
     return raw.trim()
   }
   return parsed.is_range
-    ? `${number(parsed.min_hours)}–${number(parsed.max_hours)} h`
-    : `${number(parsed.min_hours)} h`
+    ? `${formatHourValue(parsed.min_hours)}–${formatHourValue(parsed.max_hours)} h`
+    : `${formatHourValue(parsed.min_hours)} h`
 }
 
 export function formatEstimatedHoursSummary(
@@ -45,6 +45,6 @@ export function formatEstimatedHoursSummary(
     return '暂未填写'
   }
   return summary.min_hours === summary.max_hours
-    ? `${number(summary.min_hours)} h`
-    : `${number(summary.min_hours)}–${number(summary.max_hours)} h`
+    ? `${formatHourValue(summary.min_hours)} h`
+    : `${formatHourValue(summary.min_hours)}–${formatHourValue(summary.max_hours)} h`
 }

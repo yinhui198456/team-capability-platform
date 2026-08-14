@@ -7,7 +7,7 @@ import {
   waitFor,
   fireEvent,
 } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
@@ -145,6 +145,11 @@ function stubYear() {
 }
 
 describe('MemberDashboardPage', () => {
+  beforeEach(() => {
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
+    vi.spyOn(planningApi, 'listProgressLogs').mockResolvedValue([])
+  })
+
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
@@ -175,6 +180,192 @@ describe('MemberDashboardPage', () => {
     expect(
       screen.getAllByRole('link', { name: '查看年度计划' }).length,
     ).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows the empty weekly rhythm entry for members with and without current tasks', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('本周暂无学习记录。')).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: '去学习任务' }).getAttribute('href'),
+    ).toBe('/growth/annual-plan?year=2026')
+    cleanup()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue({
+      ...baseDashboard,
+      current_tasks: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('本周暂无学习记录。')).toBeTruthy()
+    expect(
+      screen
+        .getByRole('link', { name: '查看年度成长计划' })
+        .getAttribute('href'),
+    ).toBe('/growth/annual-plan?year=2026')
+  })
+
+  it('aggregates valid weekly logs by date without zero-filled days', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      baseDashboard.current_tasks[0],
+      { ...baseDashboard.current_tasks[0], id: 2 },
+    ])
+    vi.spyOn(planningApi, 'listProgressLogs').mockImplementation(async (id) =>
+      id === 1
+        ? [
+            {
+              id: 1,
+              task_id: 1,
+              record_date: '2026-06-01',
+              actual_hours: 0.1,
+              note: null,
+              recorder_id: 1,
+              created_at: '',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+            {
+              id: 2,
+              task_id: 1,
+              record_date: '2026-06-01',
+              actual_hours: 0.2,
+              note: null,
+              recorder_id: 1,
+              created_at: '',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+            {
+              id: 3,
+              task_id: 1,
+              record_date: '2026-06-03',
+              actual_hours: 2,
+              note: null,
+              recorder_id: 1,
+              created_at: '',
+              invalidated_at: '2026-06-03T01:00:00Z',
+              invalidated_by: 1,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+          ]
+        : [
+            {
+              id: 4,
+              task_id: 2,
+              record_date: '2026-06-03',
+              actual_hours: 2,
+              note: null,
+              recorder_id: 1,
+              created_at: '',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+            {
+              id: 5,
+              task_id: 2,
+              record_date: '2026-05-31',
+              actual_hours: 9,
+              note: null,
+              recorder_id: 1,
+              created_at: '',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+          ],
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('本周学习 2 天 · 共 2.3 小时')).toBeTruthy()
+    expect(screen.queryByText(/0\.30000000000000004/)).toBeNull()
+    expect(screen.getByText('6月1日周一')).toBeTruthy()
+    expect(screen.getByText('6月3日周三')).toBeTruthy()
+    expect(screen.queryByText('6月2日周二')).toBeNull()
+    expect(screen.queryByText('9 小时')).toBeNull()
+  })
+
+  it('lists only the three recorded days when the week has 3–7 active days', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([
+      baseDashboard.current_tasks[0],
+      { ...baseDashboard.current_tasks[0], id: 2 },
+      { ...baseDashboard.current_tasks[0], id: 3 },
+    ])
+    vi.spyOn(planningApi, 'listProgressLogs').mockImplementation(async (id) => [
+      {
+        id,
+        task_id: id,
+        record_date: `2026-06-0${id * 2 - 1}`,
+        actual_hours: id,
+        note: null,
+        recorder_id: 1,
+        created_at: '',
+        invalidated_at: null,
+        invalidated_by: null,
+        correction_of_log_id: null,
+        idempotency_key: null,
+      },
+    ])
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('本周学习 3 天 · 共 6 小时')).toBeTruthy()
+    expect(screen.getByText('6月1日周一')).toBeTruthy()
+    expect(screen.getByText('6月3日周三')).toBeTruthy()
+    expect(screen.getByText('6月5日周五')).toBeTruthy()
+    expect(screen.queryByText('6月2日周二')).toBeNull()
+  })
+
+  it('shows loading, then retries the complete weekly data chain after failure', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMemberDashboard').mockResolvedValue(baseDashboard)
+    let resolveTasks: (tasks: planningApi.LearningTask[]) => void
+    vi.spyOn(planningApi, 'listLearningTasks').mockImplementationOnce(
+      () => new Promise((resolve) => (resolveTasks = resolve)),
+    )
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('正在加载本周学习记录…')).toBeTruthy()
+    resolveTasks!([baseDashboard.current_tasks[0]])
+    vi.spyOn(planningApi, 'listProgressLogs').mockRejectedValueOnce(
+      new Error('failed'),
+    )
+    expect(
+      await screen.findByText('本周学习记录加载失败，请重试。'),
+    ).toBeTruthy()
+    expect(screen.queryByText('本周暂无学习记录。')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }))
+    expect(await screen.findByText('本周暂无学习记录。')).toBeTruthy()
   })
 
   it('filters gaps by domain and restores on 全部', async () => {

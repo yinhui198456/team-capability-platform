@@ -154,12 +154,60 @@ function routeDashboard(page: Page) {
   })
 }
 
+function routeWeeklyRhythm(page: Page) {
+  return Promise.all([
+    page.route('**/api/planning/learning-tasks', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(deterministicDashboard.current_tasks),
+      })
+    }),
+    page.route(
+      '**/api/planning/learning-tasks/1/progress-logs',
+      async (route) => {
+        await route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 1,
+              task_id: 1,
+              record_date: '2026-08-04',
+              actual_hours: 0.5,
+              note: '阅读数据工程指南',
+              recorder_id: 1,
+              created_at: '2026-08-04T12:00:00Z',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+            {
+              id: 2,
+              task_id: 1,
+              record_date: '2026-08-06',
+              actual_hours: 1.5,
+              note: '完成数据口径梳理',
+              recorder_id: 1,
+              created_at: '2026-08-06T12:00:00Z',
+              invalidated_at: null,
+              invalidated_by: null,
+              correction_of_log_id: null,
+              idempotency_key: null,
+            },
+          ]),
+        })
+      },
+    ),
+  ])
+}
+
 for (const viewport of VIEWPORTS) {
   test.describe(`UI-01 Member dashboard visual regression @ ${viewport.name}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
       await loginAs(page, 'member')
       await routeDashboard(page)
+      await routeWeeklyRhythm(page)
       // Pin to 2026: the intercepted payload is fixed to that year; the
       // active-year resolver otherwise follows future-year smoke drafts.
       await page.goto('/dashboard/member?year=2026')
@@ -169,6 +217,7 @@ for (const viewport of VIEWPORTS) {
       await expect(
         page.getByTestId('current-tasks-table').locator('tbody tr'),
       ).not.toHaveCount(0)
+      await expect(page.getByText('本周学习 2 天 · 共 2 小时')).toBeVisible()
     })
 
     test('semantic alignment', async ({ page }) => {
