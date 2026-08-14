@@ -10,6 +10,8 @@ import { useMe } from './catalog'
 import {
   formatCapabilityPath,
   getMemberDashboard,
+  listLearningTasks,
+  listProgressLogs,
   type MemberDashboard,
   type MemberDashboardAssessment,
 } from './planning'
@@ -79,6 +81,124 @@ function formatHours(
       <span className="hours-number">{num}</span>
       <span className="hours-unit"> h</span>
     </span>
+  )
+}
+
+function weeklyDates(asOf: string | undefined) {
+  const now = new Date()
+  const date = asOf
+    ? new Date(`${asOf.slice(0, 10)}T00:00:00Z`)
+    : new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  const day = date.getUTCDay()
+  const offset = day === 0 ? -6 : 1 - day
+  date.setUTCDate(date.getUTCDate() + offset)
+  const start = date.toISOString().slice(0, 10)
+  date.setUTCDate(date.getUTCDate() + 6)
+  return [start, date.toISOString().slice(0, 10)] as const
+}
+
+function formatWeeklyDate(date: string) {
+  const value = new Date(`${date}T00:00:00Z`)
+  return `${value.getUTCMonth() + 1}月${value.getUTCDate()}日周${['日', '一', '二', '三', '四', '五', '六'][value.getUTCDay()]}`
+}
+
+type WeeklyLearningDay = { date: string; hours: number }
+
+function WeeklyLearningRhythm({ dashboard }: { dashboard: MemberDashboard }) {
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'error' }
+    | { status: 'ready'; days: WeeklyLearningDay[] }
+  >({ status: 'loading' })
+  const [reload, setReload] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setState({ status: 'loading' })
+      try {
+        const tasks = await listLearningTasks()
+        const [start, end] = weeklyDates(dashboard.meta.as_of ?? undefined)
+        const logs = await Promise.all(
+          tasks.map((task) => listProgressLogs(task.id)),
+        )
+        const totals = new Map<string, number>()
+        logs.flat().forEach((log) => {
+          if (
+            !log.invalidated_at &&
+            log.record_date >= start &&
+            log.record_date <= end
+          ) {
+            totals.set(
+              log.record_date,
+              (totals.get(log.record_date) ?? 0) + log.actual_hours,
+            )
+          }
+        })
+        if (!cancelled) {
+          setState({
+            status: 'ready',
+            days: [...totals]
+              .map(([date, hours]) => ({ date, hours }))
+              .sort((a, b) => a.date.localeCompare(b.date)),
+          })
+        }
+      } catch {
+        if (!cancelled) setState({ status: 'error' })
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [dashboard, reload])
+
+  return (
+    <article
+      className={`card ${styles.weeklyRhythm}`}
+      aria-label="本周学习节奏"
+    >
+      <h2>本周学习节奏</h2>
+      {state.status === 'loading' && (
+        <p className="muted">正在加载本周学习记录…</p>
+      )}
+      {state.status === 'error' && (
+        <>
+          <p className="error" role="alert">
+            本周学习记录加载失败，请重试。
+          </p>
+          <button type="button" onClick={() => setReload((value) => value + 1)}>
+            重新加载
+          </button>
+        </>
+      )}
+      {state.status === 'ready' &&
+        (state.days.length === 0 ? (
+          <div className={styles.weeklyEmpty}>
+            <p>本周暂无学习记录。</p>
+            <a href={`/growth/annual-plan?year=${dashboard.year}`}>
+              {dashboard.current_tasks.length > 0
+                ? '去学习任务'
+                : '查看年度成长计划'}
+            </a>
+          </div>
+        ) : (
+          <>
+            <p className={styles.weeklySummary}>
+              本周学习 {state.days.length} 天 · 共{' '}
+              {state.days.reduce((sum, day) => sum + day.hours, 0)} 小时
+            </p>
+            <ul className={styles.weeklyDayList}>
+              {state.days.map((day) => (
+                <li key={day.date}>
+                  <span>{formatWeeklyDate(day.date)}</span>
+                  <strong>{day.hours} 小时</strong>
+                </li>
+              ))}
+            </ul>
+          </>
+        ))}
+    </article>
   )
 }
 
@@ -689,6 +809,7 @@ function PlanDashboard({
           </div>
         </article>
       </div>
+      <WeeklyLearningRhythm dashboard={dashboard} />
       <AbilitySection
         dashboard={dashboard}
         selectedDomain={selectedDomain}
