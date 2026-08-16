@@ -130,6 +130,11 @@ export function MonthlyReviewPage() {
     summary && summary.planned_count > 0
       ? Math.round(summary.completion_rate * 100)
       : 0
+  // 异常/待处理项优先展示（#175）：延期、暂停、取消。
+  const anomalyStatuses = ['延期', '暂停', '取消']
+  const anomalies =
+    data?.details.filter((detail) => anomalyStatuses.includes(detail.status)) ??
+    []
 
   return (
     <section className="page">
@@ -170,7 +175,7 @@ export function MonthlyReviewPage() {
         <>
           <section className="card" data-testid="monthly-summary">
             <h2>本月汇总</h2>
-            <dl>
+            <dl className="metadata">
               <div>
                 <dt>计划</dt>
                 <dd>{summary?.planned_count}</dd>
@@ -218,31 +223,66 @@ export function MonthlyReviewPage() {
             {!summary || summary.planned_count === 0 ? (
               <p className="muted">本月暂无计划项</p>
             ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>L3 达成路径</th>
-                    <th>状态</th>
-                    <th>预计耗时</th>
-                    <th>实际耗时</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.details.map((detail) => (
-                    <tr key={detail.plan_item_id}>
-                      <td>{detail.l3_code}</td>
-                      <td>{detail.status}</td>
-                      <td>
-                        {formatEstimatedHours(
-                          detail.estimated_hours,
-                          detail.estimated_hours_parsed,
-                        )}
-                      </td>
-                      <td>{detail.actual_hours} h</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <>
+                <h3>延期 / 暂停 / 取消</h3>
+                {anomalies.length === 0 ? (
+                  <p className="muted">本月无延期、暂停或取消项</p>
+                ) : (
+                  <table data-testid="anomaly-table">
+                    <thead>
+                      <tr>
+                        <th>L3 达成路径</th>
+                        <th>状态</th>
+                        <th>预计耗时</th>
+                        <th>实际耗时</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {anomalies.map((detail) => (
+                        <tr key={detail.plan_item_id}>
+                          <td>{detail.l3_code}</td>
+                          <td>{detail.status}</td>
+                          <td>
+                            {formatEstimatedHours(
+                              detail.estimated_hours,
+                              detail.estimated_hours_parsed,
+                            )}
+                          </td>
+                          <td>{detail.actual_hours} h</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <details>
+                  <summary>查看完整明细（{data.details.length} 项）</summary>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>L3 达成路径</th>
+                        <th>状态</th>
+                        <th>预计耗时</th>
+                        <th>实际耗时</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.details.map((detail) => (
+                        <tr key={detail.plan_item_id}>
+                          <td>{detail.l3_code}</td>
+                          <td>{detail.status}</td>
+                          <td>
+                            {formatEstimatedHours(
+                              detail.estimated_hours,
+                              detail.estimated_hours_parsed,
+                            )}
+                          </td>
+                          <td>{detail.actual_hours} h</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
+              </>
             )}
           </section>
           <section className="card">
@@ -305,6 +345,7 @@ export function MonthlyReviewPage() {
           </section>
           <section className="card" data-testid="review-history">
             <h2>修订历史</h2>
+            <p className="muted">历史修订记录只读，最新修订即当前版本。</p>
             {data.history.length === 0 ? (
               <p className="muted">暂无修订记录。</p>
             ) : (
