@@ -250,7 +250,14 @@ for (const viewport of VIEWPORTS) {
       expect(firstInput!.y + firstInput!.height).toBeLessThanOrEqual(900)
     }
 
-    // 5) 768：表单可填写；异常表行不超出视口宽度。
+    // 5) 截图证据（默认折叠状态的纯净首屏）：必须在任何会改变
+    // 焦点/滚动位置的交互（768 fill、details 展开）之前完成，
+    // 保证同一视觉命令连续运行的产物字节稳定。
+    await page.screenshot({
+      path: path.join(evidenceDir(), `monthly-review-${viewport.name}.png`),
+    })
+
+    // 6) 768：表单可填写；异常表行不超出视口宽度。
     if (viewport.name === '768x900') {
       await page.getByLabel('本月主要产出').fill('布局检查填写内容')
       await expect(page.getByLabel('本月主要产出')).toHaveValue(
@@ -264,12 +271,7 @@ for (const viewport of VIEWPORTS) {
       expect(rowBox!.x + rowBox!.width).toBeLessThanOrEqual(768)
     }
 
-    // 截图证据（默认折叠状态的首屏），供 PR/Issue 引用。
-    await page.screenshot({
-      path: path.join(evidenceDir(), `monthly-review-${viewport.name}.png`),
-    })
-
-    // 6) 展开完整明细后可见非异常状态行。
+    // 7) 展开完整明细后可见非异常状态行。
     await page.getByText('查看完整明细（5 项）').click()
     await expect(fullTable.locator('tbody tr').first()).toBeVisible()
     await expect(fullTable).toContainText('已完成')

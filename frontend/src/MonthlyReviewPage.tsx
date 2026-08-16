@@ -254,7 +254,7 @@ export function MonthlyReviewPage() {
                     </tbody>
                   </table>
                 )}
-                <details>
+                <details className="detail-fold">
                   <summary>查看完整明细（{data.details.length} 项）</summary>
                   <table>
                     <thead>
