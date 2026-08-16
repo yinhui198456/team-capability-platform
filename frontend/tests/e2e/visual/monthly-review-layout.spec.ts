@@ -207,6 +207,19 @@ for (const viewport of VIEWPORTS) {
     ).toBeVisible()
     await expect(page.getByTestId('monthly-summary')).toBeVisible()
 
+    // 0) 顶栏「选择年度」原生 select 展开面板可读（Issue #175 UAT 反馈）：
+    // option 必须显式成对定义白底 + 深色文字，避免 Chrome 原生展开面板上
+    // 未选年份继承 select 的白字而在白底上不可见。
+    const optionStyle = await page
+      .locator('.year-selector option')
+      .first()
+      .evaluate((el) => {
+        const cs = getComputedStyle(el)
+        return { background: cs.backgroundColor, color: cs.color }
+      })
+    expect(optionStyle.background).toBe('rgb(255, 255, 255)')
+    expect(optionStyle.color).toBe('rgb(16, 24, 40)')
+
     // 1) 汇总为自适应网格而非单列纵向堆叠（Issue #175 根因回归）。
     const summaryGrid = await page.evaluate(() => {
       const dl = document.querySelector('[data-testid="monthly-summary"] dl')

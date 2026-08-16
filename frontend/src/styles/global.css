@@ -159,6 +159,12 @@ button {
   width: auto;
   max-width: 140px;
 }
+/* 原生展开面板（Chrome 白底）必须显式配对 option 前景/背景，否则未选
+   年份继承 select 的白字而不可见；选中态交给浏览器原生高亮。 */
+.year-selector option {
+  background: var(--color-white);
+  color: var(--color-gray-900);
+}
 .year-selector:disabled {
   cursor: default;
   opacity: 1;
