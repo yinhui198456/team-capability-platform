@@ -119,3 +119,18 @@
 | 7-4 | 最终 UAT 与发布决策 | 7-3 经 Codex 审核通过 | 用户 | 全链路 UAT 结论及是否发布的明确决定 |
 
 卡片的默认实施方法为：CC 依据冻结基线与对应迭代计划执行 TDD、容器化测试、质量检查和小粒度提交；Codex 审核业务边界、回归证据与看板状态；用户仅在 UAT/发布决策卡给出结论。每张非 UAT 卡的状态初始为“Todo / 待开始”，除本节已记录的用户明确授权例外外，不得越过表中前置条件。
+
+---
+
+## 8. Issue #187 原型基线（Docs as Code / 静态原型）
+
+只记录批次、状态、证据与 Issue/PR 链接，不修改业务规则；业务规则变更以 `docs/01_Product.md`「Issue #187 故事合同」为准。
+
+| 项目 | 内容 |
+|---|---|
+| 状态 | 阶段 0（静态原型基线）已完成并提交 Draft PR，待评审；项目看板 In Progress/进行中，阶段 0 不自行改状态 |
+| 批次 | 第一批：M01～M05、B01、D01、L01、A01（9 页定版）；第二批：M06、M07；不实施：L02 |
+| 资产 | `docs/assets/ui-prototypes/prototype-v1/`（索引 `docs/assets/ui-prototypes/README.md`；页面矩阵 `docs/04_UI.md` §4.9；来源包 SHA256 `5875a74d…6646d`） |
+| 证据 | 阶段 0 commit `797a8b2`（25 文件，docs-only）+ [Draft PR #188](https://github.com/yinhui198456/team-capability-platform/pull/188)（head 分支 `docs/issue-187-prototype-baseline`，base `master`）；headless Chromium 1440/1024/768 自动打开检查；自动检查与人工视觉为不同层面，业务 UAT 不属于阶段 0 |
+| 相关 Issue/PR | [#187](https://github.com/yinhui198456/team-capability-platform/issues/187)（唯一阶段 0 Issue）；[PR #188](https://github.com/yinhui198456/team-capability-platform/pull/188) Open Draft；[#178](https://github.com/yinhui198456/team-capability-platform/issues/178) Open；[PR #179](https://github.com/yinhui198456/team-capability-platform/pull/179) Open Draft（head `56deae5`，base `fix/issue-93-responsive-layout`，未合并）——#178/#179 仍待处理，旧 PR 分支不能替代当前 master 基线 |
+| 下一动作 | 用户确认 PR #188 后，终态复核 #176 再决定是否启动；本阶段不启动，也不自动创建新 Issue |

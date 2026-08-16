@@ -1,0 +1,271 @@
+{
+  "generatedAt": "2026-08-14T01:12:31.691Z",
+  "pages": [
+    {
+      "code": "M01",
+      "title": "我的工作台",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/m01-v1.html"
+    },
+    {
+      "code": "M01",
+      "title": "我的工作台",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/m01-v2.html"
+    },
+    {
+      "code": "M01",
+      "title": "我的工作台",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/m01-v3.html"
+    },
+    {
+      "code": "M02",
+      "title": "能力评级与提升计划",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/m02-v1.html"
+    },
+    {
+      "code": "M02",
+      "title": "能力评级与提升计划",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/m02-v2.html"
+    },
+    {
+      "code": "M02",
+      "title": "能力评级与提升计划",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/m02-v3.html"
+    },
+    {
+      "code": "M03",
+      "title": "年度成长计划",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/m03-v1.html"
+    },
+    {
+      "code": "M03",
+      "title": "年度成长计划",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/m03-v2.html"
+    },
+    {
+      "code": "M03",
+      "title": "年度成长计划",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/m03-v3.html"
+    },
+    {
+      "code": "M04",
+      "title": "学习任务",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/m04-v1.html"
+    },
+    {
+      "code": "M04",
+      "title": "学习任务",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/m04-v2.html"
+    },
+    {
+      "code": "M04",
+      "title": "学习任务",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/m04-v3.html"
+    },
+    {
+      "code": "M05",
+      "title": "学习任务详情",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/m05-v1.html"
+    },
+    {
+      "code": "M05",
+      "title": "学习任务详情",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/m05-v2.html"
+    },
+    {
+      "code": "M05",
+      "title": "学习任务详情",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/m05-v3.html"
+    },
+    {
+      "code": "B01",
+      "title": "成果验收",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/b01-v1.html"
+    },
+    {
+      "code": "B01",
+      "title": "成果验收",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/b01-v2.html"
+    },
+    {
+      "code": "B01",
+      "title": "成果验收",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/b01-v3.html"
+    },
+    {
+      "code": "D01",
+      "title": "成员学习进度看板",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/d01-v1.html"
+    },
+    {
+      "code": "D01",
+      "title": "成员学习进度看板",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/d01-v2.html"
+    },
+    {
+      "code": "D01",
+      "title": "成员学习进度看板",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/d01-v3.html"
+    },
+    {
+      "code": "L01",
+      "title": "团队能力分析",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/l01-v1.html"
+    },
+    {
+      "code": "L01",
+      "title": "团队能力分析",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/l01-v2.html"
+    },
+    {
+      "code": "L01",
+      "title": "团队能力分析",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/l01-v3.html"
+    },
+    {
+      "code": "A01",
+      "title": "用户、角色与辅导关系",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/a01-v1.html"
+    },
+    {
+      "code": "A01",
+      "title": "用户、角色与辅导关系",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/a01-v2.html"
+    },
+    {
+      "code": "A01",
+      "title": "用户、角色与辅导关系",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/a01-v3.html"
+    },
+    {
+      "code": "A02",
+      "title": "年度与系统配置",
+      "variant": 1,
+      "variantName": "集中作业型",
+      "file": "pages/a02-v1.html"
+    },
+    {
+      "code": "A02",
+      "title": "年度与系统配置",
+      "variant": 2,
+      "variantName": "引导卡片型",
+      "file": "pages/a02-v2.html"
+    },
+    {
+      "code": "A02",
+      "title": "年度与系统配置",
+      "variant": 3,
+      "variantName": "重点聚焦型",
+      "file": "pages/a02-v3.html"
+    }
+  ],
+  "selected": [
+    {
+      "code": "M01",
+      "title": "我的工作台",
+      "variant": 1,
+      "file": "pages/m01-selected.html"
+    },
+    {
+      "code": "M02",
+      "title": "能力评级与提升计划",
+      "variant": 1,
+      "file": "pages/m02-selected.html"
+    },
+    {
+      "code": "M03",
+      "title": "年度成长计划",
+      "variant": 1,
+      "file": "pages/m03-selected.html"
+    },
+    {
+      "code": "M04",
+      "title": "学习任务",
+      "variant": 1,
+      "file": "pages/m04-selected.html"
+    },
+    {
+      "code": "M05",
+      "title": "学习任务详情",
+      "variant": 1,
+      "file": "pages/m05-selected.html"
+    },
+    {
+      "code": "B01",
+      "title": "成果验收",
+      "variant": 2,
+      "file": "pages/b01-selected.html"
+    },
+    {
+      "code": "D01",
+      "title": "成员学习进度看板",
+      "variant": 3,
+      "file": "pages/d01-selected.html"
+    },
+    {
+      "code": "L01",
+      "title": "团队能力分析",
+      "variant": 1,
+      "file": "pages/l01-selected.html"
+    },
+    {
+      "code": "A01",
+      "title": "用户、角色与辅导关系",
+      "variant": 1,
+      "file": "pages/a01-selected.html"
+    }
+  ]
+}

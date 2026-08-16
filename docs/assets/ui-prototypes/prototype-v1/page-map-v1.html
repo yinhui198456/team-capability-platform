@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TCP 页面地图 V1 · 职责确认稿</title>
+  <style>
+    :root{--navy:#0b3f91;--blue:#1767d8;--blue-bg:#edf5ff;--ink:#17243a;--muted:#64748b;--line:#dbe4ef;--canvas:#eef3f8;--green:#0c835b;--green-bg:#e7f7ef;--amber:#a45a00;--amber-bg:#fff2dd;--red:#b33232;--red-bg:#ffeded;--purple:#6d4bc3;--purple-bg:#f1edff}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.6 "Microsoft YaHei","PingFang SC",Arial,sans-serif}button{font:inherit}
+    .top{height:64px;padding:0 28px;background:var(--navy);color:#fff;display:flex;align-items:center;gap:20px;position:sticky;top:0;z-index:20;box-shadow:0 5px 20px rgba(15,45,89,.16)}.brand{font-size:19px;font-weight:800}.top small{color:#d0e1ff}.top .spacer{flex:1}.top a{color:#fff;text-decoration:none;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:7px 11px}
+    .wrap{max-width:1500px;margin:auto;padding:28px}.card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 18px rgba(32,59,91,.05)}.hero{display:grid;grid-template-columns:1.3fr .7fr;gap:16px}.hero-main,.hero-side{padding:25px}.eyebrow{color:var(--blue);font-weight:800}.hero h1{font-size:29px;line-height:1.3;margin:7px 0}.hero p{color:var(--muted);margin:0}.hero-side h2{font-size:17px;margin:0 0 11px}.count-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.count{padding:11px;border:1px solid var(--line);border-radius:9px}.count b{display:block;font-size:21px}.count span{font-size:12px;color:var(--muted)}
+    .section{margin-top:17px;padding:22px}.section-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:15px}.section h2{font-size:21px;margin:0}.section-head p{margin:2px 0 0;color:var(--muted)}.tag{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#edf2f7;color:#54667d}.tag.keep{background:var(--green-bg);color:var(--green)}.tag.merge{background:var(--blue-bg);color:var(--blue)}.tag.remove{background:var(--red-bg);color:var(--red)}.tag.later{background:var(--amber-bg);color:var(--amber)}.tag.shared{background:var(--purple-bg);color:var(--purple)}
+    .step-map{display:grid;grid-template-columns:repeat(8,minmax(170px,1fr));gap:9px;overflow-x:auto;padding-bottom:12px}.mapped-step{position:relative;min-height:172px;padding:14px;border:1px solid var(--line);border-radius:10px}.mapped-step::after{content:"→";position:absolute;right:-10px;top:70px;color:var(--blue);font-size:18px;font-weight:800;z-index:2}.mapped-step:last-child::after{display:none}.mapped-step .n{color:var(--blue);font-weight:800}.mapped-step h3{font-size:15px;line-height:1.35;margin:7px 0}.mapped-step p{font-size:12px;color:var(--muted);margin:0 0 9px}.page-ref{display:block;margin-top:5px;padding:6px 8px;background:var(--blue-bg);border-radius:7px;color:#315e94;font-size:12px;font-weight:700}
+    .filters{display:flex;flex-wrap:wrap;gap:7px}.filter{border:1px solid #b9c8da;background:#fff;border-radius:8px;padding:7px 11px;color:#40546d;cursor:pointer}.filter.active{border-color:var(--blue);background:var(--blue-bg);color:var(--blue);font-weight:800}.lanes{display:grid;gap:12px}.lane{display:grid;grid-template-columns:140px 1fr;border:1px solid var(--line);border-radius:11px;overflow:hidden}.lane-head{padding:16px;background:#f6f9fc;border-right:1px solid var(--line)}.lane-head b{display:block;font-size:16px}.lane-head span{font-size:12px;color:var(--muted)}.lane-pages{padding:13px;display:grid;grid-template-columns:repeat(4,minmax(190px,1fr));gap:9px}.page-card{position:relative;padding:14px;border:1px solid var(--line);border-radius:9px;background:#fff}.page-card.hidden{display:none}.code{color:var(--blue);font-size:11px;font-weight:800}.page-card h3{font-size:15px;margin:5px 0 6px}.page-card p{font-size:12px;color:var(--muted);margin:0 0 9px}.page-card ul{font-size:12px;margin:0;padding-left:17px;color:#40516a}.page-card .tag{position:absolute;top:10px;right:10px}
+    .matrix{width:100%;border-collapse:collapse}.matrix th{background:#f5f8fc;color:#506278;text-align:left;font-size:12px;padding:10px;border-bottom:1px solid var(--line)}.matrix td{padding:11px;border-bottom:1px solid #edf1f5;vertical-align:top}.matrix td:nth-child(1){font-weight:800;white-space:nowrap}.matrix td:nth-child(2){min-width:210px}.matrix td:nth-child(3),.matrix td:nth-child(4){color:#4d5f75}.matrix tr:last-child td{border-bottom:0}
+    .cuts{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}.cut{padding:16px;border:1px solid var(--line);border-radius:10px}.cut h3{font-size:16px;margin:8px 0}.cut p{margin:0;color:var(--muted)}.cut .fromto{margin-top:10px;padding:9px;border-radius:8px;background:#f7f9fc;color:#42546a;font-size:12px}
+    .nav-proposal{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.nav-col{border:1px solid var(--line);border-radius:10px;overflow:hidden}.nav-title{padding:12px 14px;background:#f4f8fc;font-weight:800}.nav-group{padding:12px 14px;border-top:1px solid var(--line)}.nav-group b{display:block;font-size:12px;color:#758399;margin-bottom:5px}.nav-group span{display:block;padding:4px 0}.nav-group .deleted{color:#9a4b4b;text-decoration:line-through}.note{padding:12px 14px;border:1px solid #f2cf94;background:#fff8ea;border-radius:9px;color:#745938}.footer{text-align:center;color:var(--muted);font-size:12px;margin:20px 0 5px}
+    @media(max-width:1100px){.hero{grid-template-columns:1fr}.lane-pages{grid-template-columns:repeat(2,1fr)}.cuts,.nav-proposal{grid-template-columns:1fr 1fr}}
+    @media(max-width:700px){.wrap{padding:15px}.top{padding:0 15px}.top small{display:none}.hero h1{font-size:24px}.section{padding:16px}.lane{grid-template-columns:1fr}.lane-head{border-right:0;border-bottom:1px solid var(--line)}.lane-pages,.cuts,.nav-proposal{grid-template-columns:1fr}.matrix{display:block;overflow-x:auto}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand">TCP 页面地图 V1</div><small>故事步骤 → 页面职责 → 导航取舍</small><div class="spacer"></div><a href="storyline-v1.html">返回故事线 V1</a></header>
+  <main class="wrap">
+    <section class="hero">
+      <div class="card hero-main"><div class="eyebrow">本阶段目标</div><h1>先判断“需要哪些页面”，再讨论“页面长什么样”</h1><p>页面不是按数据库表或角色名称堆出来的。每个页面必须承接一个明确用户动作；没有核心动作、与其他页面重复或只是筛选维度的页面，应当合并或移除。</p></div>
+      <aside class="card hero-side"><h2>页面取舍结果</h2><div class="count-grid"><div class="count"><b>11</b><span>首批核心页面/详情页</span></div><div class="count"><b>4</b><span>合并、内嵌或重新定义</span></div><div class="count"><b>4</b><span>当前不规划的旧入口/页面</span></div><div class="count"><b>3</b><span>第二批再做的支持页</span></div></div></aside>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>1. 故事步骤映射到页面</h2><p>注意：评级、选择、填写月份、生成任务是同一页面里的连续动作，不应拆成四页。</p></div><span class="tag keep">主路径</span></div>
+      <div class="step-map">
+        <article class="mapped-step"><span class="n">01 标准</span><h3>发布适用能力标准</h3><p>维护能力要求与适用范围。</p><span class="page-ref">S01 能力地图</span></article>
+        <article class="mapped-step"><span class="n">02 评级</span><h3>增量保存能力评级</h3><p>任意若干 L3 随时保存。</p><span class="page-ref">M02 能力评级与提升计划</span></article>
+        <article class="mapped-step"><span class="n">03 选择</span><h3>选择本次提升项</h3><p>只选择已评级且存在 Gap 的项目。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
+        <article class="mapped-step"><span class="n">04 排期</span><h3>补充计划月份</h3><p>整框点击选择年月，草稿可恢复。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
+        <article class="mapped-step"><span class="n">05 生成</span><h3>生成所选学习任务</h3><p>显式生成正式计划与任务。</p><span class="page-ref">M03 年度成长计划</span><span class="page-ref">M04 学习任务</span></article>
+        <article class="mapped-step"><span class="n">06 执行</span><h3>学习、记录与提交成果</h3><p>日志、时长、复盘和 Evidence；Buddy/Leader 同步看进度。</p><span class="page-ref">M05 学习任务详情</span><span class="page-ref">D01 成员学习进度看板</span><span class="page-ref">M06 月度复盘（第二批）</span></article>
+        <article class="mapped-step"><span class="n">07 验收</span><h3>Buddy 验收成果</h3><p>队列与验收工作区在同一页面。</p><span class="page-ref">B01 成果验收</span></article>
+        <article class="mapped-step"><span class="n">08 看板</span><h3>Buddy / Leader 查看成员进度</h3><p>按周或月识别投入不足、延期和需要关注的成员。</p><span class="page-ref">D01 成员学习进度看板</span><span class="page-ref">L01 团队能力分析</span></article>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>2. 按角色查看建议页面</h2><p>点击角色筛选；“共享”页面会同时服务多个角色，但权限不同。</p></div><div class="filters"><button class="filter active" data-role="all">全部</button><button class="filter" data-role="member">Member</button><button class="filter" data-role="buddy">Buddy</button><button class="filter" data-role="leader">Leader</button><button class="filter" data-role="admin">Admin</button></div></div>
+      <div class="lanes">
+        <div class="lane" data-lane="member"><div class="lane-head"><b>Member</b><span>评级 → 计划 → 执行 → 成果</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M01</div><h3>我的工作台</h3><p>只回答“我下一步做什么”。</p><ul><li>待评级、待排期、待确认</li><li>进行中与逾期任务</li><li>待补成果</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M02</div><h3>能力评级与提升计划</h3><p>一次完成评级、选择、计划月份和显式生成。</p><ul><li>增量保存</li><li>计划草稿</li><li>生成所选任务</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M03</div><h3>年度成长计划</h3><p>按月份查看正式计划的整体结构。</p><ul><li>已生成计划项</li><li>月份分布</li><li>进度与调整记录</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M04 / M05</div><h3>学习任务 / 任务详情</h3><p>列表负责定位，详情负责执行。</p><ul><li>日志、时长、Evidence</li><li>L3 要求变化待确认</li><li>新旧要求版本选择</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag later">第二批</span><div class="code">M06</div><h3>月度复盘</h3><p>跨任务总结本月投入、产出和下一步行动。</p><ul><li>不重复录入任务日志</li><li>自动汇总后补充结论</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag later">第二批</span><div class="code">M07</div><h3>成长档案</h3><p>只读查看长期变化和历史证据。</p><ul><li>评级历史作为一个页签</li><li>计划、成果与验收历史</li></ul></article>
+        </div></div>
+
+        <div class="lane" data-lane="buddy"><div class="lane-head"><b>Buddy</b><span>只验收成果，不审核评级</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="buddy"><span class="tag keep">唯一核心页</span><div class="code">B01</div><h3>成果验收</h3><p>成员筛选、待办队列和验收工作区在同一页。</p><ul><li>Evidence 版本与历史反馈</li><li>通过 / 需补充</li><li>按任务所选要求版本验收</li></ul></article>
+        </div></div>
+
+        <div class="lane" data-lane="oversight"><div class="lane-head"><b>Buddy / Leader</b><span>同一看板，不同数据范围</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="buddy leader"><span class="tag keep">首批共用</span><div class="code">D01</div><h3>成员学习进度看板</h3><p>按周或月查看成员的学习投入、任务进度与延期风险。</p><ul><li>Buddy：仅所辅导成员；Leader：所属团队成员</li><li>候选指标：本期/累计学习时间、任务数、完成数、延期数</li><li>支持成员排序、风险定位和进入详情；指标口径后续确认</li></ul></article>
+        </div></div>
+
+        <div class="lane" data-lane="leader"><div class="lane-head"><b>Leader</b><span>看团队结果并决定重点</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="leader"><span class="tag keep">核心</span><div class="code">L01</div><h3>团队能力分析</h3><p>查看团队能力、任务执行和成果质量。</p><ul><li>能力差距分布</li><li>计划与成果趋势</li><li>需要关注的成员/能力域</li></ul></article>
+        </div></div>
+
+        <div class="lane" data-lane="shared"><div class="lane-head"><b>共享能力库</b><span>同页不同权限</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="member buddy leader admin"><span class="tag shared">共享</span><div class="code">S01</div><h3>能力地图</h3><p>浏览能力层级与 L3 要求版本。</p><ul><li>Member/Buddy 只读</li><li>授权角色维护要求</li><li>查看版本变化</li></ul></article>
+          <article class="page-card" data-page-role="member buddy leader admin"><span class="tag later">第二批</span><div class="code">S02</div><h3>学习资源</h3><p>为 L3 提供推荐资料，不承担任务执行。</p><ul><li>按 L3 关联资源</li><li>任务详情引用</li></ul></article>
+        </div></div>
+
+        <div class="lane" data-lane="admin"><div class="lane-head"><b>Admin</b><span>轻量支撑，不进入成长闭环</span></div><div class="lane-pages">
+          <article class="page-card" data-page-role="admin"><span class="tag keep">支撑</span><div class="code">A01</div><h3>用户、角色与辅导关系</h3><p>合并账号、角色和 Buddy 关系配置。</p><ul><li>用户与状态</li><li>复合角色</li><li>Buddy—Member 关系</li></ul></article>
+          <article class="page-card" data-page-role="admin"><span class="tag keep">支撑</span><div class="code">A02</div><h3>年度与系统配置</h3><p>只保留少量全局参数。</p><ul><li>当前年度</li><li>评估窗口</li><li>基础配置</li></ul></article>
+        </div></div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>3. 页面职责矩阵</h2><p>一页只负责一类主要结果；明确“不做什么”可以防止页面再次膨胀。</p></div></div>
+      <table class="matrix"><thead><tr><th>页面</th><th>主要用户结果</th><th>页面负责</th><th>页面明确不负责</th></tr></thead><tbody>
+        <tr><td>M01 工作台</td><td>快速知道下一步</td><td>聚合待办、风险和继续入口</td><td>不在卡片中完成复杂编辑</td></tr>
+        <tr><td>M02 评级与提升计划</td><td>随时评级并生成所选任务</td><td>评级、选择、月份、草稿和显式生成</td><td>不执行任务，不验收成果</td></tr>
+        <tr><td>M03 年度成长计划</td><td>看清全年正式计划</td><td>按月份组织计划项、显示整体进度</td><td>不重新做能力评级</td></tr>
+        <tr><td>M04/M05 学习任务</td><td>完成一项具体学习</td><td>日志、时长、要求版本、Evidence</td><td>不维护能力标准</td></tr>
+        <tr><td>M06 月度复盘<br><span class="tag later">第二批</span></td><td>总结本月并决定下月行动</td><td>自动汇总后填写结论和行动</td><td>不重复录入每项任务日志</td></tr>
+        <tr><td>M07 成长档案<br><span class="tag later">第二批</span></td><td>查看长期成长轨迹</td><td>评级、计划、成果和验收的只读历史</td><td>不发起新的业务动作</td></tr>
+        <tr><td>B01 成果验收</td><td>完成 Evidence 验收</td><td>筛选成员、处理队列、反馈、历史版本</td><td>不审核评级，不审批计划</td></tr>
+        <tr><td>D01 成员学习进度看板</td><td>识别组内成员进度与风险</td><td>周/月切换、学习投入、任务进度、延期定位和成员下钻</td><td>不修改成员评级，不代替成果验收，不在当前阶段锁死指标口径</td></tr>
+        <tr><td>L01 团队能力分析</td><td>发现团队问题和机会</td><td>聚合分析、趋势、风险定位</td><td>不逐项替成员改计划</td></tr>
+        <tr><td>S01 能力地图</td><td>理解或维护能力要求</td><td>层级、要求、输出与版本变化</td><td>不展示个人任务执行详情</td></tr>
+      </tbody></table>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>4. 合并与删除建议</h2><p>这些取舍直接解决当前“页面多、作用不清、左侧导航膨胀”的问题。</p></div></div>
+      <div class="cuts">
+        <article class="cut"><span class="tag remove">删除</span><h3>Buddy 复核中心</h3><p>它围绕已经取消的自评审核流程设计，不再承担任何活动业务。</p><div class="fromto">成果相关操作统一进入：B01 成果验收</div></article>
+        <article class="cut"><span class="tag merge">重新定义</span><h3>旧“辅导成员看板”</h3><p>原页面缺少清晰用途；保留“看成员进度”的真实需求，但不保留旧故事和旧布局。</p><div class="fromto">重新定义为：D01 成员学习进度看板（Buddy / Leader 共用）</div></article>
+        <article class="cut"><span class="tag merge">合并</span><h3>评估历史</h3><p>它是成长档案的一种历史数据，不需要占用一级业务入口。</p><div class="fromto">合并到：M07 成长档案 → 评级历史页签</div></article>
+        <article class="cut"><span class="tag merge">内嵌</span><h3>Gap 摘要</h3><p>Gap 是评级结果与筛选维度，不是一个完整业务流程。</p><div class="fromto">放入：M02 顶部摘要、筛选和侧边详情</div></article>
+        <article class="cut"><span class="tag merge">合并</span><h3>用户 / 角色 / Buddy 关系</h3><p>三者都围绕同一身份配置，拆成多页只会增加跳转。</p><div class="fromto">合并为：A01 用户、角色与辅导关系</div></article>
+        <article class="cut"><span class="tag remove">删除</span><h3>整份自评提交</h3><p>与增量评级、增量任务生成冲突，也会制造虚假的全局完成门槛。</p><div class="fromto">替换为：M02 保存评级 + 生成所选任务</div></article>
+        <article class="cut"><span class="tag remove">不新增</span><h3>独立通知中心</h3><p>自学项目暂时没有足够通知量支撑新页面。</p><div class="fromto">L3 变化直接显示在 M01、M04 和 M05</div></article>
+        <article class="cut"><span class="tag later">暂不规划</span><h3>L02 年度能力重点</h3><p>当前没有明确且高频的用户动作，先不为“规划”单独建设页面。</p><div class="fromto">Leader 首批只保留：L01 团队能力分析</div></article>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>5. 建议的左侧导航</h2><p>导航按用户任务分组，不按后台模块或数据库实体分组。</p></div><span class="tag merge">待确认</span></div>
+      <div class="nav-proposal">
+        <div class="nav-col"><div class="nav-title">Member</div><div class="nav-group"><b>我的工作</b><span>我的工作台</span></div><div class="nav-group"><b>能力成长</b><span>能力评级与提升计划</span><span>年度成长计划</span><span>学习任务</span></div><div class="nav-group"><b>能力标准</b><span>能力地图</span></div></div>
+        <div class="nav-col"><div class="nav-title">Buddy 增量菜单</div><div class="nav-group"><b>导师指导</b><span>成员学习进度看板</span><span>成果验收</span><span class="deleted">Buddy 复核中心</span></div></div>
+        <div class="nav-col"><div class="nav-title">Leader 增量菜单</div><div class="nav-group"><b>团队运营</b><span>成员学习进度看板</span><span>团队能力分析</span></div><div class="nav-group"><b>能力标准</b><span>能力地图</span></div></div>
+        <div class="nav-col"><div class="nav-title">Admin 增量菜单</div><div class="nav-group"><b>系统管理</b><span>用户、角色与辅导关系</span><span>年度与系统配置</span></div></div>
+      </div>
+      <div class="note" style="margin-top:12px">首批导航不显示第二批能力。第二批再追加：月度复盘、成长档案、学习资源。复合角色只增加对应菜单组，不切换到另一套完全不同的系统。</div>
+    </section>
+
+    <div class="footer">TCP 页面地图 V1 · 页面职责确认稿 · 尚未开始逐页原型</div>
+  </main>
+  <script>
+    const filters=[...document.querySelectorAll('.filter')];
+    const pages=[...document.querySelectorAll('.page-card')];
+    filters.forEach(filter=>filter.addEventListener('click',()=>{
+      filters.forEach(item=>item.classList.toggle('active',item===filter));
+      const role=filter.dataset.role;
+      pages.forEach(page=>page.classList.toggle('hidden',role!=='all'&&!page.dataset.pageRole.split(' ').includes(role)));
+      document.querySelectorAll('.lane').forEach(lane=>{
+        const visible=lane.querySelectorAll('.page-card:not(.hidden)').length>0;
+        lane.style.display=visible?'grid':'none';
+      });
+    }));
+  </script>
+</body>
+</html>

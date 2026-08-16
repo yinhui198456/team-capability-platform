@@ -10,6 +10,8 @@
 - 不定义接口、代码、技术实现细节。
 - 所有对象与规则均来源于 `docs/01_Product.md` 与 `docs/02_Design.md`。
 
+> ⚠️ **Issue #187 新契约优先（2026-08-16）：** 本文档中与 #187 第一批原型基线冲突的旧规则——旧整表提交/原子生成、活跃的 Assessment Review / Buddy 自评复核队列、独立的季度/日期输入（如 `plan_quarter`、数值 `plan_month`）等——均为历史实现描述，不是新开发契约。新开发契约以 [`docs/01_Product.md`](01_Product.md)「Issue #187 故事合同」和 [`docs/04_UI.md`](04_UI.md) §4.9 页面矩阵为准；本文正文保留原文，不做逐节改写。
+
 ---
 
 ## 2. 核心对象清单
@@ -192,6 +194,8 @@ Assessment Detail 可记录：
 
 ### 3.11 Assessment Review
 
+> ⚠️ Issue #187 故事合同第 7 条：不再创建新的 Assessment Review/Buddy 自评复核队列；本节描述的对象仅用于**历史记录只读**（查看与追溯），Buddy Evidence Review（§3.18）保留。
+
 | 项目 | 说明 |
 |---|---|
 | 业务定义 | Buddy 对一次 Assessment 提交的复核记录，属于辅导性反馈，不是行政审批；同一 Assessment 可有多条历史 Review 记录 |
@@ -238,7 +242,7 @@ Assessment Detail 可记录：
 | 关联关系 | N:1 User；1:N Growth Goal；1:N Plan Item；N:1 Assessment |
 | 唯一性约束 | 同一 Member、同一年度唯一 |
 | 维护角色 | Member |
-| 生成约束 | 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。 |
+| 生成约束 | 正式将 Gap 纳入年度成长计划（包括生成年度成长计划及其计划项）的统一门禁：当前 Assessment 最新一次提交对应的 Assessment Review 已闭环，Review 结论为「认可」，且不存在待复核事项。（⚠️ 已被 Issue #82 废弃；Issue #187 故事合同第 2、3 条再替代为：提升项先持久化为计划草稿，仅显式「生成所选学习任务」形成正式计划项/任务） |
 
 ### 3.15 Plan Item
 
@@ -248,7 +252,7 @@ Assessment Detail 可记录：
 | 业务字段 | 计划项编码、年度成长计划编码、Growth Goal 编码、L3 编码、当前掌握度、目标掌握度、优先级、学习材料、学习任务 / 实操内容、预期输出 / 验收方式、预计耗时、计划开始日期、计划截止日期、目标月份、状态 |
 | 状态 | 未开始 / 进行中 / 已完成 / 延期 / 暂停 / 取消 |
 | 并发控制 | 单调递增 `revision`；写请求携带 `expected_revision`，过期返回 409 `plan_revision_conflict` |
-| 日期边界 | 计划开始日期须落在来源季度内，计划截止日期须落在来源计划月内（无来源月时同样限来源季度），且开始不晚于截止 |
+| 日期边界 | 计划开始日期须落在来源季度内，计划截止日期须落在来源计划月内（无来源月时同样限来源季度），且开始不晚于截止（⚠️ 已由 Issue #187 故事合同第 4 条替代：计划时间仅 `plan_month=YYYY-MM`；master 现存的 `plan_quarter` / 数值 `plan_month` 为历史实现缺口，仅记录不改动，待实施 Issue 对齐） |
 | 版本 / 年度 | 按 Annual Growth Plan 年度管理 |
 | 关联关系 | N:1 Annual Growth Plan；1:1 Growth Goal；N:1 Capability Item L3；1:1 Learning Task |
 | 唯一性约束 | 同一 Annual Growth Plan 内同一 L3 编码唯一 |
@@ -343,6 +347,15 @@ Assessment Detail 可记录：
 | 幂等 | 接受 `idempotency_key`；同 key 同 payload 重放返回首次响应，不同 payload 返回 409 `log_idempotency_conflict` |
 | 唯一性约束 | 不设任务拆分约束；每条日志必须关联一个 Learning Task |
 | 维护角色 | Member |
+
+---
+
+## 3.23 Issue #187 计划草稿语义（原型基线）
+
+- 「加入/移出提升计划草稿」是独立动作（故事合同第 2、3 条）：已选择提升项持久化为计划草稿，Member 可退出后继续；只有显式「生成所选学习任务」才形成正式计划项/学习任务（1:1）。
+- 计划时间仅 `plan_month=YYYY-MM`（故事合同第 4 条）；季度可由月份推导，但不作为用户动作或重点文案。
+- 生成时所选 L3 缺计划月份则整批零写入、保留输入并逐项中文提示（故事合同第 6 条）。
+- 本节描述的是原型交互基线语义，不定义新的数据库对象或字段；`docs/04_UI.md` §4.9 页面矩阵记录 master 落地状态与缺口，业务对象定义仍以本节上文为准。
 
 ---
 
