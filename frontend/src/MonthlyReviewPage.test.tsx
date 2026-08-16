@@ -436,6 +436,44 @@ describe('MonthlyReviewPage', () => {
     })
   })
 
+  it('uses a compact auto-fit summary grid and folds the full detail list behind native details (Issue #175 layout regression)', async () => {
+    stubYear()
+    stubMember()
+    vi.spyOn(planningApi, 'getMonthlyReview').mockResolvedValue(reviewFixture())
+    renderPage()
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: '月度复盘', level: 1 }),
+      ).toBeTruthy()
+    })
+
+    // 汇总必须使用自适应网格而非浏览器默认的纵向 dl 堆叠。
+    const summaryDl = document.querySelector(
+      '[data-testid="monthly-summary"] dl',
+    ) as HTMLElement | null
+    expect(summaryDl).not.toBeNull()
+    expect(summaryDl!.classList.contains('metadata')).toBe(true)
+
+    // 异常/待处理项（延期、暂停、取消）默认展示，完整明细在原生 details 中默认折叠。
+    const detailsSection = screen.getByTestId('monthly-details')
+    const anomalyTable = detailsSection.querySelector(
+      '[data-testid="anomaly-table"]',
+    )
+    expect(anomalyTable).not.toBeNull()
+    expect(anomalyTable!.textContent).toContain('延期')
+    expect(anomalyTable!.textContent).toContain('取消')
+    expect(anomalyTable!.textContent).not.toContain('已完成')
+
+    const fullDetails = detailsSection.querySelector('details')
+    expect(fullDetails).not.toBeNull()
+    expect(fullDetails!.querySelector('summary')?.textContent).toContain(
+      '查看完整明细',
+    )
+    // 完整明细（含非异常状态行）只在折叠块内。
+    expect(fullDetails!.querySelector('table')?.textContent).toContain('已完成')
+    expect(fullDetails!.getAttribute('open')).toBeNull()
+  })
+
   it('renders an empty month with placeholder estimated hours', async () => {
     stubYear()
     stubMember()
