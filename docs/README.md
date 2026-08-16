@@ -9,7 +9,7 @@
 - 迭代 6 的 UI-01～UI-05、角色权限和 Codex 真实容器浏览器复验已完成；等待用户集成 UAT（6A-4、6B-5）。
 - 迭代 7 的种子、端到端 smoke、容器/文档硬化已完成；最终 UAT 与发布决策（7-4）待用户执行。
 - Issue #63 第三阶段工程收口已完成：跨角色真实 API E2E（5 场景）、必要失败路径、三视口与文档一致性，含一处生产修复（双角色 Buddy 评审历史 403 回退）；见 `acceptance/ISSUE_63_ENGINEERING_CLOSEOUT.md`。PR #71 保持 Draft，#63 UAT 未执行、不得视为通过。
-- Issue #187 阶段 0 原型基线（Docs as Code / 静态原型）已完成：第一批 9 页交互原型、故事线与页面地图纳入 `docs/assets/ui-prototypes/prototype-v1/`，索引见 `docs/assets/ui-prototypes/README.md`，页面矩阵见 `docs/04_UI.md` §4.9；详见 [Issue #187](https://github.com/yinhui198456/team-capability-platform/issues/187)。
+- Issue #187 阶段 0 原型基线（Docs as Code / 静态原型）已完成：第一批 9 页交互原型、故事线与页面地图纳入 `docs/assets/ui-prototypes/prototype-v1/`，索引见 `docs/assets/ui-prototypes/README.md`，页面矩阵见 `docs/04_UI.md` §4.9；详见 [Issue #187](https://github.com/yinhui198456/team-capability-platform/issues/187) 与 [PR #188](https://github.com/yinhui198456/team-capability-platform/pull/188)（Draft，待用户评审）。
 - Issue #178 / PR #179 终态：PR #179 为 Open Draft、未合并（head `56deae5`，base `fix/issue-93-responsive-layout`，非 master），#178/#179 仍待处理；旧 PR body/分支不能替代当前 master 基线。
 
 ## 阅读路径

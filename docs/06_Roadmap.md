@@ -131,6 +131,6 @@
 | 状态 | 阶段 0（静态原型基线）已完成并提交 Draft PR，待评审；项目看板 In Progress/进行中，阶段 0 不自行改状态 |
 | 批次 | 第一批：M01～M05、B01、D01、L01、A01（9 页定版）；第二批：M06、M07；不实施：L02 |
 | 资产 | `docs/assets/ui-prototypes/prototype-v1/`（索引 `docs/assets/ui-prototypes/README.md`；页面矩阵 `docs/04_UI.md` §4.9；来源包 SHA256 `5875a74d…6646d`） |
-| 证据 | 阶段 0 commit + Draft PR（head 分支 `docs/issue-187-prototype-baseline`，base `master`）；headless Chromium 1440/1024/768 自动打开检查；自动检查与人工视觉为不同层面，业务 UAT 不属于阶段 0 |
-| 相关 Issue/PR | [#187](https://github.com/yinhui198456/team-capability-platform/issues/187)（唯一阶段 0 Issue）；[#178](https://github.com/yinhui198456/team-capability-platform/issues/178) Open；[PR #179](https://github.com/yinhui198456/team-capability-platform/pull/179) Open Draft（head `56deae5`，base `fix/issue-93-responsive-layout`，未合并）——#178/#179 仍待处理，旧 PR 分支不能替代当前 master 基线 |
-| 下一动作 | 用户评审 Draft PR 后决定后续阶段；不自动创建/启动 #176 或新 Issue |
+| 证据 | 阶段 0 commit `797a8b2`（25 文件，docs-only）+ [Draft PR #188](https://github.com/yinhui198456/team-capability-platform/pull/188)（head 分支 `docs/issue-187-prototype-baseline`，base `master`）；headless Chromium 1440/1024/768 自动打开检查；自动检查与人工视觉为不同层面，业务 UAT 不属于阶段 0 |
+| 相关 Issue/PR | [#187](https://github.com/yinhui198456/team-capability-platform/issues/187)（唯一阶段 0 Issue）；[PR #188](https://github.com/yinhui198456/team-capability-platform/pull/188) Open Draft；[#178](https://github.com/yinhui198456/team-capability-platform/issues/178) Open；[PR #179](https://github.com/yinhui198456/team-capability-platform/pull/179) Open Draft（head `56deae5`，base `fix/issue-93-responsive-layout`，未合并）——#178/#179 仍待处理，旧 PR 分支不能替代当前 master 基线 |
+| 下一动作 | 用户确认 PR #188 后，终态复核 #176 再决定是否启动；本阶段不启动，也不自动创建新 Issue |
