@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TCP 故事线 V1 · 业务确认稿</title>
+  <style>
+    :root {
+      --navy:#0b3f91; --blue:#1767d8; --blue-050:#f3f8ff; --blue-100:#e8f2ff;
+      --ink:#17243a; --muted:#64748b; --line:#dbe4ef; --canvas:#eef3f8;
+      --green:#0f8a61; --green-bg:#e8f7f0; --amber:#a95d00; --amber-bg:#fff3df;
+      --red:#b73838; --red-bg:#fff0f0; --white:#fff;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.65 "Microsoft YaHei","PingFang SC",Arial,sans-serif}
+    button,input{font:inherit}
+    .top{position:sticky;top:0;z-index:10;background:var(--navy);color:#fff;padding:0 28px;height:64px;display:flex;align-items:center;gap:22px;box-shadow:0 5px 18px rgba(15,45,89,.16)}
+    .brand{font-size:19px;font-weight:800;white-space:nowrap}.top small{color:#cfe1ff}.top .spacer{flex:1}
+    .pill{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.26)}
+    .wrap{max-width:1500px;margin:0 auto;padding:28px}
+    .hero{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,.75fr);gap:18px;margin-bottom:18px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 18px rgba(32,59,91,.05)}
+    .hero-main{padding:28px}.eyebrow{color:var(--blue);font-weight:800;letter-spacing:.04em}.hero h1{font-size:30px;line-height:1.3;margin:8px 0}.hero p{margin:0;color:var(--muted);font-size:15px}
+    .hero-side{padding:22px}.hero-side h2{font-size:17px;margin:0 0 12px}.rule{padding:10px 0;border-top:1px solid var(--line)}.rule:first-of-type{border-top:0}.rule b{display:block}.rule span{color:var(--muted);font-size:13px}
+    .section{margin-top:18px;padding:22px}.section-head{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;margin-bottom:16px}.section h2{font-size:21px;margin:0}.section-head p{margin:2px 0 0;color:var(--muted)}
+    .legend{display:flex;gap:8px;flex-wrap:wrap}.tag{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#edf2f7;color:#53657c}.tag.ok{background:var(--green-bg);color:var(--green)}.tag.warn{background:var(--amber-bg);color:var(--amber)}.tag.stop{background:var(--red-bg);color:var(--red)}
+    .backbone{display:grid;grid-template-columns:repeat(8,minmax(165px,1fr));gap:10px;overflow-x:auto;padding:4px 2px 14px;scroll-snap-type:x proximity}
+    .step{position:relative;min-height:220px;padding:16px;border:1px solid var(--line);border-radius:11px;background:linear-gradient(180deg,#fff 0%,#fbfdff 100%);scroll-snap-align:start}
+    .step::after{content:"→";position:absolute;right:-10px;top:92px;color:var(--blue);font-size:19px;font-weight:800;z-index:2}.step:last-child::after{display:none}
+    .step .number{display:inline-flex;width:25px;height:25px;border-radius:50%;align-items:center;justify-content:center;background:var(--blue-100);color:var(--blue);font-weight:800}.role{margin:10px 0 4px;color:var(--blue);font-size:12px;font-weight:800}.step h3{font-size:16px;line-height:1.35;margin:0 0 9px}.step p{color:var(--muted);font-size:13px;margin:0 0 12px}.step dl{margin:0;font-size:12px}.step dt{float:left;clear:left;width:38px;color:#7b8797}.step dd{margin-left:42px;margin-bottom:6px;color:#394b63}
+    .boundary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.action{padding:17px;border:1px solid var(--line);border-radius:11px;background:#fff}.action h3{font-size:16px;margin:8px 0 10px}.action ul{margin:0;padding-left:18px;color:#43546b}.action li+li{margin-top:5px}.action .scope{margin-top:12px;padding:9px 10px;border-radius:8px;background:var(--blue-050);font-size:12px;color:#365c89}
+    .state-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(310px,.6fr);gap:14px}.state-flow{display:flex;align-items:stretch;gap:9px;overflow:auto;padding:3px 2px 12px}.state{min-width:145px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff}.state b{display:block;margin-bottom:5px}.state small{color:var(--muted)}.arrow{display:flex;align-items:center;color:var(--blue);font-weight:800}.example{padding:18px;background:#f8fbff;border:1px solid #cfdef2;border-radius:11px}.example h3{margin:0 0 10px;font-size:16px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{padding:10px;background:#fff;border:1px solid var(--line);border-radius:8px}.metric b{display:block;font-size:19px}.metric span{color:var(--muted);font-size:11px}
+    .month-rule{display:grid;grid-template-columns:minmax(250px,.7fr) minmax(0,1.3fr);gap:14px}.month-sample{position:relative;padding:18px;border:1px solid #bcd4f3;background:var(--blue-050);border-radius:11px}.month-sample label{display:block;font-weight:800;margin-bottom:8px}.month-trigger{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 15px;border:1px solid #8fb3df;border-radius:9px;background:#fff;color:var(--ink);text-align:left;cursor:pointer}.month-trigger:hover,.month-trigger:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,103,216,.12);outline:0}.month-trigger strong{font-size:16px}.month-trigger span{color:var(--blue);font-size:12px;font-weight:700}.month-panel{display:none;position:absolute;left:18px;right:18px;top:112px;z-index:5;padding:14px;border:1px solid #a9c4e6;border-radius:11px;background:#fff;box-shadow:0 16px 40px rgba(35,71,118,.18)}.month-panel.open{display:block}.month-year{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}.month-year button{border:1px solid var(--line);border-radius:7px;background:#fff;padding:6px 9px;color:#365675;cursor:pointer}.month-year b{font-size:15px}.month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.month-option{border:1px solid var(--line);border-radius:7px;background:#fff;padding:8px;cursor:pointer}.month-option:hover,.month-option.selected{border-color:var(--blue);background:var(--blue-100);color:var(--blue);font-weight:800}.derived{margin-top:10px;color:#315f96}.month-rule ul{margin:0;padding:18px 18px 18px 36px;border:1px solid var(--line);border-radius:11px}.month-rule li+li{margin-top:6px}
+    .change-story{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:12px}.change-card{padding:17px;border:1px solid var(--line);border-radius:10px;background:#fff}.change-card h3{margin:8px 0;font-size:16px}.change-card p{margin:0;color:var(--muted)}.task-demo{border-color:#efc274;background:#fff9ec}.task-alert{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:10px;border-radius:8px;background:#ffe9c2;color:#805000}.task-alert button{border:1px solid #d58a20;background:#fff;color:#9a5a00;border-radius:7px;padding:7px 11px;font-weight:800;cursor:pointer}.choice-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.choice-button{border:1px solid #afc3dc;border-radius:8px;background:#fff;color:#35506f;padding:9px 10px;font-weight:700;cursor:pointer}.choice-button:hover,.choice-button.selected{border-color:var(--blue);background:var(--blue-100);color:var(--blue)}.choice-result{min-height:23px;margin-top:9px;color:var(--green);font-size:12px;font-weight:700}
+    .template{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.template-step{padding:15px;border:1px solid var(--line);border-radius:10px;background:#fff}.template-step b{display:block;margin-bottom:6px}.template-step span{color:var(--muted);font-size:12px}.template-step.current{border-color:#8eb9ee;background:var(--blue-050)}
+    .hotspots{display:grid;grid-template-columns:1fr 1fr;gap:12px}.hotspot{padding:16px;border:1px solid #f3cc8e;background:#fff8eb;border-radius:10px}.hotspot h3{margin:0 0 6px;font-size:15px}.hotspot p{margin:0;color:#6d583a}.footer{margin:20px 0 6px;color:var(--muted);text-align:center;font-size:12px}
+    @media(max-width:1050px){.hero,.state-layout,.month-rule{grid-template-columns:1fr}.boundary{grid-template-columns:1fr 1fr}.template{grid-template-columns:repeat(3,1fr)}.change-story{grid-template-columns:1fr}}
+    @media(max-width:680px){.top{padding:0 16px}.top small{display:none}.wrap{padding:16px}.hero-main{padding:21px}.hero h1{font-size:24px}.section{padding:17px}.boundary,.hotspots{grid-template-columns:1fr}.template{grid-template-columns:1fr 1fr}.section-head{display:block}.legend{margin-top:10px}.month-grid{grid-template-columns:repeat(3,1fr)}}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">TCP 故事线 V1</div>
+    <small>先确认故事，再设计页面</small>
+    <div class="spacer"></div>
+    <span class="pill">业务确认稿 · 非页面原型</span>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div class="card hero-main">
+        <div class="eyebrow">核心用户结果</div>
+        <h1>Member 可以边评、边选、边学，不被数百项未评级能力阻塞</h1>
+        <p>每个适用 L3 独立推进；评级覆盖度是进度指标，不是全局阶段门。只有用户明确生成所选任务时，系统才创建计划与学习任务。</p>
+      </div>
+      <aside class="card hero-side">
+        <h2>已确认的三条边界</h2>
+        <div class="rule"><b>评级不产生任务</b><span>保存评级只更新能力数据。</span></div>
+        <div class="rule"><b>计划时间只有一个来源</b><span>直接选择计划年月，不重复填写其他时间字段。</span></div>
+        <div class="rule"><b>Buddy 不审核评级</b><span>只验收学习成果 Evidence。</span></div>
+      </aside>
+    </section>
+
+    <section class="card section">
+      <div class="section-head">
+        <div><h2>1. 端到端故事主干</h2><p>从目标标准到学习成果的完整闭环；横向滚动查看全部步骤。</p></div>
+        <div class="legend"><span class="tag ok">已确认</span><span class="tag warn">待补规则</span></div>
+      </div>
+      <div class="backbone">
+        <article class="step"><span class="number">1</span><div class="role">Leader / Admin</div><h3>发布适用能力标准</h3><p>明确岗位、当前职级和目标职级下真正适用的 L3。</p><dl><dt>结果</dt><dd>适用 L3 清单</dd><dt>规则</dt><dd>不适用项不进入分母</dd></dl></article>
+        <article class="step"><span class="number">2</span><div class="role">Member</div><h3>增量保存能力评级</h3><p>一次评 1 项或多项，随时保存；不要求全部完成。</p><dl><dt>输入</dt><dd>current_level 0…5</dd><dt>结果</dt><dd>评级与 Gap 更新</dd></dl></article>
+        <article class="step"><span class="number">3</span><div class="role">Member</div><h3>选择本次提升项</h3><p>只从“已评级且 Gap &gt; 0”的 L3 中选择。</p><dl><dt>输入</dt><dd>一个或多个 L3</dd><dt>结果</dt><dd>形成待计划批次</dd></dl></article>
+        <article class="step"><span class="number">4</span><div class="role">Member</div><h3>补充计划月份</h3><p>每个选中项选择一个年月；整个输入框都可以点击打开选择面板。</p><dl><dt>输入</dt><dd>计划年月</dd><dt>结果</dt><dd>计划草稿就绪</dd></dl></article>
+        <article class="step"><span class="number">5</span><div class="role">Member → 系统</div><h3>生成所选学习任务</h3><p>显式提交所选批次；任一缺月份，整批零写入并保留输入。</p><dl><dt>规则</dt><dd>原子、幂等</dd><dt>结果</dt><dd>正式计划与任务</dd></dl></article>
+        <article class="step"><span class="number">6</span><div class="role">Member</div><h3>执行学习并记录</h3><p>记录学习日志、投入时长、阶段产出和复盘。</p><dl><dt>结果</dt><dd>可追踪的执行记录</dd><dt>下一步</dt><dd>提交 Evidence</dd></dl></article>
+        <article class="step"><span class="number">7</span><div class="role">Buddy</div><h3>验收学习成果</h3><p>只判断 Evidence 是否达标；通过或要求补充。</p><dl><dt>保留</dt><dd>Evidence Review</dd><dt>取消</dt><dd>自评复核</dd></dl></article>
+        <article class="step"><span class="number">8</span><div class="role">Buddy / Leader</div><h3>查看成员学习进度</h3><p>按周或月查看辅导范围或所属团队内成员的学习投入、任务完成与延期情况。</p><dl><dt>输入</dt><dd>学习时间与任务进度</dd><dt>输出</dt><dd>需要关注的成员和风险</dd></dl></article>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>2. 四个动作的业务边界</h2><p>它们不是四个全局页面阶段，而是每个 L3 可独立推进的状态变化。</p></div></div>
+      <div class="boundary">
+        <article class="action"><span class="tag ok">动作 A</span><h3>保存能力评级</h3><ul><li>保存本次改动的任意若干项</li><li><b>0</b> 表示已评级；<b>null</b> 表示未评级</li><li>不创建计划、任务或 Review</li></ul><div class="scope">阻断范围：仅本次填写值是否合法</div></article>
+        <article class="action"><span class="tag ok">动作 B</span><h3>选择提升项</h3><ul><li>已评级且 Gap &gt; 0 才可选择</li><li>支持单选或多选</li><li>其他未评级 L3 与本批次无关</li></ul><div class="scope">阻断范围：仅所选项是否具备提升资格</div></article>
+        <article class="action"><span class="tag ok">动作 C</span><h3>补充计划月份</h3><ul><li>只填写一个年月字段</li><li>整框点击即可打开年月面板</li><li>与已选提升项一起保存为计划草稿</li></ul><div class="scope">阻断范围：不阻断评级保存，只影响正式生成</div></article>
+        <article class="action"><span class="tag ok">动作 D</span><h3>生成所选学习任务</h3><ul><li>这是唯一创建任务的入口</li><li>所选任一项缺月份则整批零写入</li><li>重复提交复用已有任务</li></ul><div class="scope">阻断范围：仅本次所选批次，批次内原子</div></article>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>3. 同一份评估允许混合状态</h2><p>没有“进入下一阶段”的按钮；用户通过状态筛选定位下一步。</p></div></div>
+      <div class="state-layout">
+        <div class="state-flow">
+          <div class="state"><b>未评级</b><small>current_level = null</small></div><div class="arrow">→</div>
+          <div class="state"><b>已评级</b><small>current_level = 0…5</small></div><div class="arrow">→</div>
+          <div class="state"><b>可提升</b><small>Gap &gt; 0</small></div><div class="arrow">→</div>
+          <div class="state"><b>已选择</b><small>待填写计划月份</small></div><div class="arrow">→</div>
+          <div class="state"><b>可生成</b><small>plan_month 已填写</small></div><div class="arrow">→</div>
+          <div class="state"><b>任务已生成</b><small>进入学习执行</small></div>
+        </div>
+        <aside class="example">
+          <h3>238 项适用 L3 的某一时刻</h3>
+          <div class="metrics">
+            <div class="metric"><b>47</b><span>已评级</span></div><div class="metric"><b>191</b><span>未评级</span></div><div class="metric"><b>18</b><span>存在 Gap</span></div>
+            <div class="metric"><b>3</b><span>已选择</span></div><div class="metric"><b>1</b><span>待补月份</span></div><div class="metric"><b>5</b><span>任务已生成</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>4. 计划时间只选择年月</h2><p>整个输入框都是触发区；点击文字、空白处或右侧提示都能打开年月面板。</p></div><span class="tag ok">交互已纠正</span></div>
+      <div class="month-rule">
+        <div class="month-sample">
+          <label>计划月份</label>
+          <button id="monthTrigger" class="month-trigger" type="button" aria-expanded="false" aria-controls="monthPanel"><strong id="monthValue">2026年09月</strong><span>点击整框选择年月</span></button>
+          <div id="monthPanel" class="month-panel" aria-hidden="true">
+            <div class="month-year"><button id="prevYear" type="button">上一年</button><b id="monthYear">2026 年</b><button id="nextYear" type="button">下一年</button></div>
+            <div id="monthGrid" class="month-grid"></div>
+          </div>
+          <div class="derived">已选择：2026年09月</div>
+        </div>
+        <ul>
+          <li>只记录一个年月值，不再要求用户填写重复的时间字段。</li>
+          <li>输入框整块可点击，打开后直接看到 12 个月份，不依赖右侧小日历图标。</li>
+          <li>支持键盘聚焦和清晰的选中状态；选择后面板自动关闭。</li>
+          <li>不提供默认月份；未选择时明确显示“待补计划月份”。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>5. TCP 轻量故事线模板</h2><p>每条故事先走完这六步；第 5 步确认后，才进入逐页原型设计。</p></div></div>
+      <div class="template">
+        <div class="template-step current"><b>① 用户结果</b><span>谁要完成什么，为什么有价值</span></div>
+        <div class="template-step current"><b>② 角色与主干</b><span>按时间顺序画端到端动作</span></div>
+        <div class="template-step current"><b>③ 状态与规则</b><span>输入、输出、约束、异常、幂等</span></div>
+        <div class="template-step"><b>④ 争议点确认</b><span>只保留真实业务选择，不代替用户决定</span></div>
+        <div class="template-step"><b>⑤ 页面映射</b><span>每个故事步骤对应入口、页面和主要动作</span></div>
+        <div class="template-step"><b>⑥ 原型与验证</b><span>逐页低保真 → 核心路径串联 → UI/UX</span></div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>6. 任务生成后，L3 要求发生变化</h2><p>预期输出、输出类型或验收要求变化时，不静默覆盖正在执行的任务，必须让 Member 看见并选择采用哪个版本。</p></div><span class="tag ok">规则已确认</span></div>
+      <div class="change-story">
+        <article class="change-card"><span class="tag">触发</span><h3>L3 要求发布了新版本</h3><p>系统比较任务创建时引用的要求与最新要求，识别预期输出、输出类型、验收标准等实质变化。</p></article>
+        <article class="change-card task-demo"><span class="tag warn">任务提醒</span><h3>正在学习的任务被醒目标记</h3><p>任务仍保留原要求，增加变化提示；不能在 Member 不知情时替换学习目标。</p><div class="task-alert"><b>能力要求已更新</b><button type="button">待确认</button></div></article>
+        <article class="change-card"><span class="tag ok">Member 决定</span><h3>查看差异并选择执行版本</h3><p>点击“待确认”查看变更前后内容，然后选择采用新要求或继续按原任务要求执行。Evidence 必须按所选版本验收。</p><div class="choice-actions"><button class="choice-button" type="button" data-requirement-choice="new">采用新要求</button><button class="choice-button" type="button" data-requirement-choice="original">按原任务要求继续</button></div><div id="requirementChoiceResult" class="choice-result">尚未选择</div></article>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head"><div><h2>7. 已确认的计划草稿规则</h2><p>选择提升项和计划月份都属于可恢复草稿，不因退出页面或重新登录而丢失。</p></div><span class="tag ok">已确认</span></div>
+      <div class="decision">
+        <div><h3>草稿保存</h3><p>“已选择提升项 + 计划月份”持久保存；用户可以分多次完成，也可以取消尚未生成的选择。</p></div>
+        <div><h3>正式生成边界</h3><p>只有点击“生成所选学习任务”才创建正式计划和任务；保存评级、选择提升项、填写月份都不会偷偷生成任务。</p></div>
+      </div>
+    </section>
+
+    <div class="footer">TCP 故事线 V1 · 仅用于业务确认 · 页面 UI/UX 尚未开始</div>
+  </main>
+  <script>
+    const trigger=document.getElementById('monthTrigger');
+    const panel=document.getElementById('monthPanel');
+    const grid=document.getElementById('monthGrid');
+    const yearLabel=document.getElementById('monthYear');
+    const valueLabel=document.getElementById('monthValue');
+    const derived=document.querySelector('.derived');
+    let selectedYear=2026,selectedMonth=9,viewYear=2026;
+    function renderMonths(){
+      yearLabel.textContent=`${viewYear} 年`;
+      grid.innerHTML='';
+      for(let month=1;month<=12;month++){
+        const button=document.createElement('button');
+        button.type='button';button.className='month-option';button.textContent=`${month} 月`;
+        if(viewYear===selectedYear&&month===selectedMonth)button.classList.add('selected');
+        button.addEventListener('click',()=>{selectedYear=viewYear;selectedMonth=month;valueLabel.textContent=`${selectedYear}年${String(month).padStart(2,'0')}月`;derived.textContent=`已选择：${selectedYear}年${String(month).padStart(2,'0')}月`;setOpen(false);});
+        grid.appendChild(button);
+      }
+    }
+    function setOpen(open){panel.classList.toggle('open',open);panel.setAttribute('aria-hidden',String(!open));trigger.setAttribute('aria-expanded',String(open));if(open)renderMonths();}
+    trigger.addEventListener('click',()=>setOpen(!panel.classList.contains('open')));
+    document.getElementById('prevYear').addEventListener('click',()=>{viewYear--;renderMonths();});
+    document.getElementById('nextYear').addEventListener('click',()=>{viewYear++;renderMonths();});
+    document.addEventListener('click',event=>{if(!event.target.closest('.month-sample'))setOpen(false);});
+    document.querySelectorAll('[data-requirement-choice]').forEach(button=>button.addEventListener('click',()=>{
+      document.querySelectorAll('[data-requirement-choice]').forEach(item=>item.classList.toggle('selected',item===button));
+      document.getElementById('requirementChoiceResult').textContent=button.dataset.requirementChoice==='new'?'已记录：采用新要求，后续按新版本执行与验收':'已记录：保留原任务要求，后续按原版本执行与验收';
+    }));
+  </script>
+</body>
+</html>

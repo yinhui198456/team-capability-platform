@@ -148,6 +148,8 @@ flowchart TD
 
 ## 4. 页面清单
 
+> 页面编号（M01～M07、B01、D01、L01、A01、L02）、最终版本、批次与落地状态的完整矩阵见 `docs/04_UI.md` §4.9（Issue #187 页面矩阵），本表不再重复。
+
 | 页面名称 | 路由路径 | 主要角色 | 所属模块 | 页面目的 | 关联业务对象 |
 |---|---|---|---|---|---|
 | 我的成长看板 | /dashboard/member | Member | Growth | 查看年度进度、待办、完成情况 | Annual Growth Plan / Plan Item / Learning Task / Learning Progress Log / Evidence |
@@ -206,7 +208,11 @@ flowchart LR
 - Member 提交自评时，系统立即原子生成：Gap 分析、年度成长计划、计划项和学习任务。
 - Buddy 复核结果作为反馈，不阻塞计划生成。
 
+> ⚠️ 以上两条已由 Issue #187 故事合同替代：「保存能力评级」「加入/移出提升计划草稿」「生成所选学习任务」为三个独立动作，仅显式生成形成正式计划项/任务；不再创建新的自评复核队列（历史只读）。
+
 ### 5.2 Buddy 辅导流程
+
+> ⚠️ 自评复核分支（B→F）已由 Issue #187 故事合同第 7 条替代：不再创建新的自评复核队列，历史 Assessment Review 只读；Buddy 流程保留 Evidence Review 与进度跟踪。
 
 ```mermaid
 flowchart LR
@@ -269,6 +275,8 @@ Assessment 创建时，系统按以下顺序为全部启用 L3 生成一次标�
 
 Member 提交自评时，系统在单一事务中原子执行：生成 Gap 分析 → 创建年度成长计划（若不存在）→ 为标记「纳入计划」的 Gap 生成计划项 → 为每个计划项生成对应学习任务（1:1）。Buddy 复核结果作为反馈，不影响已生成的计划。
 
+> ⚠️ 本段原子生成语义已由 Issue #187 故事合同第 2、3、6 条替代（独立动作 + 显式「生成所选学习任务」）；「待复核」状态机与 Assessment Review 队列按故事合同第 7 条不再创建新队列，历史记录只读，状态机仅用于描述既有历史数据。
+
 ```mermaid
 stateDiagram-v2
     [*] --> 草稿
@@ -292,7 +300,7 @@ stateDiagram-v2
 | 状态 | 说明 |
 |---|---|
 | 草稿 | Member 正在填写自评，未提交 |
-| 待复核 | Member 已提交，系统已原子生成计划；等待 Buddy 复核给出反馈 |
+| 待复核 | Member 已提交，系统已原子生成计划；等待 Buddy 复核给出反馈（Issue #187 后不创建新队列，仅描述历史数据） |
 | 已复核 | Buddy 复核认可，该版本评估闭环归档 |
 | 建议调整 | Buddy 认为自评不合理，Member 可选择修改后重新提交 |
 | 已归档 | 该次评估已闭环，进入历史记录 |
@@ -354,7 +362,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> 制定中
-    制定中 --> 执行中 : 自评提交时原子生成，立即进入执行
+    制定中 --> 执行中 : 自评提交时原子生成，立即进入执行（Issue #187 后为显式「生成所选学习任务」后进入）
     执行中 --> 已归档 : 年度周期结束或 Member 手动归档
     已归档 --> [*]
 ```
@@ -468,7 +476,7 @@ Evidence Review 是 Buddy 对一个已提交 Evidence 版本作出的历史反�
 | assessment.view.own | 查看自己的评估 | Member 查看个人评估历史 |
 | assessment.view.assigned | 查看负责成员的评估 | Buddy 查看辅导成员评估 |
 | assessment.view.team | 查看团队评估 | Leader 查看团队整体评估 |
-| assessment.review | 复核自评 | Buddy 复核自评结果 |
+| assessment.review | 复核自评 | Buddy 复核自评结果（Issue #187 后仅历史记录只读，不创建新队列） |
 | gap.view.own | 查看自己的 Gap | Member 查看个人 Gap 分析 |
 | gap.view.assigned | 查看负责成员的 Gap | Buddy 查看辅导成员 Gap |
 | gap.view.team | 查看团队 Gap | Leader 查看团队 Gap 分布 |
