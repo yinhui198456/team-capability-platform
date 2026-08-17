@@ -455,14 +455,16 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_include_in_plan_requires_quarter_month(
+def test_include_in_plan_pending_month_persists(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """include_in_plan=TRUE without quarter+month → 422."""
-    member_id = _create_test_user(plan_schema, "m_noqm", ["Member"])
+    """Issue #178: 待补计划月份 — include_in_plan=TRUE with quarter/month NULL
+    saves as draft (200), persists across re-read and later sparse PATCH;
+    half-filled timing stays 422; submit still blocks the pending item."""
+    member_id = _create_test_user(plan_schema, "m_pending", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
-    cookies = _login(plan_schema, "m_noqm")
+    cookies = _login(plan_schema, "m_pending")
 
     detail = plan_schema.execute(
         "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
@@ -472,8 +474,9 @@ def test_include_in_plan_requires_quarter_month(
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
+    # 加入提升计划但待补月份 → 200 且持久化。
     status, body = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
@@ -492,7 +495,56 @@ def test_include_in_plan_requires_quarter_month(
         },
         cookies=cookies,
     )
-    assert status == 422, f"expected 422, got {status}: {body}"
+    assert status == 200, f"pending-month draft must save: {status} {body}"
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["include_in_plan"] is True
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+    # 刷新/重进后的稀疏 PATCH 必须保留待补状态。
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"sparse patch: {body}"
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["include_in_plan"] is True
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+
+    # 半填（只有季度或只有月份）仍是一致性错误 → 422，零写入。
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [{"l3_node_id": node_id, "l3_code": code, "plan_quarter": "Q2"}],
+            "expected_revision": 3,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, f"half-filled plan time must 422: {status} {body}"
+    assessment = get_assessment(plan_schema, assessment_id)
+    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
+    assert saved["plan_quarter"] is None
+    assert saved["plan_month"] is None
+    assert int(assessment["revision"]) == 3
+
+    # 回归：submit/生成门禁不变 — 缺月份整批拦截。
+    status, body = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/submit",
+        {"expected_revision": 3},
+        cookies=cookies,
+    )
+    assert status == 422, f"submit with pending month must 422: {status} {body}"
+    assert "plan_time_required" in json.dumps(body, ensure_ascii=False)
 
 
 def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
