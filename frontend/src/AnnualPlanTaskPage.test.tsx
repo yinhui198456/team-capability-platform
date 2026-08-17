@@ -549,8 +549,10 @@ describe('learning task execution (v0010)', () => {
       note: '阅读文档',
     })
     expect(payload.idempotency_key).toBeTruthy()
-    // The task total is displayed, not editable.
-    expect(screen.getByText(/实际耗时/)).toBeTruthy()
+    // The task total is displayed in the first-screen summary, not editable.
+    expect(
+      within(screen.getByTestId('task-summary')).getByText(/实际耗时/),
+    ).toBeTruthy()
     expect(screen.queryByLabelText('任务实际时长')).toBeNull()
   })
 
@@ -1479,5 +1481,72 @@ describe('evidence draft link persistence (issue #63)', () => {
       description: null,
       evidence_link: null,
     })
+  })
+})
+
+describe('Issue #176: task detail progressive disclosure', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('shows summary, actions and schedule editor on first screen; full metadata collapsible', async () => {
+    await renderMember(
+      [
+        makeItem({
+          learning_material: '数据管道教材',
+          learning_task_content: '完成管道设计',
+          expected_output: '设计文档',
+          source_assessment_id: 1,
+          plan_quarter: 'Q2',
+          plan_month: 6,
+          planning_source_type: 'assessment_approval',
+          assessment_revision: 2,
+          include_in_plan: true,
+        }),
+      ],
+      [makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 })],
+    )
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
+    )
+
+    const summary = screen.getByTestId('task-summary')
+    expect(summary.textContent).toContain('进行中')
+    expect(summary.textContent).toContain('实际耗时')
+    expect(summary.textContent).toContain('保存日期')
+    expect(within(summary).getByLabelText('计划开始日期')).toBeTruthy()
+    expect(within(summary).getByLabelText('计划结束日期')).toBeTruthy()
+    expect(within(summary).getByRole('button', { name: '暂停' })).toBeTruthy()
+
+    const details = screen.getByTestId('task-metadata-details')
+    expect(details.textContent).toContain('查看完整资料')
+    expect(details.textContent).toContain('学习材料')
+    expect(details.textContent).toContain('数据管道教材')
+
+    fireEvent.click(within(details).getByText('查看完整资料'))
+    expect(within(details).getByText('来源评估')).toBeTruthy()
+    expect(within(details).getByText('评估 #1')).toBeTruthy()
+    expect(within(details).getByText('计划季度')).toBeTruthy()
+    expect(within(details).getByText('纳入计划')).toBeTruthy()
+  })
+
+  it('keeps action buttons inside the first-screen summary', async () => {
+    await renderMember(
+      [makeItem({})],
+      [makeTask({ id: 1, plan_item_id: 1, status: '未开始', revision: 1 })],
+    )
+    expandItem(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
+    )
+    const summary = screen.getByTestId('task-summary')
+    expect(
+      within(summary).getByRole('button', { name: '开始执行' }),
+    ).toBeTruthy()
+    expect(
+      within(summary).getByRole('button', { name: '取消任务' }),
+    ).toBeTruthy()
   })
 })
