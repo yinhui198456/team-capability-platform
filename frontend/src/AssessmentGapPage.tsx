@@ -16,8 +16,8 @@ import {
   newIdempotencyKey,
   repairDraftTargetSnapshots,
   saveDraft,
+  generatePlanItems,
   selectL2Requirement,
-  submitAssessment,
 } from './assessment'
 import { type ApiError } from './shared/api'
 import {
@@ -501,14 +501,32 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleSubmit() {
+  async function handleGeneratePlan() {
     if (!assessment) return
     setError('')
     setMessage('')
     try {
       if (isMockEnabled()) {
         setAssessment({ ...mockAssessmentSubmitted, details })
-        setMessage('已提交，Gap 即时生成。等待 Buddy 复核。')
+        setMessage('已生成所选学习任务（演示）。')
+        return
+      }
+      const selected = details.filter((d) => d.include_in_plan === true)
+      if (selected.length === 0) {
+        setError('请先勾选「是」将提升项加入计划草稿，再生成所选学习任务。')
+        return
+      }
+      // Issue #187 合同第 6 条：缺计划月份 → 整批不提交，保留输入，逐项中文提示。
+      const missingMonth = selected.filter((d) => !d.plan_month)
+      if (missingMonth.length > 0) {
+        setError(
+          `以下项计划月份待补（请选择 YYYY-MM）：${missingMonth
+            .map((d) => d.l3_code)
+            .join('、')}`,
+        )
+        const target = missingMonth[0]
+        const index = details.findIndex((d) => d.l3_code === target.l3_code)
+        if (index >= 0) locateDetail(target)
         return
       }
       let revision = assessment.revision ?? 1
@@ -527,7 +545,6 @@ export function AssessmentGapPage() {
                 for (const f of cleared.fields) {
                   if (f === 'member_priority') patch.member_priority = null
                   if (f === 'include_in_plan') patch.include_in_plan = null
-                  if (f === 'plan_quarter') patch.plan_quarter = null
                   if (f === 'plan_month') patch.plan_month = null
                 }
                 return { ...detail, ...patch }
@@ -547,28 +564,28 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
-      const result = await submitAssessment(assessment.id, revision)
+      const result = await generatePlanItems(
+        assessment.id,
+        selected.map((d) => d.l3_code),
+        revision,
+        newIdempotencyKey(),
+      )
       loadAssessment(await getAssessment(assessment.id))
 
-      // Issue #82: Show plan generation result
-      const planGen = (result as any).plan_generation
-      if (planGen && planGen.created_tasks > 0) {
-        setMessage(
-          `✅ 自评已提交\n📋 已生成 ${planGen.created_tasks} 个学习任务${planGen.skipped_items > 0 ? `（${planGen.skipped_items} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看`,
-        )
-      } else {
-        setMessage(
-          (result.auto_cancelled_plan_candidates ?? []).length
-            ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
-            : '已提交，Gap 即时生成。',
-        )
-      }
+      const created = result.created ?? []
+      const existing = result.existing ?? []
+      const total = created.length + existing.length
+      setMessage(
+        total === 0
+          ? '所选提升项均已生成过学习任务。'
+          : `✅ 已生成 ${created.length} 个学习任务${existing.length > 0 ? `（${existing.length} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看`,
+      )
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
-          ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
+          ? '生成冲突：数据已被其他操作更新，本地输入已保留；请重新加载后再生成。'
           : isStructuredAssessmentError(detail)
             ? (() => {
                 const target = details.find(
@@ -579,7 +596,7 @@ export function AssessmentGapPage() {
               })()
             : err instanceof Error
               ? err.message
-              : '提交失败',
+              : '生成失败',
       )
     }
   }
@@ -645,7 +662,7 @@ export function AssessmentGapPage() {
       const row = document.getElementById(
         `row-${detail.id}`,
       ) as HTMLElement | null
-      row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
       row?.focus()
     }, 50)
   }
@@ -819,7 +836,11 @@ export function AssessmentGapPage() {
         !d.member_priority,
     ).length
     const undecided = hasGap.filter((d) => d.include_in_plan == null).length
-    return { inPlanNoPriority, undecided }
+    // Issue #194: 待补计划月份 — 已加入计划但未填 YYYY-MM（生成前必须补齐）。
+    const inPlanNoMonth = hasGap.filter(
+      (d) => d.include_in_plan === true && !d.plan_month,
+    ).length
+    return { inPlanNoPriority, undecided, inPlanNoMonth }
   }, [assessedDetails])
 
   const filters: Filter[] = [
@@ -1576,53 +1597,30 @@ export function AssessmentGapPage() {
                                         <option value="no">否</option>
                                       </select>
                                     </td>
-                                    {/* Column 7: 计划时间 */}
+                                    {/* Column 7: 计划时间 — 单一 YYYY-MM（Issue #194/187 合同第 4 条） */}
                                     <td>
                                       {showPlanTime ? (
                                         <div className={s.planTime}>
-                                          <select
-                                            value={detail.plan_quarter ?? ''}
-                                            onChange={(event) =>
-                                              updateDetail(index, {
-                                                plan_quarter:
-                                                  (event.target.value as
-                                                    | 'Q1'
-                                                    | 'Q2'
-                                                    | 'Q3'
-                                                    | 'Q4') || null,
-                                              })
-                                            }
-                                            disabled={!editable}
-                                            aria-label={`计划季度 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            <option value="Q1">Q1</option>
-                                            <option value="Q2">Q2</option>
-                                            <option value="Q3">Q3</option>
-                                            <option value="Q4">Q4</option>
-                                          </select>
-                                          <select
+                                          <input
+                                            type="month"
                                             value={detail.plan_month ?? ''}
                                             onChange={(event) =>
                                               updateDetail(index, {
-                                                plan_month: event.target.value
-                                                  ? Number(event.target.value)
-                                                  : null,
+                                                plan_month:
+                                                  event.target.value || null,
                                               })
                                             }
                                             disabled={!editable}
                                             aria-label={`计划月份 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            {Array.from(
-                                              { length: 12 },
-                                              (_, i) => i + 1,
-                                            ).map((m) => (
-                                              <option key={m} value={m}>
-                                                {m}月
-                                              </option>
-                                            ))}
-                                          </select>
+                                          />
+                                          {!detail.plan_month && editable && (
+                                            <small
+                                              className={s.pendingMonth}
+                                              data-testid={`pending-month-${detail.l3_code}`}
+                                            >
+                                              待补计划月份
+                                            </small>
+                                          )}
                                         </div>
                                       ) : detail.include_in_plan === false ? (
                                         <span className="muted">否</span>
@@ -1708,19 +1706,22 @@ export function AssessmentGapPage() {
             {stickyStats.inPlanNoPriority > 0 && (
               <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
             )}
+            {stickyStats.inPlanNoMonth > 0 && (
+              <span>{stickyStats.inPlanNoMonth} 项待补计划月份</span>
+            )}
             {stickyStats.undecided > 0 && (
               <span>{stickyStats.undecided} 项未决定计划</span>
             )}
             <button type="button" onClick={handleSave}>
-              保存草稿
+              保存能力评级
             </button>
             <button
               type="button"
               className="primary"
-              onClick={handleSubmit}
-              disabled={unfilled > 0}
+              onClick={handleGeneratePlan}
+              disabled={stickyStats.inPlanNoMonth > 0}
             >
-              提交自评
+              生成所选学习任务
             </button>
           </footer>
         )}

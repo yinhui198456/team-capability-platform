@@ -67,8 +67,11 @@ def _create_test_user(
 
 @pytest.fixture
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
-    _reset_access_schema(connection)
-    _reset_assessment_schema(connection)
+    # Full chain: catalog + v0004-published baseline cover the synthetic
+    # P01 node for scope-preview; v0015 brings plan_month to TEXT.
+    from tests.review_support import reset_full_schema
+
+    reset_full_schema(connection)
     return connection
 
 
@@ -182,8 +185,7 @@ def _create_and_submit_assessment(
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
@@ -215,13 +217,17 @@ def _create_and_submit_assessment(
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
@@ -252,9 +258,10 @@ def test_buddy_approve_archives_assessment(
     assert status == 200
     assert body is not None
     assert body["assessment_status"] == "已归档"
-    assert body["plan"]["created"] is True
-    assert body["plan"]["items_created"] == 1
-    assert body["plan"]["tasks_created"] == 1
+    # Issue #194: the retained seed path generates the plan atomically at
+    # submit, so approval finds it already created by this assessment.
+    assert body["plan"]["created"] is False
+    assert body["plan"]["plan_id"] is not None
 
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -318,8 +325,7 @@ def test_buddy_request_adjustment_and_resubmit(
                         "evidence_note": "已补充项目实践依据",
                         "member_priority": "高",
                         "include_in_plan": True,
-                        "plan_quarter": "Q2",
-                        "plan_month": 5,
+                        "plan_month": "2026-05",
                     }
                 ],
             ),
@@ -329,13 +335,17 @@ def test_buddy_request_adjustment_and_resubmit(
     )
     assert status == 200
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
-        cookies=member_cookies,
+    # Issue #194: the API submit is retired; reseed through the retained
+    # repository-level path (assessment is 建议调整, revision 5).
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        assessment_schema.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(assessment_schema, assessment_id, member_id, 5)
+    assessment_schema.commit()
 
     status, pending, _ = _request(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies

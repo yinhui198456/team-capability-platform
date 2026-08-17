@@ -374,8 +374,7 @@ def _build_two_member_team(
                 "evidence_note": "a p01",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             },
             {
                 "l3_code": "P02-L2B-L3A",
@@ -384,8 +383,7 @@ def _build_two_member_team(
                 "evidence_note": "a p02",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             },
         ],
     )
@@ -402,8 +400,7 @@ def _build_two_member_team(
                 "evidence_note": "b p01",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             }
         ],
     )
@@ -832,8 +829,7 @@ def test_team_analytics_preserves_personal_plan_endpoints(
                 "evidence_note": "regression",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             }
         ],
     )

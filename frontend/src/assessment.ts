@@ -143,8 +143,9 @@ export type AssessmentDetail = {
   current_level_explicitly_cleared?: boolean
   member_priority?: '高' | '中' | '低' | '暂缓' | null
   include_in_plan?: boolean | null // tri-state: true/false/null
+  /** Derived server-side from plan_month (Issue #194) — read-only display. */
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month?: number | null // 1–12
+  plan_month?: string | null // 'YYYY-MM' (Issue #194)
   /** Buddy Review workspace: advisory consistency flag (never overwrites canonical). */
   data_issue?: boolean
 }
@@ -303,7 +304,7 @@ export async function saveDraft(
         evidence_note: detail.evidence_note ?? null,
         member_priority: detail.member_priority ?? null,
         include_in_plan: detail.include_in_plan,
-        plan_quarter: detail.plan_quarter ?? null,
+        // plan_quarter is derived server-side and never accepted as input.
         plan_month: detail.plan_month ?? null,
       })),
     },
@@ -339,22 +340,31 @@ export async function batchFillL2(
   )
 }
 
-export async function submitAssessment(
+/** Issue #194: M02 第三个独立动作 — 显式生成所选学习任务。
+
+Retired contract: POST /submit (submit-and-auto-generate) → 422
+legacy_assessment_submit_disabled; generation is now explicit and
+idempotent per (plan, l3_code) — replays return the same created/existing
+split. The Idempotency-Key header is accepted; the DB kernel provides
+the guarantee.
+*/
+export async function generatePlanItems(
   id: number,
+  l3Codes: string[],
   expectedRevision: number,
+  idempotencyKey?: string,
 ): Promise<{
   ok: boolean
-  revision?: number
-  auto_cancelled_plan_candidates?: string[]
+  annual_plan_id?: number
+  created: string[]
+  existing: string[]
 }> {
-  return request<{
-    ok: boolean
-    revision?: number
-    auto_cancelled_plan_candidates?: string[]
-  }>(
-    `/api/assessments/${id}/submit`,
-    { method: 'POST' },
-    { expected_revision: expectedRevision },
+  const headers: HeadersInit = {}
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+  return request(
+    `/api/assessments/${id}/generate-plan-items`,
+    { method: 'POST', headers },
+    { l3_codes: l3Codes, expected_revision: expectedRevision },
   )
 }
 

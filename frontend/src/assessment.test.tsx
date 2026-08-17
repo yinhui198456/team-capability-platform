@@ -200,12 +200,11 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    expect(
-      screen.getByRole('combobox', { name: /计划季度 P01.01.01/ }),
-    ).toBeTruthy()
-    expect(
-      screen.getByRole('combobox', { name: /计划月份 P01.01.01/ }),
-    ).toBeTruthy()
+    // Issue #194: single native month input (plan_quarter no longer exists
+    // as an input; derived server-side only).
+    const month = screen.getByLabelText('计划月份 P01.01.01')
+    expect(month).toBeTruthy()
+    expect(month).toHaveProperty('type', 'month')
   })
 
   it('filters work: 未评估, 有Gap, 已纳入计划, 暂缓', async () => {
@@ -473,7 +472,9 @@ describe('AssessmentGapPage', () => {
     expect(levelSelects.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('submit disabled when null levels', async () => {
+  it('generate button not gated on unfilled levels (#187 contract #1)', async () => {
+    // 评级允许任意部分逐项保存：未评级不阻断生成动作（未选中的项不参与
+    // 生成；选中但缺月份才在生成时按项提示）。
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -494,12 +495,17 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '提交自评' })).toBeTruthy()
+      expect(
+        screen.getByRole('button', { name: '生成所选学习任务' }),
+      ).toBeTruthy()
     })
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true)
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false)
   })
 
   it.each([
@@ -531,8 +537,11 @@ describe('AssessmentGapPage', () => {
       await screen.findByText('能力自评与 Gap 分析')
       expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
-        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-          .disabled,
+        (
+          screen.getByRole('button', {
+            name: '生成所选学习任务',
+          }) as HTMLButtonElement
+        ).disabled,
       ).toBe(false)
     },
   )
@@ -566,8 +575,11 @@ describe('AssessmentGapPage', () => {
       await screen.findByText('能力自评与 Gap 分析')
       expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
-        (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-          .disabled,
+        (
+          screen.getByRole('button', {
+            name: '生成所选学习任务',
+          }) as HTMLButtonElement
+        ).disabled,
       ).toBe(false)
     },
   )
@@ -594,8 +606,11 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('本次已更新')
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(false)
     expect(
       (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
@@ -667,36 +682,49 @@ describe('AssessmentGapPage', () => {
     expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
   })
 
-  it('blocks incomplete personal adjustments and unblocks after canceling them', async () => {
+  it('surfaces an incomplete personal adjustment reason at save time', async () => {
+    // Issue #194: the generate button does not client-gate on adjustment
+    // completeness — the dirty detail is saved first and the server 422
+    // (per-L3 Chinese message) is surfaced, input preserved.
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
+          include_in_plan: true,
+          plan_month: '2026-07',
         },
       ],
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi.spyOn(assessmentApi, 'saveDraft').mockRejectedValue({
+      status: 422,
+      detail: {
+        code: 'target_adjustment',
+        l3_code: 'P01.01.01',
+        reason: 'missing_reason',
+        message: '请填写调整原因',
+      },
+    })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    const submit = screen.getByRole('button', { name: '提交自评' })
-    // Click the adjustment expand button
+    const generate = screen.getByRole('button', { name: '生成所选学习任务' })
+    // Click the adjustment expand button, enable without a reason
     fireEvent.click(screen.getByText('调整▸'))
-    // Enable adjustment
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     expect(screen.getByText('需填写调整原因')).toBeTruthy()
-    expect((submit as HTMLButtonElement).disabled).toBe(true)
-    // Cancel adjustment
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    await waitFor(() =>
-      expect((submit as HTMLButtonElement).disabled).toBe(false),
-    )
+    expect((generate as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(generate)
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    await waitFor(() => {
+      expect(screen.getByText('请填写调整原因')).toBeTruthy()
+    })
   })
 
   it('supports a valid personal adjustment target and reason', async () => {
@@ -723,8 +751,11 @@ describe('AssessmentGapPage', () => {
       target: { value: '调整原因' },
     })
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(false)
   })
 
@@ -750,8 +781,11 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('沿用上次评估')
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(false)
     expect(
       (screen.getByLabelText('纳入计划 P01.01.01') as HTMLInputElement)
@@ -783,12 +817,14 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByRole('button', { name: '批量填 2' })).toBeNull()
   })
 
-  it('saves dirty details with PATCH before direct submit', async () => {
+  it('saves dirty details with PATCH before explicit generation', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           current_level: 1,
+          include_in_plan: true,
+          plan_month: '2026-07',
         },
       ],
     })
@@ -797,9 +833,9 @@ describe('AssessmentGapPage', () => {
     const save = vi
       .spyOn(assessmentApi, 'saveDraft')
       .mockResolvedValue({ ok: true, revision: 2 })
-    const submit = vi
-      .spyOn(assessmentApi, 'submitAssessment')
-      .mockResolvedValue({ ok: true, revision: 3 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -809,13 +845,18 @@ describe('AssessmentGapPage', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '2' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '提交自评' }))
-    await waitFor(() => expect(submit).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalled())
     expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
-      submit.mock.invocationCallOrder[0],
+      generate.mock.invocationCallOrder[0],
     )
-    expect(submit).toHaveBeenCalledWith(7, 2)
+    expect(generate).toHaveBeenCalledWith(
+      7,
+      ['P01.01.01'],
+      2,
+      expect.any(String),
+    )
   })
 
   it('replaces the Gap summary after draft save', async () => {
@@ -857,7 +898,7 @@ describe('AssessmentGapPage', () => {
     fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
       target: { value: '4' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => {
       expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 0')
     })
@@ -943,7 +984,7 @@ describe('AssessmentGapPage', () => {
     fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
       target: { value: '晋升准备' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '保存草稿' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
 
     await waitFor(() => expect(save).toHaveBeenCalled())
     const detail = save.mock.calls[0][1][0]
@@ -952,10 +993,11 @@ describe('AssessmentGapPage', () => {
       adjusted_target_level: 5,
       target_adjustment_reason: '晋升准备',
     })
-    // Must include canonical fields
+    // Raw page-state detail objects still carry plan_quarter (read-only,
+    // server-derived display field, Issue #194); saveDraft's own payload
+    // mapping drops it — asserted in the api-helpers suite below.
     expect(detail).toHaveProperty('member_priority')
     expect(detail).toHaveProperty('include_in_plan')
-    expect(detail).toHaveProperty('plan_quarter')
     expect(detail).toHaveProperty('plan_month')
   })
 
@@ -995,8 +1037,11 @@ describe('AssessmentGapPage', () => {
     // The adjust button should not appear for non-applicable items
     expect(screen.queryByText('调整▸')).toBeNull()
     expect(
-      (screen.getByRole('button', { name: '提交自评' }) as HTMLButtonElement)
-        .disabled,
+      (
+        screen.getByRole('button', {
+          name: '生成所选学习任务',
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(false)
   })
 
@@ -1415,8 +1460,7 @@ describe('assessment api helpers', () => {
           gap_value: 3,
           member_priority: '高',
           include_in_plan: true,
-          plan_quarter: 'Q1',
-          plan_month: 3,
+          plan_month: '2026-03',
         },
       ],
       1,
@@ -1433,10 +1477,10 @@ describe('assessment api helpers', () => {
       evidence_note: null,
       member_priority: '高',
       include_in_plan: true,
-      plan_quarter: 'Q1',
-      plan_month: 3,
+      plan_month: '2026-03',
     })
     expect(body.details[0]).not.toHaveProperty('plan_candidate')
+    expect(body.details[0]).not.toHaveProperty('plan_quarter')
     expect(body.expected_revision).toBe(1)
   })
 })

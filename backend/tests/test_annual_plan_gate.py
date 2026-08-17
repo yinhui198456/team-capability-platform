@@ -12,6 +12,7 @@ from app.assessment.schema import create_assessment_schema
 from app.main import app
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -53,7 +54,8 @@ def _create_test_user(
     for role_code in roles:
         assign_role(connection, user_id, role_code)
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P4', target_level = 'P8' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id
@@ -63,6 +65,13 @@ def _create_test_user(
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -170,11 +179,12 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
+    publish_test_standard(connection, ["P01-L2A-L3A"])
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -203,13 +213,17 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
@@ -226,7 +240,12 @@ def test_no_submitted_assessment_blocks_gate(
     assert body == {"eligible": False, "reason": "暂无已提交的能力评估"}
 
 
-def test_pending_review_blocks_gate(assessment_schema: psycopg.Connection) -> None:
+def test_pending_review_does_not_block_gate(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    # Issue #82+#194: the gate only requires a submitted assessment; the
+    # review outcome no longer gates eligibility (plans are generated at
+    # submit / explicit generation, review is not a gate).
     member_id = _create_test_user(assessment_schema, "member_pending", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_pending", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
@@ -239,13 +258,12 @@ def test_pending_review_blocks_gate(assessment_schema: psycopg.Connection) -> No
         "GET", "/api/planning/annual-plan-eligibility", cookies=member_cookies
     )
     assert status == 200
-    assert body == {
-        "eligible": False,
-        "reason": "存在待复核的自评，请等待 Buddy 复核",
-    }
+    assert body == {"eligible": True, "reason": None}
 
 
-def test_rejected_review_blocks_gate(assessment_schema: psycopg.Connection) -> None:
+def test_rejected_review_does_not_block_gate(
+    assessment_schema: psycopg.Connection,
+) -> None:
     member_id = _create_test_user(assessment_schema, "member_reject", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_reject", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
@@ -272,7 +290,7 @@ def test_rejected_review_blocks_gate(assessment_schema: psycopg.Connection) -> N
         "GET", "/api/planning/annual-plan-eligibility", cookies=member_cookies
     )
     assert status == 200
-    assert body == {"eligible": False, "reason": "最新自评复核结论不是“认可”"}
+    assert body == {"eligible": True, "reason": None}
 
 
 def test_approved_review_unblocks_gate(
@@ -307,7 +325,7 @@ def test_approved_review_unblocks_gate(
     assert body == {"eligible": True, "reason": None}
 
 
-def test_new_pending_version_blocks_gate_again(
+def test_new_pending_version_does_not_block_gate_again(
     assessment_schema: psycopg.Connection,
 ) -> None:
     member_id = _create_test_user(assessment_schema, "member_reversion", ["Member"])
@@ -369,8 +387,7 @@ def test_new_pending_version_blocks_gate_again(
                         "evidence_note": "更新",
                         "member_priority": "高",
                         "include_in_plan": True,
-                        "plan_quarter": "Q2",
-                        "plan_month": 5,
+                        "plan_month": "2026-05",
                     }
                 ],
             ),
@@ -379,22 +396,23 @@ def test_new_pending_version_blocks_gate_again(
         cookies=member_cookies,
     )
     assert status == 200
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{new_id}/submit",
-        {"expected_revision": 2},
-        cookies=member_cookies,
+    # Issue #194: the API submit is retired; seed through the retained path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        assessment_schema.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (new_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(assessment_schema, new_id, member_id, 2)
+    assessment_schema.commit()
 
     status, body, _ = _request(
         "GET", "/api/planning/annual-plan-eligibility", cookies=member_cookies
     )
     assert status == 200
-    assert body == {
-        "eligible": False,
-        "reason": "存在待复核的自评，请等待 Buddy 复核",
-    }
+    # A newer submitted assessment keeps eligibility (gate is review-free).
+    assert body == {"eligible": True, "reason": None}
 
 
 def test_non_member_role_returns_403(assessment_schema: psycopg.Connection) -> None:

@@ -178,8 +178,7 @@ def test_save_uses_snapshot_and_requires_reason_for_adjustment(
                 "evidence_note": "已完成基础练习",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             }
         ],
         expected_revision=1,
@@ -234,8 +233,7 @@ def test_not_applicable_item_rejects_adjustment(
                     "target_adjustment_reason": "提前适用",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
             expected_revision=1,

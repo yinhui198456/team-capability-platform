@@ -719,8 +719,8 @@ export function BuddyReviewCenter() {
                                       : '未选择'}
                                 </td>
                                 <td>
-                                  {detail.plan_quarter && detail.plan_month
-                                    ? `${detail.plan_quarter} ${detail.plan_month}月`
+                                  {detail.plan_month
+                                    ? `${detail.plan_month}`
                                     : '—'}
                                 </td>
                                 <td>

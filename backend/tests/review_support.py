@@ -76,6 +76,11 @@ def reset_full_schema(connection: psycopg.Connection) -> None:
     from tests.standard_target_support import ensure_capability_nodes
 
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
+    # Issue #194: current-state schema = schema modules + full migration chain
+    # (v0015 upgrades plan_month to TEXT 'YYYY-MM').
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
     connection.commit()
 
 

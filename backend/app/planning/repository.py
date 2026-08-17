@@ -643,7 +643,9 @@ def _validate_plan_item_dates(
     plan_quarter = row[2]
     plan_month = row[3]
     target_month = row[4]
-    month = plan_month if plan_month is not None else target_month
+    # plan_month is TEXT 'YYYY-MM' (Issue #194); its YYYY always equals the
+    # owner year by construction, so only the month part is needed here.
+    month = int(plan_month[5:7]) if plan_month is not None else target_month
     year = int(row[5])
 
     if start is not None and due is not None and start > due:
@@ -4582,7 +4584,8 @@ def _team_analytics_monthly_trends(
     planned_values_by_month: dict[int, list[str | None]] = {}
     for month, estimated_hours in planned_rows:
         if month is not None:
-            planned_values_by_month.setdefault(int(month), []).append(
+            # plan_month is TEXT 'YYYY-MM' (Issue #194); trend keys are 1-12.
+            planned_values_by_month.setdefault(int(month[5:7]), []).append(
                 estimated_hours if isinstance(estimated_hours, str) else None
             )
     planned_by_month = {

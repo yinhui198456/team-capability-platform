@@ -171,6 +171,7 @@ _EXPECTED_VERSIONS = [
     "0012_team_analytics_indexes",
     "0013_plan_item_growth_goal_nullable",
     "0014_evidence_archive_backfill",
+    "0015_plan_month_text",
 ]
 
 # Pre-v0007 planning DDL snapshot (v0006 era): plan_item.growth_goal_id is
@@ -547,20 +548,48 @@ def test_upgrade_to_v0008_and_lifespan(pre_v0007_db: psycopg.Connection) -> None
                 "WHERE id = %s",
                 (detail_id,),
             )
-    # include_in_plan=TRUE without quarter/month rejected (v0007).
+    # include_in_plan=TRUE without month is legal now (v0015: pending
+    # plan month is a valid draft state; generation enforces the month).
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+            (detail_id,),
+        )
+    # New format constraint: plan_month must match YYYY-MM.
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():
             connection.execute(
-                "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+                "UPDATE assessment_detail SET plan_month = '26-5' WHERE id = %s",
                 (detail_id,),
             )
-    # include_in_plan=NULL with plan_quarter set rejected (v0008).
+    # A valid YYYY-MM month is accepted.
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET plan_month = '2026-05' WHERE id = %s",
+            (detail_id,),
+        )
+    # New consistency constraint: plan_quarter must match the derived
+    # quarter of plan_month (2026-05 is Q2).
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():
             connection.execute(
                 "UPDATE assessment_detail SET plan_quarter = 'Q1' WHERE id = %s",
                 (detail_id,),
             )
+    # Retained (v0015): include_in_plan not TRUE ⇒ time fields NULL.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with connection.transaction():
+            connection.execute(
+                "UPDATE assessment_detail SET include_in_plan = FALSE WHERE id = %s",
+                (detail_id,),
+            )
+    # Restore the legacy NULL state before commit.
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = NULL, "
+            "plan_month = NULL WHERE id = %s",
+            (detail_id,),
+        )
     connection.commit()
 
     # ── Idempotent re-run. ─────────────────────────────────────────────

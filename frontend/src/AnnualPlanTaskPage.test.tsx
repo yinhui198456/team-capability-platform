@@ -988,7 +988,7 @@ describe('plan item source summary (issue #63)', () => {
           expected_output: '设计文档与评审记录',
           source_assessment_id: 1,
           plan_quarter: 'Q2',
-          plan_month: 6,
+          plan_month: '2026-06',
           planning_source_type: 'assessment_approval',
           assessment_revision: 2,
           include_in_plan: true,
@@ -1009,9 +1009,9 @@ describe('plan item source summary (issue #63)', () => {
     expect(screen.getByText('计划季度')).toBeTruthy()
     expect(screen.getByText('Q2')).toBeTruthy()
     expect(screen.getByText('计划月份')).toBeTruthy()
-    // Scoped: the month timeline also renders a "6 月" button.
+    // Issue #194: plan_month is 'YYYY-MM' — displayed as-is, not "N 月".
     expect(
-      within(screen.getByTestId('task-detail-panel')).getByText('6 月'),
+      within(screen.getByTestId('task-detail-panel')).getByText('2026-06'),
     ).toBeTruthy()
     expect(screen.getByText('来源类型')).toBeTruthy()
     expect(screen.getByText('评估认可生成')).toBeTruthy()
@@ -1032,7 +1032,11 @@ describe('plan item schedule editing (issue #63)', () => {
   })
 
   it('lets the member edit only the two schedule dates with a CAS payload', async () => {
-    const item = makeItem({ revision: 2, plan_quarter: 'Q2', plan_month: 6 })
+    const item = makeItem({
+      revision: 2,
+      plan_quarter: 'Q2',
+      plan_month: '2026-06',
+    })
     await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
     const update = vi.spyOn(planningApi, 'updatePlanItem').mockResolvedValue({
       ...item,
@@ -1066,7 +1070,7 @@ describe('plan item schedule editing (issue #63)', () => {
 
   it('rejects a start later than the end locally without calling the API', async () => {
     await renderMember(
-      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: 6 })],
+      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: '2026-06' })],
       [makeTask({ id: 1, plan_item_id: 1 })],
     )
     const update = vi
@@ -1091,7 +1095,7 @@ describe('plan item schedule editing (issue #63)', () => {
 
   it('rejects an end date outside the source plan month', async () => {
     await renderMember(
-      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: 6 })],
+      [makeItem({ revision: 1, plan_quarter: 'Q2', plan_month: '2026-06' })],
       [makeTask({ id: 1, plan_item_id: 1 })],
     )
     const update = vi
@@ -1119,7 +1123,7 @@ describe('plan item schedule editing (issue #63)', () => {
           plan_start_date: '2026-04-01',
           plan_end_date: '2026-06-30',
           plan_quarter: 'Q2',
-          plan_month: 6,
+          plan_month: '2026-06',
         }),
       ],
       [makeTask({ id: 1, plan_item_id: 1 })],
@@ -1197,7 +1201,7 @@ describe('plan item schedule editing (issue #63)', () => {
       plan_start_date: '2026-04-01',
       plan_end_date: '2026-06-30',
       plan_quarter: 'Q2',
-      plan_month: 6,
+      plan_month: '2026-06',
     })
     await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
     const conflict: unknown = Object.assign(
@@ -1262,7 +1266,7 @@ describe('plan item schedule editing (issue #63)', () => {
         plan_start_date: '2026-04-01',
         plan_end_date: '2026-06-30',
         plan_quarter: 'Q2',
-        plan_month: 6,
+        plan_month: '2026-06',
       })
       await renderMember([item], [makeTask({ id: 1, plan_item_id: 1 })])
       const error: unknown = Object.assign(new Error(message), {

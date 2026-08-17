@@ -95,7 +95,7 @@ def test_member_dashboard_aggregates_only_current_member_data(
     assert body["assessment"]["submitted_at"] is not None
     assert body["assessment"]["review_status"] == "已闭环"
     assert body["assessment"]["review_conclusion"] == "认可"
-    assert body["annual_plan_status"] == "制定中"
+    assert body["annual_plan_status"] == "执行中"
 
 
 def test_member_dashboard_rejects_non_members(
@@ -275,7 +275,7 @@ def test_dashboard_current_month_counts_reconcilable(
     # Move the sole plan item into the current month (2026-08, Q3), 进行中.
     profile_schema.execute(
         """
-        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3'
+        UPDATE plan_item SET plan_month = '2026-08', plan_quarter = 'Q3'
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )
@@ -307,7 +307,8 @@ def test_dashboard_current_month_delayed_and_pending_evidence(
     member_id, member_cookies = _build_full_profile(profile_schema)
     profile_schema.execute(
         """
-        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3', status = '延期'
+        UPDATE plan_item
+        SET plan_month = '2026-08', plan_quarter = 'Q3', status = '延期'
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )

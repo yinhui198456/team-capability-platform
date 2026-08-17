@@ -56,8 +56,7 @@ class TestBuddyRelationshipLockConcurrency(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -152,7 +151,9 @@ class TestBuddyRelationshipLockConcurrency(ReviewTestBase):
         assert results.get("switch") == "ok", results
         # The old Buddy must NOT close the Review after the switch committed.
         assert results.get("review") == "insufficient_permissions", results
-        # Zero partial writes: assessment still pending, no plan, no closed review.
+        # Zero partial writes: assessment still pending, no closed review;
+        # the plan exists from submit-time generation (#82+#194) and the
+        # blocked review writes nothing new.
         status = review_schema.execute(
             "SELECT status FROM assessment WHERE id=%s", (assessment_id,)
         ).fetchone()
@@ -161,7 +162,7 @@ class TestBuddyRelationshipLockConcurrency(ReviewTestBase):
             review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
                 0
             ]
-            == 0
+            == 1
         )
         closed = review_schema.execute(
             "SELECT COUNT(*) FROM assessment_review WHERE status='已闭环'"
@@ -438,8 +439,7 @@ class TestBuddyRelationshipLockConcurrency(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -490,11 +490,13 @@ class TestBuddyRelationshipLockConcurrency(ReviewTestBase):
         with pytest.raises(ReviewError) as excinfo:
             self.approve(review_schema, assessment_id, old_buddy)
         assert excinfo.value.code == "insufficient_permissions"
+        # Issue #82+#194: the plan exists from submit-time generation; the
+        # rejected review writes nothing new.
         assert (
             review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
                 0
             ]
-            == 0
+            == 1
         )
         status = review_schema.execute(
             "SELECT status FROM assessment WHERE id=%s", (assessment_id,)

@@ -247,8 +247,7 @@ def test_create_draft_save_details_submit_review(
                     "evidence_note": "测试中",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
             "expected_revision": 1,
@@ -264,29 +263,43 @@ def test_create_draft_save_details_submit_review(
     assert len(details) == 1
     assert details[0]["gap_value"] == 2
 
+    # Issue #194: the submit-and-review chain is retired; /submit is a
+    # zero-write 422, and explicit generation forms plan items without any
+    # Assessment Review row (contract #7).
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
         {"expected_revision": 2},
         cookies=cookies,
     )
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
+
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {
+            "l3_codes": [l3_code],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
     assert status == 200
+    assert body["created"] == [l3_code]
 
     status, body, _ = _request(
         "GET", f"/api/assessments/{assessment_id}", cookies=cookies
     )
     assert status == 200
-    assert body["status"] == "待复核"
-    assert body["submitted_at"] is not None
+    # Generation is not a submission: the assessment stays 草稿.
+    assert body["status"] == "草稿"
+    assert body["submitted_at"] is None
 
     status, history, _ = _request(
         "GET", f"/api/assessments/{assessment_id}/history", cookies=cookies
     )
     assert status == 200
-    assert len(history) == 1
-    assert history[0]["status"] == "待复核"
-    assert history[0]["buddy_id"] == buddy_id
-    assert history[0]["conclusion"] is None
+    assert history == []
 
 
 def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
@@ -430,9 +443,10 @@ def test_assessment_writes_require_expected_revision_token(
             cookies=cookies,
         )
         assert status == 422
-    status, _, _ = _request(
+    status, body, _ = _request(
         "POST", f"/api/assessments/{assessment_id}/submit", {}, cookies=cookies
     )
+    # Issue #194: the legacy submit endpoint is retired (zero-write 422).
     assert status == 422
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -440,9 +454,11 @@ def test_assessment_writes_require_expected_revision_token(
     assert assessment["revision"] == 1
 
 
-def test_submit_validation_returns_structured_l3_error(
+def test_generation_validation_returns_structured_l3_error(
     assessment_schema: psycopg.Connection,
 ) -> None:
+    """Issue #194: explicit generation returns a structured per-L3 422 with
+    zero writes when a selected item is not ready (contract #6)."""
     _create_test_user(assessment_schema, "member_structured_error", ["Member"])
     assessment_schema.execute(
         """
@@ -468,8 +484,8 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
-    # Set current_level low enough to create a positive gap (standard target is 3),
-    # but DON'T provide plan fields — submit must fail validation.
+    # Positive gap (standard target is 3) with include_in_plan=TRUE but NO
+    # plan_month — partial drafts are legal, generation must fail structured.
     l3_code = "C01.01.01"
     node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
@@ -479,7 +495,13 @@ def test_submit_validation_returns_structured_l3_error(
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
-                {"l3_node_id": node_id, "l3_code": l3_code, "current_level": 0}
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": l3_code,
+                    "current_level": 0,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                }
             ],
             "expected_revision": 1,
         },
@@ -488,19 +510,27 @@ def test_submit_validation_returns_structured_l3_error(
     assert status == 200
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": [l3_code], "expected_revision": 2},
         cookies=cookies,
     )
     assert status == 422
     detail = body["detail"]
-    assert detail["code"] == "assessment_validation_failed"
+    assert detail["code"] == "plan_generation"
     assert detail["l3_code"] == "C01.01.01"
-    assert "l3_node_id" in detail
-    assert isinstance(detail["l3_node_id"], int)
-    # With #61: evidence gate removed; validation now catches missing plan fields.
-    assert detail["reason"] == "priority_required"
+    assert detail["reason"] == "pending_plan_month"
     assert "message" in detail
+    # Zero-write: assessment stays 草稿 at the same revision, no plan items.
+    assessment = get_assessment(assessment_schema, assessment_id)
+    assert assessment is not None
+    assert assessment["status"] == "草稿"
+    assert assessment["revision"] == 2
+    rows = assessment_schema.execute(
+        "SELECT COUNT(*) FROM plan_item WHERE annual_growth_plan_id IN ("
+        "SELECT id FROM annual_growth_plan WHERE member_id = %s)",
+        (assessment["member_id"],),
+    ).fetchone()[0]
+    assert rows == 0
 
 
 def test_member_cannot_view_or_edit_other_draft(

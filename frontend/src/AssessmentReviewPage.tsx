@@ -194,8 +194,8 @@ export function AssessmentReviewPage() {
                         {detail.member_priority
                           ? ` · Member优先级: ${detail.member_priority}`
                           : ''}
-                        {detail.plan_quarter && detail.plan_month
-                          ? ` · 计划时间: ${detail.plan_quarter} ${detail.plan_month}月`
+                        {detail.plan_month
+                          ? ` · 计划时间: ${detail.plan_month}`
                           : ''}
                         {detail.data_issue ? ' · 数据异常' : ''}
                       </li>

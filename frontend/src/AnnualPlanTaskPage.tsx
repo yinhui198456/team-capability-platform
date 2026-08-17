@@ -844,7 +844,11 @@ function TaskExecutionPanel({
     if (start && end && start > end) {
       return '计划开始日期不得晚于计划结束日期。'
     }
-    const month = item.plan_month ?? item.target_month
+    // plan_month is 'YYYY-MM' (Issue #194); target_month stays an int.
+    const month =
+      typeof item.plan_month === 'string'
+        ? Number(item.plan_month.slice(5, 7))
+        : (item.plan_month ?? item.target_month)
     const pad = (n: number) => String(n).padStart(2, '0')
     if (month != null) {
       if (
@@ -963,7 +967,8 @@ function TaskExecutionPanel({
         </div>
         <div className={s.taskField}>
           <span>计划月份</span>
-          <strong>{item.plan_month ? `${item.plan_month} 月` : '—'}</strong>
+          {/* plan_month is 'YYYY-MM' (Issue #194) — display as-is. */}
+          <strong>{item.plan_month ?? '—'}</strong>
         </div>
         <div className={s.taskField}>
           <span>来源类型</span>

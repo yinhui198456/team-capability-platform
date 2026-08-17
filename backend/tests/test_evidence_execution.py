@@ -202,13 +202,13 @@ def test_assessment_review_is_isolated_from_evidence_review(
 ) -> None:
     mc, bc = seeded["member_cookies"], seeded["buddy_cookies"]
     task_id = int(seeded["task_id"])
-    # The approval chain left a closed assessment_review row.
+    # Issue #194: the member flow creates no assessment_review row at all
+    # (generation replaces the submit-and-review chain).
     connection = seeded["connection"]
     assessment_reviews = connection.execute(
         "SELECT conclusion, status FROM assessment_review"
     ).fetchall()
-    assert assessment_reviews and assessment_reviews[0][1] == "已闭环"
-    assert assessment_reviews[0][0] == "认可"
+    assert not assessment_reviews
 
     status, ev = _create_evidence(mc, task_id)
     ev_id = int(ev["id"])

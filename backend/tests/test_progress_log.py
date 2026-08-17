@@ -14,6 +14,7 @@ from app.main import app
 from app.planning.schema import create_planning_schema
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -167,6 +168,11 @@ def progress_log_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_assessment_schema(connection)
     _reset_planning_schema(connection)
     _reset_catalog_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -278,8 +284,7 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
         {
             "l3_code": "P01-L2A-L3B",
@@ -288,11 +293,12 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    publish_test_standard(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    connection.commit()
     from app.migrations import run_migrations
 
     run_migrations(connection)
@@ -325,13 +331,17 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 

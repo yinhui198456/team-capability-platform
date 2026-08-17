@@ -32,6 +32,7 @@ from .v0013_plan_item_growth_goal_nullable import (
 from .v0014_evidence_archive_backfill import (
     upgrade as upgrade_evidence_archive_backfill,
 )
+from .v0015_plan_month_text import upgrade as upgrade_plan_month_text
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -57,6 +58,7 @@ MIGRATIONS = [
         "0014_evidence_archive_backfill",
         upgrade_evidence_archive_backfill,
     ),
+    ("0015_plan_month_text", upgrade_plan_month_text),
 ]
 
 __all__ = ["MIGRATIONS"]

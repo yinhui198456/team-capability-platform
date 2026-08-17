@@ -353,10 +353,11 @@ def plan_schema(connection: psycopg.Connection) -> psycopg.Connection:
 # ── Tests ────────────────────────────────────────────────────────
 
 
-def test_current_level_zero_submits_successfully(
+def test_current_level_zero_valid_and_submit_retired(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """0 is a valid current_level; submits without evidence gate."""
+    """0 is a valid current_level (no evidence gate); #187 contract: the
+    old submit-and-generate endpoint is retired → 422 legacy zero-write."""
     member_id = _create_test_user(plan_schema, "m_zero", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -383,8 +384,7 @@ def test_current_level_zero_submits_successfully(
                     "current_level": 0,
                     "member_priority": "低",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 2,
+                    "plan_month": "2026-02",
                 }
             ],
             "expected_revision": 1,
@@ -399,7 +399,18 @@ def test_current_level_zero_submits_successfully(
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200, f"submit with level=0 failed: {body}"
+    assert status == 422, f"retired submit must 422, got {status}: {body}"
+    assert "legacy_assessment_submit_disabled" in str(body)
+    # Zero writes: status unchanged, no review, no plan created.
+    row = plan_schema.execute(
+        "SELECT status FROM assessment WHERE id=%s", (assessment_id,)
+    ).fetchone()
+    assert row[0] == "草稿"
+    row = plan_schema.execute(
+        "SELECT COUNT(*) FROM assessment_review WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchone()
+    assert row[0] == 0
 
 
 def test_priority_not_auto_generated(plan_schema: psycopg.Connection) -> None:
@@ -455,14 +466,19 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_include_in_plan_requires_quarter_month(
+def test_include_in_plan_pending_month_persists(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """include_in_plan=TRUE without quarter+month → 422."""
-    member_id = _create_test_user(plan_schema, "m_noqm", ["Member"])
+    """#194: include_in_plan=TRUE 且 plan_month 未填（待补计划月份）可持久化。
+
+    Superseded contract: include_in_plan=TRUE without quarter+month → 422
+    (old ``plan_time_required`` CHECK).  The story contract allows joining
+    the plan draft with a pending month that is filled in later.
+    """
+    member_id = _create_test_user(plan_schema, "m_pending", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
-    cookies = _login(plan_schema, "m_noqm")
+    cookies = _login(plan_schema, "m_pending")
 
     detail = plan_schema.execute(
         "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
@@ -473,7 +489,7 @@ def test_include_in_plan_requires_quarter_month(
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
     status, body = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": [
@@ -486,21 +502,46 @@ def test_include_in_plan_requires_quarter_month(
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
+                    # plan_month omitted → 待补计划月份 must be persistable
                 }
             ],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
-    assert status == 422, f"expected 422, got {status}: {body}"
+    assert status == 200, f"待补计划月份必须可持久化, got {status}: {body}"
+
+    saved = plan_schema.execute(
+        "SELECT include_in_plan, plan_month, plan_quarter "
+        "FROM assessment_detail WHERE assessment_id=%s AND l3_code=%s",
+        (assessment_id, code),
+    ).fetchone()
+    assert saved[0] is True
+    assert saved[1] is None
+    assert saved[2] is None
+
+    # Cross-refresh/relogin persistence: reload through the API.
+    from app.assessment.repository import get_assessment
+
+    reloaded = get_assessment(plan_schema, assessment_id)
+    row = next(d for d in reloaded["details"] if d["l3_code"] == code)
+    assert row["include_in_plan"] is True
+    assert row["plan_month"] is None
+    assert row["plan_quarter"] is None
 
 
-def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
-    """Q1+5月 → 422; Q1+2月 → 200."""
-    member_id = _create_test_user(plan_schema, "m_qmap", ["Member"])
+def test_plan_month_text_format_and_derivation(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """#194: plan_month 契约升级为 TEXT 'YYYY-MM'；quarter 内部派生不再接受输入。
+
+    Superseded contract: plan_month INT 1-12 + plan_quarter Q1-Q4 双输入
+    (old quarter-month mapping validation).
+    """
+    member_id = _create_test_user(plan_schema, "m_yyyymm", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
-    cookies = _login(plan_schema, "m_qmap")
+    cookies = _login(plan_schema, "m_yyyymm")
 
     detail = plan_schema.execute(
         "SELECT l3_code FROM assessment_detail WHERE assessment_id=%s LIMIT 1",
@@ -510,49 +551,47 @@ def test_quarter_month_mapping(plan_schema: psycopg.Connection) -> None:
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Invalid: Q1 + 5月 (need positive gap to reach quarter validation)
-    status, body = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": [
-                {
-                    "l3_node_id": node_id,
-                    "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
-                    "member_priority": "中",
-                    "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 5,
-                }
-            ],
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 422, f"Q1+5 should fail: {body}"
+    def _patch(plan_month: object) -> tuple[int, Any]:
+        return _request(
+            "PATCH",
+            f"/api/assessments/{assessment_id}/draft",
+            {
+                "details": [
+                    {
+                        "l3_node_id": node_id,
+                        "l3_code": code,
+                        "current_level": 2,
+                        "target_adjusted": True,
+                        "adjusted_target_level": 5,
+                        "target_adjustment_reason": "test",
+                        "member_priority": "高",
+                        "include_in_plan": True,
+                        "plan_month": plan_month,
+                    }
+                ],
+                "expected_revision": 1,
+            },
+            cookies=cookies,
+        )
 
-    # Valid: Q1 + 2月
-    status, body = _request(
-        "PATCH",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": [
-                {
-                    "l3_node_id": node_id,
-                    "l3_code": code,
-                    "plan_quarter": "Q1",
-                    "plan_month": 2,
-                }
-            ],
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200, f"Q1+2 should pass: {body}"
+    # 合法 YYYY-MM：2026-07 → 200，落库为 TEXT，quarter 派生为 Q3
+    status, body = _patch("2026-07")
+    assert status == 200, f"2026-07 should pass: {body}"
+    saved = plan_schema.execute(
+        "SELECT plan_month, plan_quarter FROM assessment_detail "
+        "WHERE assessment_id=%s AND l3_code=%s",
+        (assessment_id, code),
+    ).fetchone()
+    assert saved[0] == "2026-07"
+    assert saved[1] == "Q3"
+
+    # 非法月份 2026-13 → 422
+    status, body = _patch("2026-13")
+    assert status == 422, f"2026-13 should fail: {body}"
+
+    # 非 YYYY-MM 格式 → 422
+    status, body = _patch("07-2026")
+    assert status == 422, f"07-2026 should fail: {body}"
 
 
 def test_gap_zero_clears_plan_fields(plan_schema: psycopg.Connection) -> None:
@@ -617,7 +656,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # First set plan
+    # First set plan (TEXT 'YYYY-MM' per #187 contract; quarter derived).
     status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
@@ -632,8 +671,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 3,
+                    "plan_month": "2026-03",
                 }
             ],
             "expected_revision": 1,
@@ -846,7 +884,13 @@ def test_revision_conflict_409_zero_writes(plan_schema: psycopg.Connection) -> N
 
 
 def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None:
-    """include_in_plan=NULL represents 未决定 — submit blocks it."""
+    """include_in_plan=NULL represents 未决定 — persistable draft state.
+
+    #187 contract: the old submit-and-generate endpoint is retired, so
+    'NULL blocks submit' is superseded by a zero-write legacy 422; the
+    generation-time requirement (a selected item must have include_in_plan
+    and a month) is covered by test_generate_plan_items.py.
+    """
     member_id = _create_test_user(plan_schema, "m_tri", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -882,15 +926,19 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
     )
     assert status == 200
 
-    # Submit should block — include_in_plan is still NULL
+    # Retired endpoint: 422 legacy, zero writes, assessment stays 草稿.
     status, body = _request(
         "POST",
         f"/api/assessments/{assessment_id}/submit",
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 422, f"submit with NULL include_in_plan: {status} {body}"
-    assert "plan_decision_required" in str(body)
+    assert status == 422, f"retired submit must 422: {status} {body}"
+    assert "legacy_assessment_submit_disabled" in str(body)
+    row = plan_schema.execute(
+        "SELECT status FROM assessment WHERE id=%s", (assessment_id,)
+    ).fetchone()
+    assert row[0] == "草稿"
 
 
 def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
@@ -928,8 +976,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
                     "target_adjustment_reason": "test",
                     "member_priority": "中",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 6,
+                    "plan_month": "2026-06",
                 }
             ],
             "expected_revision": 1,
@@ -956,8 +1003,9 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert saved["current_level"] == 3
     assert saved["member_priority"] == "中"
     assert saved["include_in_plan"] is True
+    # plan_quarter is derived server-side from plan_month (TEXT YYYY-MM).
     assert saved["plan_quarter"] == "Q2"
-    assert saved["plan_month"] == 6
+    assert saved["plan_month"] == "2026-06"
 
     # Explicit null on priority while include_in_plan=TRUE → 422 conflict,
     # zero writes (include requires a valid priority).
@@ -1182,8 +1230,7 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q3",
-                    "plan_month": 7,
+                    "plan_month": "2026-07",
                 }
             ],
             "expected_revision": 1,
@@ -1216,8 +1263,16 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
     assert saved["plan_month"] is None
 
 
-def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> None:
-    """#61 removes evidence gate: level≥3 without evidence → 200."""
+def test_submit_retired_legacy_422_zero_write(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """#187 contract: old submit-and-generate endpoint is retired.
+
+    Supersedes the #61 'submit without evidence succeeds' contract — plan
+    creation now happens only via explicit POST /generate-plan-items.
+    Assert the retirement is zero-write: no status change, no review, no
+    plan, no task.
+    """
     member_id = _create_test_user(plan_schema, "m_noev", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -1245,8 +1300,7 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q4",
-                    "plan_month": 11,
+                    "plan_month": "2026-11",
                 }
             ],
             "expected_revision": 1,
@@ -1261,7 +1315,19 @@ def test_submit_without_evidence_succeeds(plan_schema: psycopg.Connection) -> No
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200, f"submit without evidence should succeed: {body}"
+    assert status == 422, f"retired submit must 422: {status} {body}"
+    assert "legacy_assessment_submit_disabled" in str(body)
+    for sql in (
+        "SELECT status FROM assessment WHERE id=%s",
+        "SELECT COUNT(*) FROM assessment_review WHERE assessment_id=%s",
+        "SELECT COUNT(*) FROM annual_growth_plan WHERE source_assessment_id=%s",
+        "SELECT COUNT(*) FROM plan_item WHERE source_assessment_id=%s",
+    ):
+        row = plan_schema.execute(sql, (assessment_id,)).fetchone()
+        if "status" in sql:
+            assert row[0] == "草稿"
+        else:
+            assert row[0] == 0, f"retired submit must be zero-write: {sql}"
 
 
 def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:
@@ -1376,8 +1442,7 @@ def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> 
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
             "expected_revision": 1,
@@ -1405,11 +1470,13 @@ def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> 
     ]
     assert cleared, f"auto_cleared missing entry: {body}"
     assert cleared[0].get("l3_node_id") == node_id
+    # plan_quarter is derived server-side (Issue #194) — never an input,
+    # so it cannot appear among auto-cleared fields.
     assert set(cleared[0].get("fields", [])) >= {
         "include_in_plan",
-        "plan_quarter",
         "plan_month",
     }
+    assert "plan_quarter" not in cleared[0].get("fields", [])
 
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)

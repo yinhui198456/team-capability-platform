@@ -132,7 +132,7 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
     run_migrations(connection)
 
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 14
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 15
     )
     assert (
         connection.execute(
@@ -196,8 +196,7 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
                 "evidence_note": "补充历史草稿依据",
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2027-05",
             }
         ],
         expected_revision=1,

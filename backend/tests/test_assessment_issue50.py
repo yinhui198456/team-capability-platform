@@ -192,8 +192,7 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
                     "evidence_note": "旧依据",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q3",
-                    "plan_month": 7,
+                    "plan_month": "2024-07",
                 },
                 {"l3_code": codes[1], "current_level": 1, "evidence_note": "另一依据"},
             ],
@@ -448,8 +447,7 @@ def test_plan_fields_work_with_inherited_level_increase(
                     "target_adjustment_reason": "晋升目标",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 3,
+                    "plan_month": "2026-03",
                 },
                 {"l3_code": codes[1], "current_level": 1},
             ],
@@ -547,8 +545,7 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 3,
+                    "plan_month": "2026-03",
                 }
             ],
         ),
@@ -568,7 +565,6 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert set(result["auto_cleared"][0]["fields"]) == {
         "member_priority",
         "include_in_plan",
-        "plan_quarter",
         "plan_month",
     }
     detail = next(

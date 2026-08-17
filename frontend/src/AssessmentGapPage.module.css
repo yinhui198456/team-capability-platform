@@ -576,15 +576,21 @@
   margin-right: auto;
 }
 
-/* Plan time layout */
+/* Plan time layout — single YYYY-MM month input (Issue #194) */
 .planTime {
   display: flex;
+  flex-direction: column;
   gap: 2px;
+  align-items: flex-start;
 }
-.planTime select {
-  width: 44px;
+.planTime input[type='month'] {
+  width: 118px;
   padding: 1px 2px;
   font-size: 11px;
+}
+.pendingMonth {
+  font-size: 10px;
+  color: var(--text-secondary, #888);
 }
 
 @media (max-width: 1280px) {

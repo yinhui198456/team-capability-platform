@@ -138,7 +138,7 @@ export type PlanItem = CapabilityContext & {
   member_current_level_snapshot?: string | null
   member_target_level_snapshot?: string | null
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month?: number | null
+  plan_month?: string | null // 'YYYY-MM' (Issue #194)
   planning_source_type?: 'assessment_approval' | null
   assessment_revision?: number | null
   gap_value?: number | null
@@ -294,7 +294,7 @@ export type ChangeProposalDetail = {
   member_priority: '高' | '中' | '低' | '暂缓' | null
   include_in_plan: boolean | null
   plan_quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month: number | null
+  plan_month: string | null // 'YYYY-MM' (Issue #194)
   standard_job_level_snapshot: string | null
   member_current_level_snapshot: string | null
   member_target_level_snapshot: string | null
