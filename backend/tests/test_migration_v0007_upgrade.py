@@ -171,6 +171,7 @@ _EXPECTED_VERSIONS = [
     "0012_team_analytics_indexes",
     "0013_plan_item_growth_goal_nullable",
     "0014_evidence_archive_backfill",
+    "0015_plan_draft_pending_month",
 ]
 
 # Pre-v0007 planning DDL snapshot (v0006 era): plan_item.growth_goal_id is
@@ -547,14 +548,25 @@ def test_upgrade_to_v0008_and_lifespan(pre_v0007_db: psycopg.Connection) -> None
                 "WHERE id = %s",
                 (detail_id,),
             )
-    # include_in_plan=TRUE without quarter/month rejected (v0007).
+    # include_in_plan=TRUE with quarter/month still NULL is allowed since
+    # v0015 (Issue #178 待补计划月份); half-filled timing stays rejected.
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+            (detail_id,),
+        )
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():
             connection.execute(
-                "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+                "UPDATE assessment_detail SET plan_quarter = 'Q1' WHERE id = %s",
                 (detail_id,),
             )
     # include_in_plan=NULL with plan_quarter set rejected (v0008).
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = NULL WHERE id = %s",
+            (detail_id,),
+        )
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():
             connection.execute(

@@ -32,6 +32,9 @@ from .v0013_plan_item_growth_goal_nullable import (
 from .v0014_evidence_archive_backfill import (
     upgrade as upgrade_evidence_archive_backfill,
 )
+from .v0015_plan_draft_pending_month import (
+    upgrade as upgrade_plan_draft_pending_month,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -56,6 +59,10 @@ MIGRATIONS = [
     (
         "0014_evidence_archive_backfill",
         upgrade_evidence_archive_backfill,
+    ),
+    (
+        "0015_plan_draft_pending_month",
+        upgrade_plan_draft_pending_month,
     ),
 ]
 

@@ -114,8 +114,11 @@ def create_assessment_schema(connection: psycopg.Connection) -> None:
                 OR (plan_quarter = 'Q3' AND plan_month BETWEEN 7 AND 9)
                 OR (plan_quarter = 'Q4' AND plan_month BETWEEN 10 AND 12)
             ),
+            -- Issue #178: 待补计划月份 — both NULL (pending) or both set;
+            -- half-filled stays invalid.  Same terminal predicate as v0015.
             CHECK (
                 include_in_plan IS DISTINCT FROM TRUE
+                OR (plan_quarter IS NULL AND plan_month IS NULL)
                 OR (plan_quarter IS NOT NULL AND plan_month IS NOT NULL)
             ),
             CHECK (

@@ -1759,14 +1759,17 @@ def save_assessment_draft(
                         field="include_in_plan",
                         reason="requires_valid_priority",
                     )
-                if plan_quarter is None or plan_month is None:
+                # Issue #178: 待补计划月份 — quarter/month may both stay NULL
+                # in the draft; half-filled timing is still inconsistent.
+                if (plan_quarter is None) != (plan_month is None):
                     raise DetailValidationError(
                         "plan_validation",
-                        f"include_in_plan requires quarter and month for {code}",
+                        f"plan quarter and month must both be set or both "
+                        f"pending for {code}",
                         l3_code=str(code),
                         l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_quarter_and_month",
+                        field="plan_quarter",
+                        reason="incomplete_plan_time",
                     )
                 # Validate quarter-month mapping
                 if plan_quarter is not None and plan_month is not None:
