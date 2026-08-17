@@ -361,6 +361,9 @@ test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与
   await expect(itemCard).toBeVisible({ timeout: 20_000 })
   await itemCard.locator('[data-testid="plan-header"]').click()
   const panel = page.locator('[data-testid="task-detail-panel"]')
+  // Issue #176: static metadata now lives in the collapsible 完整资料 section;
+  // expand it before asserting — the assertion itself is unchanged.
+  await panel.getByTestId('task-metadata-details').locator('summary').click()
   await expect(panel.getByText('任务内容')).toBeVisible()
 
   // client guard: end outside the source month is rejected before any request
