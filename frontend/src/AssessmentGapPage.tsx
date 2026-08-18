@@ -5,6 +5,7 @@ import {
   type Assessment,
   type AssessmentDetail,
   type AssessmentL2Group,
+  type DraftDetailInput,
   type DraftTargetRepairPreview,
   type ScopePreview,
   createAssessment,
@@ -25,6 +26,14 @@ import {
   mockAssessmentSubmitted,
   isMockEnabled,
 } from './__fixtures__/assessmentMock'
+
+// Issue #194 P1: 计划草稿字段（保存提升计划草稿动作），其余字段归评级动作。
+const PLAN_FIELDS = new Set([
+  'member_priority',
+  'include_in_plan',
+  'plan_quarter',
+  'plan_month',
+])
 
 const LEVELS = [0, 1, 2, 3, 4, 5]
 const LEVEL_LABELS: Record<number, string> = {
@@ -226,7 +235,10 @@ export function AssessmentGapPage() {
   const [search, setSearch] = useState('')
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set())
+  // Issue #194 P1: 保存评级与维护计划草稿是两个独立动作。按字段拆分脏行
+  // —— 评级/调整/依据 与 计划字段（优先级/纳入/月份）互不夹带。
+  const [ratingDirtyIds, setRatingDirtyIds] = useState<Set<number>>(new Set())
+  const [planDirtyIds, setPlanDirtyIds] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [adjustmentId, setAdjustmentId] = useState<number | null>(null)
@@ -385,14 +397,95 @@ export function AssessmentGapPage() {
     )
     const detail = details[index]
     if (detail?.id != null) {
-      setDirtyIds((current) => new Set(current).add(detail.id!))
+      // Issue #194 P1: 按字段归入对应动作的脏集合，两动作互不夹带。
+      const hasPlanField = Object.keys(patch).some((key) =>
+        PLAN_FIELDS.has(key),
+      )
+      const hasRatingField = Object.keys(patch).some(
+        (key) => !PLAN_FIELDS.has(key),
+      )
+      if (hasPlanField) {
+        setPlanDirtyIds((current) => new Set(current).add(detail.id!))
+      }
+      if (hasRatingField) {
+        setRatingDirtyIds((current) => new Set(current).add(detail.id!))
+      }
+    }
+  }
+
+  /** Issue #194 P1: 只取某动作的字段构造稀疏 PATCH 行——评级/调整/依据
+    或 计划（优先级/纳入/月份），绝不夹带另一动作的字段。 */
+  function buildDraftRows(
+    rows: AssessmentDetail[],
+    kind: 'rating' | 'plan',
+  ): DraftDetailInput[] {
+    return rows.map((detail) => {
+      const base = {
+        l3_node_id: detail.l3_node_id,
+        l3_code: detail.l3_code,
+      }
+      if (kind === 'rating') {
+        return {
+          ...base,
+          current_level: detail.current_level,
+          target_adjusted: detail.target_adjusted ?? false,
+          adjusted_target_level: detail.adjusted_target_level ?? null,
+          target_adjustment_reason: detail.target_adjustment_reason ?? null,
+          evidence_note: detail.evidence_note ?? null,
+        }
+      }
+      return {
+        ...base,
+        member_priority: detail.member_priority ?? null,
+        include_in_plan: detail.include_in_plan,
+        plan_month: detail.plan_month ?? null,
+      }
+    })
+  }
+
+  /** 应用服务端 auto_cleared 裁决：清空相应行的计划字段，并把该行从
+    计划脏集合移除（本地未保存计划变更已被服务端否决）。 */
+  function applyAutoCleared(
+    cleared: Array<{ l3_node_id: number; fields: string[] }>,
+  ) {
+    if (!cleared.length) return
+    const clearedIds = new Set<number>()
+    for (const item of cleared) {
+      const row = details.find((d) => d.l3_node_id === item.l3_node_id)
+      if (row?.id != null) clearedIds.add(row.id)
+    }
+    for (const item of cleared) {
+      setDetails((current) =>
+        current.map((detail) => {
+          if (detail.l3_node_id === item.l3_node_id) {
+            const patch: Partial<AssessmentDetail> = {}
+            for (const f of item.fields) {
+              if (f === 'member_priority') patch.member_priority = null
+              if (f === 'include_in_plan') patch.include_in_plan = null
+              if (f === 'plan_quarter') patch.plan_quarter = null
+              if (f === 'plan_month') patch.plan_month = null
+            }
+            return { ...detail, ...patch }
+          }
+          return detail
+        }),
+      )
+    }
+    if (clearedIds.size) {
+      setPlanDirtyIds((current) => {
+        const next = new Set(current)
+        clearedIds.forEach((id) => next.delete(id))
+        return next
+      })
     }
   }
 
   async function handleSave() {
     if (!assessment) return
+    // Issue #194 P1: 保存能力评级只提交评级/调整/依据字段（稀疏 PATCH），
+    // 不清掉待保存的计划变更（planDirtyIds 保留）。
     const changed = details.filter(
-      (detail) => detail.id != null && dirtyIds.has(detail.id),
+      (detail) => detail.id != null && ratingDirtyIds.has(detail.id),
     )
     if (!changed.length) return
     setError('')
@@ -400,12 +493,12 @@ export function AssessmentGapPage() {
     try {
       if (isMockEnabled()) {
         setMessage('草稿已保存')
-        setDirtyIds(new Set())
+        setRatingDirtyIds(new Set())
         return
       }
       const result = await saveDraft(
         assessment.id,
-        changed,
+        buildDraftRows(changed, 'rating'),
         assessment.revision ?? 1,
       )
       setAssessment((current) =>
@@ -417,36 +510,80 @@ export function AssessmentGapPage() {
             }
           : current,
       )
-      setDirtyIds(new Set())
-      const autoCleared = result.auto_cleared ?? []
-      for (const cleared of autoCleared) {
-        setDetails((current) =>
-          current.map((detail) => {
-            if (detail.l3_node_id === cleared.l3_node_id) {
-              const patch: Partial<AssessmentDetail> = {}
-              for (const f of cleared.fields) {
-                if (f === 'member_priority') patch.member_priority = null
-                if (f === 'include_in_plan') patch.include_in_plan = null
-                if (f === 'plan_quarter') patch.plan_quarter = null
-                if (f === 'plan_month') patch.plan_month = null
-              }
-              return { ...detail, ...patch }
-            }
-            return detail
-          }),
-        )
-      }
-      const updated = await getAssessment(assessment.id)
-      loadAssessment(updated)
+      setRatingDirtyIds(new Set())
+      applyAutoCleared(result.auto_cleared ?? [])
       setMessage('草稿已保存')
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
+      const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
           ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : err instanceof Error
-            ? err.message
-            : '保存失败',
+          : isStructuredAssessmentError(detail)
+            ? (() => {
+                const target = details.find(
+                  (item) => item.l3_code === detail.l3_code,
+                )
+                if (target) locateDetail(target)
+                return detail.message
+              })()
+            : err instanceof Error
+              ? err.message
+              : '保存失败',
+      )
+    }
+  }
+
+  async function handleSavePlan() {
+    if (!assessment) return
+    // Issue #194 P1: 保存提升计划草稿只提交计划字段
+    // （member_priority/include_in_plan/plan_month），不夹带未保存评级。
+    const changed = details.filter(
+      (detail) => detail.id != null && planDirtyIds.has(detail.id),
+    )
+    if (!changed.length) return
+    setError('')
+    setMessage('')
+    try {
+      if (isMockEnabled()) {
+        setMessage('提升计划草稿已保存')
+        setPlanDirtyIds(new Set())
+        return
+      }
+      const result = await saveDraft(
+        assessment.id,
+        buildDraftRows(changed, 'plan'),
+        assessment.revision ?? 1,
+      )
+      setAssessment((current) =>
+        current
+          ? {
+              ...current,
+              revision: result.revision ?? current.revision,
+              gap_summary: result.gap_summary ?? current.gap_summary,
+            }
+          : current,
+      )
+      setPlanDirtyIds(new Set())
+      applyAutoCleared(result.auto_cleared ?? [])
+      setMessage('提升计划草稿已保存')
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status
+      const detail = (err as { detail?: unknown }).detail
+      setError(
+        status === 409
+          ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+          : isStructuredAssessmentError(detail)
+            ? (() => {
+                const target = details.find(
+                  (item) => item.l3_code === detail.l3_code,
+                )
+                if (target) locateDetail(target)
+                return detail.message
+              })()
+            : err instanceof Error
+              ? err.message
+              : '保存提升计划草稿失败',
       )
     }
   }
@@ -533,29 +670,19 @@ export function AssessmentGapPage() {
         return
       }
       let revision = assessment.revision ?? 1
+      // Issue #194 P1: 生成前如需落计划草稿，只提交计划字段（稀疏 PATCH），
+      // 不夹带未保存评级；未保存评级仍保留在本地（ratingDirtyIds 不清）。
       const changed = details.filter(
-        (detail) => detail.id != null && dirtyIds.has(detail.id),
+        (detail) => detail.id != null && planDirtyIds.has(detail.id),
       )
       if (changed.length) {
-        const saved = await saveDraft(assessment.id, changed, revision)
+        const saved = await saveDraft(
+          assessment.id,
+          buildDraftRows(changed, 'plan'),
+          revision,
+        )
         revision = saved.revision ?? revision + 1
-        const autoCleared = saved.auto_cleared ?? []
-        for (const cleared of autoCleared) {
-          setDetails((current) =>
-            current.map((detail) => {
-              if (detail.l3_node_id === cleared.l3_node_id) {
-                const patch: Partial<AssessmentDetail> = {}
-                for (const f of cleared.fields) {
-                  if (f === 'member_priority') patch.member_priority = null
-                  if (f === 'include_in_plan') patch.include_in_plan = null
-                  if (f === 'plan_month') patch.plan_month = null
-                }
-                return { ...detail, ...patch }
-              }
-              return detail
-            }),
-          )
-        }
+        applyAutoCleared(saved.auto_cleared ?? [])
         setAssessment((current) =>
           current
             ? {
@@ -565,7 +692,7 @@ export function AssessmentGapPage() {
               }
             : current,
         )
-        setDirtyIds(new Set())
+        setPlanDirtyIds(new Set())
       }
       const fingerprint = `${[...selected.map((d) => d.l3_code)].sort().join('|')}|${revision}`
       if (
@@ -642,7 +769,8 @@ export function AssessmentGapPage() {
       )
       loadAssessment(await getAssessment(assessment.id))
       setRepairPreview(null)
-      setDirtyIds(new Set())
+      setRatingDirtyIds(new Set())
+      setPlanDirtyIds(new Set())
       setMessage(
         result.result === 'noop'
           ? '草稿目标快照已是最新状态。'
@@ -1727,6 +1855,9 @@ export function AssessmentGapPage() {
             )}
             <button type="button" onClick={handleSave}>
               保存能力评级
+            </button>
+            <button type="button" onClick={handleSavePlan}>
+              保存提升计划草稿
             </button>
             <button
               type="button"

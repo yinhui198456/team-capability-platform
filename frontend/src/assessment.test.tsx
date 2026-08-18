@@ -682,10 +682,9 @@ describe('AssessmentGapPage', () => {
     expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
   })
 
-  it('surfaces an incomplete personal adjustment reason at save time', async () => {
-    // Issue #194: the generate button does not client-gate on adjustment
-    // completeness — the dirty detail is saved first and the server 422
-    // (per-L3 Chinese message) is surfaced, input preserved.
+  it('surfaces an incomplete personal adjustment reason at rating save', async () => {
+    // Issue #194 P1（三独立动作）：生成所选学习任务不再夹带未保存评级，
+    // 调整不完整由「保存能力评级」承接服务端 422（逐项中文提示）。
     const draft = mockDraft({
       details: [
         {
@@ -720,8 +719,10 @@ describe('AssessmentGapPage', () => {
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     expect(screen.getByText('需填写调整原因')).toBeTruthy()
     expect((generate as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.click(generate)
+    // 评级保存提交该调整（含缺原因），服务端 422 逐项提示、输入保留
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalled())
+    expect(save.mock.calls[0][1][0]).toMatchObject({ target_adjusted: true })
     await waitFor(() => {
       expect(screen.getByText('请填写调整原因')).toBeTruthy()
     })
@@ -842,9 +843,11 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '2' },
-    })
+    // Issue #194 P1：生成前的落草稿只涉及计划字段（三独立动作）
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await waitFor(() => expect(generate).toHaveBeenCalled())
     expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
@@ -993,12 +996,208 @@ describe('AssessmentGapPage', () => {
       adjusted_target_level: 5,
       target_adjustment_reason: '晋升准备',
     })
-    // Raw page-state detail objects still carry plan_quarter (read-only,
-    // server-derived display field, Issue #194); saveDraft's own payload
-    // mapping drops it — asserted in the api-helpers suite below.
-    expect(detail).toHaveProperty('member_priority')
-    expect(detail).toHaveProperty('include_in_plan')
-    expect(detail).toHaveProperty('plan_month')
+    // Issue #194 P1：保存能力评级与保存提升计划草稿是两个独立动作，
+    // 评级保存（稀疏 PATCH）绝不夹带计划字段；计划草稿由
+    // 「保存提升计划草稿」动作单独提交。
+    expect(detail).not.toHaveProperty('member_priority')
+    expect(detail).not.toHaveProperty('include_in_plan')
+    expect(detail).not.toHaveProperty('plan_month')
+  })
+
+  it('rating save and plan-draft save stay independent (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+
+    // 评级变更 + 计划变更分别落入各自脏集合
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /纳入计划 P01\.01\.01/ }),
+      { target: { value: 'yes' } },
+    )
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-05' },
+    })
+
+    // 保存能力评级：只提交评级字段，不夹带计划字段；本地计划变更保留
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    const ratingRow = save.mock.calls[0][1][0]
+    expect(ratingRow).toMatchObject({
+      current_level: 3,
+      target_adjusted: false,
+      evidence_note: '已有依据',
+    })
+    expect(ratingRow).not.toHaveProperty('member_priority')
+    expect(ratingRow).not.toHaveProperty('include_in_plan')
+    expect(ratingRow).not.toHaveProperty('plan_month')
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /优先级 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('高')
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /纳入计划 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('yes')
+    expect(
+      (screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement).value,
+    ).toBe('2026-05')
+
+    // 保存提升计划草稿：只提交计划字段，不夹带评级；本地值保持（可恢复）
+    fireEvent.click(screen.getByRole('button', { name: '保存提升计划草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    const planRow = save.mock.calls[1][1][0]
+    expect(planRow).toMatchObject({
+      member_priority: '高',
+      include_in_plan: true,
+      plan_month: '2026-05',
+    })
+    expect(planRow).not.toHaveProperty('current_level')
+    expect(planRow).not.toHaveProperty('target_adjusted')
+    expect(planRow).not.toHaveProperty('evidence_note')
+    expect(screen.getByText('提升计划草稿已保存')).toBeTruthy()
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /优先级 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('高')
+  })
+
+  it('plan-draft save failure keeps input and shows a Chinese message (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce({ ok: true })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+
+    // 409：中文提示，输入与待保存计划变更均保留
+    fireEvent.click(screen.getByRole('button', { name: '保存提升计划草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
+        ),
+      ).toBeTruthy()
+    })
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /优先级 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('高')
+
+    // 脏集合未清：再次点击仍提交同一计划变更
+    fireEvent.click(screen.getByRole('button', { name: '保存提升计划草稿' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][1][0]).toMatchObject({ member_priority: '高' })
+  })
+
+  it('generate pre-save submits only plan fields, never unsaved ratings (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true })
+    const gen = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+
+    // 未保存评级：当前等级改 3 但不点保存
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /纳入计划 P01\.01\.01/ }),
+      { target: { value: 'yes' } },
+    )
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-05' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    const planRow = save.mock.calls[0][1][0]
+    expect(planRow).toMatchObject({
+      member_priority: '高',
+      include_in_plan: true,
+      plan_month: '2026-05',
+    })
+    expect(planRow).not.toHaveProperty('current_level')
+    expect(planRow).not.toHaveProperty('target_adjusted')
+    await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
+    expect(gen.mock.calls[0][1]).toEqual(['P01.01.01'])
   })
 
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
@@ -1468,13 +1667,18 @@ describe('assessment api helpers', () => {
     const body = JSON.parse(
       (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
     )
+    // 稀疏 PATCH：调用方提供的键全部透传（含评级与计划字段），
+    // 未提供的键不发送；plan_candidate/plan_quarter 永不出现。
     expect(body.details[0]).toEqual({
       l3_code: 'P01.01.01',
       current_level: 2,
+      target_level: 5,
+      standard_target_applicable: true,
+      standard_target_level: 4,
       target_adjusted: true,
       adjusted_target_level: 5,
       target_adjustment_reason: '晋升准备',
-      evidence_note: null,
+      gap_value: 3,
       member_priority: '高',
       include_in_plan: true,
       plan_month: '2026-03',
@@ -1482,6 +1686,34 @@ describe('assessment api helpers', () => {
     expect(body.details[0]).not.toHaveProperty('plan_candidate')
     expect(body.details[0]).not.toHaveProperty('plan_quarter')
     expect(body.expected_revision).toBe(1)
+  })
+
+  it('saveDraft sparse PATCH: only provided keys are sent (#194)', async () => {
+    // 计划动作只给计划字段 → 请求体中不得出现评级字段
+    await assessmentApi.saveDraft(
+      7,
+      [
+        {
+          l3_node_id: 1,
+          l3_code: 'P01.01.01',
+          member_priority: '高',
+          include_in_plan: true,
+          plan_month: '2026-03',
+        },
+      ],
+      2,
+    )
+    const body = JSON.parse(
+      (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
+    )
+    expect(body.details[0]).toEqual({
+      l3_node_id: 1,
+      l3_code: 'P01.01.01',
+      member_priority: '高',
+      include_in_plan: true,
+      plan_month: '2026-03',
+    })
+    expect(body.expected_revision).toBe(2)
   })
 })
 
