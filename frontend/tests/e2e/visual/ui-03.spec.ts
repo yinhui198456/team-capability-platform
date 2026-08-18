@@ -16,11 +16,11 @@ for (const viewport of VIEWPORTS) {
       // Pin to 2026: the seed's annual plan lives there; the active-year
       // resolver otherwise follows future-year smoke drafts.
       await page.goto('/growth/annual-plan?year=2026')
-      await expect(
-        page.getByRole('heading', { name: '年度成长计划' }),
-      ).toBeVisible()
-      // 真实计划/任务数据下首屏更慢：有界等待加载态消失（或错误态出现），
-      // 默认 5s poll 门槛太短。随后再断言无错误 alert 且计划项已渲染。
+      // 真实计划/任务数据下首屏更慢：加载态中页面只渲染「加载中…」，
+      // heading 与计划项均在加载结束后才出现。先用 20 秒有界等待加载态
+      // 消失（或错误态出现），再断言无 alert、heading 与计划项已渲染。
+      // 注意：heading 断言不得放在 poll 之前——5 秒默认门禁正是
+      // run 32119821566 的失败点。
       await expect
         .poll(
           async () =>
@@ -30,6 +30,9 @@ for (const viewport of VIEWPORTS) {
         )
         .toBeTruthy()
       await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(
+        page.getByRole('heading', { name: '年度成长计划' }),
+      ).toBeVisible()
       await expect(page.getByTestId('plan-item')).not.toHaveCount(0)
     })
 
