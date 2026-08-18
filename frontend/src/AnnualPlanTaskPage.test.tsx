@@ -370,6 +370,38 @@ describe('learning task execution (v0010)', () => {
     vi.restoreAllMocks()
   })
 
+  it('M03: hydrates only tasks of the current plan items, never other years', async () => {
+    // listLearningTasks returns tasks across ALL years. Only the task that
+    // belongs to this plan's item 1 may be hydrated; the unrelated task
+    // (other year / no current plan item) must never be loaded.
+    const unrelated = makeTask({
+      id: 99,
+      plan_item_id: 99,
+      l3_code: 'P99.01.01',
+    })
+    await renderMember(
+      [makeItem({ id: 1 })],
+      [
+        makeTask({ id: 1, plan_item_id: 1, status: '进行中', revision: 1 }),
+        unrelated,
+      ],
+    )
+    // Page completes loading and item 1's detail is hydrated.
+    const headers = screen.getAllByTestId('plan-header')
+    fireEvent.click(headers[0])
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
+    )
+    // The unrelated task id is never hydrated — neither the task itself nor
+    // its detail chain (logs/evidences/reviews/history).
+    expect(
+      vi.mocked(planningApi.getLearningTask).mock.calls.map(([id]) => id),
+    ).not.toContain(99)
+    expect(
+      vi.mocked(planningApi.listProgressLogs).mock.calls.map(([id]) => id),
+    ).not.toContain(99)
+  })
+
   it('shows conditional actions per task status', async () => {
     await renderMember(
       [

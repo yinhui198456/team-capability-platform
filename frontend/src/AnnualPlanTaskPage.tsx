@@ -227,12 +227,20 @@ export function AnnualPlanTaskPage() {
         ])
         if (cancelled) return
         setPlan(p)
+        // M03/M04: hydrate only tasks belonging to this year's plan items.
+        // listLearningTasks returns tasks across ALL years; hydrating the
+        // full list stalls the page once E2E data accumulates. p=null or an
+        // empty plan yields an empty subset (nothing to hydrate).
+        const itemIds = new Set((p?.items ?? []).map((item) => item.id))
+        const currentTasks = taskList.filter((task) =>
+          itemIds.has(task.plan_item_id),
+        )
         const details = await Promise.all(
-          taskList.map((t) => loadTaskDetail(t.id).catch(() => null)),
+          currentTasks.map((t) => loadTaskDetail(t.id).catch(() => null)),
         )
         if (cancelled) return
         const record: Record<number, TaskDetail> = {}
-        taskList.forEach((task, index) => {
+        currentTasks.forEach((task, index) => {
           if (details[index]) record[task.plan_item_id] = details[index]
         })
         setTasks(record)
