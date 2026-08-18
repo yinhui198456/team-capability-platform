@@ -78,10 +78,7 @@ async function fillAllApplicable(page: Parameters<typeof loginAs>[0]) {
 
 test.describe('Issue #50 assessment gap workflow', () => {
   test.beforeEach(async ({ page }) => {
-    test.skip(
-      !process.env.TCP_E2E_ISOLATED,
-      'Issue #50 writes assessment data and requires an isolated database',
-    )
+    // 隔离由 CI 既有 per-run 隔离栈提供（e2e.yml），不再用测试级条件跳过。
     await loginAs(page, 'member2')
     const preview = await page.request.get(
       '/api/assessments/scope-preview?year=2026',
@@ -554,10 +551,7 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
     browser,
   }) => {
     test.setTimeout(120_000)
-    test.skip(
-      !process.env.TCP_E2E_ISOLATED,
-      'Issue #50 writes assessment data and requires an isolated database',
-    )
+    // 隔离由 CI 既有 per-run 隔离栈提供（同前），测试级无条件执行。
     await loginAs(page, 'member2')
     // 新合同动作：创建 2025 草稿并保存评级。
     const previousPreview = await page.request.get(
