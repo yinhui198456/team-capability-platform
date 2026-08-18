@@ -29,16 +29,21 @@ def login(page, username: str, password: str) -> None:
 
 
 def check_default_routes(
-    browser, password: str, username: str, path: str, heading: str
+    browser, password: str, username: str, path: str, heading: str | None
 ) -> None:
-    """Login lands on the role's default route (defaultRouteFor) with its heading."""
+    """Login lands on the role's default route (defaultRouteFor); heading=None
+    anchors on the stable nav entry instead (the Member dashboard h1 varies
+    with the business stage, e.g. 自评已提交)."""
     page = browser.new_page(viewport={"width": 1440, "height": 960})
     try:
         login(page, username, password)
         # SPA <Navigate> to the default route; allow a trailing ?year=YYYY query.
         page.wait_for_url(f"{BASE_URL}{path}*", timeout=10000)
         assert urlsplit(page.url).path == path, page.url
-        assert page.get_by_role("heading", name=heading, exact=True).is_visible()
+        if heading:
+            assert page.get_by_role("heading", name=heading, exact=True).is_visible()
+        else:
+            assert page.get_by_role("link", name="我的工作台", exact=True).is_visible()
         print(f"PASS default-route {username} -> {path}")
     finally:
         page.close()
@@ -52,7 +57,8 @@ def check_member_navigation(browser, password: str) -> None:
             ("我的工作台", "/dashboard/member"),
             ("能力自评与 Gap", "/capability/assessment"),
             ("年度成长计划", "/growth/annual-plan"),
-            ("学习任务", "/growth/tasks"),
+            # Issue #194 兼容入口：/growth/tasks 统一重定向到年度成长计划。
+            ("学习任务", "/growth/annual-plan"),
             ("成长档案", "/growth/profile"),
         ):
             page.get_by_role("link", name=link, exact=True).click()
@@ -102,7 +108,7 @@ def main() -> None:
         browser = playwright.chromium.launch(headless=True)
         try:
             for case in (
-                ("member", "/dashboard/member", "我的成长总览"),
+                ("member", "/dashboard/member", None),
                 ("buddy", "/mentoring/evidence-review", "待验收成果"),
                 ("leader", "/operations/analytics", "团队能力分析"),
                 ("admin", "/system/users", "系统管理"),
