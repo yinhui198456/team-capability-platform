@@ -707,8 +707,9 @@ export function AssessmentGapPage() {
         revision,
         genIdemRef.current.key,
       )
-      loadAssessment(await getAssessment(assessment.id))
-
+      // Issue #194 P1-1: 生成成功不重载 Assessment 草稿（生成不改草稿
+      // 字段/revision；M03/M04 导航自行读取正式结果）——重载会用服务端
+      // 旧值覆盖本地未保存评级，违背输入保留。本地计划选择与月份保留。
       const created = result.created ?? []
       const existing = result.existing ?? []
       const total = created.length + existing.length

@@ -1200,6 +1200,80 @@ describe('AssessmentGapPage', () => {
     expect(gen.mock.calls[0][1]).toEqual(['P01.01.01'])
   })
 
+  it('generation success keeps unsaved local ratings (#194)', async () => {
+    // P1-1：生成成功不得重载草稿（服务端旧评级会覆盖本地输入）。
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true })
+    const gen = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+
+    // 未保存评级：当前等级 2 → 3；计划字段一并修改
+    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
+      target: { value: '3' },
+    })
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /纳入计划 P01\.01\.01/ }),
+      { target: { value: 'yes' } },
+    )
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-05' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
+    // 生成前的落草稿只含计划字段
+    expect(save.mock.calls[0][1][0]).not.toHaveProperty('current_level')
+    expect(save.mock.calls[0][1][0]).not.toHaveProperty('target_adjusted')
+    // 本地未保存评级与计划选择、月份均保留
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /当前等级/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('3')
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /优先级 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('高')
+    expect(
+      (
+        screen.getByRole('combobox', {
+          name: /纳入计划 P01\.01\.01/,
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe('yes')
+    expect(
+      (screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement).value,
+    ).toBe('2026-05')
+  })
+
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
