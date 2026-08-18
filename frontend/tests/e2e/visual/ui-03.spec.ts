@@ -24,8 +24,8 @@ for (const viewport of VIEWPORTS) {
       await expect
         .poll(
           async () =>
-            page.getByText('加载中…').count() === 0 ||
-            page.getByRole('alert').count() > 0,
+            (await page.getByText('加载中…').count()) === 0 ||
+            (await page.getByRole('alert').count()) > 0,
           { timeout: 20000 },
         )
         .toBeTruthy()
