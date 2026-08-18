@@ -8,6 +8,11 @@
     It never blindly re-creates over an open draft.
   - Every test cleans up in a finally block; cleanup submits best-effort and
     then reads back the final status instead of assuming success.
+
+  Issue #194 contract: plan_month is TEXT 'YYYY-MM'; plan_quarter is derived
+  server-side and never sent; legacy submit is retired (422) — the three
+  independent actions are save rating / include_in_plan / explicit
+  generate-plan-items.
  */
 
 import { expect, test } from '@playwright/test'
@@ -43,7 +48,7 @@ interface Detail {
   member_priority: string | null
   include_in_plan: boolean | null
   plan_quarter: string | null
-  plan_month: number | null
+  plan_month: string | null // Issue #194: YYYY-MM
 }
 
 interface AutoClearedEntry {
@@ -135,8 +140,9 @@ async function getFirstDetail(
 
 /**
  * Best-effort cleanup: submit to close the draft, then READ BACK the final
- * status — never assume the submit succeeded. A draft that cannot be
- * submitted (incomplete plan decisions) stays open but is harmless: the
+ * status — never assume the submit succeeded. Since Issue #194 the legacy
+ * submit is retired (422 legacy_assessment_submit_disabled), which is the
+ * expected terminal state: the draft stays open but is harmless, because the
  * scenario's fixed year guarantees no other scenario shares the key, and a
  * later run of the same scenario reuses it via ensureFreshDraft.
  */
@@ -154,7 +160,16 @@ async function cleanupDraft(
         `${BACKEND}/api/assessments/${state.id}/submit`,
         { data: { expected_revision: detail.revision } },
       )
-      state.submitted = submitResp.ok()
+      if (submitResp.ok()) {
+        state.submitted = true
+      } else {
+        // Issue #194: legacy submit is retired — 422 with
+        // legacy_assessment_submit_disabled is the expected terminal state;
+        // the draft stays open and is reused via the fixed-year key.
+        const body = await submitResp.json().catch(() => null)
+        state.submitted =
+          body?.detail?.code === 'legacy_assessment_submit_disabled'
+      }
     } else {
       state.submitted = true
     }
@@ -162,7 +177,7 @@ async function cleanupDraft(
     const confirmResp = await request.get(
       `${BACKEND}/api/assessments/${state.id}`,
     )
-    if (confirmResp.ok()) {
+    if (confirmResp.ok() && !state.submitted) {
       const final = await confirmResp.json()
       if (['草稿', '建议调整'].includes(final.status)) {
         console.warn(
@@ -204,7 +219,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
 
       const detail = await getFirstDetail(page.request, state.id)
 
-      // fill: level=0, priority=低, include_in_plan=true, Q2, 5月
+      // fill: level=0, priority=低, include_in_plan=true, 5月 (YYYY-MM)
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -220,8 +235,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 target_adjustment_reason: 'E2E-01 deterministic target',
                 member_priority: '低',
                 include_in_plan: true,
-                plan_quarter: 'Q2',
-                plan_month: 5,
+                plan_month: `${year}-05`,
               },
             ],
           },
@@ -241,6 +255,8 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(saved.current_level).toBe(0)
       expect(saved.member_priority).toBe('低')
       expect(saved.include_in_plan).toBe(true)
+      // Issue #194: plan_quarter is derived server-side from plan_month.
+      expect(saved.plan_quarter).toBe('Q2')
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -270,14 +286,17 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 target_adjustment_reason: 'E2E-02 deterministic target',
                 member_priority: '暂缓',
                 include_in_plan: true,
-                plan_quarter: 'Q1',
-                plan_month: 1,
+                plan_month: `${year}-01`,
               },
             ],
           },
         },
       )
       expect(patchResp.status()).toBe(422)
+      const patchBody = await patchResp.json()
+      // Issue #194: the 暂缓 + include_in_plan=TRUE mutex is still enforced
+      // (plan_quarter itself would be rejected as derived first).
+      expect(patchBody.detail.reason).toBe('hold_plan_mutex')
 
       // zero writes: revision and stored state unchanged
       const verify = await page.request.get(
@@ -310,8 +329,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 current_level: detail.target_level,
                 member_priority: '高',
                 include_in_plan: true,
-                plan_quarter: 'Q3',
-                plan_month: 8,
+                plan_month: `${year}-08`,
               },
             ],
           },
@@ -334,13 +352,17 @@ test.describe('Issue #61 — assessment field refactor', () => {
     }
   })
 
-  test('E2E-04: Quarter-month mismatch rejected (Q1+5月)', async ({ page }) => {
+  test('E2E-04: plan_quarter input rejected as derived (422 plan_quarter_derived)', async ({
+    page,
+  }) => {
     const year = yearFor('E2E-04')
     await loginAs(page, 'member')
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
 
+      // Issue #194: plan_quarter is derived from plan_month and must never be
+      // sent; the API rejects it before any plan validation, zero writes.
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -357,13 +379,21 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 member_priority: '中',
                 include_in_plan: true,
                 plan_quarter: 'Q1',
-                plan_month: 5,
+                plan_month: `${year}-05`,
               },
             ],
           },
         },
       )
       expect(patchResp.status()).toBe(422)
+      const body = await patchResp.json()
+      expect(body.detail.code).toBe('plan_quarter_derived')
+      expect(body.detail.reason).toBe('derived_from_plan_month')
+      // zero writes: revision unchanged.
+      const verify = await page.request.get(
+        `${BACKEND}/api/assessments/${state.id}`,
+      )
+      expect((await verify.json()).revision).toBe(state.revision)
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -424,14 +454,17 @@ test.describe('Issue #61 — assessment field refactor', () => {
     }
   })
 
-  test('E2E-06: Submit without evidence succeeds', async ({ page }) => {
+  test('E2E-06: All ratings saved without evidence; legacy submit retired', async ({
+    page,
+  }) => {
     const year = yearFor('E2E-06')
     await loginAs(page, 'member')
     const state = await ensureFreshDraft(page.request, year)
     try {
       const allDetails = await getAllDetails(page.request, state.id)
 
-      // fill ALL items with level >= 3, include_in_plan=false, priority=中
+      // fill ALL items with level >= 3, include_in_plan=false, priority=中 —
+      // saving the ratings is its own action and needs no evidence (#194).
       const patchDetails = allDetails.map((d) => ({
         l3_node_id: d.l3_node_id,
         l3_code: d.l3_code,
@@ -439,17 +472,35 @@ test.describe('Issue #61 — assessment field refactor', () => {
         member_priority: '中',
         include_in_plan: false,
       }))
-      await page.request.patch(`${BACKEND}/api/assessments/${state.id}/draft`, {
-        data: { expected_revision: state.revision, details: patchDetails },
-      })
+      const patchResp = await page.request.patch(
+        `${BACKEND}/api/assessments/${state.id}/draft`,
+        { data: { expected_revision: state.revision, details: patchDetails } },
+      )
+      expect(patchResp.ok()).toBeTruthy()
       state.revision++
 
+      // saved ratings persist (spot-check one detail).
+      const verify = await page.request.get(
+        `${BACKEND}/api/assessments/${state.id}`,
+      )
+      const saved = (await verify.json()).details.find(
+        (d: { l3_code: string }) => d.l3_code === allDetails[0].l3_code,
+      )
+      expect(saved.current_level).toBe(4)
+      expect(saved.include_in_plan).toBe(false)
+
+      // Issue #194: legacy submit is retired — 422, zero writes.
       const submitResp = await page.request.post(
         `${BACKEND}/api/assessments/${state.id}/submit`,
         { data: { expected_revision: state.revision } },
       )
-      expect(submitResp.ok()).toBeTruthy()
-      state.submitted = true
+      expect(submitResp.status()).toBe(422)
+      const body = await submitResp.json()
+      expect(body.detail.code).toBe('legacy_assessment_submit_disabled')
+      const afterSubmit = await page.request.get(
+        `${BACKEND}/api/assessments/${state.id}`,
+      )
+      expect((await afterSubmit.json()).revision).toBe(state.revision)
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -529,8 +580,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               target_adjustment_reason: 'E2E-09 deterministic target',
               member_priority: '高',
               include_in_plan: true,
-              plan_quarter: 'Q2',
-              plan_month: 5,
+              plan_month: `${year}-05`,
             },
           ],
         },
@@ -603,8 +653,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               l3_node_id: detail.l3_node_id,
               l3_code: detail.l3_code,
               include_in_plan: true,
-              plan_quarter: 'Q4',
-              plan_month: 12,
+              plan_month: `${year}-12`,
             },
           ],
         },
@@ -617,6 +666,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
       expect(s2.include_in_plan).toBe(true)
+      // Issue #194: plan_quarter derived server-side from plan_month.
       expect(s2.plan_quarter).toBe('Q4')
 
       // TRUE → NULL (explicit)
@@ -655,7 +705,8 @@ test.describe('Issue #61 — assessment field refactor', () => {
     try {
       const allDetails = await getAllDetails(page.request, state.id)
 
-      // fill every item with valid plan (gap>0, include_in_plan=true)
+      // fill every item with valid plan (gap>0, include_in_plan=true,
+      // plan_month YYYY-MM within the assessment year).
       const patchDetails = allDetails.map((d) => ({
         l3_node_id: d.l3_node_id,
         l3_code: d.l3_code,
@@ -665,26 +716,42 @@ test.describe('Issue #61 — assessment field refactor', () => {
         target_adjustment_reason: 'E2E-11 deterministic target',
         member_priority: '低',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       }))
-      await page.request.patch(`${BACKEND}/api/assessments/${state.id}/draft`, {
-        data: { expected_revision: state.revision, details: patchDetails },
-      })
+      const patchResp = await page.request.patch(
+        `${BACKEND}/api/assessments/${state.id}/draft`,
+        { data: { expected_revision: state.revision, details: patchDetails } },
+      )
+      expect(patchResp.ok()).toBeTruthy()
       state.revision++
 
-      const submitResp = await page.request.post(
-        `${BACKEND}/api/assessments/${state.id}/submit`,
-        { data: { expected_revision: state.revision } },
+      // Issue #194: generation is the explicit third action.
+      const genResp = await page.request.post(
+        `${BACKEND}/api/assessments/${state.id}/generate-plan-items`,
+        {
+          headers: {
+            'Idempotency-Key': `generate-plan-items:e2e-11-${year}`,
+          },
+          data: {
+            expected_revision: state.revision,
+            l3_codes: allDetails.map((d) => d.l3_code),
+          },
+        },
       )
-      expect(submitResp.status()).toBe(200)
-      state.submitted = true
+      expect(genResp.status()).toBe(200)
+      const genBody = await genResp.json()
+      expect(genBody.ok).toBe(true)
+      expect(genBody.annual_plan_id).toBeDefined()
+      // Every selected code is either freshly created or already existing.
+      expect(genBody.created.length + genBody.existing.length).toBe(
+        allDetails.length,
+      )
     } finally {
       await cleanupDraft(page.request, state)
     }
   })
 
-  test('E2E-12: Structured submit error includes l3_node_id, l3_code, field', async ({
+  test('E2E-12: Structured plan error includes l3_node_id, l3_code, field', async ({
     page,
   }) => {
     const year = yearFor('E2E-12')
@@ -698,14 +765,15 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(applicable.length).toBeGreaterThanOrEqual(2)
       const blocked = applicable[0]
 
-      // Close every applicable item (level = adjusted target → gap 0, no
-      // plan requirement) so the ONLY submit blocker is the cleared row.
+      // Close every OTHER applicable item (level = adjusted target → gap 0,
+      // no plan requirement) so the ONLY invalid row is the blocked one.
+      const others = applicable.filter((d) => d.l3_code !== blocked.l3_code)
       const fillResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
           data: {
             expected_revision: state.revision,
-            details: applicable.map((d) => ({
+            details: others.map((d) => ({
               l3_node_id: d.l3_node_id,
               l3_code: d.l3_code,
               current_level: 5,
@@ -719,8 +787,10 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(fillResp.ok()).toBeTruthy()
       state.revision++
 
-      // Explicit-clear the first applicable row → unassessed.
-      const clearResp = await page.request.patch(
+      // Issue #194: PATCH-level plan validation errors stay structured —
+      // 暂缓 + include_in_plan=TRUE on a positive-gap row → 422 with
+      // l3_node_id / l3_code / field.
+      const conflictResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
           data: {
@@ -729,26 +799,47 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: blocked.l3_node_id,
                 l3_code: blocked.l3_code,
-                current_level: null,
+                current_level: 1,
+                target_adjusted: true,
+                adjusted_target_level: 5,
+                target_adjustment_reason: 'E2E-12 deterministic target',
+                member_priority: '暂缓',
+                include_in_plan: true,
               },
             ],
           },
         },
       )
-      expect(clearResp.ok()).toBeTruthy()
-      state.revision++
-
-      const submitResp = await page.request.post(
-        `${BACKEND}/api/assessments/${state.id}/submit`,
-        { data: { expected_revision: state.revision } },
-      )
-      expect(submitResp.status()).toBe(422)
-      const body = await submitResp.json()
-      expect(body.detail.reason).toBe('requires_current_level')
+      expect(conflictResp.status()).toBe(422)
+      const body = await conflictResp.json()
+      expect(body.detail.reason).toBe('hold_plan_mutex')
+      expect(body.detail.code).toBe('plan_validation')
       expect(body.detail.l3_code).toBe(blocked.l3_code)
       expect(body.detail.l3_node_id).toBe(blocked.l3_node_id)
-      expect(body.detail.field).toBe('current_level')
+      expect(body.detail.field).toBe('include_in_plan')
       expect(body.detail.message).toBeDefined()
+
+      // The failed PATCH wrote nothing, so generation still blocks the row
+      // (暂缓 → include_in_plan=false): explicit generation reports the
+      // unplanned item with a per-L3 structured error, zero writes.
+      const genResp = await page.request.post(
+        `${BACKEND}/api/assessments/${state.id}/generate-plan-items`,
+        {
+          headers: {
+            'Idempotency-Key': `generate-plan-items:e2e-12-${year}`,
+          },
+          data: {
+            expected_revision: state.revision,
+            l3_codes: [blocked.l3_code],
+          },
+        },
+      )
+      expect(genResp.status()).toBe(422)
+      const genBody = await genResp.json()
+      expect(genBody.detail.reason).toBe('not_in_plan')
+      expect(genBody.detail.code).toBe('plan_generation')
+      expect(genBody.detail.l3_code).toBe(blocked.l3_code)
+      expect(genBody.detail.field).toBe('l3_codes')
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -778,8 +869,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 target_adjustment_reason: 'E2E-13 deterministic target',
                 member_priority: '中',
                 include_in_plan: true,
-                plan_quarter: 'Q2',
-                plan_month: 6,
+                plan_month: `${year}-06`,
               },
             ],
           },
@@ -819,8 +909,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(saved.current_level).toBe(3)
       expect(saved.member_priority).toBe('中') // preserved from first PATCH
       expect(saved.include_in_plan).toBe(true)
+      // Issue #194: plan_quarter derived server-side; plan_month is TEXT.
       expect(saved.plan_quarter).toBe('Q2')
-      expect(saved.plan_month).toBe(6)
+      expect(saved.plan_month).toBe(`${year}-06`)
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -992,7 +1083,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     try {
       const detail = await getFirstDetail(page.request, state.id)
 
-      // 1. Existing plan item: 高 priority, include_in_plan=true, Q2+5月.
+      // 1. Existing plan item: 高 priority, include_in_plan=true, 5月 (YYYY-MM).
       const setup = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -1008,8 +1099,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 target_adjustment_reason: 'E2E-16 deterministic target',
                 member_priority: '高',
                 include_in_plan: true,
-                plan_quarter: 'Q2',
-                plan_month: 5,
+                plan_month: `${year}-05`,
               },
             ],
           },
@@ -1041,13 +1131,12 @@ test.describe('Issue #61 — assessment field refactor', () => {
       )
       expect(cleared).toBeDefined()
       expect(cleared?.l3_node_id).toBe(detail.l3_node_id)
+      // Issue #194: auto-clear covers the canonical fields; plan_quarter is
+      // derived and never appears in the cleared list.
       expect(cleared?.fields).toEqual(
-        expect.arrayContaining([
-          'include_in_plan',
-          'plan_quarter',
-          'plan_month',
-        ]),
+        expect.arrayContaining(['include_in_plan', 'plan_month']),
       )
+      expect(cleared?.fields).not.toContain('plan_quarter')
       state.revision++
 
       // 3. Server final state: include=false, quarter/month null.
@@ -1074,8 +1163,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
                 l3_code: detail.l3_code,
                 member_priority: '暂缓',
                 include_in_plan: true,
-                plan_quarter: 'Q3',
-                plan_month: 8,
+                plan_month: `${year}-08`,
               },
             ],
           },

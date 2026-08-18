@@ -1,10 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
-import {
-  mockBuddyReviewData,
-  mockBuddyReviewWorkspaceRoutes,
-} from '../fixtures/buddy-review-mock'
+import { mockBuddyReviewData } from '../fixtures/buddy-review-mock'
 import { mockTeamAnalyticsData } from '../fixtures/team-analytics-mock'
 
 const rangeHours = {
@@ -18,21 +15,21 @@ const rangeHours = {
 const unparsedHours = '约半天'
 
 test.describe('Issue #52 P1 regressions', () => {
-  test('keeps an unmapped historic L3 in the Buddy review workspace', async ({
+  test('legacy Buddy review route redirects to evidence review; pending evidence stays visible', async ({
     page,
   }) => {
     await mockBuddyReviewData(page)
-    await mockBuddyReviewWorkspaceRoutes(page)
     await loginAs(page, 'buddy')
+    // Issue #194 P1-3: 旧复核工作区已退役，路由重定向到证据评审。
     await page.goto('/mentoring/dashboard')
-
-    // Issue #62 workspace: frozen facts in the summary grid and grouped table
-    await expect(page.getByText('适用 3')).toBeVisible()
-    await expect(page.getByText('未映射历史项')).toBeVisible()
-    await expect(page.getByText(/unknown-legacy-l3/).first()).toBeVisible()
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    // 待验收证据保持可见（mock 数据：P01.01.01 数据管道基础）。
     await expect(page.getByText('数据管道基础', { exact: true })).toBeVisible()
-    // personal adjustment shown only when it happened
-    await expect(page.getByText(/3 → 4（岗位项目要求/)).toBeVisible()
+    await expect(page.getByText(/P01\.01\.01/).first()).toBeVisible()
+    await expect(page.getByText('Buddy 复核中心')).toHaveCount(0)
   })
 
   test('labels team aggregates as L3 mastery rather than job-level attainment', async ({

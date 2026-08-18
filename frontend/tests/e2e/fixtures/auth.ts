@@ -31,10 +31,11 @@ const credentials: Record<
 
 export type ExtendedRole = Role | 'member2'
 
+// Issue #194 P1-3: Buddy 默认页改为 Evidence Review（自评复核退役）。
 const defaultRoutes: Record<ExtendedRole, string> = {
   member: '/dashboard/member',
   member2: '/dashboard/member',
-  buddy: '/mentoring/dashboard',
+  buddy: '/mentoring/evidence-review',
   leader: '/operations/analytics',
   admin: '/system/users',
 }

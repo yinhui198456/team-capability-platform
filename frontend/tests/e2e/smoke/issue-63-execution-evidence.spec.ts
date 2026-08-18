@@ -101,11 +101,13 @@ interface ScopeSnapshot {
   target_level?: number | null
 }
 
-/** Fill the draft with one plan-bound detail, submit, buddy-approve. */
-async function fillSubmitApprove(
-  page: Page,
+/** Fill the draft with one plan-bound detail, then explicitly generate its
+  plan item and learning task (Issue #194: generation is the third of the
+  three independent actions — legacy submit/approve no longer exists). */
+async function fillAndGenerate(
   request: APIRequestContext,
   draft: DraftState,
+  year: number,
 ): Promise<{ l3Code: string }> {
   const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
   const assessment = await getResp.json()
@@ -132,8 +134,7 @@ async function fillSubmitApprove(
         ? {
             member_priority: '高',
             include_in_plan: true,
-            plan_quarter: 'Q2',
-            plan_month: 5,
+            plan_month: `${year}-05`,
           }
         : {}),
     }
@@ -148,41 +149,21 @@ async function fillSubmitApprove(
     )
   }
   const saved = await saveResp.json()
-  const submitResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/submit`,
-    { data: { expected_revision: saved.revision } },
-  )
-  if (!submitResp.ok()) {
-    throw new Error(
-      `submit failed: ${submitResp.status()} ${await submitResp.text()}`,
-    )
-  }
-  const submitted = await submitResp.json()
-
-  await loginAs(page, 'buddy')
-  const pendingResp = await request.get(
-    `${BACKEND}/api/assessments/reviews/pending`,
-  )
-  const pending = await pendingResp.json()
-  const review = pending.find(
-    (r: { assessment_id: number }) => r.assessment_id === draft.id,
-  )
-  if (!review) {
-    throw new Error(`no pending review for assessment ${draft.id}`)
-  }
-  const reviewResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/reviews/${review.id}`,
+  const genResp = await request.post(
+    `${BACKEND}/api/assessments/${draft.id}/generate-plan-items`,
     {
+      headers: {
+        'Idempotency-Key': `generate-plan-items:e2e63-${year}`,
+      },
       data: {
-        conclusion: '认可',
-        feedback: 'E2E-63 认可',
-        expected_revision: submitted.revision,
+        expected_revision: saved.revision,
+        l3_codes: [picked.l3_code],
       },
     },
   )
-  if (!reviewResp.ok()) {
+  if (!genResp.ok()) {
     throw new Error(
-      `approve failed: ${reviewResp.status()} ${await reviewResp.text()}`,
+      `generate-plan-items failed: ${genResp.status()} ${await genResp.text()}`,
     )
   }
   return { l3Code: picked.l3_code }
@@ -196,13 +177,12 @@ interface SeedResult {
   taskRevision: number
 }
 
-/** member-login → draft → approve → plan/item/task ids for `year`. */
+/** member-login → draft → generate → plan/item/task ids for `year`. */
 async function seedExecution(page: Page, year: number): Promise<SeedResult> {
   const request = page.request
   await loginAs(page, 'member')
   const draft = await ensureDraft(request, year)
-  const { l3Code } = await fillSubmitApprove(page, request, draft)
-  await loginAs(page, 'member')
+  const { l3Code } = await fillAndGenerate(request, draft, year)
   const planResp = await request.get(
     `${BACKEND}/api/planning/annual-plan?year=${year}`,
   )
@@ -900,7 +880,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   await page.getByLabel('用户名').fill(STRANGER_BUDDY.username)
   await page.getByLabel('密码').fill(STRANGER_BUDDY.password)
   await page.getByRole('button', { name: '登录' }).click()
-  await page.waitForURL((url) => url.pathname === '/mentoring/dashboard')
+  await page.waitForURL((url) => url.pathname === '/mentoring/evidence-review')
   await page.setViewportSize(viewports[0])
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByText('暂无待验收成果。')).toBeVisible()

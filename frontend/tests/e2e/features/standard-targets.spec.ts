@@ -322,7 +322,8 @@ test.describe('capability standard targets', () => {
     await page.getByLabel('启用个人调整 P01.01.01').check()
     await page.getByLabel('调整目标 P01.01.01').selectOption('5')
     await page.getByLabel('调整原因 P01.01.01').fill('晋升准备')
-    await page.getByRole('button', { name: '保存草稿' }).click()
+    // Issue #194 M02: 三动作之一「保存能力评级」。
+    await page.getByRole('button', { name: '保存能力评级' }).click()
 
     await expect.poll(() => saved).not.toBeNull()
     const details = saved?.details as Array<Record<string, unknown>>
