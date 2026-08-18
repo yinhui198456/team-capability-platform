@@ -27,8 +27,10 @@ test.describe('Issue #52 P1 regressions', () => {
       page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
     // 待验收证据保持可见（mock 数据：P01.01.01 数据管道基础）。
-    await expect(page.getByText('数据管道基础', { exact: true })).toBeVisible()
-    await expect(page.getByText(/P01\.01\.01/).first()).toBeVisible()
+    // 标题渲染在组合段落内，按验收工作区约束并用包含语义匹配。
+    const workspace = page.locator('.buddy-workspace')
+    await expect(workspace.getByText(/数据管道基础/).first()).toBeVisible()
+    await expect(workspace.getByText(/P01\.01\.01/).first()).toBeVisible()
     await expect(page.getByText('Buddy 复核中心')).toHaveCount(0)
   })
 

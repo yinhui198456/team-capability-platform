@@ -487,7 +487,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
         (d: { l3_code: string }) => d.l3_code === allDetails[0].l3_code,
       )
       expect(saved.current_level).toBe(4)
-      expect(saved.include_in_plan).toBe(false)
+      // #194 合同：gap=0 的未选择计划字段按响应归一为 null（非 false）。
+      expect(saved.include_in_plan).toBe(null)
+      expect(saved.member_priority).toBe(null)
 
       // Issue #194: legacy submit is retired — 422, zero writes.
       const submitResp = await page.request.post(

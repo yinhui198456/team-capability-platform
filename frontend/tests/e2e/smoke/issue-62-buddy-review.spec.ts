@@ -153,6 +153,10 @@ async function fillDetails(
     )
   }
   const saved = await saveResp.json()
+  // Success path only: keep the shared draft state's revision in sync so a
+  // later save/generate in the same scenario never sends a stale revision.
+  // Real conflict scenarios capture a stale value explicitly instead.
+  draft.revision = saved.revision
   return saved.revision
 }
 
@@ -618,6 +622,8 @@ test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自
     const year = yearFor('E2E-62-10')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
+    // 捕获保存前的 revision 作为过期值（fillDetails 成功后共享状态会同步）。
+    const staleRevision = draft.revision
     const { codes, revision } = await pickAndFill(request, draft, [
       {
         current_level: 2,
@@ -627,7 +633,7 @@ test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自
       },
     ])
     // 过期 revision → 409 revision conflict，零写入。
-    const stale = await generatePlan(request, draft, draft.revision, codes)
+    const stale = await generatePlan(request, draft, staleRevision, codes)
     expect(stale.status).toBe(409)
     expect(await annualPlanOf(request, year)).toBeNull()
 

@@ -343,11 +343,37 @@ test.describe('Issue #50 assessment gap workflow', () => {
       await expect(page.getByLabel('评估摘要')).toBeVisible()
     }
     // Issue #194: 提交自评退役；三动作之一「保存能力评级」保留脏输入。
+    // 批量填写与 gap 修正均已保存（无 dirty 行）：先通过可见控件制造
+    // 一个合法脏变更（applicable 行的当前等级 +1），再保存验证 UI 提示
+    // 与持久化。
+    const combos = page.getByRole('combobox', { name: /当前等级/ })
+    const comboCount = await combos.count()
+    let ratingIndex = -1
+    for (let i = 0; i < comboCount; i += 1) {
+      if (await combos.nth(i).isEnabled()) {
+        ratingIndex = i
+        break
+      }
+    }
+    expect(ratingIndex).toBeGreaterThanOrEqual(0)
+    const rating = combos.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::tr')
+    const rowId = await row.getAttribute('id')
+    expect(rowId).toMatch(/^row-\d+$/)
+    const previous = Number(await rating.inputValue())
+    expect(previous).toBeGreaterThanOrEqual(0)
+    await rating.selectOption(String(previous + 1))
     await expect(
       page.getByRole('button', { name: '保存能力评级' }),
     ).toBeVisible()
     await page.getByRole('button', { name: '保存能力评级' }).click()
     await expect(page.getByText('草稿已保存')).toBeVisible({ timeout: 15000 })
+    // 持久化：该行评级已落库。
+    const persisted = await currentDraft(page)
+    const changedRow = persisted.details.find(
+      (detail) => detail.id === Number(rowId.slice(4)),
+    )
+    expect(changedRow?.current_level).toBe(previous + 1)
   })
 
   test('partial save keeps the page dense and avoids viewport overflow', async ({
@@ -627,7 +653,8 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
     )
     expect((await afterRejected.json()).status).toBe('草稿')
 
-    // 旧 review 写路径拒绝（未提交评估非可复核关系）；GET 历史保持只读。
+    // 旧 review 写路径退役：Buddy 关系有效 → 410 assessment_review_write_disabled
+    // 零写入；GET 历史保持只读。
     const buddy = await browser.newContext()
     await loginAs(buddy.pages()[0] ?? (await buddy.newPage()), 'buddy')
     const rejectedReview = await buddy.request.post(
@@ -640,7 +667,10 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
         },
       },
     )
-    expect(rejectedReview.status()).toBe(403)
+    expect(rejectedReview.status()).toBe(410)
+    expect(await rejectedReview.text()).toContain(
+      'assessment_review_write_disabled',
+    )
     const history = await buddy.request.get(
       `/api/assessments/${previousId}/history`,
     )

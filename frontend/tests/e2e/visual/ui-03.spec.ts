@@ -19,10 +19,18 @@ for (const viewport of VIEWPORTS) {
       await expect(
         page.getByRole('heading', { name: '年度成长计划' }),
       ).toBeVisible()
-      // Wait for async plan items to render before screenshots
+      // 真实计划/任务数据下首屏更慢：有界等待加载态消失（或错误态出现），
+      // 默认 5s poll 门槛太短。随后再断言无错误 alert 且计划项已渲染。
       await expect
-        .poll(async () => page.getByTestId('plan-item').count())
-        .toBeGreaterThan(0)
+        .poll(
+          async () =>
+            page.getByText('加载中…').count() === 0 ||
+            page.getByRole('alert').count() > 0,
+          { timeout: 20000 },
+        )
+        .toBeTruthy()
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(page.getByTestId('plan-item')).not.toHaveCount(0)
     })
 
     test('annual plan and learning-task semantics', async ({ page }) => {
