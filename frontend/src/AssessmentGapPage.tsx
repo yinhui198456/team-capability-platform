@@ -27,7 +27,7 @@ import {
   isMockEnabled,
 } from './__fixtures__/assessmentMock'
 
-// Issue #194 P1: 计划草稿字段（保存提升计划草稿动作），其余字段归评级动作。
+// Issue #194 P1: 计划草稿字段（随行内变更自动保存），其余字段归评级动作。
 const PLAN_FIELDS = new Set([
   'member_priority',
   'include_in_plan',
@@ -235,10 +235,16 @@ export function AssessmentGapPage() {
   const [search, setSearch] = useState('')
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // Issue #194 P1: 保存评级与维护计划草稿是两个独立动作。按字段拆分脏行
-  // —— 评级/调整/依据 与 计划字段（优先级/纳入/月份）互不夹带。
+  // Issue #194 P1: 保存评级与维护计划草稿是两个独立动作。评级/调整/依据
+  // 走 ratingDirtyIds；计划字段（优先级/纳入/月份）随行内变更自动保存。
+  // M02 V1: 计划草稿无全局保存按钮——变更入队后由泵串行提交（任务载荷为
+  // 变更时刻的行快照），revision 用 ref 跨请求推进，避免并发 PATCH 冲突。
   const [ratingDirtyIds, setRatingDirtyIds] = useState<Set<number>>(new Set())
-  const [planDirtyIds, setPlanDirtyIds] = useState<Set<number>>(new Set())
+  const planQueueRef = useRef<DraftDetailInput[]>([])
+  const planPumpingRef = useRef(false)
+  const planFlushPromiseRef = useRef<Promise<void> | null>(null)
+  const revisionRef = useRef<number>(1)
+  const detailsRef = useRef<AssessmentDetail[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [adjustmentId, setAdjustmentId] = useState<number | null>(null)
@@ -282,6 +288,11 @@ export function AssessmentGapPage() {
   function loadAssessment(value: Assessment) {
     setAssessment(value)
     setDetails(value.details ?? [])
+    // M02 V1: 重新加载即视为新的草稿会话——同步镜像、自动保存队列与
+    // revision 全部重置，避免旧会话任务泄漏进新草稿。
+    detailsRef.current = value.details ?? []
+    planQueueRef.current = []
+    revisionRef.current = value.revision ?? 1
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     setActiveDomain((current) => current || firstDomain)
@@ -290,6 +301,12 @@ export function AssessmentGapPage() {
         ?.l2_code ?? defaultL2(value.details ?? [], firstDomain)
     if (firstL2) setExpandedL2(new Set([firstL2]))
   }
+
+  // detailsRef 的同步镜像：updateDetail 在变更时刻立即写入（保证行快照
+  // 包含同批次内的先前变更），本 effect 兜底捕获其余 setDetails 站点。
+  useEffect(() => {
+    detailsRef.current = details
+  }, [details])
 
   useEffect(() => {
     let cancelled = false
@@ -390,25 +407,33 @@ export function AssessmentGapPage() {
   }
 
   function updateDetail(index: number, patch: Partial<AssessmentDetail>) {
-    setDetails((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
+    const next = detailsRef.current.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, ...patch } : item,
     )
-    const detail = details[index]
+    detailsRef.current = next
+    setDetails(next)
+    const detail = next[index]
     if (detail?.id != null) {
-      // Issue #194 P1: 按字段归入对应动作的脏集合，两动作互不夹带。
+      // Issue #194 M02 V1: 评级字段归脏集合（保存能力评级显式提交），
+      // 计划字段入队自动保存——两动作互不夹带，串行泵逐条提交。
       const hasPlanField = Object.keys(patch).some((key) =>
         PLAN_FIELDS.has(key),
       )
       const hasRatingField = Object.keys(patch).some(
         (key) => !PLAN_FIELDS.has(key),
       )
-      if (hasPlanField) {
-        setPlanDirtyIds((current) => new Set(current).add(detail.id!))
-      }
       if (hasRatingField) {
         setRatingDirtyIds((current) => new Set(current).add(detail.id!))
+      }
+      if (hasPlanField) {
+        const task = buildDraftRows([next[index]], 'plan')[0]
+        // 同行旧任务被更新快照替换：在途旧载荷不会覆盖新输入，失败重试
+        // 直接提交最新状态（含先前变更）。
+        planQueueRef.current = planQueueRef.current.filter(
+          (queued) => queued.l3_code !== task.l3_code,
+        )
+        planQueueRef.current.push(task)
+        void pumpPlanSaves()
       }
     }
   }
@@ -443,16 +468,98 @@ export function AssessmentGapPage() {
     })
   }
 
+  /** Issue #194 M02 V1: 计划草稿自动保存泵 — 串行提交队列中的计划行快照。
+    失败时队列保留（本地输入不丢）并给出中文可操作提示；下次计划变更或
+    生成前自动重试。revision 用 ref 跨请求推进，避免并发 PATCH 冲突。 */
+  async function pumpPlanSaves(): Promise<void> {
+    if (isMockEnabled()) return
+    if (planPumpingRef.current) {
+      await planFlushPromiseRef.current
+      return
+    }
+    if (!assessment) return
+    planPumpingRef.current = true
+    const flush = (async () => {
+      try {
+        // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
+        // 去重替换队首，首个请求总是携带最新快照。
+        await Promise.resolve()
+        while (planQueueRef.current.length > 0) {
+          const task = planQueueRef.current[0]
+          try {
+            const result = await saveDraft(
+              assessment.id,
+              [task],
+              revisionRef.current,
+            )
+            revisionRef.current = result.revision ?? revisionRef.current + 1
+            // 仅当队首仍是本次保存的任务时才出队：保存在途期间若该行被
+            // 再次变更（队首被替换为更新的快照），保留它让下一轮提交最新。
+            if (planQueueRef.current[0] === task) {
+              planQueueRef.current.shift()
+            }
+            applyAutoCleared(result.auto_cleared ?? [])
+            setAssessment((current) =>
+              current
+                ? {
+                    ...current,
+                    revision: result.revision ?? current.revision,
+                    gap_summary: result.gap_summary ?? current.gap_summary,
+                  }
+                : current,
+            )
+          } catch (err: unknown) {
+            const status = (err as { status?: number }).status
+            const detail = (err as { detail?: unknown }).detail
+            setError(
+              status === 409
+                ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+                : isStructuredAssessmentError(detail)
+                  ? (() => {
+                      const target = detailsRef.current.find(
+                        (item) => item.l3_code === detail.l3_code,
+                      )
+                      if (target) locateDetail(target)
+                      return detail.message
+                    })()
+                  : err instanceof Error
+                    ? err.message
+                    : '计划草稿自动保存失败，本地输入已保留；请重试。',
+            )
+            break // 队列保留，下次计划变更或生成前重试
+          }
+        }
+      } finally {
+        planPumpingRef.current = false
+      }
+    })()
+    planFlushPromiseRef.current = flush
+    await flush
+  }
+
+  /** Issue #194 M02 V1: 单动作加入/移出提升项；加入保留已有月份，
+    移出清空计划月份与季度。变更随行内自动保存落库。 */
+  function toggleIncludePlan(index: number, include: boolean) {
+    const detail = detailsRef.current[index]
+    updateDetail(index, {
+      include_in_plan: include,
+      plan_quarter: include ? (detail?.plan_quarter ?? null) : null,
+      plan_month: include ? (detail?.plan_month ?? null) : null,
+    })
+  }
+
   /** 应用服务端 auto_cleared 裁决：清空相应行的计划字段，并把该行从
-    计划脏集合移除（本地未保存计划变更已被服务端否决）。 */
+    自动保存队列移除（本地未保存计划变更已被服务端否决）。 */
   function applyAutoCleared(
     cleared: Array<{ l3_node_id: number; fields: string[] }>,
   ) {
     if (!cleared.length) return
-    const clearedIds = new Set<number>()
+    const clearedCodes = new Set<string>()
     for (const item of cleared) {
-      const row = details.find((d) => d.l3_node_id === item.l3_node_id)
-      if (row?.id != null) clearedIds.add(row.id)
+      const row = detailsRef.current.find(
+        (d) => d.l3_node_id === item.l3_node_id,
+      )
+      if (row) clearedCodes.add(row.l3_code)
     }
     for (const item of cleared) {
       setDetails((current) =>
@@ -471,23 +578,23 @@ export function AssessmentGapPage() {
         }),
       )
     }
-    if (clearedIds.size) {
-      setPlanDirtyIds((current) => {
-        const next = new Set(current)
-        clearedIds.forEach((id) => next.delete(id))
-        return next
-      })
+    if (clearedCodes.size) {
+      planQueueRef.current = planQueueRef.current.filter(
+        (task) => !clearedCodes.has(task.l3_code),
+      )
     }
   }
 
   async function handleSave() {
     if (!assessment) return
-    // Issue #194 P1: 保存能力评级只提交评级/调整/依据字段（稀疏 PATCH），
-    // 不清掉待保存的计划变更（planDirtyIds 保留）。
     const changed = details.filter(
       (detail) => detail.id != null && ratingDirtyIds.has(detail.id),
     )
     if (!changed.length) return
+    // Issue #194 M02 V1: 先等待在途计划自动保存完成再提交评级——两个 PATCH
+    // 走同一 revision 序列，串行化避免并发冲突。评级只提交评级/调整/依据
+    // 字段（稀疏 PATCH），不清计划自动保存队列。
+    await pumpPlanSaves()
     setError('')
     setMessage('')
     try {
@@ -499,8 +606,9 @@ export function AssessmentGapPage() {
       const result = await saveDraft(
         assessment.id,
         buildDraftRows(changed, 'rating'),
-        assessment.revision ?? 1,
+        revisionRef.current,
       )
+      revisionRef.current = result.revision ?? revisionRef.current + 1
       setAssessment((current) =>
         current
           ? {
@@ -530,60 +638,6 @@ export function AssessmentGapPage() {
             : err instanceof Error
               ? err.message
               : '保存失败',
-      )
-    }
-  }
-
-  async function handleSavePlan() {
-    if (!assessment) return
-    // Issue #194 P1: 保存提升计划草稿只提交计划字段
-    // （member_priority/include_in_plan/plan_month），不夹带未保存评级。
-    const changed = details.filter(
-      (detail) => detail.id != null && planDirtyIds.has(detail.id),
-    )
-    if (!changed.length) return
-    setError('')
-    setMessage('')
-    try {
-      if (isMockEnabled()) {
-        setMessage('提升计划草稿已保存')
-        setPlanDirtyIds(new Set())
-        return
-      }
-      const result = await saveDraft(
-        assessment.id,
-        buildDraftRows(changed, 'plan'),
-        assessment.revision ?? 1,
-      )
-      setAssessment((current) =>
-        current
-          ? {
-              ...current,
-              revision: result.revision ?? current.revision,
-              gap_summary: result.gap_summary ?? current.gap_summary,
-            }
-          : current,
-      )
-      setPlanDirtyIds(new Set())
-      applyAutoCleared(result.auto_cleared ?? [])
-      setMessage('提升计划草稿已保存')
-    } catch (err: unknown) {
-      const status = (err as { status?: number }).status
-      const detail = (err as { detail?: unknown }).detail
-      setError(
-        status === 409
-          ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : isStructuredAssessmentError(detail)
-            ? (() => {
-                const target = details.find(
-                  (item) => item.l3_code === detail.l3_code,
-                )
-                if (target) locateDetail(target)
-                return detail.message
-              })()
-            : err instanceof Error
-              ? err.message
-              : '保存提升计划草稿失败',
       )
     }
   }
@@ -653,7 +707,7 @@ export function AssessmentGapPage() {
       }
       const selected = details.filter((d) => d.include_in_plan === true)
       if (selected.length === 0) {
-        setError('请先勾选「是」将提升项加入计划草稿，再生成所选学习任务。')
+        setError('请先加入提升项到计划草稿，再生成所选学习任务。')
         return
       }
       // Issue #187 合同第 6 条：缺计划月份 → 整批不提交，保留输入，逐项中文提示。
@@ -669,31 +723,12 @@ export function AssessmentGapPage() {
         if (index >= 0) locateDetail(target)
         return
       }
-      let revision = assessment.revision ?? 1
-      // Issue #194 P1: 生成前如需落计划草稿，只提交计划字段（稀疏 PATCH），
-      // 不夹带未保存评级；未保存评级仍保留在本地（ratingDirtyIds 不清）。
-      const changed = details.filter(
-        (detail) => detail.id != null && planDirtyIds.has(detail.id),
-      )
-      if (changed.length) {
-        const saved = await saveDraft(
-          assessment.id,
-          buildDraftRows(changed, 'plan'),
-          revision,
-        )
-        revision = saved.revision ?? revision + 1
-        applyAutoCleared(saved.auto_cleared ?? [])
-        setAssessment((current) =>
-          current
-            ? {
-                ...current,
-                revision,
-                gap_summary: saved.gap_summary ?? current.gap_summary,
-              }
-            : current,
-        )
-        setPlanDirtyIds(new Set())
-      }
+      // M02 V1: 生成前先等待在途计划自动保存完成（同一 revision 序列）——
+      // 失败（队列非空）则中止本次生成并保留队列，由用户重试；避免
+      // 部分写入、revision 冲突与生成读旧值。未保存评级仍保留在本地。
+      await pumpPlanSaves()
+      if (planQueueRef.current.length > 0) return
+      const revision = revisionRef.current
       const fingerprint = `${[...selected.map((d) => d.l3_code)].sort().join('|')}|${revision}`
       if (
         !genIdemRef.current ||
@@ -771,7 +806,7 @@ export function AssessmentGapPage() {
       loadAssessment(await getAssessment(assessment.id))
       setRepairPreview(null)
       setRatingDirtyIds(new Set())
-      setPlanDirtyIds(new Set())
+      // loadAssessment 已重置自动保存队列与 revision。
       setMessage(
         result.result === 'noop'
           ? '草稿目标快照已是最新状态。'
@@ -971,6 +1006,9 @@ export function AssessmentGapPage() {
       const g = computeGap(d)
       return g != null && g > 0
     })
+    const inPlan = assessedDetails.filter(
+      (d) => d.include_in_plan === true,
+    ).length
     const inPlanNoPriority = hasGap.filter(
       (d) =>
         d.include_in_plan === true &&
@@ -982,7 +1020,7 @@ export function AssessmentGapPage() {
     const inPlanNoMonth = hasGap.filter(
       (d) => d.include_in_plan === true && !d.plan_month,
     ).length
-    return { inPlanNoPriority, undecided, inPlanNoMonth }
+    return { inPlan, inPlanNoPriority, undecided, inPlanNoMonth }
   }, [assessedDetails])
 
   const filters: Filter[] = [
@@ -1074,6 +1112,7 @@ export function AssessmentGapPage() {
             </p>
           </div>
           <div className="assessment-actions">
+            <span className={s.autoSaveBadge}>计划草稿自动保存</span>
             <button type="button" onClick={() => setDrawerOpen(true)}>
               查看 Gap 摘要
             </button>
@@ -1702,42 +1741,32 @@ export function AssessmentGapPage() {
                                         <option value="暂缓">暂缓</option>
                                       </select>
                                     </td>
-                                    {/* Column 6: 纳入年度计划 */}
+                                    {/* Column 6: 纳入年度计划 — M02 V1 单动作加入/移出 */}
                                     <td>
-                                      <select
-                                        value={
-                                          detail.include_in_plan === true
-                                            ? 'yes'
-                                            : detail.include_in_plan === false
-                                              ? 'no'
-                                              : ''
-                                        }
-                                        onChange={(e) => {
-                                          const val = e.target.value
-                                          updateDetail(index, {
-                                            include_in_plan:
-                                              val === 'yes'
-                                                ? true
-                                                : val === 'no'
-                                                  ? false
-                                                  : null,
-                                            plan_quarter:
-                                              val === 'yes'
-                                                ? (detail.plan_quarter ?? null)
-                                                : null,
-                                            plan_month:
-                                              val === 'yes'
-                                                ? (detail.plan_month ?? null)
-                                                : null,
-                                          })
-                                        }}
-                                        disabled={!editable || !canPlan}
-                                        aria-label={`纳入计划 ${detail.l3_code}`}
-                                      >
-                                        <option value="">未选择</option>
-                                        <option value="yes">是</option>
-                                        <option value="no">否</option>
-                                      </select>
+                                      {gap === 0 ? (
+                                        <span className="muted">无需提升</span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className={
+                                            detail.include_in_plan === true
+                                              ? s.planToggleJoined
+                                              : undefined
+                                          }
+                                          onClick={() =>
+                                            toggleIncludePlan(
+                                              index,
+                                              detail.include_in_plan !== true,
+                                            )
+                                          }
+                                          disabled={!editable || !canPlan}
+                                          aria-label={`${detail.include_in_plan === true ? '移出提升计划' : '加入提升计划'} ${detail.l3_code}`}
+                                        >
+                                          {detail.include_in_plan === true
+                                            ? '已加入'
+                                            : '加入提升计划'}
+                                        </button>
+                                      )}
                                     </td>
                                     {/* Column 7: 计划时间 — 单一 YYYY-MM（Issue #194/187 合同第 4 条） */}
                                     <td>
@@ -1764,8 +1793,6 @@ export function AssessmentGapPage() {
                                             </small>
                                           )}
                                         </div>
-                                      ) : detail.include_in_plan === false ? (
-                                        <span className="muted">否</span>
                                       ) : (
                                         '—'
                                       )}
@@ -1841,9 +1868,15 @@ export function AssessmentGapPage() {
           </aside>
         )}
 
-        {/* Sticky action bar */}
+        {/* Sticky action bar — M02 V1：仅两个主操作；计划草稿随行内变更自动保存 */}
         {editable && (
           <footer className={s.stickyActions}>
+            <span>
+              计划草稿：已选 {stickyStats.inPlan} 项 ·{' '}
+              {stickyStats.inPlanNoMonth > 0
+                ? '仍有月份待补'
+                : '计划月份已完整'}
+            </span>
             {unfilled > 0 && <span>还有 {unfilled} 项未完成</span>}
             {stickyStats.inPlanNoPriority > 0 && (
               <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
@@ -1856,9 +1889,6 @@ export function AssessmentGapPage() {
             )}
             <button type="button" onClick={handleSave}>
               保存能力评级
-            </button>
-            <button type="button" onClick={handleSavePlan}>
-              保存提升计划草稿
             </button>
             <button
               type="button"

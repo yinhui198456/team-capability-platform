@@ -223,7 +223,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             (assessment_id,),
         ).fetchone()[0]
         # Approval atomically creates the Annual Plan, Plan Item and Task.
-        review_result = submit_assessment_review(
+        submit_assessment_review(
             connection,
             assessment_review_id,
             buddy_id,

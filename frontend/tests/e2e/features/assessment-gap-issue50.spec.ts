@@ -170,13 +170,14 @@ test.describe('Issue #50 assessment gap workflow', () => {
     const row = current.locator('xpath=ancestor::tr')
     await expect(row.getByText('需评估等级')).toBeVisible()
     // Issue #194: 提交自评已退役；未评估项无法纳入计划草稿（前置校验）。
-    const planSelect = row.getByRole('combobox', { name: /纳入计划/ })
-    await expect(planSelect).toBeDisabled()
+    // M02 V1：行内加入/移出按钮在未评估时禁用（gap 未知，无加入资格）。
+    const planButton = row.getByRole('button', { name: /加入提升计划/ })
+    await expect(planButton).toBeDisabled()
     await current.selectOption('3')
     await expect(row.getByText('需评估等级')).toHaveCount(0)
     await current.selectOption('')
     await expect(row.getByText('需评估等级')).toBeVisible()
-    await expect(planSelect).toBeDisabled()
+    await expect(planButton).toBeDisabled()
   })
 
   test('excludes N/A items from progress and unfinished-item location', async ({

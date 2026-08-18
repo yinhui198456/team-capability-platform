@@ -576,6 +576,22 @@
   margin-right: auto;
 }
 
+/* M02 V1: 已加入提升计划的成功态按钮 + 页头自动保存徽标 */
+.planToggleJoined {
+  background: #ecfdf3;
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+.autoSaveBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-lg);
+  background: #ecfdf3;
+  color: var(--color-success);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
 /* Plan time layout — single YYYY-MM month input (Issue #194) */
 .planTime {
   display: flex;
