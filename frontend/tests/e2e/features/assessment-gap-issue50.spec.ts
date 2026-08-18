@@ -680,11 +680,35 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
     // UI：2025 草稿可继续编辑保存（保存能力评级）。
     await page.goto('/capability/assessment?year=2025')
     await expect(page.getByLabel('评估摘要')).toBeVisible()
+    // 与 first-evaluation 同根因：无 dirty 行时保存不产生提示。先通过
+    // 可见控件制造一个合法脏变更（applicable 行当前等级 +1）再保存。
+    const combos = page.getByRole('combobox', { name: /当前等级/ })
+    const comboCount = await combos.count()
+    let ratingIndex = -1
+    for (let i = 0; i < comboCount; i += 1) {
+      if (await combos.nth(i).isEnabled()) {
+        ratingIndex = i
+        break
+      }
+    }
+    expect(ratingIndex).toBeGreaterThanOrEqual(0)
+    const rating = combos.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::tr')
+    const rowId = await row.getAttribute('id')
+    expect(rowId).toMatch(/^row-\d+$/)
+    const priorLevel = Number(await rating.inputValue())
+    expect(priorLevel).toBeGreaterThanOrEqual(0)
+    await rating.selectOption(String(priorLevel + 1))
     await page.getByRole('button', { name: '保存能力评级' }).click()
-    await expect(page.getByText('草稿已保存')).toBeVisible()
+    await expect(page.getByText('草稿已保存')).toBeVisible({ timeout: 15000 })
 
     // 显式生成前置校验：未纳入计划的项 → 422 且零写入。
     const afterUi = await currentDraft(page, previousId)
+    // 持久化：该行评级已落库（afterUi 读取于保存之后）。
+    const changedRow = afterUi.details.find(
+      (detail) => detail.id === Number(rowId.slice(4)),
+    )
+    expect(changedRow?.current_level).toBe(priorLevel + 1)
     const beforeGenerate = await page.request.get(
       `/api/planning/annual-plan?year=2025`,
     )

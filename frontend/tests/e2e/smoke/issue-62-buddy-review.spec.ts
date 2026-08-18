@@ -421,7 +421,17 @@ test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自
 
     // 草稿后续修改（revision 前进）后再生成同一 code → 唯一核去重：
     // created 为空、existing 返回、正式计划（Item 数与 revision）不变。
-    const revised = await fillDetails(request, draft, [])
+    // 注意：full-replacement 空数组会把所选 code 的 include/month 清空
+    // （新合同下变未选择 → generate 422），故复用同一首项配置保存以推进
+    // revision，保持合法正 Gap + include=true + YYYY-MM。
+    const { revision: revised } = await pickAndFill(request, draft, [
+      {
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
+      },
+    ])
     const again = await generatePlan(request, draft, revised, codes)
     expect(again.status).toBe(200)
     expect(again.body?.created).toEqual([])
@@ -542,7 +552,16 @@ test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自
 
     // “响应丢失后前端刷新 revision 重试”：同 key、同 l3_codes、新 revision
     // → fingerprint 不同 → 409 拒绝，提示换新 key。
-    const revised = await fillDetails(request, draft, [])
+    // revision 前进时保持所选 code 合法（full-replacement 空数组会清空
+    // include/month → 422），复用同一首项配置保存。
+    const { revision: revised } = await pickAndFill(request, draft, [
+      {
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
+      },
+    ])
     const conflict = await generatePlan(request, draft, revised, codes, key)
     expect(conflict.status).toBe(409)
     expect(detailOf(conflict)?.code).toBe('idempotency_key_reused')

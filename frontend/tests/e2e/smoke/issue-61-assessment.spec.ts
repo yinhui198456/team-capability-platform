@@ -706,20 +706,32 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const allDetails = await getAllDetails(page.request, state.id)
+      const applicable = allDetails.filter(
+        (d) => d.standard_target_applicable === true,
+      )
+      expect(applicable.length).toBeGreaterThanOrEqual(2)
+      // 代表性选择：前 2 个 applicable 项进入计划。全量约 289 个
+      // include=true 并显式生成会制造 289 个 Item/Task，把
+      // AnnualPlanTaskPage 的全量 learning-tasks 加载拖入 UI-03 的
+      // 20 秒门禁（跨套件放大）——issue-62 已覆盖单选/多选/幂等。
+      const selected = applicable.slice(0, 2).map((d) => d.l3_code)
 
-      // fill every item with valid plan (gap>0, include_in_plan=true,
-      // plan_month YYYY-MM within the assessment year).
-      const patchDetails = allDetails.map((d) => ({
-        l3_node_id: d.l3_node_id,
-        l3_code: d.l3_code,
-        current_level: 1,
-        target_adjusted: true,
-        adjusted_target_level: 5,
-        target_adjustment_reason: 'E2E-11 deterministic target',
-        member_priority: '低',
-        include_in_plan: true,
-        plan_month: `${year}-05`,
-      }))
+      // 所有评级均可保存：全量行填合法评级（正 Gap 目标），但只有代表性
+      // 项选择纳入计划（include=true + plan_month）；其余保存为未选择。
+      const patchDetails = allDetails.map((d) => {
+        const inPlan = selected.includes(d.l3_code)
+        return {
+          l3_node_id: d.l3_node_id,
+          l3_code: d.l3_code,
+          current_level: 1,
+          target_adjusted: true,
+          adjusted_target_level: 5,
+          target_adjustment_reason: 'E2E-11 deterministic target',
+          member_priority: inPlan ? '低' : null,
+          include_in_plan: inPlan,
+          plan_month: inPlan ? `${year}-05` : null,
+        }
+      })
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         { data: { expected_revision: state.revision, details: patchDetails } },
@@ -736,7 +748,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
           },
           data: {
             expected_revision: state.revision,
-            l3_codes: allDetails.map((d) => d.l3_code),
+            l3_codes: selected,
           },
         },
       )
@@ -746,7 +758,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(genBody.annual_plan_id).toBeDefined()
       // Every selected code is either freshly created or already existing.
       expect(genBody.created.length + genBody.existing.length).toBe(
-        allDetails.length,
+        selected.length,
       )
     } finally {
       await cleanupDraft(page.request, state)
