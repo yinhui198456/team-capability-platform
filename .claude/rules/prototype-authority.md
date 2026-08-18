@@ -1,0 +1,34 @@
+---
+description: 执行主场与角色边界、Issue 切片原则、原型权威与快照证据规则。适用于所有 TCP 会话。
+---
+
+# Prototype Authority
+
+## 执行主场
+
+- TCP 的编码、集成、测试、受控部署与真实 Chrome 验收主场均为 Ubuntu。
+
+## 角色边界
+
+- tcp-codex-control 中，gpt-5.6-sol 是唯一总控，且是当前 Issue 的 Goal/Plan owner。
+- Windows Codex 仅负责启动恢复、辅助检查、业务决策与交接，不建立竞争 Goal。
+- Issue worktree 的主 CC 是唯一代码 writer 与 commit/push owner；Sol 不旁路修改该 worktree。
+
+## Issue 切片
+
+- Issue 按一个完整、用户可见、测试环境可验证的业务结果切片，不按单页或前后端机械拆分。
+
+## 原型权威
+
+- 已确认原型是实现与验收的权威，不是参考。
+- 未经授权，不得以“功能等价”替换原型的布局、层级、操作位置或交互表达。
+
+## 快照与验收结论
+
+- 快照只是回归证据。
+- writer 同改 UI 与快照时，必须由非 writer 对照权威原型。
+- 业务可操作性与原型一致性分别给出结论。
+
+## 不沉淀临时内容
+
+- 当前 Issue 编号、SHA、CI 状态、最后指令、一次性缺陷与用户临时授权，不得进入长期规则或 auto memory。
