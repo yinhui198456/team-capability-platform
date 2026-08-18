@@ -4,7 +4,8 @@ Contract (docs/01_Product.md §"Issue #187 故事合同"):
 - POST /api/assessments/{id}/generate-plan-items 仅处理所选 l3_codes；
 - 整批零写入：任一所选项不满足即 422，本次不写入任何 plan_item/learning_task；
 - per-L3 中文错误提示（含 l3_code 与原因）；
-- Idempotency-Key 幂等：同键重放返回 existing 而非重复创建；
+- Idempotency-Key 幂等：同键同 payload 重放首次响应，同键异 payload 409；
+  无 key 时由 (plan_id, l3_code) 唯一键内核去重（返回 existing）；
 - 生成不创建 Assessment Review、不迁移 assessment.status（保持 草稿）；
 - current_level=0 是合法评级（gap>0 可生成）；
 - expected_revision 不匹配 → 409 零写入。
@@ -61,8 +62,10 @@ def _api(
         headers.append((b"cookie", cookie_header.encode("utf-8")))
 
     if extra_headers:
+        # Starlette Headers matches on lowercase byte keys — normalize the
+        # ASGI raw header name or the Idempotency-Key never arrives.
         for name, value in extra_headers.items():
-            headers.append((name.encode("utf-8"), value.encode("utf-8")))
+            headers.append((name.lower().encode("utf-8"), value.encode("utf-8")))
 
     async def receive() -> dict[str, Any]:
         return {"type": "http.request", "body": body_bytes, "more_body": False}
@@ -189,14 +192,39 @@ def test_generate_plan_items_created(plan_schema, gen_assessment) -> None:
 
 
 def test_generate_plan_items_idempotent(plan_schema, gen_assessment) -> None:
-    """同一 Idempotency-Key 重放 → existing 而非重复创建。"""
+    """同一 Idempotency-Key + 同一 payload 重放 → 返回首次响应，不重复创建。
+
+    Issue #194 P1-4: 同键同 payload 重放首次响应（created 与首次一致），
+    而不是再次探测唯一键内核返回 existing。
+    """
     code = _ready_detail(plan_schema, gen_assessment, "m_gen")
     key = "gen-key-0001"
-    status, body = _generate(plan_schema, gen_assessment, [code], key=key)
-    assert status == 200 and body["created"] == [code]
+    status, first = _generate(plan_schema, gen_assessment, [code], key=key)
+    assert status == 200 and first["created"] == [code]
+    assert first["existing"] == []
 
     status, body = _generate(plan_schema, gen_assessment, [code], key=key)
     assert status == 200, f"replay failed: {status}: {body}"
+    assert body == first, f"replay must return the first response, got {body}"
+
+    count = plan_schema.execute(
+        "SELECT COUNT(*) FROM plan_item pi "
+        "JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id "
+        "WHERE agp.member_id = (SELECT id FROM tcp_user WHERE username='m_gen')"
+    ).fetchone()[0]
+    assert count == 1, f"expected exactly 1 plan_item, got {count}"
+
+
+def test_generate_plan_items_replay_same_payload_no_key_returns_existing(
+    plan_schema, gen_assessment
+) -> None:
+    """无 key 的重复生成仍由唯一键内核保证：返回 existing，不重复创建。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    status, first = _generate(plan_schema, gen_assessment, [code])
+    assert status == 200 and first["created"] == [code]
+
+    status, body = _generate(plan_schema, gen_assessment, [code])
+    assert status == 200, f"regenerate failed: {status}: {body}"
     assert body["created"] == []
     assert body["existing"] == [code]
 
@@ -206,6 +234,141 @@ def test_generate_plan_items_idempotent(plan_schema, gen_assessment) -> None:
         "WHERE agp.member_id = (SELECT id FROM tcp_user WHERE username='m_gen')"
     ).fetchone()[0]
     assert count == 1, f"expected exactly 1 plan_item, got {count}"
+
+
+def test_generate_plan_items_key_reused_different_payload_conflict(
+    plan_schema, gen_assessment
+) -> None:
+    """同键不同 payload（不同 l3_codes）→ 409 idempotency_key_reused 零写入。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    key = "gen-key-0002"
+    status, _ = _generate(plan_schema, gen_assessment, [code], key=key)
+    assert status == 200
+
+    status, body = _generate(plan_schema, gen_assessment, ["not-a-real-code"], key=key)
+    assert status == 409, f"expected 409, got {status}: {body}"
+    assert "idempotency_key_reused" in json.dumps(body, ensure_ascii=False)
+
+    count = plan_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0]
+    assert count == 1, f"conflict must be zero-write, got {count} plan_item(s)"
+
+
+def test_generate_plan_items_key_reused_different_revision_conflict(
+    plan_schema, gen_assessment
+) -> None:
+    """同键不同 expected_revision → 409 idempotency_key_reused。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    key = "gen-key-0003"
+    status, _ = _generate(plan_schema, gen_assessment, [code], key=key)
+    assert status == 200
+
+    status, body = _generate(
+        plan_schema, gen_assessment, [code], expected_revision=99, key=key
+    )
+    assert status == 409, f"expected 409, got {status}: {body}"
+    assert "idempotency_key_reused" in json.dumps(body, ensure_ascii=False)
+
+
+def test_generate_plan_items_concurrent_same_key_single_write(
+    plan_schema, gen_assessment
+) -> None:
+    """并发同键：两个连接同时生成 → 仅一次写入，另一个拿到首次响应。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    key = "gen-key-0004"
+    # 新连接用独立 cursor；同一键 + 同一 payload。
+    import threading
+
+    results: list[tuple[int, Any | None]] = []
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(2)
+
+    def run() -> None:
+        try:
+            # conn.info.dsn redacts the password — append it explicitly.
+            with psycopg.connect(
+                conninfo=f"{plan_schema.info.dsn} password=tcp_dev_only"
+            ) as conn:
+                barrier.wait()
+                results.append(_generate(conn, gen_assessment, [code], key=key))
+        except BaseException as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"concurrent generate failed: {errors}"
+    statuses = sorted(r[0] for r in results)
+    assert statuses == [200, 200], f"expected two 200s, got {statuses}"
+
+    count = plan_schema.execute(
+        "SELECT COUNT(*) FROM plan_item pi "
+        "JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id "
+        "WHERE agp.member_id = (SELECT id FROM tcp_user WHERE username='m_gen')"
+    ).fetchone()[0]
+    assert count == 1, f"concurrent same-key must write once, got {count}"
+
+    # 与串行首次响应一致（created 或 existing 各一枚）。
+    created_counts = [r[1]["created"] for r in results]
+    existing_counts = [r[1]["existing"] for r in results]
+    assert created_counts.count([code]) + existing_counts.count([code]) == 2
+
+
+def test_generate_plan_items_mixed_ready_unready_zero_write(
+    plan_schema, gen_assessment
+) -> None:
+    """单选/多选混合：就绪项 + 待补月份项一起选 → 422 整批零写入。"""
+    ready_code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    # 第二个 L3（同一评估内）置为待补月份状态（revision 已到 2）。
+    second = plan_schema.execute(
+        "SELECT code FROM capability_node "
+        "WHERE node_type='L3' AND code <> %s ORDER BY code LIMIT 1",
+        (ready_code,),
+    ).fetchone()[0]
+    plan_schema.execute(
+        "UPDATE capability_node SET enabled = TRUE WHERE code = %s", (second,)
+    )
+    plan_schema.commit()
+    cookies = _login(plan_schema, "m_gen")
+    node2 = _detail_l3_node_id(plan_schema, gen_assessment, str(second))
+    assert node2 is not None, "scope-v1 detail must exist for the second L3"
+    status, body = _api(
+        "PATCH",
+        f"/api/assessments/{gen_assessment}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node2,
+                    "l3_code": str(second),
+                    "current_level": 2,
+                    "target_adjusted": True,
+                    "adjusted_target_level": 5,
+                    "target_adjustment_reason": "test",
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_month": None,
+                }
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, f"second PATCH failed: {status}: {body}"
+
+    status, body = _generate(
+        plan_schema, gen_assessment, [ready_code, str(second)], expected_revision=3
+    )
+    assert status == 422, f"mixed selection must 422: {status}: {body}"
+    assert str(second) in json.dumps(body, ensure_ascii=False)
+
+    count = plan_schema.execute(
+        "SELECT COUNT(*) FROM plan_item pi "
+        "JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id "
+        "WHERE agp.member_id = (SELECT id FROM tcp_user WHERE username='m_gen')"
+    ).fetchone()[0]
+    assert count == 0, f"zero write violated: {count} plan_item(s) created"
 
 
 def test_generate_plan_items_pending_month_zero_write(

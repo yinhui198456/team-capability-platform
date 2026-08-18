@@ -39,6 +39,15 @@ import {
 } from './planning'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
+
+// Issue #194: plan_month 'YYYY-MM' is the canonical month source (the
+// filter/display key); legacy rows fall back to target_month.
+function monthOf(item: PlanItem): number | null {
+  if (typeof item.plan_month === 'string') {
+    return Number(item.plan_month.slice(5, 7))
+  }
+  return item.plan_month ?? item.target_month
+}
 // Capability-model L1 domains, fixed (matches dashboard domain radar).
 const DOMAIN_OPTIONS = ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']
 const STATUS_LABELS: Record<string, string> = {
@@ -242,7 +251,7 @@ export function AnnualPlanTaskPage() {
 
   const items = plan?.items ?? []
   const visibleItems = items
-    .filter((i) => !selectedMonth || i.target_month === selectedMonth)
+    .filter((i) => !selectedMonth || monthOf(i) === selectedMonth)
     .filter((i) => statusFilter === '全部状态' || i.status === statusFilter)
     .filter(
       (i) => priorityFilter === '全部优先级' || i.priority === priorityFilter,
@@ -484,7 +493,7 @@ export function AnnualPlanTaskPage() {
         <div>
           {items.length === 0 && (
             <p className="muted">
-              暂无计划项：年度计划由 Buddy 认可评估时原子生成。
+              暂无计划项：请在评估页勾选提升项并显式生成所选学习任务。
             </p>
           )}
           <a
@@ -502,7 +511,7 @@ export function AnnualPlanTaskPage() {
             ? ` · ${plan.source_standard_version_label}`
             : ''}
           {plan.planning_source_type === 'assessment_approval'
-            ? ' · 认可生成'
+            ? ' · 显式选择生成'
             : ''}
         </p>
       )}
@@ -553,7 +562,7 @@ export function AnnualPlanTaskPage() {
       {/* Monthly timeline */}
       <div className={s.timeline} data-testid="month-timeline">
         {MONTHS.map((m) => {
-          const count = items.filter((i) => i.target_month === m).length
+          const count = items.filter((i) => monthOf(i) === m).length
           return (
             <button
               key={m}
@@ -676,7 +685,8 @@ export function AnnualPlanTaskPage() {
                 </span>
                 <span>{td ? td.task.actual_hours : 0} h</span>
                 <span>
-                  {item.target_month ? `${item.target_month} 月` : '—'}
+                  {item.plan_month ??
+                    (item.target_month ? `${item.target_month} 月` : '—')}
                 </span>
                 <span className={`${s.status} ${statusClass(st)}`}>
                   {STATUS_LABELS[st] ?? st}
@@ -844,11 +854,7 @@ function TaskExecutionPanel({
     if (start && end && start > end) {
       return '计划开始日期不得晚于计划结束日期。'
     }
-    // plan_month is 'YYYY-MM' (Issue #194); target_month stays an int.
-    const month =
-      typeof item.plan_month === 'string'
-        ? Number(item.plan_month.slice(5, 7))
-        : (item.plan_month ?? item.target_month)
+    const month = monthOf(item)
     const pad = (n: number) => String(n).padStart(2, '0')
     if (month != null) {
       if (
@@ -974,7 +980,7 @@ function TaskExecutionPanel({
           <span>来源类型</span>
           <strong>
             {item.planning_source_type === 'assessment_approval'
-              ? '评估认可生成'
+              ? '显式选择生成'
               : '—'}
           </strong>
         </div>

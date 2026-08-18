@@ -10,6 +10,7 @@ from app.access.repository import assign_role, create_buddy_relationship, create
 from app.access.schema import create_access_schema
 from app.assessment.schema import create_assessment_schema
 from app.main import app
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
     publish_test_standard,
@@ -270,20 +271,14 @@ def test_rejected_review_does_not_block_gate(
     assessment_schema.commit()
 
     assessment_id = _create_and_submit_assessment(assessment_schema, "member_reject")
-    buddy_cookies = _login(assessment_schema, "buddy_reject")
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(
+        assessment_schema,
+        assessment_id,
+        "buddy_reject",
+        conclusion="建议调整",
+        feedback="需补充",
     )
-    assert status == 200
-    review_id = pending[0]["id"]
-
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "建议调整", "feedback": "需补充", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
     member_cookies = _login(assessment_schema, "member_reject")
     status, body, _ = _request(
@@ -302,20 +297,8 @@ def test_approved_review_unblocks_gate(
     assessment_schema.commit()
 
     assessment_id = _create_and_submit_assessment(assessment_schema, "member_approve")
-    buddy_cookies = _login(assessment_schema, "buddy_approve")
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(assessment_schema, assessment_id, "buddy_approve")
 
     member_cookies = _login(assessment_schema, "member_approve")
     status, body, _ = _request(
@@ -334,20 +317,8 @@ def test_new_pending_version_does_not_block_gate_again(
     assessment_schema.commit()
 
     assessment_id = _create_and_submit_assessment(assessment_schema, "member_reversion")
-    buddy_cookies = _login(assessment_schema, "buddy_reversion")
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(assessment_schema, assessment_id, "buddy_reversion")
 
     member_cookies = _login(assessment_schema, "member_reversion")
     status, body, _ = _request(
@@ -457,15 +428,9 @@ def test_dry_run_returns_ok_when_eligible(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
     )
     assert status == 200
-    review_id = pending[0]["id"]
 
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(assessment_schema, assessment_id, "buddy_dry_ok")
 
     member_cookies = _login(assessment_schema, "member_dry_ok")
     status, body, _ = _request(

@@ -84,6 +84,46 @@ def reset_full_schema(connection: psycopg.Connection) -> None:
     connection.commit()
 
 
+def submit_review(
+    connection: psycopg.Connection,
+    assessment_id: int,
+    buddy_username: str,
+    *,
+    conclusion: str = "认可",
+    feedback: str = "符合预期",
+    expected_revision: int = 3,
+    review_id: int | None = None,
+) -> dict[str, object]:
+    """Issue #194 P1-3: repository-level review submit.
+
+    The API POST /{assessment_id}/reviews/{review_id} is retired (stable 410
+    zero-write); tests seed approval through the retained repository path.
+    """
+    buddy_id = connection.execute(
+        "SELECT id FROM tcp_user WHERE username = %s", (buddy_username,)
+    ).fetchone()[0]
+    if review_id is None:
+        review_id = connection.execute(
+            "SELECT id FROM assessment_review WHERE assessment_id = %s",
+            (assessment_id,),
+        ).fetchone()[0]
+    result = submit_assessment_review(
+        connection,
+        int(review_id),
+        int(buddy_id),
+        conclusion,
+        feedback,
+        expected_revision=expected_revision,
+        assessment_id_from_url=assessment_id,
+    )
+    # The leading SELECTs opened an implicit transaction, so the repository's
+    # transaction() block ran as a savepoint — commit here or the FOR UPDATE
+    # review/assessment locks stay held (idle-in-transaction) until the
+    # fixture connection closes, hanging later app requests in the test.
+    connection.commit()
+    return result
+
+
 @pytest.fixture
 def review_schema(connection: psycopg.Connection) -> psycopg.Connection:
     reset_full_schema(connection)

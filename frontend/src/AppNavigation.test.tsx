@@ -208,7 +208,7 @@ describe('role-based default routing', () => {
   it.each([
     ['Admin', '/system/users'],
     ['Leader', '/operations/analytics'],
-    ['Buddy', '/mentoring/dashboard'],
+    ['Buddy', '/mentoring/evidence-review'],
     ['Member', '/dashboard/member'],
   ])('redirects %s from / to %s', async (role, expectedPath) => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
@@ -248,7 +248,7 @@ describe('role-based default routing', () => {
   it.each([
     ['Admin', '/system/users'],
     ['Leader', '/operations/analytics'],
-    ['Buddy', '/mentoring/dashboard'],
+    ['Buddy', '/mentoring/evidence-review'],
     ['Member', '/dashboard/member'],
   ])(
     'redirects %s from unknown URL to default route',
@@ -491,12 +491,45 @@ describe('evidence review route boundary', () => {
     ).toBeTruthy()
     expect(screen.getByText('Buddy')).toBeTruthy()
     expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Buddy 复核中心' })).toBeTruthy()
+    // Issue #194 P1-3: Buddy 自评复核导航已退役 — 仅保留待验收成果。
+    expect(screen.queryByRole('link', { name: 'Buddy 复核中心' })).toBeNull()
     expect(screen.getByRole('link', { name: '待验收成果' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe(
       '/mentoring/evidence-review',
     )
   })
+
+  it.each([['/mentoring/dashboard'], ['/mentoring/assessment-review']])(
+    'Issue #194: legacy Buddy route %s redirects to evidence review',
+    async (path) => {
+      stubFetch()
+      vi.spyOn(accessApi, 'me').mockResolvedValue({
+        id: 2,
+        username: 'buddy',
+        full_name: 'Buddy',
+        roles: ['Buddy'],
+      })
+      vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+        available_years: [2026],
+        active_year: 2026,
+      })
+      vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <App />
+          <LocationDisplay />
+        </MemoryRouter>,
+      )
+      await waitFor(() =>
+        expect(
+          screen.getByRole('heading', { name: '待验收成果' }),
+        ).toBeTruthy(),
+      )
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/mentoring/evidence-review',
+      )
+    },
+  )
 
   it.each([
     [['Member'], '/dashboard/member'],

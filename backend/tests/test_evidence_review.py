@@ -12,6 +12,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
     publish_test_standard,
@@ -341,19 +342,8 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
 def _approve_assessment(
     connection: psycopg.Connection, assessment_id: int, buddy_username: str
 ) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]  # evidence id (v0010 queue)
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(connection, assessment_id, buddy_username)
 
 
 def _seed_submitted_evidence(

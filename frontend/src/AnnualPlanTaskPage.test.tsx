@@ -241,6 +241,58 @@ describe('AnnualPlanTaskPage display', () => {
     expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
   })
 
+  it('M03: plan_month is the canonical month — filters and shows YYYY-MM', async () => {
+    await renderMember([
+      makeItem({
+        id: 1,
+        l3_name: '任务A',
+        plan_month: '2026-03',
+        target_month: 3,
+      }),
+      makeItem({
+        id: 2,
+        l3_code: 'P02.01.01',
+        l3_name: '任务B',
+        plan_month: '2026-04',
+        target_month: 3,
+      }),
+      makeItem({
+        id: 3,
+        l3_code: 'P03.01.01',
+        l3_name: '任务C',
+        target_month: 5,
+      }),
+    ])
+    // plan_month wins over target_month: B belongs to April, not March.
+    const btns = screen.getAllByRole('button', { name: /3 月/ })
+    fireEvent.click(
+      btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
+    )
+    await waitFor(() => {
+      expect(screen.getByText('P01.01.01 · 任务A')).toBeTruthy()
+    })
+    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
+    // Row shows the YYYY-MM plan_month; legacy rows fall back to 'N 月'.
+    const rows = screen.getAllByTestId('plan-header')
+    expect(within(rows[0]).getByText('2026-03')).toBeTruthy()
+    // Timeline count derives from plan_month too.
+    const april = screen
+      .getAllByRole('button', { name: /4 月/ })
+      .find((b) => b.textContent?.startsWith('4 月'))
+    expect(april?.textContent).toContain('1 项')
+    // Without a selected month, the legacy fallback row renders '5 月'.
+    fireEvent.click(
+      btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
+    )
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plan-header')).toHaveLength(3)
+      const legacy = screen
+        .getAllByTestId('plan-header')
+        .find((r) => r.textContent?.includes('任务C'))
+      expect(legacy && within(legacy).getByText('5 月')).toBeTruthy()
+    })
+  })
+
   it('shows an estimated-hour range without coercing it to zero', async () => {
     await renderMember(
       [
@@ -1014,7 +1066,7 @@ describe('plan item source summary (issue #63)', () => {
       within(screen.getByTestId('task-detail-panel')).getByText('2026-06'),
     ).toBeTruthy()
     expect(screen.getByText('来源类型')).toBeTruthy()
-    expect(screen.getByText('评估认可生成')).toBeTruthy()
+    expect(screen.getByText('显式选择生成')).toBeTruthy()
     expect(screen.getByText('评估版本')).toBeTruthy()
     expect(screen.getByText('2')).toBeTruthy()
     expect(screen.getByText('纳入计划')).toBeTruthy()

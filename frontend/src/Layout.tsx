@@ -69,11 +69,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: '导师指导',
     items: [
-      {
-        label: 'Buddy 复核中心',
-        href: '/mentoring/dashboard',
-        roles: ['Buddy'],
-      },
+      // Issue #194 P1-3: Buddy 自评复核退役 — 仅保留证据评审
       {
         label: '待验收成果',
         href: '/mentoring/evidence-review',

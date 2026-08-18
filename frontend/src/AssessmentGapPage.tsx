@@ -241,6 +241,9 @@ export function AssessmentGapPage() {
     Record<string, 'P4' | 'P5' | 'P6' | 'P7' | 'P8'>
   >({})
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
+  // 指纹变化（选中项/版本变更）或 409 后换新 key（镜像 BuddyReviewCenter 模式）。
+  const genIdemRef = useRef<{ key: string; fingerprint: string } | null>(null)
   const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
   const [repairPreview, setRepairPreview] =
     useState<DraftTargetRepairPreview | null>(null)
@@ -564,11 +567,18 @@ export function AssessmentGapPage() {
         )
         setDirtyIds(new Set())
       }
+      const fingerprint = `${[...selected.map((d) => d.l3_code)].sort().join('|')}|${revision}`
+      if (
+        !genIdemRef.current ||
+        genIdemRef.current.fingerprint !== fingerprint
+      ) {
+        genIdemRef.current = { key: newIdempotencyKey(), fingerprint }
+      }
       const result = await generatePlanItems(
         assessment.id,
         selected.map((d) => d.l3_code),
         revision,
-        newIdempotencyKey(),
+        genIdemRef.current.key,
       )
       loadAssessment(await getAssessment(assessment.id))
 
@@ -585,7 +595,10 @@ export function AssessmentGapPage() {
       const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
-          ? '生成冲突：数据已被其他操作更新，本地输入已保留；请重新加载后再生成。'
+          ? (() => {
+              genIdemRef.current = null // 409 → 下次换新 key（P1-4）
+              return '生成冲突：数据已被其他操作更新，本地输入已保留；请重新加载后再生成。'
+            })()
           : isStructuredAssessmentError(detail)
             ? (() => {
                 const target = details.find(
@@ -1719,7 +1732,6 @@ export function AssessmentGapPage() {
               type="button"
               className="primary"
               onClick={handleGeneratePlan}
-              disabled={stickyStats.inPlanNoMonth > 0}
             >
               生成所选学习任务
             </button>

@@ -12,7 +12,6 @@ import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
-import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
@@ -73,7 +72,7 @@ export function App() {
         />
         <Route
           path="/mentoring/assessment-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
+          element={<Navigate to="/mentoring/evidence-review" replace />}
         />
         <Route
           path="/capability/gap"
@@ -106,7 +105,11 @@ export function App() {
             path="/growth/review/monthly"
             element={<MonthlyReviewPage />}
           />
-          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          {/* Issue #194 P1-3: Buddy 自评复核退役 — 默认与旧路由均导向 Evidence Review */}
+          <Route
+            path="/mentoring/dashboard"
+            element={<Navigate to="/mentoring/evidence-review" replace />}
+          />
           <Route
             path="/mentoring/evidence-review"
             element={

@@ -2335,6 +2335,8 @@ def generate_plan_items_for_selection(
     member_id: int,
     l3_codes: list[str],
     expected_revision: int,
+    *,
+    idempotency_key: str | None = None,
 ) -> dict[str, object]:
     """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）.
 
@@ -2346,11 +2348,55 @@ def generate_plan_items_for_selection(
     - idempotent via the (annual_growth_plan_id, l3_code) unique kernel:
       already-generated items come back as ``existing`` and are never
       duplicated (a savepoint re-check absorbs concurrent unique conflicts);
+    - Idempotency-Key (prefixed ``generate-plan-items:``) replays the stored
+      first response for the same key + payload fingerprint, 409 on key
+      reuse with a different payload — reuses assessment_idempotency_key;
     - does NOT create an Assessment Review and does NOT move
       assessment.status (the draft stays 草稿);
     - plan_month is TEXT 'YYYY-MM' and is required on every selected item.
     """
+    # Payload identity only — independent of current domain state.
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "assessment_id": assessment_id,
+                "l3_codes": sorted(set(l3_codes)),
+                "expected_revision": expected_revision,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    stored_key = f"generate-plan-items:{idempotency_key}" if idempotency_key else None
+
+    def _replay_or_conflict() -> dict[str, object] | None:
+        existing_key = connection.execute(
+            """
+            SELECT request_fingerprint, response
+            FROM assessment_idempotency_key
+            WHERE member_id = %s AND idempotency_key = %s
+            """,
+            (member_id, stored_key),
+        ).fetchone()
+        if existing_key is None:
+            return None
+        if str(existing_key[0]) != fingerprint:
+            raise AssessmentScopeError(
+                "idempotency_key_reused",
+                "idempotency key reused with a different request",
+                status_code=409,
+            )
+        stored = existing_key[1]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        return stored
+
     with connection.transaction():
+        # 0. idempotency check first, before any domain recomputation.
+        if stored_key is not None:
+            replay = _replay_or_conflict()
+            if replay is not None:
+                return replay
         row = connection.execute(
             """
             SELECT status, member_id, revision, year,
@@ -2369,6 +2415,12 @@ def generate_plan_items_for_selection(
             raise ValueError("assessment does not belong to member")
         if int(revision) != expected_revision:
             raise ValueError("revision conflict")
+        # 2. Re-check idempotency after the FOR UPDATE lock to close the
+        #    concurrent window where two callers both pass the first check.
+        if stored_key is not None:
+            replay = _replay_or_conflict()
+            if replay is not None:
+                return replay
 
         detail_rows = connection.execute(
             """
@@ -2521,11 +2573,29 @@ def generate_plan_items_for_selection(
             except psycopg.errors.UniqueViolation:
                 connection.execute("ROLLBACK TO SAVEPOINT gen_sp")
                 existing.append(code)
-        return {
+        response = {
             "annual_plan_id": plan_id,
             "created": created,
             "existing": existing,
         }
+        if stored_key is not None:
+            connection.execute(
+                """
+                INSERT INTO assessment_idempotency_key (
+                    member_id, idempotency_key, request_fingerprint,
+                    assessment_id, response
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    member_id,
+                    stored_key,
+                    fingerprint,
+                    assessment_id,
+                    json.dumps(response, ensure_ascii=False),
+                ),
+            )
+        return response
 
 
 def generate_gaps_for_assessment(

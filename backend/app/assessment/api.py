@@ -5,10 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
-    AssessmentValidationError,
     DetailValidationError,
     DraftTargetRepairError,
-    ReviewError,
     batch_fill_l2,
     create_assessment_draft,
     generate_plan_items_for_selection,
@@ -24,7 +22,6 @@ from .repository import (
     patch_assessment_draft,
     repair_draft_target_snapshots,
     save_assessment_draft,
-    submit_assessment_review,
     update_gap,
 )
 from .scope import AssessmentScopeError, compute_assessment_scope
@@ -671,11 +668,11 @@ def generate_plan_items(
     """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）。
 
     Only the selected l3_codes are generated.  Any unready item fails the
-    whole batch with a per-L3 Chinese error (zero writes).  Replays are
-    idempotent via the (annual_growth_plan_id, l3_code) unique kernel —
-    already-generated items are returned as ``existing`` and never
-    duplicated; the Idempotency-Key header is accepted and documented, the
-    DB kernel provides the guarantee.
+    whole batch with a per-L3 Chinese error (zero writes).  Idempotency:
+    the (annual_growth_plan_id, l3_code) unique kernel returns already
+    generated items as ``existing``, and the Idempotency-Key header (with a
+    payload fingerprint) replays the stored first response or 409s on reuse
+    with a different payload.
     """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
@@ -695,7 +692,10 @@ def generate_plan_items(
             int(user["id"]),
             request.l3_codes,
             expected_revision=request.expected_revision,
+            idempotency_key=idempotency_key,
         )
+    except AssessmentScopeError as exc:
+        raise _scope_error(exc) from exc
     except DetailValidationError as exc:
         raise _detail_validation_error(exc) from exc
     except ValueError as exc:
@@ -803,6 +803,11 @@ def submit_review(
     connection: Connection,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
+    """Issue #194 P1-3: 退役 — Buddy 自评复核改为 Evidence Review。
+
+    Assessment Review 写端点保持存在但零写入（稳定 410），自评复核流程
+    已由 Evidence Review（证据评审）取代；GET 历史（/history）只读保持。
+    """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -814,60 +819,17 @@ def submit_review(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
-    try:
-        return submit_assessment_review(
-            connection,
-            review_id,
-            int(user["id"]),
-            request.conclusion,
-            request.feedback,
-            expected_revision=request.expected_revision,
-            assessment_id_from_url=assessment_id,
-            idempotency_key=idempotency_key,
-        )
-    except ReviewError as exc:
-        detail: dict[str, object] = {
-            "code": exc.code,
-            "message": str(exc),
-        }
-        if exc.l3_node_id is not None:
-            detail["l3_node_id"] = exc.l3_node_id
-        if exc.l3_code is not None:
-            detail["l3_code"] = exc.l3_code
-        if exc.field is not None:
-            detail["field"] = exc.field
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=detail,
-        ) from exc
-    except AssessmentValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": exc.code,
-                "l3_code": exc.l3_code,
-                "l3_node_id": exc.l3_node_id,
-                "field": exc.field,
-                "reason": exc.reason,
-                "message": str(exc),
-            },
-        ) from exc
-    except psycopg.errors.UniqueViolation as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "business_key_conflict",
-                "message": "concurrent business key conflict",
-            },
-        ) from exc
-    except psycopg.errors.RaiseException as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "database_guard_rejected",
-                "message": "database integrity guard rejected the write",
-            },
-        ) from exc
+    del request, idempotency_key, review_id  # zero-write by design
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "assessment_review_write_disabled",
+            "message": (
+                "自评复核提交已退役（410）：请改用证据评审 Evidence Review"
+                "（/mentoring/evidence-review）评审证据并推进学习任务闭环"
+            ),
+        },
+    )
 
 
 # ponytail: archive remains a repository function only; not exposed via API.
