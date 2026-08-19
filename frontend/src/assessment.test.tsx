@@ -950,6 +950,65 @@ describe('AssessmentGapPage', () => {
     })
   })
 
+  it('batch fill advances the same revision chain as plan auto-save (#194 P1)', async () => {
+    const draft = mockDraft({
+      details: [{ ...mockDraft().details![0], current_level: null }],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveSave!: (value: { ok: boolean; revision: number }) => void
+    let saveCalls = 0
+    const save = vi.spyOn(assessmentApi, 'saveDraft').mockImplementation(() => {
+      saveCalls += 1
+      if (saveCalls === 1) {
+        return new Promise((resolve) => {
+          resolveSave = resolve
+        })
+      }
+      return Promise.resolve({ ok: true, revision: 4 })
+    })
+    const batch = vi.spyOn(assessmentApi, 'batchFillL2').mockResolvedValue({
+      revision: 3,
+      updated_l3_codes: ['P01.01.01'],
+      skipped_l3_codes: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力自评与 Gap 分析')
+
+    // 计划变更 → 在途自动保存挂起
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+
+    // 批量填必须与在途计划保存串行：保存完成前不发起请求
+    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(batch).not.toHaveBeenCalled()
+
+    // 在途保存成功（revision 1→2），批量填随后发起并沿用同一 revision 链
+    resolveSave({ ok: true, revision: 2 })
+    await waitFor(() => expect(batch).toHaveBeenCalledTimes(1))
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+      batch.mock.invocationCallOrder[0],
+    )
+    expect(batch.mock.calls[0][3]).toBe(2)
+
+    // 批量填成功返回新 revision 3 → 下一次计划草稿 PATCH 必须使用 3
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '中' } },
+    )
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][2]).toBe(3)
+  })
+
   it('sends canonical fields instead of plan_candidate in saveDraft', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
