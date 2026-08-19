@@ -62,8 +62,9 @@ def check_member_navigation(browser, password: str) -> None:
             ("成长档案", "/growth/profile"),
         ):
             page.get_by_role("link", name=link, exact=True).click()
-            page.wait_for_load_state("networkidle")
-            # Issue #194: year query may follow the pathname.
+            # SPA 客户端导航可能在 networkidle 之后才落地；先等到预期 path
+            # （允许 ?year= 查询串）再断言，消除时序假阴性。
+            page.wait_for_url(f"{BASE_URL}{path}*", timeout=10000)
             assert urlsplit(page.url).path == path, page.url
         print("PASS member-core-navigation")
     finally:

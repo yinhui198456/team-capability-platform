@@ -33,6 +33,9 @@ from .v0014_evidence_archive_backfill import (
     upgrade as upgrade_evidence_archive_backfill,
 )
 from .v0015_plan_month_text import upgrade as upgrade_plan_month_text
+from .v0016_plan_item_later_assessment import (
+    upgrade as upgrade_plan_item_later_assessment,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -59,6 +62,10 @@ MIGRATIONS = [
         upgrade_evidence_archive_backfill,
     ),
     ("0015_plan_month_text", upgrade_plan_month_text),
+    (
+        "0016_plan_item_later_assessment",
+        upgrade_plan_item_later_assessment,
+    ),
 ]
 
 __all__ = ["MIGRATIONS"]

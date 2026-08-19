@@ -110,13 +110,14 @@ def _ready_detail(
     assessment_id: int,
     username: str,
     *,
+    code: str | None = None,
     current_level: int = 2,
     plan_month: str | None = "2026-07",
     include_in_plan: bool = True,
 ) -> str:
     """PATCH one detail into the new-contract ready state; returns l3_code."""
     cookies = _login(connection, username)
-    code = _enable_one_l3(connection)
+    code = code or _enable_one_l3(connection)
     node_id = _detail_l3_node_id(connection, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
     status, body = _api(
@@ -150,8 +151,9 @@ def _generate(
     l3_codes: list[str],
     expected_revision: int = 2,
     key: str | None = None,
+    username: str = "m_gen",
 ) -> tuple[int, Any | None]:
-    cookies = _login(connection, "m_gen")
+    cookies = _login(connection, username)
     headers = {"Idempotency-Key": key} if key else {}
     return _api(
         "POST",
@@ -452,3 +454,64 @@ def test_generate_plan_items_no_review_no_status_change(
         (gen_assessment,),
     ).fetchone()[0]
     assert review_count == 0, "no Assessment Review may be created"
+
+
+def test_generate_plan_items_later_assessment_extends_same_plan(plan_schema) -> None:
+    """同一 member/year 的后续 assessment 生成新 L3 加入同一计划（#194 UAT 根因）。
+
+    首个 assessment 已创建年度计划后，后续 assessment 的新 L3 必须可加入同一
+    计划：计划保留首个 source_assessment_id，每个 plan item 保留各自精确来源；
+    无键重复生成由 (plan_id, l3_code) 内核去重返回 existing。
+    修复前：v0009 复合 FK plan_item_plan_source_fk 误绑首个 assessment → 500。
+    """
+    member_id = _create_test_user(plan_schema, "m_gen2", ["Member"])
+    plan_schema.execute(
+        "UPDATE capability_node SET enabled = (code IN ('C01.01.01','C01.01.02')) "
+        "WHERE node_type = 'L3'"
+    )
+    plan_schema.commit()
+    first = create_scoped_draft(plan_schema, member_id, 2026)
+    first_code = _ready_detail(plan_schema, first, "m_gen2")
+    status, body = _generate(plan_schema, first, [first_code], username="m_gen2")
+    assert status == 200 and body["created"] == [first_code]
+
+    # 每 member/year 只允许一个开放草稿；复现 UAT 形态须让首个 assessment
+    # 先脱离草稿（旧流程已闭环），再建后续 assessment。
+    plan_schema.execute(
+        "UPDATE assessment SET status = '已复核' WHERE id = %s", (first,)
+    )
+    # _ready_detail 的 _enable_one_l3 只留了 C01.01.01；恢复两个 L3 再建草稿，
+    # 让后续 assessment 的 scope 覆盖 C01.01.02。
+    plan_schema.execute(
+        "UPDATE capability_node SET enabled = (code IN ('C01.01.01','C01.01.02')) "
+        "WHERE node_type = 'L3'"
+    )
+    plan_schema.commit()
+    later = create_scoped_draft(plan_schema, member_id, 2026)
+
+    later_code = _ready_detail(plan_schema, later, "m_gen2", code="C01.01.02")
+    status, body = _generate(plan_schema, later, [later_code], username="m_gen2")
+    assert status == 200, f"later assessment generate failed: {status}: {body}"
+    assert body["created"] == [later_code]
+
+    plans = plan_schema.execute(
+        "SELECT id, source_assessment_id FROM annual_growth_plan "
+        "WHERE member_id = %s AND year = 2026",
+        (member_id,),
+    ).fetchall()
+    assert len(plans) == 1, f"exactly one plan per member/year, got {plans}"
+    assert int(plans[0][1]) == first, "plan keeps the first source_assessment_id"
+
+    provenance = plan_schema.execute(
+        "SELECT l3_code, source_assessment_id FROM plan_item "
+        "WHERE annual_growth_plan_id = %s ORDER BY l3_code",
+        (int(plans[0][0]),),
+    ).fetchall()
+    assert [(row[0], int(row[1])) for row in provenance] == [
+        ("C01.01.01", first),
+        ("C01.01.02", later),
+    ], "each item keeps its exact source assessment"
+
+    status, body = _generate(plan_schema, later, [later_code], username="m_gen2")
+    assert status == 200, f"replay failed: {status}: {body}"
+    assert body["created"] == [] and body["existing"] == [later_code]

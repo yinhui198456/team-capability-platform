@@ -56,6 +56,7 @@ _EXPECTED_VERSIONS = (
     "0013_plan_item_growth_goal_nullable",
     "0014_evidence_archive_backfill",
     "0015_plan_month_text",
+    "0016_plan_item_later_assessment",
 )
 
 

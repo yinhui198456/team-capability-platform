@@ -132,7 +132,7 @@ def test_standard_target_migration_is_idempotent_and_preserves_history(
     run_migrations(connection)
 
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 15
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 16
     )
     assert (
         connection.execute(
