@@ -55,11 +55,10 @@ def check_member_navigation(browser, password: str) -> None:
         login(page, "member", password)
         for link, path in (
             ("我的工作台", "/dashboard/member"),
-            ("能力自评与 Gap", "/capability/assessment"),
+            ("能力评级与提升计划", "/capability/assessment"),
             ("年度成长计划", "/growth/annual-plan"),
             # Issue #194 兼容入口：/growth/tasks 统一重定向到年度成长计划。
             ("学习任务", "/growth/annual-plan"),
-            ("成长档案", "/growth/profile"),
         ):
             page.get_by_role("link", name=link, exact=True).click()
             # SPA 客户端导航可能在 networkidle 之后才落地；先等到预期 path
