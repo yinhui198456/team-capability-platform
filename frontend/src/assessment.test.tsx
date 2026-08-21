@@ -1245,6 +1245,45 @@ describe('AssessmentGapPage', () => {
     ).toBe('true')
   })
 
+  it('uses the saved rating revision when joining an incomplete plan draft', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValueOnce({ ok: true, revision: 2 })
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][2]).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][2]).toBe(2)
+    expect(save.mock.calls[1][1][0]).toMatchObject({
+      include_in_plan: true,
+      member_priority: null,
+      plan_month: null,
+    })
+    expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
+  })
+
   it('plan auto-save failure keeps input and shows a Chinese retry message (#194)', async () => {
     const draft = mockDraft({
       details: [

@@ -1780,21 +1780,9 @@ def save_assessment_draft(
                     )
                 plan_quarter = _quarter_of(plan_month)
 
-            # include_in_plan tri-state validation.
-            if include_in_plan is True:
-                if member_priority is None or member_priority == "暂缓":
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"include_in_plan requires valid priority for {code}",
-                        l3_code=str(code),
-                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_valid_priority",
-                    )
-                # 待补计划月份 (Issue #194): include_in_plan=TRUE with
-                # plan_month=NULL is a legal draft state — a valid YYYY-MM
-                # month is required only at explicit generation time
-                # (POST /generate-plan-items).
+            # 已选提升项可作为不完整计划草稿持久化；优先级和月份均由显式
+            # 生成前校验，避免首个「加入提升计划」动作因 UI 尚未展示编辑区
+            # 而失败。
 
             # Track auto-cleared fields
             if orig_priority != member_priority:
@@ -2459,6 +2447,14 @@ def generate_plan_items_for_selection(
                     l3_code=code,
                     field="l3_codes",
                     reason="not_in_plan",
+                )
+            if detail[14] not in {"高", "中", "低"}:  # member_priority
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 优先级待补：请先在草稿中选择高、中或低优先级",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="pending_member_priority",
                 )
             plan_month = detail[17]
             if plan_month is None:

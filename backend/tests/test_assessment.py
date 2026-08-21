@@ -457,8 +457,8 @@ def test_assessment_writes_require_expected_revision_token(
 def test_generation_validation_returns_structured_l3_error(
     assessment_schema: psycopg.Connection,
 ) -> None:
-    """Issue #194: explicit generation returns a structured per-L3 422 with
-    zero writes when a selected item is not ready (contract #6)."""
+    """Issue #194: missing priority returns a structured per-L3 422 with
+    zero writes at explicit generation (contract #6)."""
     _create_test_user(assessment_schema, "member_structured_error", ["Member"])
     assessment_schema.execute(
         """
@@ -484,13 +484,13 @@ def test_generation_validation_returns_structured_l3_error(
     assert status == 200
     assessment_id = body["id"]
 
-    # Positive gap (standard target is 3) with include_in_plan=TRUE but NO
-    # plan_month — partial drafts are legal, generation must fail structured.
+    # Positive gap (standard target is 3) with include_in_plan=TRUE but no
+    # priority/month — partial drafts are legal, generation must fail structured.
     l3_code = "C01.01.01"
     node_id = _detail_l3_node_id(assessment_schema, assessment_id, l3_code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    status, _, _ = _request(
+    status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
@@ -499,8 +499,9 @@ def test_generation_validation_returns_structured_l3_error(
                     "l3_node_id": node_id,
                     "l3_code": l3_code,
                     "current_level": 0,
-                    "member_priority": "高",
                     "include_in_plan": True,
+                    "member_priority": None,
+                    "plan_month": None,
                 }
             ],
             "expected_revision": 1,
@@ -508,6 +509,15 @@ def test_generation_validation_returns_structured_l3_error(
         cookies=cookies,
     )
     assert status == 200
+    assert body["revision"] == 2
+    saved = get_assessment(assessment_schema, assessment_id)
+    assert saved is not None
+    saved_detail = next(
+        detail for detail in saved["details"] if detail["l3_code"] == l3_code
+    )
+    assert saved_detail["include_in_plan"] is True
+    assert saved_detail["member_priority"] is None
+    assert saved_detail["plan_month"] is None
     status, body, _ = _request(
         "POST",
         f"/api/assessments/{assessment_id}/generate-plan-items",
@@ -518,8 +528,8 @@ def test_generation_validation_returns_structured_l3_error(
     detail = body["detail"]
     assert detail["code"] == "plan_generation"
     assert detail["l3_code"] == "C01.01.01"
-    assert detail["reason"] == "pending_plan_month"
-    assert "message" in detail
+    assert detail["reason"] == "pending_member_priority"
+    assert "优先级待补" in detail["message"]
     # Zero-write: assessment stays 草稿 at the same revision, no plan items.
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
