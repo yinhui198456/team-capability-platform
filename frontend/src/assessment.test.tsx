@@ -79,7 +79,28 @@ describe('AssessmentGapPage', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders 7-column table', async () => {
+  it('loads the editable draft for the current year instead of the first list item', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft({ id: 4, year: 2025 }), details: undefined },
+      { ...mockDraft({ id: 3, year: 2026 }), details: undefined },
+    ])
+    const getAssessment = vi
+      .spyOn(assessmentApi, 'getAssessment')
+      .mockResolvedValue(mockDraft({ id: 3, year: 2026 }))
+
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(getAssessment).toHaveBeenCalledWith(3)
+    })
+    expect(getAssessment).not.toHaveBeenCalledWith(4)
+  })
+
+  it('renders the prototype four-zone item header', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -101,21 +122,19 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
-    const headers = screen.getAllByRole('columnheader')
-    expect(headers.length).toBe(7)
+    await screen.findByText('能力评级与提升计划')
+    // Issue #194 P1: 权威原型 M02 V1 四区行头（取代 #61 七列表格）。
+    const table = screen.getByTestId('assessment-table')
+    const headers = [...table.querySelectorAll('[class*="abilityHead"] > span')]
     expect(headers.map((h) => h.textContent)).toEqual([
       '能力项',
-      '当前掌握度',
-      '目标掌握度',
-      'Gap',
-      '优先级',
-      '纳入计划',
-      '计划时间',
+      '当前评级',
+      '目标与差距',
+      '提升计划',
     ])
   })
 
-  it('0 is selectable in level dropdown', async () => {
+  it('0 and 5 are offered as per-level rating buttons', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -136,13 +155,19 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
-    const select = screen.getByRole('combobox', { name: /当前等级/ })
-    const options = Array.from((select as HTMLSelectElement).options).map(
-      (o) => o.textContent,
-    )
-    expect(options).toContain('0 · 未接触/无可验证输出')
-    expect(options).toContain('5 · 专家')
+    await screen.findByText('能力评级与提升计划')
+    // Issue #194 P1: 逐档评级按钮保留真实 LEVEL_LABELS 可访问名称。
+    let item: HTMLElement | null = screen.getByText('P01.01.01')
+    while (item && !item.id.startsWith('row-')) {
+      item = item.parentElement
+    }
+    expect(item).toBeTruthy()
+    expect(
+      within(item!).getByRole('button', {
+        name: /0 · 未接触\/无可验证输出/,
+      }),
+    ).toBeTruthy()
+    expect(within(item!).getByRole('button', { name: /5 · 专家/ })).toBeTruthy()
   })
 
   it('priority dropdown conditionally disabled when no gap', async () => {
@@ -159,6 +184,7 @@ describe('AssessmentGapPage', () => {
             current_level: 5,
             standard_target_level: 4,
             target_level: 4,
+            include_in_plan: true,
           },
         ],
       }),
@@ -168,7 +194,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     const prioSelect = screen.getByRole('combobox', {
       name: /优先级 P01.01.01/,
     })
@@ -199,7 +225,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     // Issue #194: single native month input (plan_quarter no longer exists
     // as an input; derived server-side only).
     const month = screen.getByLabelText('计划月份 P01.01.01')
@@ -207,7 +233,50 @@ describe('AssessmentGapPage', () => {
     expect(month).toHaveProperty('type', 'month')
   })
 
-  it('filters work: 未评估, 有Gap, 已纳入计划, 暂缓', async () => {
+  it('M02 V1 prototype: per-level rating buttons in the item row, two independent primary actions', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            standard_target_level: 4,
+            target_level: 4,
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+    // M02 V1 故事合同：两个独立主操作保留。
+    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '生成所选学习任务' }),
+    ).toBeTruthy()
+    // 从唯一 L3 code 文本向上找稳定的能力项容器（id^=row-；未来
+    // article/card 形态保留该 id 即可），不强制表格结构。
+    let item: HTMLElement | null = screen.getByText('P01.01.01')
+    while (item && !item.id.startsWith('row-')) {
+      item = item.parentElement
+    }
+    expect(item).toBeTruthy()
+    // 权威原型 M02 V1：能力项内是逐档评级按钮（真实等级文字），当前评级
+    // 不再是单一下拉选择框。
+    expect(within(item!).getByRole('button', { name: /2 · 基础/ })).toBeTruthy()
+    expect(within(item!).getByRole('button', { name: /4 · 精通/ })).toBeTruthy()
+    expect(
+      within(item!).queryByRole('combobox', { name: /当前等级/ }),
+    ).toBeNull()
+  })
+
+  it('M02 toolbar keeps domain nav + search; scope/status filter layers are removed', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -243,38 +312,19 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
-    const filterSelect = screen.getByTestId('status-filter')
-    fireEvent.change(filterSelect, { target: { value: '未评估' } })
-    await waitFor(() => {
-      expect(screen.queryByText('任务2')).toBeNull()
-      expect(screen.getByText('数据管道')).toBeTruthy()
-    })
-
-    fireEvent.change(filterSelect, { target: { value: '有Gap' } })
-    await waitFor(() => {
-      expect(screen.getByText('任务2')).toBeTruthy()
-    })
-
-    fireEvent.change(filterSelect, { target: { value: '已纳入计划' } })
-    await waitFor(() => {
-      expect(screen.getByText('任务2')).toBeTruthy()
-    })
-
-    fireEvent.change(filterSelect, { target: { value: '暂缓' } })
-    await waitFor(() => {
-      expect(screen.getByText('任务2')).toBeTruthy()
-    })
-
-    fireEvent.change(filterSelect, { target: { value: '全部' } })
-    await waitFor(() => {
-      expect(screen.getByText('数据管道')).toBeTruthy()
-      expect(screen.getByText('任务2')).toBeTruthy()
-    })
+    // Issue #194: 定版原型工具条只有域切换 + 搜索；范围/状态两个额外筛选层
+    // 不在原型中，移除后两条明细默认均可见。
+    expect(screen.queryByTestId('scope-filter')).toBeNull()
+    expect(screen.queryByTestId('status-filter')).toBeNull()
+    expect(screen.getByLabelText('搜索全部能力项')).toBeTruthy()
+    expect(screen.getByLabelText('一级能力域导航')).toBeTruthy()
+    expect(screen.getByText('数据管道')).toBeTruthy()
+    expect(screen.getByText('任务2')).toBeTruthy()
   })
 
-  it('sticky bar counts show unfilled, no-priority, undecided', async () => {
+  it('sticky bar shows only the prototype draft span and the two actions', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -300,9 +350,18 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
-    // Should show "1 项纳入计划但未填优先级"
-    expect(screen.getByText(/纳入计划但未填优先级/)).toBeTruthy()
+    await screen.findByText('能力评级与提升计划')
+    // Issue #194: 原型底部只有「计划草稿：已选 N 项 · 月份状态」一条状态
+    // 与两个独立动作；未完成/未填优先级/待补月份/未决定等额外统计层移除。
+    expect(screen.getByText(/计划草稿：已选 1 项/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '生成所选学习任务' }),
+    ).toBeTruthy()
+    expect(screen.queryByText(/纳入计划但未填优先级/)).toBeNull()
+    expect(screen.queryByText(/项未决定计划/)).toBeNull()
+    expect(screen.queryByText(/项待补计划月份/)).toBeNull()
+    expect(screen.queryByText(/还有 .* 项未完成/)).toBeNull()
   })
 
   it('uses a single L1 view and keeps Gap details in a closed drawer', async () => {
@@ -330,13 +389,13 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     expect(screen.queryByTestId('gap-sidebar')).toBeNull()
     expect(screen.queryByTestId('gap-drawer')).toBeNull()
     const content = screen.getByTestId('assessment-content-area')
     expect(
       within(content).getByRole('heading', {
-        name: '能力自评与 Gap 分析',
+        name: '能力评级与提升计划',
       }),
     ).toBeTruthy()
     expect(within(content).getByTestId('assessment-main-area')).toBeTruthy()
@@ -462,7 +521,7 @@ describe('AssessmentGapPage', () => {
       screen.getByRole('button', { name: '确认创建年度自评草稿' }),
     )
     await waitFor(() => {
-      expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
+      expect(screen.getByText('能力评级与提升计划')).toBeTruthy()
     })
     // Select should show "请选择" for null value
     const selects = screen.getAllByRole('combobox')
@@ -534,7 +593,7 @@ describe('AssessmentGapPage', () => {
         </MemoryRouter>,
       )
       // evidence is no longer a submit gate
-      await screen.findByText('能力自评与 Gap 分析')
+      await screen.findByText('能力评级与提升计划')
       expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (
@@ -572,7 +631,7 @@ describe('AssessmentGapPage', () => {
           <App />
         </MemoryRouter>,
       )
-      await screen.findByText('能力自评与 Gap 分析')
+      await screen.findByText('能力评级与提升计划')
       expect(screen.queryByText('需更新依据')).toBeNull()
       expect(
         (
@@ -604,7 +663,9 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('本次已更新')
+    await waitFor(() => {
+      expect(document.querySelector('[title="本次已更新"]')).toBeTruthy()
+    })
     expect(
       (
         screen.getByRole('button', {
@@ -651,17 +712,21 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('不适用')
-    expect(screen.getByLabelText('评估摘要').textContent).toContain('进度 1/1')
+    // Issue #194: 摘要只保留原型语义指标（能力域/三级能力项/已评级/存在差距/
+    // 已加入计划）；不适用项不计入三级能力项与已评级。
+    expect(screen.getByLabelText('评估摘要').textContent).toContain(
+      '三级能力项 1',
+    )
+    expect(screen.getByLabelText('评估摘要').textContent).toContain('已评级 1')
     expect(
       within(screen.getByLabelText('一级能力域导航')).getByRole('button', {
         name: /P01/,
       }).textContent,
     ).toContain('1/1')
-    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
-    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+    expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
   })
 
-  it('does not block progress or locate when every item is not applicable', async () => {
+  it('does not block progress when every item is not applicable', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -681,8 +746,7 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('不适用')
-    fireEvent.click(screen.getByRole('button', { name: '定位未完成' }))
-    expect(document.querySelector('[id^="row-"]:focus')).toBeNull()
+    expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
   })
 
   it('surfaces an incomplete personal adjustment reason at rating save', async () => {
@@ -715,7 +779,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     const generate = screen.getByRole('button', { name: '生成所选学习任务' })
     // Click the adjustment expand button, enable without a reason
     fireEvent.click(screen.getByText('调整▸'))
@@ -748,7 +812,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     fireEvent.click(screen.getByText('调整▸'))
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
     fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
@@ -783,7 +847,9 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('沿用上次评估')
+    await waitFor(() => {
+      expect(document.querySelector('[title="沿用上次评估"]')).toBeTruthy()
+    })
     expect(
       (
         screen.getByRole('button', {
@@ -848,7 +914,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     // Issue #194 P1：生成前的落草稿只涉及计划字段（三独立动作）
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
@@ -903,13 +969,13 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '4' },
-    })
+    await screen.findByText('能力评级与提升计划')
+    fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
     fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => {
-      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 0')
+      expect(screen.getByLabelText('评估摘要').textContent).toContain(
+        '存在差距 0',
+      )
     })
   })
 
@@ -942,17 +1008,31 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
     fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
     await waitFor(() => {
-      expect(screen.getByLabelText('评估摘要').textContent).toContain('Gap 1')
+      expect(screen.getByLabelText('评估摘要').textContent).toContain(
+        '存在差距 1',
+      )
     })
   })
 
   it('batch fill advances the same revision chain as plan auto-save (#194 P1)', async () => {
     const draft = mockDraft({
-      details: [{ ...mockDraft().details![0], current_level: null }],
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          include_in_plan: true,
+        },
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_code: 'P01.01.02',
+          current_level: null,
+        },
+      ],
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
@@ -977,7 +1057,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 计划变更 → 在途自动保存挂起
     fireEvent.change(
@@ -1042,7 +1122,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     fireEvent.click(screen.getByText('调整▸'))
     fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
@@ -1087,7 +1167,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
     expect(
       screen.getByRole('button', { name: '生成所选学习任务' }),
@@ -1116,7 +1196,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     // M02 V1：三态下拉被单一加入/移出操作取代。
     expect(screen.queryByRole('combobox', { name: /纳入计划/ })).toBeNull()
     const join = screen.getByRole('button', { name: /加入提升计划/ })
@@ -1145,12 +1225,10 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 未保存评级（当前等级 2 → 3）
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '3' },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     // 行内加入 → 自动保存，仅计划字段
     fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
@@ -1161,12 +1239,10 @@ describe('AssessmentGapPage', () => {
     expect(row).not.toHaveProperty('evidence_note')
     // 未保存评级保留在本地
     expect(
-      (
-        screen.getByRole('combobox', {
-          name: /当前等级/,
-        }) as HTMLSelectElement
-      ).value,
-    ).toBe('3')
+      screen
+        .getByRole('button', { name: /3 · 熟练/ })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
   })
 
   it('plan auto-save failure keeps input and shows a Chinese retry message (#194)', async () => {
@@ -1190,7 +1266,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
     fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     await waitFor(() => {
@@ -1243,7 +1319,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 优先级变更触发在途自动保存
     fireEvent.change(
@@ -1271,6 +1347,7 @@ describe('AssessmentGapPage', () => {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
+          include_in_plan: true,
         },
       ],
     })
@@ -1284,17 +1361,14 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 评级变更归脏集合；计划变更入队自动保存（两动作互不夹带）
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '3' },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
       { target: { value: '高' } },
     )
-    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
       target: { value: '2026-05' },
     })
@@ -1341,6 +1415,7 @@ describe('AssessmentGapPage', () => {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
+          include_in_plan: true,
         },
       ],
     })
@@ -1355,7 +1430,7 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 优先级变更触发自动保存 → 409：中文提示，输入与待保存计划变更均保留
     fireEvent.change(
@@ -1394,6 +1469,7 @@ describe('AssessmentGapPage', () => {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
+          include_in_plan: true,
         },
       ],
     })
@@ -1410,17 +1486,14 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 未保存评级：当前等级改 3 但不点保存
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '3' },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
       { target: { value: '高' } },
     )
-    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
       target: { value: '2026-05' },
     })
@@ -1448,6 +1521,7 @@ describe('AssessmentGapPage', () => {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
+          include_in_plan: true,
         },
       ],
     })
@@ -1464,17 +1538,14 @@ describe('AssessmentGapPage', () => {
         <App />
       </MemoryRouter>,
     )
-    await screen.findByText('能力自评与 Gap 分析')
+    await screen.findByText('能力评级与提升计划')
 
     // 未保存评级：当前等级 2 → 3；计划字段一并修改
-    fireEvent.change(screen.getByRole('combobox', { name: /当前等级/ }), {
-      target: { value: '3' },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
       { target: { value: '高' } },
     )
-    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
       target: { value: '2026-05' },
     })
@@ -1486,12 +1557,10 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.calls[0][1][0]).not.toHaveProperty('target_adjusted')
     // 本地未保存评级与计划选择、月份均保留
     expect(
-      (
-        screen.getByRole('combobox', {
-          name: /当前等级/,
-        }) as HTMLSelectElement
-      ).value,
-    ).toBe('3')
+      screen
+        .getByRole('button', { name: /3 · 熟练/ })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
     expect(
       (
         screen.getByRole('combobox', {
@@ -1852,7 +1921,7 @@ describe('R2-B filter/search', () => {
     ...o,
   })
 
-  it('未评估 filter shows null-level items', async () => {
+  it('shows unassessed items by default without a status filter layer', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -1905,14 +1974,116 @@ describe('R2-B filter/search', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByText('能力自评与 Gap 分析')).toBeTruthy()
+      expect(screen.getByText('能力评级与提升计划')).toBeTruthy()
     })
-    fireEvent.change(screen.getByTestId('status-filter'), {
-      target: { value: '未评估' },
-    })
+    // Issue #194: 状态筛选层已按定版原型移除——未评估项默认可见，
+    // 无需筛选即可定位。
+    expect(screen.queryByTestId('status-filter')).toBeNull()
     await waitFor(() => {
       expect(screen.getByText('P01.01.02')).toBeTruthy()
     })
+    expect(screen.getByText('数据管道基础')).toBeTruthy()
+  })
+})
+
+describe('M02 prototype element inventory (issue #194)', () => {
+  beforeEach(() => {
+    stubAuthAndYear()
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('renders the prototype header, five metrics, toolbar and two bottom actions', async () => {
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [
+          {
+            ...mockDraft().details![0],
+            current_level: 2,
+            include_in_plan: true,
+            plan_month: '2026-05',
+            member_priority: '高',
+            scope_type: 'current_required',
+            standard_job_level_snapshot: 'P4',
+          },
+          {
+            ...mockDraft().details![0],
+            id: 2,
+            l3_code: 'P01.01.02',
+            l3_name: '任务2',
+            current_level: null,
+            scope_type: 'target_progressive',
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: '能力评级与提升计划' })
+    // 定版原型页头说明
+    expect(
+      screen.getByText(
+        '逐项保存评级；选择存在差距的提升项，补充计划月份后再显式生成任务。',
+      ),
+    ).toBeTruthy()
+    const header = screen
+      .getByRole('heading', { name: '能力评级与提升计划' })
+      .closest('header')
+    expect(header).toBeTruthy()
+    expect(within(header!).getByText('能力成长')).toBeTruthy()
+    expect(screen.getByText('计划草稿自动保存')).toBeTruthy()
+    // R6: 年度/版本/内部范围和 P4–P8 长要求不再占用默认主层级；直达
+    // 路由与兼容修复另行保留。
+    expect(screen.queryByTestId('scope-header')).toBeNull()
+    expect(screen.queryByRole('button', { name: '查看 Gap 摘要' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '查看评估历史' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
+    expect(screen.queryByText('职级要求 P4–P8')).toBeNull()
+    // 摘要只保留原型语义的五项指标，真实计数（不伪造原型示例数字）
+    const summary = screen.getByLabelText('评估摘要')
+    expect(summary.textContent).toContain('能力域')
+    expect(summary.textContent).toContain('三级能力项 2')
+    expect(summary.textContent).toContain('已评级 1')
+    expect(summary.textContent).toContain('存在差距 1')
+    expect(summary.textContent).toContain('已加入计划 1')
+    // 原型没有的暂缓/季度统计移除
+    expect(summary.textContent).not.toContain('暂缓')
+    expect(summary.textContent).not.toContain('Q1')
+    // 域切换与搜索按原型位置组织；额外筛选层移除
+    expect(screen.queryByTestId('scope-filter')).toBeNull()
+    expect(screen.queryByTestId('status-filter')).toBeNull()
+    expect(screen.getByLabelText('搜索全部能力项')).toBeTruthy()
+    expect(screen.getByLabelText('一级能力域导航')).toBeTruthy()
+    expect(screen.getByTestId('assessment-navigation-toolbar')).toBeTruthy()
+    // 四区能力项行、行内加入/移出与计划月份
+    expect(screen.getAllByTestId('assessment-table').length).toBeGreaterThan(0)
+    expect(
+      screen.getByRole('button', { name: '移出提升计划 P01.01.01' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '加入提升计划 P01.01.02' }),
+    ).toBeTruthy()
+    expect(screen.getByLabelText('计划月份 P01.01.01')).toBeTruthy()
+    expect(screen.getByText('P01.01.01 · 当前职级必备')).toBeTruthy()
+    expect(screen.getByText('P01.01.02 · 目标职级进阶')).toBeTruthy()
+    expect(screen.getByText('目标：4 · P4 标准')).toBeTruthy()
+    expect(screen.getByText('Gap：2')).toBeTruthy()
+    // 优先级与月份同属已加入的计划草稿；未加入行不占用默认能力项密度。
+    expect(screen.getByLabelText('优先级 P01.01.01')).toBeTruthy()
+    expect(screen.queryByLabelText('优先级 P01.01.02')).toBeNull()
+    // 底部两个独立动作
+    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '生成所选学习任务' }),
+    ).toBeTruthy()
   })
 })
 

@@ -30,28 +30,56 @@ for (const viewport of VIEWPORTS) {
         )
         .toBeTruthy()
       await expect(page.getByRole('alert')).toHaveCount(0)
+      // Issue #194 R5：定版原型 M03 V1 标题/说明。
       await expect(
-        page.getByRole('heading', { name: '年度成长计划' }),
+        page.getByRole('heading', { name: '月度计划时间轴' }),
       ).toBeVisible()
       await expect(page.getByTestId('plan-item')).not.toHaveCount(0)
     })
 
     test('annual plan and learning-task semantics', async ({ page }) => {
+      // Issue #194 R5：定版原型 M03 V1 摘要为任务总数/已完成/进行中/逾期；
+      // 原型没有的三筛选区（状态/优先级/能力域）不得出现。
       const summary = page.getByTestId('plan-summary')
-      await expect(summary).toContainText('总体进度')
-      await expect(summary).toContainText('预计时长')
-      await expect(summary).toContainText('实际时长')
+      await expect(summary).toContainText('任务总数')
       await expect(summary).toContainText('已完成')
+      await expect(summary).toContainText('进行中')
+      await expect(summary).toContainText('逾期')
+      await expect(summary).not.toContainText('总体进度')
+      await expect(summary).not.toContainText('预计时长')
+      await expect(page.getByLabel('状态筛选')).toHaveCount(0)
+      await expect(page.getByLabel('优先级筛选')).toHaveCount(0)
+      await expect(page.getByLabel('能力域筛选')).toHaveCount(0)
 
       const timeline = page.getByTestId('month-timeline')
-      await expect(timeline.getByRole('button')).toHaveCount(12)
-      await expect(timeline).toContainText('1 月')
-      await expect(timeline).toContainText('12 月')
+      // Issue #194 P1: 12 月横向筛选条由权威原型 M03 V1 纵向月度时间轴
+      // 合法替代——仅有计划项的月份渲染月份 marker（不虚构空月业务项），
+      // marker 为带 aria-pressed 的按钮（点击切换该月过滤）。
+      const markers = timeline.locator('button[aria-pressed]')
+      await expect(markers.first()).toBeVisible()
+      await expect(timeline).toContainText('月')
+      await expect(timeline).toContainText('项')
 
       const planItems = page.getByTestId('plan-item')
       await expect.poll(async () => planItems.count()).toBeGreaterThan(0)
-      await expect(page.getByText('二级能力标准 → 三级达成路径')).toBeVisible()
-      await expect(page.getByText('掌握度提升')).toBeVisible()
+      // Issue #194 P1 复审修正：全局表头由权威原型 M03 V1 月卡头
+      // （标题+项数/状态摘要/aria-expanded）与时间轴节点 i（aria-hidden）
+      // 替代。仅结构断言；截图基线不在本轮重新生成。
+      const monthHeads = timeline.getByRole('button', { name: /月任务/ })
+      await expect(monthHeads.first()).toBeVisible()
+      await expect(monthHeads.first()).toHaveAttribute('aria-expanded', 'true')
+      await expect(
+        timeline.locator('button i[aria-hidden="true"]').first(),
+      ).toBeAttached()
+
+      // Issue #194 R5：展开月卡内每个任务行有且仅有一个可访问「进入任务」
+      // 按钮（外层行不再以同名 button 暴露）；行身份只显示 L3 编码/名称。
+      const enterButtons = timeline.getByRole('button', { name: '进入任务' })
+      await expect(enterButtons.first()).toBeVisible()
+      await expect(enterButtons).toHaveCount(await planItems.count())
+      await expect(
+        timeline.getByTestId('plan-header').first(),
+      ).not.toHaveAttribute('role', 'button')
     })
 
     test('annual plan screenshot', async ({ page }) => {
@@ -67,7 +95,7 @@ for (const viewport of VIEWPORTS) {
       await page.goto('/growth/tasks')
       await expect(page).toHaveURL(/\/growth\/annual-plan/)
       await expect(
-        page.getByRole('heading', { name: '年度成长计划' }),
+        page.getByRole('heading', { name: '月度计划时间轴' }),
       ).toBeVisible()
     })
   })

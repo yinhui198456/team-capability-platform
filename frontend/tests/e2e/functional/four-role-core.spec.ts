@@ -41,7 +41,7 @@ test.describe('four-role core read paths', () => {
     await page.goto('/capability/assessment')
 
     await expect(
-      page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
     ).toBeVisible()
     await expect(page.getByText('数据范围：本人')).toBeVisible()
   })

@@ -145,13 +145,12 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(search).toBeFocused()
   })
 
-  test('Gap Drawer is on demand and L2 batch fill requires confirmation', async ({
+  test('retired Gap Drawer stays absent and L2 batch fill requires confirmation', async ({
     page,
   }) => {
-    await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
-    await page.getByRole('button', { name: '查看 Gap 摘要' }).click()
-    await expect(page.getByTestId('gap-drawer')).toBeVisible()
-    await page.getByRole('button', { name: '关闭' }).click()
+    await expect(
+      page.getByRole('button', { name: '查看 Gap 摘要' }),
+    ).toHaveCount(0)
 
     const batch = page.getByRole('button', { name: '批量填 2' }).first()
     if (await batch.isVisible()) {
@@ -163,24 +162,28 @@ test.describe('Issue #50 assessment gap workflow', () => {
   test('unassessed level 3 is visibly incomplete and cannot enter the plan', async ({
     page,
   }) => {
-    const current = page.getByRole('combobox', { name: /当前等级/ }).first()
+    // Issue #194 P1: 当前评级为逐档按钮（M02 V1 原型），选中态以
+    // aria-pressed 表达；点击已选中按钮清空评级。
+    const rating = page.locator('[aria-label^="当前等级"]').first()
     // the draft is shared across tests — clear the row first so the
     // unfilled state is deterministic
-    if ((await current.inputValue()) !== '') await current.selectOption('')
-    const row = current.locator('xpath=ancestor::tr')
+    if ((await rating.locator('button[aria-pressed="true"]').count()) > 0) {
+      await rating.locator('button[aria-pressed="true"]').first().click()
+    }
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
     await expect(row.getByText('需评估等级')).toBeVisible()
     // Issue #194: 提交自评已退役；未评估项无法纳入计划草稿（前置校验）。
     // M02 V1：行内加入/移出按钮在未评估时禁用（gap 未知，无加入资格）。
     const planButton = row.getByRole('button', { name: /加入提升计划/ })
     await expect(planButton).toBeDisabled()
-    await current.selectOption('3')
+    await rating.getByRole('button', { name: /^3 ·/ }).click()
     await expect(row.getByText('需评估等级')).toHaveCount(0)
-    await current.selectOption('')
+    await rating.locator('button[aria-pressed="true"]').first().click()
     await expect(row.getByText('需评估等级')).toBeVisible()
     await expect(planButton).toBeDisabled()
   })
 
-  test('excludes N/A items from progress and unfinished-item location', async ({
+  test('excludes N/A items from progress without a retired locator control', async ({
     page,
   }) => {
     const draft = await fillAllApplicable(page)
@@ -192,8 +195,9 @@ test.describe('Issue #50 assessment gap workflow', () => {
       `进度 ${applicable.length}/${applicable.length}`,
     )
     await expect(summary).toContainText('未评估 0')
-    await page.getByRole('button', { name: '定位未完成' }).click()
-    await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '定位未完成' })).toHaveCount(
+      0,
+    )
   })
 
   test('personal adjustment requires a valid target and reason; cancel clears errors', async ({
@@ -204,9 +208,11 @@ test.describe('Issue #50 assessment gap workflow', () => {
     const search = page.getByLabel('搜索全部能力项')
     await search.fill(code)
     await search.press('Enter')
-    const current = page.getByLabel(`当前等级 ${code}`)
-    if ((await current.inputValue()) === '') await current.selectOption('1')
-    const row = current.locator('xpath=ancestor::tr')
+    const rating = page.getByLabel(`当前等级 ${code}`)
+    if ((await rating.locator('button[aria-pressed="true"]').count()) === 0) {
+      await rating.getByRole('button', { name: /^1 ·/ }).click()
+    }
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
     await row.getByRole('button', { name: '调整▸' }).click()
     const enable = page.getByLabel(`启用个人调整 ${code}`)
     await enable.check()
@@ -295,11 +301,12 @@ test.describe('Issue #50 assessment gap workflow', () => {
     page,
   }) => {
     test.setTimeout(120_000)
-    const firstCurrent = page
-      .getByRole('combobox', { name: /当前等级/ })
-      .first()
-    if ((await firstCurrent.inputValue()) === '') {
-      await firstCurrent.selectOption('1')
+    // Issue #194 P1: 逐档评级按钮；未选中任何档位视为未评估。
+    const firstRating = page.locator('[aria-label^="当前等级"]').first()
+    if (
+      (await firstRating.locator('button[aria-pressed="true"]').count()) === 0
+    ) {
+      await firstRating.getByRole('button', { name: /^1 ·/ }).click()
     }
     for (const domain of await page
       .getByRole('navigation', { name: '一级能力域导航' })
@@ -347,23 +354,30 @@ test.describe('Issue #50 assessment gap workflow', () => {
     // 批量填写与 gap 修正均已保存（无 dirty 行）：先通过可见控件制造
     // 一个合法脏变更（applicable 行的当前等级 +1），再保存验证 UI 提示
     // 与持久化。
-    const combos = page.getByRole('combobox', { name: /当前等级/ })
-    const comboCount = await combos.count()
+    const ratings = page.locator('[aria-label^="当前等级"]')
+    const ratingCount = await ratings.count()
     let ratingIndex = -1
-    for (let i = 0; i < comboCount; i += 1) {
-      if (await combos.nth(i).isEnabled()) {
+    for (let i = 0; i < ratingCount; i += 1) {
+      if (await ratings.nth(i).locator('button').first().isEnabled()) {
         ratingIndex = i
         break
       }
     }
     expect(ratingIndex).toBeGreaterThanOrEqual(0)
-    const rating = combos.nth(ratingIndex)
-    const row = rating.locator('xpath=ancestor::tr')
+    const rating = ratings.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
     const rowId = await row.getAttribute('id')
     expect(rowId).toMatch(/^row-\d+$/)
-    const previous = Number(await rating.inputValue())
+    const previous = Number(
+      (await rating
+        .locator('button[aria-pressed="true"]')
+        .first()
+        .textContent())!.split(' ')[0],
+    )
     expect(previous).toBeGreaterThanOrEqual(0)
-    await rating.selectOption(String(previous + 1))
+    await rating
+      .getByRole('button', { name: new RegExp(`^${previous + 1} ·`) })
+      .click()
     await expect(
       page.getByRole('button', { name: '保存能力评级' }),
     ).toBeVisible()
@@ -407,10 +421,13 @@ test.describe('Issue #50 assessment gap workflow', () => {
         const mainRect = main
           ? visible(main.getBoundingClientRect())
           : { width: 0, height: 0 }
-        const rows = [...content.querySelectorAll('tbody tr')].filter((row) => {
-          const rect = row.getBoundingClientRect()
-          return rect.top >= 0 && rect.bottom <= window.innerHeight
-        }).length
+        // Issue #194 P1: 能力项行容器为 div[id^="row-"]（原七列表格已退役）。
+        const rows = [...content.querySelectorAll('[id^="row-"]')].filter(
+          (row) => {
+            const rect = row.getBoundingClientRect()
+            return rect.top >= 0 && rect.bottom <= window.innerHeight
+          },
+        ).length
         return {
           contentArea: contentRect.width * contentRect.height,
           tableArea: mainRect.width * mainRect.height,
@@ -421,6 +438,117 @@ test.describe('Issue #50 assessment gap workflow', () => {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(viewport!.width)
+  })
+
+  test('768 viewport: M02 same-item controls measured together at scrollLeft=0 without horizontal scroll', async ({
+    page,
+  }) => {
+    // 权威原型 M02 V1 在窄宽做响应式重排；横向滚动桌面表格不是合法替代。
+    await page.setViewportSize({ width: 768, height: 900 })
+    const draft = await currentDraft(page)
+    const target = draft.details.find(
+      (detail) =>
+        detail.standard_target_applicable !== false && detail.id != null,
+    )!
+    const patched = await page.request.patch(
+      `/api/assessments/${draft.id}/draft`,
+      {
+        data: {
+          expected_revision: draft.revision,
+          details: [
+            {
+              l3_node_id: target.l3_node_id,
+              l3_code: target.l3_code,
+              current_level: 1,
+              member_priority: '高',
+              include_in_plan: true,
+              plan_month: '2026-06',
+            },
+          ],
+        },
+      },
+    )
+    expect(patched.ok()).toBeTruthy()
+    await page.reload()
+    await expect(page.getByLabel('评估摘要')).toBeVisible({ timeout: 15000 })
+    // 先定位稳定的能力项容器（id^=row-；未来 article/card 保留该 id），
+    // 不要求 table 结构存在。
+    const row = page.locator(`#row-${target.id}`)
+    await expect(row).toBeVisible()
+    // 垂直方向单独处理：只做纵向滚动让目标行可见，禁止触发横向滚动。
+    await row.evaluate((element) => {
+      const scroller = element.closest('[data-testid="assessment-main-area"]')
+      if (scroller) {
+        scroller.scrollBy({
+          top:
+            element.getBoundingClientRect().top -
+            scroller.getBoundingClientRect().top -
+            8,
+          behavior: 'auto',
+        })
+      } else {
+        window.scrollBy({
+          top: element.getBoundingClientRect().top - 80,
+          behavior: 'auto',
+        })
+      }
+    })
+    // 测量前提：scrollLeft 保持 0，不得靠横向滚动逐一暴露右侧控件。
+    const scrollLeft = await page.evaluate(() => {
+      const element = document.querySelector(
+        '[data-testid="assessment-main-area"]',
+      )
+      return element ? element.scrollLeft : 0
+    })
+    expect(scrollLeft).toBe(0)
+    const code = target.l3_code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const controls = [
+      // 当前评级：item 内按稳定 aria-label 前缀定位，兼容旧 select 与
+      // 未来分段容器/按钮。
+      row.locator('[aria-label^="当前等级"]').first(),
+      page.getByLabel(`优先级 ${target.l3_code}`),
+      page.getByRole('button', { name: new RegExp(`提升计划 ${code}`) }),
+      page.getByLabel(`计划月份 ${target.l3_code}`),
+      page.getByRole('button', { name: '生成所选学习任务' }),
+    ]
+    const viewportWidth = await page.evaluate(() => window.innerWidth)
+    // 同一能力项的五个控件同时测量水平边界与裁切祖先（整数像素判定）。
+    for (const control of controls) {
+      const box = await control.boundingBox()
+      expect(box).not.toBeNull()
+      expect(Math.floor(box!.x)).toBeGreaterThanOrEqual(0)
+      expect(Math.ceil(box!.x + box!.width)).toBeLessThanOrEqual(viewportWidth)
+      const clipping = await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        let left = Math.max(0, rect.left)
+        let right = Math.min(window.innerWidth, rect.right)
+        let node = element.parentElement
+        while (node) {
+          const overflowX = window.getComputedStyle(node).overflowX
+          if (/(hidden|auto|scroll)/.test(overflowX)) {
+            const clip = node.getBoundingClientRect()
+            left = Math.max(left, clip.left)
+            right = Math.min(right, clip.right)
+          }
+          node = node.parentElement
+        }
+        return {
+          visibleWidth: Math.max(0, right - left),
+          fullWidth: rect.width,
+        }
+      })
+      expect(Math.round(clipping.visibleWidth)).toBe(
+        Math.round(clipping.fullWidth),
+      )
+    }
+    // 主区域自身不得以横向滚动承载表格（真实横向溢出判定）。
+    const overflow = await page
+      .getByTestId('assessment-main-area')
+      .evaluate((element) => ({
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+      }))
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
   })
 
   test('sparse PATCH preserves a hidden L1 detail', async ({ page }) => {
@@ -683,23 +811,30 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
     await expect(page.getByLabel('评估摘要')).toBeVisible()
     // 与 first-evaluation 同根因：无 dirty 行时保存不产生提示。先通过
     // 可见控件制造一个合法脏变更（applicable 行当前等级 +1）再保存。
-    const combos = page.getByRole('combobox', { name: /当前等级/ })
-    const comboCount = await combos.count()
+    const ratings = page.locator('[aria-label^="当前等级"]')
+    const ratingCount = await ratings.count()
     let ratingIndex = -1
-    for (let i = 0; i < comboCount; i += 1) {
-      if (await combos.nth(i).isEnabled()) {
+    for (let i = 0; i < ratingCount; i += 1) {
+      if (await ratings.nth(i).locator('button').first().isEnabled()) {
         ratingIndex = i
         break
       }
     }
     expect(ratingIndex).toBeGreaterThanOrEqual(0)
-    const rating = combos.nth(ratingIndex)
-    const row = rating.locator('xpath=ancestor::tr')
+    const rating = ratings.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
     const rowId = await row.getAttribute('id')
     expect(rowId).toMatch(/^row-\d+$/)
-    const priorLevel = Number(await rating.inputValue())
+    const priorLevel = Number(
+      (await rating
+        .locator('button[aria-pressed="true"]')
+        .first()
+        .textContent())!.split(' ')[0],
+    )
     expect(priorLevel).toBeGreaterThanOrEqual(0)
-    await rating.selectOption(String(priorLevel + 1))
+    await rating
+      .getByRole('button', { name: new RegExp(`^${priorLevel + 1} ·`) })
+      .click()
     await page.getByRole('button', { name: '保存能力评级' }).click()
     await expect(page.getByText('草稿已保存')).toBeVisible({ timeout: 15000 })
 

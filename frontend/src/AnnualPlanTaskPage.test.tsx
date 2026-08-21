@@ -195,7 +195,12 @@ async function renderMember(
     </MemoryRouter>,
   )
   await waitFor(() => {
-    expect(screen.getByRole('heading', { name: '年度成长计划' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '月度计划时间轴' })).toBeTruthy()
+  })
+  // 默认展开首个非空月由数据到达后的 effect 应用；等组内计划项真正渲染，
+  // 避免后续同步断言落在默认展开应用前的那一帧。
+  await waitFor(() => {
+    expect(screen.getAllByTestId('plan-header').length).toBeGreaterThan(0)
   })
 }
 
@@ -213,12 +218,18 @@ describe('AnnualPlanTaskPage display', () => {
 
   it('renders page with plan items', async () => {
     await renderMember([makeItem({})])
-    expect(
-      screen.getByText((content) => content.includes('P01.01.01')),
-    ).toBeTruthy()
-    expect(screen.getByText('二级能力标准 → 三级达成路径')).toBeTruthy()
-    expect(screen.getByText('掌握度提升')).toBeTruthy()
-    expect(screen.getByText('计划时长')).toBeTruthy()
+    // 默认展开由数据到达后的 effect 应用，需等待首个非空月展开。
+    await waitFor(() => {
+      expect(
+        screen.getByText((content) => content.includes('P01.01.01')),
+      ).toBeTruthy()
+    })
+    // Issue #194 P1 复审修正：原型 M03 V1 月卡头（标题+项数+真实状态摘要+
+    // aria-expanded）替代全局表头。
+    const head = screen.getByRole('button', { name: /3 月任务/ })
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+    expect(head.textContent).toContain('1 项')
+    expect(head.textContent).toContain('进行中 1')
   })
 
   it('month filter shows only selected month items', async () => {
@@ -231,14 +242,16 @@ describe('AnnualPlanTaskPage display', () => {
         target_month: 4,
       }),
     ])
-    const btns = screen.getAllByRole('button', { name: /3 月/ })
+    // 复审修正后语义：默认展开第一个非空月（3 月）；点击其它月份只展开
+    // 目标月。点击 4 月 → 只见 4 月组内项。
+    const btns = screen.getAllByRole('button', { name: /4 月/ })
     fireEvent.click(
-      btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
+      btns.find((b) => b.textContent?.startsWith('4 月')) || btns[0],
     )
     await waitFor(() => {
-      expect(screen.getByText('P01.01.01 · 任务A')).toBeTruthy()
+      expect(screen.getByText('P02.01.01 · 任务B')).toBeTruthy()
     })
-    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
+    expect(screen.queryByText('P01.01.01 · 任务A')).toBeNull()
   })
 
   it('M03: plan_month is the canonical month — filters and shows YYYY-MM', async () => {
@@ -263,29 +276,25 @@ describe('AnnualPlanTaskPage display', () => {
         target_month: 5,
       }),
     ])
-    // plan_month wins over target_month: B belongs to April, not March.
-    const btns = screen.getAllByRole('button', { name: /3 月/ })
-    fireEvent.click(
-      btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
-    )
-    await waitFor(() => {
-      expect(screen.getByText('P01.01.01 · 任务A')).toBeTruthy()
-    })
-    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
-    // Row shows the YYYY-MM plan_month; legacy rows fall back to 'N 月'.
-    const rows = screen.getAllByTestId('plan-header')
-    expect(within(rows[0]).getByText('2026-03')).toBeTruthy()
-    // Timeline count derives from plan_month too.
+    // Timeline count derives from plan_month (B is April's only item).
     const april = screen
       .getAllByRole('button', { name: /4 月/ })
       .find((b) => b.textContent?.startsWith('4 月'))
     expect(april?.textContent).toContain('1 项')
-    // Without a selected month, the legacy fallback row renders '5 月'.
-    fireEvent.click(
-      btns.find((b) => b.textContent?.startsWith('3 月')) || btns[0],
-    )
+    // 复审修正后语义：默认展开按时间排序的第一个非空月（3 月）。
+    // plan_month wins over target_month: B 的 target_month=3 但 plan_month
+    // 属 4 月，故默认视角下 B 不可见（4 月组收起）。
     await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(3)
+      expect(screen.getByText('P01.01.01 · 任务A')).toBeTruthy()
+    })
+    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
+    // Row shows the YYYY-MM plan_month.
+    const rows = screen.getAllByTestId('plan-header')
+    expect(within(rows[0]).getByText('2026-03')).toBeTruthy()
+    // 无 plan_month 的遗留项 C 按 target_month 归入 5 月组，卡头常驻；
+    // 点击展开后，其行回退显示 '5 月'。
+    fireEvent.click(screen.getByRole('button', { name: /5 月任务/ }))
+    await waitFor(() => {
       const legacy = screen
         .getAllByTestId('plan-header')
         .find((r) => r.textContent?.includes('任务C'))
@@ -293,74 +302,127 @@ describe('AnnualPlanTaskPage display', () => {
     })
   })
 
-  it('shows an estimated-hour range without coercing it to zero', async () => {
-    await renderMember(
-      [
-        makeItem({
-          estimated_hours: '4–6',
-          estimated_hours_parsed: {
-            raw: '4–6',
-            min_hours: 4,
-            max_hours: 6,
-            is_valid: true,
-            is_range: true,
-          },
-        }),
-      ],
-      [],
-      {
-        planExtra: {
-          estimated_hours_summary: {
-            min_hours: 4,
-            max_hours: 6,
-            has_values: true,
-            has_unparsed: false,
-          },
-        },
-      },
-    )
-    await waitFor(() => expect(screen.getAllByText('4–6 h')).toHaveLength(2))
+  it('M03 prototype: plan items form vertical month groups, not a filter strip plus flat list', async () => {
+    await renderMember([
+      makeItem({
+        id: 1,
+        l3_name: '任务A',
+        plan_month: '2026-03',
+        target_month: 3,
+      }),
+      makeItem({
+        id: 2,
+        l3_code: 'P02.01.01',
+        l3_name: '任务B',
+        plan_month: '2026-04',
+        target_month: 4,
+      }),
+    ])
+    // 权威原型 M03 V1 的月度时间轴按月份纵向分组：月份 marker 与该月计划
+    // 项同组。从计划项向外找最小包含子树——含该月 marker 且不含其它月份的
+    // 计划项。横向 12 月筛选按钮 + 扁平列表无法满足：marker 在列表之外，
+    // 任何同时覆盖 marker 与计划项的子树必然同时包含两个月份的计划项。
+    // 复审修正后同一时刻仅一个月卡展开，故按月依次验证。
+    const findMonthGroup = (
+      item: HTMLElement,
+      other: HTMLElement | null,
+      marker: RegExp,
+    ): HTMLElement | null => {
+      let node: HTMLElement | null = item
+      while (node) {
+        if (
+          (!other || !node.contains(other)) &&
+          marker.test(node.textContent ?? '')
+        ) {
+          return node
+        }
+        node = node.parentElement
+      }
+      return null
+    }
+    // 默认展开的 3 月组：marker 与计划项 A 同组。
+    const itemA = screen.getByText('P01.01.01 · 任务A')
+    const marchGroup = findMonthGroup(itemA, null, /3\s*月/)
+    expect(marchGroup).not.toBeNull()
+    expect(within(marchGroup!).getByText('P01.01.01 · 任务A')).toBeTruthy()
+    // 切换到 4 月：3 月组收起（A 不在 DOM），marker 与计划项 B 同组。
+    fireEvent.click(screen.getByRole('button', { name: /4 月任务/ }))
+    await waitFor(() => {
+      expect(screen.getByText('P02.01.01 · 任务B')).toBeTruthy()
+    })
+    expect(screen.queryByText('P01.01.01 · 任务A')).toBeNull()
+    const itemB = screen.getByText('P02.01.01 · 任务B')
+    const aprilGroup = findMonthGroup(itemB, itemA, /4\s*月/)
+    expect(aprilGroup).not.toBeNull()
+    expect(within(aprilGroup!).getByText('P02.01.01 · 任务B')).toBeTruthy()
   })
 
+  // Issue #194 P1 复审修正：最小组件回归——默认仅展开按时间排序的第一个
+  // 非空月；点击其它月只展开目标月；点击当前月收起全部；卡头与节点常驻。
+  // null=全展开的旧状态解释与旧的预过滤简化实现在此均失败。
+  it('M03 regression: month card heads persist; only the selected month expands', async () => {
+    await renderMember([
+      makeItem({
+        id: 1,
+        l3_name: '任务A',
+        plan_month: '2026-03',
+        target_month: 3,
+      }),
+      makeItem({
+        id: 2,
+        l3_code: 'P02.01.01',
+        l3_name: '任务B',
+        plan_month: '2026-04',
+        target_month: 4,
+      }),
+    ])
+    // 锚定「N 月任务」卡头，避免误匹配头部「继续本月任务」动作按钮。
+    const heads = () => screen.getAllByRole('button', { name: /^\d+ 月任务/ })
+    const marchHead = () => screen.getByRole('button', { name: /3 月任务/ })
+    const aprilHead = () => screen.getByRole('button', { name: /4 月任务/ })
+    const assertChrome = () => {
+      // 所有卡头与时间轴节点 i（aria-hidden）始终存在。
+      expect(heads()).toHaveLength(2)
+      for (const head of heads()) {
+        expect(head.textContent).toContain('（1 项）')
+      }
+      expect(document.querySelectorAll('i[aria-hidden="true"]')).toHaveLength(2)
+    }
+    // 初始：第一月（3 月）展开、第二月（4 月）收起，只见第一月组内项。
+    assertChrome()
+    await waitFor(() => {
+      expect(marchHead().getAttribute('aria-expanded')).toBe('true')
+    })
+    expect(aprilHead().getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByText('P01.01.01 · 任务A')).toBeTruthy()
+    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
+    // 切换到 4 月：反向。
+    fireEvent.click(aprilHead())
+    await waitFor(() => {
+      expect(screen.getByText('P02.01.01 · 任务B')).toBeTruthy()
+    })
+    assertChrome()
+    expect(marchHead().getAttribute('aria-expanded')).toBe('false')
+    expect(aprilHead().getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByText('P01.01.01 · 任务A')).toBeNull()
+    // 再点 4 月：全部收起——两者均 false，两组计划项均不可见。
+    fireEvent.click(aprilHead())
+    await waitFor(() => {
+      expect(aprilHead().getAttribute('aria-expanded')).toBe('false')
+    })
+    assertChrome()
+    expect(marchHead().getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('P01.01.01 · 任务A')).toBeNull()
+    expect(screen.queryByText('P02.01.01 · 任务B')).toBeNull()
+  })
+
+  // Issue #194: 定版原型 M03 V1 摘要改为任务总数/已完成/进行中/逾期，任务行
+  // 只含编码/名称·说明·状态(+进度)·计划月份·进入任务——预计时长列与预计时长
+  // 汇总卡随旧布局移除。预计时长解析/格式化合同由 estimatedHours.test.ts 与
+  // 仪表盘展示承接，此处不再重复断言旧展示位。
   it('falls back to l3_code when l3_name is missing', async () => {
     await renderMember([makeItem({ l3_name: undefined })])
     expect(screen.getByText('P01.01.01')).toBeTruthy()
-  })
-
-  it('shows unparsed warning when estimated hours summary has unparsed text', async () => {
-    await renderMember(
-      [
-        makeItem({
-          estimated_hours: '约半天',
-          estimated_hours_parsed: {
-            raw: '约半天',
-            min_hours: null,
-            max_hours: null,
-            is_valid: false,
-            is_range: false,
-          },
-        }),
-      ],
-      [],
-      {
-        planExtra: {
-          estimated_hours_summary: {
-            min_hours: 0,
-            max_hours: 0,
-            has_values: false,
-            has_unparsed: true,
-          },
-        },
-      },
-    )
-    await waitFor(() =>
-      expect(
-        screen.getByText((content) =>
-          content.includes('部分计划项耗时为文本，未计入汇总'),
-        ),
-      ).toBeTruthy(),
-    )
-    expect(screen.getByText('约半天')).toBeTruthy()
   })
 })
 
@@ -1038,22 +1100,174 @@ describe('learning task execution (v0010)', () => {
     },
   )
 
-  it('filters plan items by status', async () => {
+  it('M03 prototype inventory: title, four metrics, continue entry, task rows, no filter layer', async () => {
     await renderMember(
       [
-        makeItem({ id: 1, status: '进行中' }),
-        makeItem({ id: 2, l3_code: 'P02.01.01', status: '已完成' }),
+        makeItem({
+          id: 1,
+          status: '进行中',
+          plan_month: '2026-03',
+          target_month: 3,
+          learning_task_content: '完成管道设计',
+          expected_output: '设计文档',
+          estimated_hours: '24',
+          estimated_hours_parsed: {
+            raw: '24',
+            min_hours: 24,
+            max_hours: 24,
+            is_valid: true,
+            is_range: false,
+          },
+        }),
+        makeItem({
+          id: 2,
+          l3_code: 'P02.01.01',
+          l3_name: '任务B',
+          status: '延期',
+          plan_month: '2026-04',
+          target_month: 4,
+          learning_task_content: null,
+          expected_output: null,
+        }),
       ],
-      [],
+      [
+        makeTask({
+          id: 1,
+          plan_item_id: 1,
+          status: '进行中',
+          actual_hours: 12,
+        }),
+      ],
     )
-    fireEvent.change(screen.getByLabelText('状态筛选'), {
-      target: { value: '已完成' },
-    })
+    // 定版原型标题/说明
+    expect(screen.getByRole('heading', { name: '月度计划时间轴' })).toBeTruthy()
+    expect(screen.getByText('按月推进学习任务，持续提升能力。')).toBeTruthy()
+    const header = screen
+      .getByRole('heading', { name: '月度计划时间轴' })
+      .closest('header')
+    expect(header).toBeTruthy()
+    expect(within(header!).getByText('我的计划')).toBeTruthy()
+    // 摘要改为任务总数/已完成/进行中/逾期（真实计数）
+    const summary = screen.getByTestId('plan-summary')
+    expect(summary.textContent).toContain('任务总数')
+    expect(summary.textContent).toContain('已完成')
+    expect(summary.textContent).toContain('进行中')
+    expect(summary.textContent).toContain('逾期')
+    expect(summary.textContent).not.toContain('总体进度')
+    expect(summary.textContent).not.toContain('预计时长')
+    expect(within(summary).getAllByTestId('plan-summary-icon')).toHaveLength(4)
+    const iconWraps = within(summary).getAllByTestId('plan-summary-icon-wrap')
+    expect(iconWraps).toHaveLength(4)
+    expect(
+      iconWraps.map((wrapper) => wrapper.getAttribute('data-tone')),
+    ).toEqual(['blue', 'green', 'blue', 'red'])
+    // 「继续本月任务」入口存在
+    const continueButton = screen.getByRole('button', { name: /继续本月任务/ })
+    expect(continueButton).toBeTruthy()
+    expect(
+      within(continueButton).getByTestId('plan-continue-icon'),
+    ).toBeTruthy()
+    // 原型没有的三筛选区移除
+    expect(screen.queryByLabelText('状态筛选')).toBeNull()
+    expect(screen.queryByLabelText('优先级筛选')).toBeNull()
+    expect(screen.queryByLabelText('能力域筛选')).toBeNull()
+    // 展开月卡的任务行：编码/名称、任务说明、状态、已有进度、计划月份、
+    // 「进入任务」入口
+    const march = screen
+      .getAllByTestId('plan-item')
+      .find((el) => el.textContent?.includes('P01.01.01'))
+    expect(march).toBeTruthy()
+    expect(within(march!).getByText('完成管道设计')).toBeTruthy()
+    expect(within(march!).getByText('进行中')).toBeTruthy()
+    expect(within(march!).getByText('50%')).toBeTruthy()
+    expect(within(march!).getByText('2026-03')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '2026 年 3 月，1 项' }),
+    ).toBeTruthy()
+    const expandedMonth = screen.getByRole('button', { name: /3 月任务/ })
+    const collapsedMonth = screen.getByRole('button', { name: /4 月任务/ })
+    expect(
+      within(expandedMonth!)
+        .getByTestId('month-card-toggle-icon')
+        .getAttribute('data-direction'),
+    ).toBe('up')
+    expect(
+      within(collapsedMonth!)
+        .getByTestId('month-card-toggle-icon')
+        .getAttribute('data-direction'),
+    ).toBe('down')
+    // Issue #194 R5：行内唯一可访问「进入任务」入口（外层行不再以同名
+    // button 暴露——外层 role 断言见专项回归）。
+    expect(
+      within(march!).getAllByRole('button', { name: '进入任务' }),
+    ).toHaveLength(1)
+    // 说明缺失时不编造：4 月任务行无任务说明/预期输出占位
+    fireEvent.click(screen.getByRole('button', { name: /4 月任务/ }))
     await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
+      const april = screen
+        .getAllByTestId('plan-item')
+        .find((el) => el.textContent?.includes('P02.01.01'))
+      expect(april).toBeTruthy()
+      expect(within(april!).queryByTestId('task-output')).toBeNull()
+      expect(within(april!).getByText('延期')).toBeTruthy()
+      expect(
+        within(april!).getAllByRole('button', { name: '进入任务' }),
+      ).toHaveLength(1)
     })
-    const headers = screen.getAllByTestId('plan-header')
-    expect(headers[0].textContent).toContain('已完成')
+  })
+
+  // Issue #194 R5：行身份按定版原型只显示 L3 code + L3 name，不把完整
+  // L2→L3 路径塞进首列（1024 下首列放不下长路径，详情面板保留完整上下文）。
+  it('M03 row identity shows only L3 code + name, not the full L2→L3 path', async () => {
+    await renderMember([makeItem({ l2_code: 'P01.01', l2_name: '数据平台' })])
+    const row = screen.getByTestId('plan-header')
+    expect(within(row).getByText('P01.01.01 · 数据管道基础')).toBeTruthy()
+    expect(row.textContent).not.toContain('数据平台')
+    expect(row.textContent).not.toContain('→')
+  })
+
+  // Issue #194 R5：planHeader 曾以 role=button 暴露且包含内层「进入任务」
+  // button，getByRole(button, {name:'进入任务'}) 命中两个元素、语义不唯一。
+  // 外层行不再以 button 暴露；唯一可访问入口是真正的「进入任务」按钮，
+  // 展开功能由它承担（aria-expanded 随行展开/收起翻转）。
+  it('M03 row shell is not a button; the single accessible entry is 进入任务', async () => {
+    await renderMember([makeItem({})])
+    const row = screen.getByTestId('plan-header')
+    expect(row.getAttribute('role')).not.toBe('button')
+    const entries = within(row).getAllByRole('button', { name: '进入任务' })
+    expect(entries).toHaveLength(1)
+    expect(entries[0].getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(entries[0])
+    await waitFor(() => {
+      expect(entries[0].getAttribute('aria-expanded')).toBe('true')
+    })
+  })
+
+  it('继续本月任务 expands the current month card', async () => {
+    const nowMonth = new Date().getMonth() + 1
+    const otherMonth = nowMonth === 3 ? 4 : 3
+    await renderMember([
+      makeItem({ id: 1, l3_name: '任务A', target_month: otherMonth }),
+      makeItem({
+        id: 2,
+        l3_code: 'P02.01.01',
+        l3_name: '任务B',
+        target_month: nowMonth,
+      }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: /继续本月任务/ }))
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole('button', { name: new RegExp(`${nowMonth} 月任务`) })
+          .getAttribute('aria-expanded'),
+      ).toBe('true')
+    })
+    expect(
+      screen
+        .getByRole('button', { name: new RegExp(`${otherMonth} 月任务`) })
+        .getAttribute('aria-expanded'),
+    ).toBe('false')
   })
 })
 
@@ -1084,7 +1298,10 @@ describe('plan item source summary (issue #63)', () => {
     await waitFor(() => expect(screen.getByText('学习材料')).toBeTruthy())
     expect(screen.getByText('数据管道教材')).toBeTruthy()
     expect(screen.getByText('任务内容')).toBeTruthy()
-    expect(screen.getByText('完成管道设计')).toBeTruthy()
+    // Issue #194: 任务行 simple-row 也回显任务说明（完成管道设计），故面板内
+    // 断言需限定在 task-detail-panel 作用域内避免多元素命中。
+    const panel = screen.getByTestId('task-detail-panel')
+    expect(within(panel).getByText('完成管道设计')).toBeTruthy()
     expect(screen.getByText('预期输出')).toBeTruthy()
     expect(screen.getByText('设计文档与评审记录')).toBeTruthy()
     // #62 frozen source snapshot, read-only.
@@ -1387,114 +1604,6 @@ describe('plan item schedule editing (issue #63)', () => {
       expect(screen.queryByText(/日期已保存/)).toBeNull()
     },
   )
-})
-
-describe('plan item filters (issue #63)', () => {
-  afterEach(() => {
-    cleanup()
-    vi.restoreAllMocks()
-  })
-
-  it('filters by priority and resets on 全部优先级', async () => {
-    await renderMember([
-      makeItem({ id: 1, priority: '高' }),
-      makeItem({ id: 2, l3_code: 'P02.01.01', priority: '中' }),
-    ])
-    fireEvent.change(screen.getByLabelText('优先级筛选'), {
-      target: { value: '高' },
-    })
-    await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
-    })
-    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
-      'P01.01.01',
-    )
-    fireEvent.change(screen.getByLabelText('优先级筛选'), {
-      target: { value: '全部优先级' },
-    })
-    await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(2)
-    })
-  })
-
-  it('filters by capability domain and shows an empty state', async () => {
-    await renderMember([
-      makeItem({ id: 1, l1_code: 'P01' }),
-      makeItem({ id: 2, l3_code: 'C01.01.01', l1_code: 'C01' }),
-    ])
-    fireEvent.change(screen.getByLabelText('能力域筛选'), {
-      target: { value: 'C01' },
-    })
-    await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
-    })
-    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
-      'C01.01.01',
-    )
-    // A domain with no items shows an empty result.
-    fireEvent.change(screen.getByLabelText('能力域筛选'), {
-      target: { value: 'C02' },
-    })
-    await waitFor(() => {
-      expect(screen.queryByTestId('plan-header')).toBeNull()
-    })
-    expect(screen.getByText(/暂无计划项/)).toBeTruthy()
-  })
-
-  it('combines month, status, priority and domain filters', async () => {
-    await renderMember([
-      makeItem({
-        id: 1,
-        target_month: 3,
-        status: '进行中',
-        priority: '高',
-        l1_code: 'P01',
-      }),
-      makeItem({
-        id: 2,
-        l3_code: 'P02.01.01',
-        target_month: 3,
-        status: '进行中',
-        priority: '中',
-        l1_code: 'P01',
-      }),
-      makeItem({
-        id: 3,
-        l3_code: 'P03.01.01',
-        target_month: 4,
-        status: '进行中',
-        priority: '高',
-        l1_code: 'P01',
-      }),
-      makeItem({
-        id: 4,
-        l3_code: 'P04.01.01',
-        target_month: 3,
-        status: '已完成',
-        priority: '高',
-        l1_code: 'P01',
-      }),
-    ])
-    const monthBtns = screen.getAllByRole('button', { name: /3 月/ })
-    fireEvent.click(
-      monthBtns.find((b) => b.textContent?.startsWith('3 月')) || monthBtns[0],
-    )
-    fireEvent.change(screen.getByLabelText('状态筛选'), {
-      target: { value: '进行中' },
-    })
-    fireEvent.change(screen.getByLabelText('优先级筛选'), {
-      target: { value: '高' },
-    })
-    fireEvent.change(screen.getByLabelText('能力域筛选'), {
-      target: { value: 'P01' },
-    })
-    await waitFor(() => {
-      expect(screen.getAllByTestId('plan-header')).toHaveLength(1)
-    })
-    expect(screen.getAllByTestId('plan-header')[0].textContent).toContain(
-      'P01.01.01',
-    )
-  })
 })
 
 describe('evidence draft link persistence (issue #63)', () => {

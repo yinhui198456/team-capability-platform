@@ -182,6 +182,37 @@ describe('r1.1 topbar — sidebar is sole navigation', () => {
     expect(screen.getByRole('combobox', { name: '选择年度' })).toBeTruthy()
     expect(screen.getByText('数据范围：本人')).toBeTruthy()
   })
+
+  it('shows M01–M04 in the Member sidebar; M05 stays contextual', async () => {
+    stubYear()
+    stubApi()
+    stubDashboard()
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: '学习任务' })).toBeTruthy()
+    })
+    const memberLinks = Array.from(
+      document.querySelectorAll('.app-sidebar-item'),
+    )
+      .map((link) => link.textContent)
+      .filter(Boolean)
+    expect(memberLinks).toEqual([
+      '我的工作台',
+      '能力评级与提升计划',
+      '年度成长计划',
+      '学习任务',
+    ])
+    // M05 是年度计划中的上下文详情，不是新的 sidebar 入口；其唯一
+    // 「进入任务」入口由 AnnualPlanTaskPage 的 M03 回归覆盖。
+    expect(memberLinks).not.toContain('学习任务详情')
+    expect(screen.queryByRole('link', { name: '评估历史' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '月度复盘' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '成长档案' })).toBeNull()
+  })
 })
 
 describe('role-based default routing', () => {

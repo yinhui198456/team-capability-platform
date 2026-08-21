@@ -1,9 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { newIdempotencyKey } from './assessment'
-import {
-  formatEstimatedHours,
-  formatEstimatedHoursSummary,
-} from './estimatedHours'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
 import {
@@ -12,7 +8,6 @@ import {
   TASK_TRANSITIONS,
   createEvidence,
   createProgressLog,
-  formatCapabilityPath,
   getAnnualPlan,
   getLearningTask,
   invalidateProgressLog,
@@ -33,12 +28,9 @@ import {
   type LearningTask,
   type LearningTaskStatus,
   type PlanItem,
-  type PlanItemStatus,
   type ProgressLog,
   type TransitionHistoryItem,
 } from './planning'
-
-const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
 
 // Issue #194: plan_month 'YYYY-MM' is the canonical month source (the
 // filter/display key); legacy rows fall back to target_month.
@@ -48,8 +40,9 @@ function monthOf(item: PlanItem): number | null {
   }
   return item.plan_month ?? item.target_month
 }
-// Capability-model L1 domains, fixed (matches dashboard domain radar).
-const DOMAIN_OPTIONS = ['P01', 'P02', 'P03', 'C01', 'C02', 'C03']
+// Issue #194 P1 复审修正：未排期组（无 plan_month 的遗留项）的选中令牌，
+// 与真实月份 1–12 区分——null 表示用户收起全部，undefined 表示数据未到达。
+const UNSCHEDULED_MONTH = 0
 const STATUS_LABELS: Record<string, string> = {
   未开始: '未开始',
   进行中: '进行中',
@@ -57,6 +50,20 @@ const STATUS_LABELS: Record<string, string> = {
   延期: '延期',
   暂停: '暂停',
   取消: '取消',
+}
+// Issue #194 P1 复审修正：原型 M03 V1 month-card-head 的简短状态摘要，
+// 由组内计划项真实状态聚合（不虚构）。
+function monthStatusSummary(monthItems: PlanItem[]): string {
+  const counts: Record<string, number> = {}
+  for (const item of monthItems) {
+    const label = STATUS_LABELS[item.status] ?? item.status
+    counts[label] = (counts[label] ?? 0) + 1
+  }
+  const order = ['已完成', '进行中', '延期', '暂停', '未开始', '取消']
+  const parts = order
+    .filter((label) => counts[label])
+    .map((label) => `${label} ${counts[label]}`)
+  return parts.length > 0 ? parts.join(' · ') : '未开始'
 }
 const ACTION_LABELS: Record<LearningTaskStatus, string> = {
   未开始: '开始执行',
@@ -132,6 +139,102 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
+// Exact M03 V1 source geometry from prototype-v1's Df/Hn/Bf/Bn icons.
+function PrototypeSummaryIcon({
+  kind,
+}: {
+  kind: 'document' | 'check' | 'refresh' | 'clock'
+}) {
+  const common = {
+    className: s.summaryIcon,
+    'data-testid': 'plan-summary-icon',
+    'aria-hidden': true,
+    focusable: 'false',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+  } as const
+
+  if (kind === 'document') {
+    return (
+      <svg {...common}>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10 9 9 9 8 9" />
+      </svg>
+    )
+  }
+  if (kind === 'check') {
+    return (
+      <svg {...common}>
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+        <polyline points="22 4 12 14.01 9 11.01" />
+      </svg>
+    )
+  }
+  if (kind === 'refresh') {
+    return (
+      <svg {...common}>
+        <polyline points="23 4 23 10 17 10" />
+        <polyline points="1 20 1 14 7 14" />
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  )
+}
+
+// Exact M03 V1 source geometry from prototype-v1's ke, th and te icons.
+function PrototypeArrowIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className={s.actionIcon}
+      data-testid="plan-continue-icon"
+      fill="none"
+      focusable="false"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+    >
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  )
+}
+
+function PrototypeMonthChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={`${s.monthChevron} ${expanded ? s.monthChevronUp : ''}`}
+      data-direction={expanded ? 'up' : 'down'}
+      data-testid="month-card-toggle-icon"
+      fill="none"
+      focusable="false"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      viewBox="0 0 24 24"
+    >
+      <polyline points={expanded ? '6 9 12 15 18 9' : '9 18 15 12 9 6'} />
+    </svg>
+  )
+}
+
 export function AnnualPlanTaskPage() {
   const year = useYear()
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
@@ -139,14 +242,12 @@ export function AnnualPlanTaskPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
-  const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
-  const [statusFilter, setStatusFilter] = useState<PlanItemStatus | '全部状态'>(
-    '全部状态',
+  // Issue #194 P1 复审修正：选定原型 M03 V1 默认仅展开一个月卡。
+  // undefined = 数据未到达（首次默认尚未应用）；number/UNSCHEDULED_MONTH =
+  // 展开该月卡；null = 用户主动收起全部。不得把 null 回退解释为全展开。
+  const [selectedMonth, setSelectedMonth] = useState<number | null | undefined>(
+    undefined,
   )
-  const [priorityFilter, setPriorityFilter] = useState<
-    '全部优先级' | '高' | '中' | '低'
-  >('全部优先级')
-  const [domainFilter, setDomainFilter] = useState<string>('全部能力域')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [conflictTask, setConflictTask] = useState<number | null>(null)
 
@@ -258,28 +359,40 @@ export function AnnualPlanTaskPage() {
   }, [year])
 
   const items = plan?.items ?? []
-  const visibleItems = items
-    .filter((i) => !selectedMonth || monthOf(i) === selectedMonth)
-    .filter((i) => statusFilter === '全部状态' || i.status === statusFilter)
-    .filter(
-      (i) => priorityFilter === '全部优先级' || i.priority === priorityFilter,
-    )
-    .filter((i) => domainFilter === '全部能力域' || i.l1_code === domainFilter)
-  const hasActiveFilters =
-    statusFilter !== '全部状态' ||
-    priorityFilter !== '全部优先级' ||
-    domainFilter !== '全部能力域'
-  const totalEstimated = formatEstimatedHoursSummary(
-    plan?.estimated_hours_summary,
-  )
-  const hasUnparsedHours = plan?.estimated_hours_summary?.has_unparsed ?? false
-  const totalActual = Object.values(tasks).reduce(
-    (sum, t) => sum + (t.task.actual_hours ?? 0),
-    0,
-  )
+  // Issue #194 P1: 权威原型 M03 V1 按月份纵向分组（月份 marker + 月度卡片 +
+  // 组内计划项）。只渲染仍有计划项的月份——空月份不伪造业务项；无月份的
+  // 遗留项归入末尾无 marker 分组，不丢弃。
+  const monthGroups = useMemo(() => {
+    const groups: Array<{ month: number | null; monthItems: PlanItem[] }> = []
+    for (const item of items) {
+      const month = monthOf(item)
+      const group = groups.find((entry) => entry.month === month)
+      if (group) group.monthItems.push(item)
+      else groups.push({ month, monthItems: [item] })
+    }
+    groups.sort((left, right) => (left.month ?? 13) - (right.month ?? 13))
+    return groups
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.items])
+  // Issue #194 P1 复审修正：数据出现时首次默认展开按时间排序后的第一个非空
+  // 月份；之后只由用户点击改变（点其它月只展开目标月，点当前月收起全部）。
+  useEffect(() => {
+    if (selectedMonth === undefined && monthGroups.length > 0) {
+      setSelectedMonth(monthGroups[0].month ?? UNSCHEDULED_MONTH)
+    }
+  }, [monthGroups, selectedMonth])
+  // 定版原型页头动作「继续本月任务」：展开当前自然月所在月卡；当前月无
+  // 计划项时退回按时间排序的第一个非空月。
+  function continueCurrentMonth() {
+    const nowMonth = new Date().getMonth() + 1
+    const target =
+      monthGroups.find((group) => group.month === nowMonth) ?? monthGroups[0]
+    if (target) setSelectedMonth(target.month ?? UNSCHEDULED_MONTH)
+  }
+  // 原型摘要四项：任务总数/已完成/进行中/逾期（真实计数，不伪造）。
   const completed = items.filter((i) => i.status === '已完成').length
-  const progress =
-    items.length === 0 ? 0 : Math.round((completed / items.length) * 100)
+  const active = items.filter((i) => i.status === '进行中').length
+  const overdue = items.filter((i) => i.status === '延期').length
 
   async function handleTransition(
     task: LearningTask,
@@ -488,41 +601,30 @@ export function AnnualPlanTaskPage() {
   if (loading) return <p className="muted">加载中…</p>
 
   return (
-    <section className="page">
-      <header className="page-heading">
-        <div>
-          <p className="eyebrow">我的计划 / 年度闭环</p>
-          <h1>年度成长计划</h1>
-          <p className="muted">
-            {year} 年度 · {plan?.plan_cycle ?? 12} 个月周期 ·{' '}
-            {plan?.status ?? '制定中'}
-          </p>
+    <section className="page annual-plan-page">
+      <header className={`page-heading ${s.pageHeader}`}>
+        <div className={s.headerActions}>
+          {/* 定版原型 M03 V1 页头：标题 + 说明 */}
+          <span className={s.eyebrow}>我的计划</span>
+          <h1>月度计划时间轴</h1>
+          <p className="muted">按月推进学习任务，持续提升能力。</p>
         </div>
-        <div>
+        <div className={s.headerCta}>
+          {/* 定版原型页头动作：继续本月任务（展开当前月卡） */}
+          <button
+            type="button"
+            className="primary"
+            onClick={continueCurrentMonth}
+          >
+            继续本月任务 <PrototypeArrowIcon />
+          </button>
           {items.length === 0 && (
             <p className="muted">
               暂无计划项：请在评估页勾选提升项并显式生成所选学习任务。
             </p>
           )}
-          <a
-            href="/growth/review/monthly"
-            style={{ marginLeft: 'var(--space-3)' }}
-          >
-            查看月度复盘
-          </a>
         </div>
       </header>
-      {plan?.source_assessment_id != null && (
-        <p className="muted">
-          来源：评估 #{plan.source_assessment_id}
-          {plan.source_standard_version_label
-            ? ` · ${plan.source_standard_version_label}`
-            : ''}
-          {plan.planning_source_type === 'assessment_approval'
-            ? ' · 显式选择生成'
-            : ''}
-        </p>
-      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -539,201 +641,243 @@ export function AnnualPlanTaskPage() {
         </p>
       )}
 
-      {/* Summary cards */}
+      {/* Summary cards — 定版原型 M03 V1：任务总数/已完成/进行中/逾期 */}
       <dl className={s.summary} data-testid="plan-summary">
         <div className={s.summaryCard}>
-          <dt>总体进度</dt>
-          <dd>{progress}%</dd>
-          <div className={s.progressBar}>
-            <div className={s.progressFill} style={{ width: `${progress}%` }} />
+          <span
+            aria-hidden="true"
+            className={`${s.summaryIconWrap} ${s.summaryIconBlue}`}
+            data-testid="plan-summary-icon-wrap"
+            data-tone="blue"
+          >
+            <PrototypeSummaryIcon kind="document" />
+          </span>
+          <div className={s.summaryMetric}>
+            <dt>任务总数</dt>
+            <dd>{items.length}</dd>
           </div>
         </div>
         <div className={s.summaryCard}>
-          <dt>预计时长</dt>
-          <dd>
-            {totalEstimated}
-            {hasUnparsedHours && '（部分计划项耗时为文本，未计入汇总）'}
-          </dd>
+          <span
+            aria-hidden="true"
+            className={`${s.summaryIconWrap} ${s.summaryIconGreen}`}
+            data-testid="plan-summary-icon-wrap"
+            data-tone="green"
+          >
+            <PrototypeSummaryIcon kind="check" />
+          </span>
+          <div className={s.summaryMetric}>
+            <dt>已完成</dt>
+            <dd>{completed}</dd>
+          </div>
         </div>
         <div className={s.summaryCard}>
-          <dt>实际时长</dt>
-          <dd>{totalActual} h</dd>
+          <span
+            aria-hidden="true"
+            className={`${s.summaryIconWrap} ${s.summaryIconBlue}`}
+            data-testid="plan-summary-icon-wrap"
+            data-tone="blue"
+          >
+            <PrototypeSummaryIcon kind="refresh" />
+          </span>
+          <div className={s.summaryMetric}>
+            <dt>进行中</dt>
+            <dd>{active}</dd>
+          </div>
         </div>
         <div className={s.summaryCard}>
-          <dt>已完成</dt>
-          <dd>
-            {completed}/{items.length}
-          </dd>
+          <span
+            aria-hidden="true"
+            className={`${s.summaryIconWrap} ${s.summaryIconRed}`}
+            data-testid="plan-summary-icon-wrap"
+            data-tone="red"
+          >
+            <PrototypeSummaryIcon kind="clock" />
+          </span>
+          <div className={s.summaryMetric}>
+            <dt>逾期</dt>
+            <dd>{overdue}</dd>
+          </div>
         </div>
       </dl>
 
-      {/* Monthly timeline */}
-      <div className={s.timeline} data-testid="month-timeline">
-        {MONTHS.map((m) => {
-          const count = items.filter((i) => monthOf(i) === m).length
-          return (
-            <button
-              key={m}
-              className={`${s.timelineBtn} ${selectedMonth === m ? s.timelineBtnActive : ''}`}
-              onClick={() => setSelectedMonth(selectedMonth === m ? null : m)}
-              aria-pressed={selectedMonth === m}
-            >
-              <span className={s.timelineBtnMonth}>{m} 月</span>
-              <span className={s.timelineBtnCount}>{count} 项</span>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Filters: month timeline + status / priority / domain, combinable */}
-      <div className={s.filterRow}>
-        <label htmlFor="status-filter">状态筛选</label>
-        <select
-          id="status-filter"
-          aria-label="状态筛选"
-          value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as PlanItemStatus | '全部状态')
-          }
-        >
-          <option value="全部状态">全部状态</option>
-          {Object.keys(STATUS_LABELS).map((st) => (
-            <option key={st} value={st}>
-              {st}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="priority-filter">优先级筛选</label>
-        <select
-          id="priority-filter"
-          aria-label="优先级筛选"
-          value={priorityFilter}
-          onChange={(event) =>
-            setPriorityFilter(
-              event.target.value as '全部优先级' | '高' | '中' | '低',
-            )
-          }
-        >
-          <option value="全部优先级">全部优先级</option>
-          <option value="高">高</option>
-          <option value="中">中</option>
-          <option value="低">低</option>
-        </select>
-        <label htmlFor="domain-filter">能力域筛选</label>
-        <select
-          id="domain-filter"
-          aria-label="能力域筛选"
-          value={domainFilter}
-          onChange={(event) => setDomainFilter(event.target.value)}
-        >
-          <option value="全部能力域">全部能力域</option>
-          {DOMAIN_OPTIONS.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Plan items */}
-      <div className={s.planList}>
-        <div
-          className={`${s.planHeader} ${s.planHeaderLabel}`}
-          style={{
-            cursor: 'default',
-            borderBottom: '2px solid var(--color-gray-200)',
-          }}
-        >
-          <strong>二级能力标准 → 三级达成路径</strong>
-          <strong>掌握度提升</strong>
-          <strong>计划时长</strong>
-          <strong>实际时长</strong>
-          <strong>月份</strong>
-          <strong>状态</strong>
-          <span />
-        </div>
-        {visibleItems.length === 0 && (
-          <p className="muted">
-            {selectedMonth
-              ? `${selectedMonth} 月暂无计划项`
-              : hasActiveFilters
-                ? '该筛选条件下暂无计划项'
-                : '暂无计划项，请先生成年度计划。'}
-          </p>
+      {/* Plan items — 权威原型 M03 V1 纵向月度时间轴分组：所有非空月份
+          timeline-row 常驻（marker + 月卡头），selectedMonth 只控制哪一个
+          月卡展开显示组内计划项；数据出现时默认展开按时间排序的第一个非空
+          月份，点击其它月份只展开目标月，点击当前月份收起全部。
+          Issue #194: 原型没有状态/优先级/能力域三筛选区，已移除。 */}
+      <div className={s.monthTimeline} data-testid="month-timeline">
+        {items.length === 0 && (
+          <p className="muted">暂无计划项，请先生成年度计划。</p>
         )}
-        {visibleItems.map((item) => {
-          const td = tasks[item.id]
-          const isExpanded = expandedId === item.id
-          const st = item.status
+        {monthGroups.map(({ month, monthItems }) => {
+          const token = month ?? UNSCHEDULED_MONTH
+          const expanded = selectedMonth === token
           return (
-            <div className={s.planItem} key={item.id} data-testid="plan-item">
-              <div
-                className={s.planHeader}
-                data-testid="plan-header"
-                onClick={() => setExpandedId(isExpanded ? null : item.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setExpandedId(isExpanded ? null : item.id)
+            <article
+              key={month ?? 'unplanned'}
+              className={`${s.timelineRow} ${
+                month == null ? s.timelineRowNoMarker : ''
+              } ${expanded ? s.timelineRowOpen : ''}`}
+            >
+              {month != null && (
+                <button
+                  type="button"
+                  className={s.monthMarker}
+                  onClick={() =>
+                    setSelectedMonth(selectedMonth === token ? null : token)
                   }
-                }}
-              >
-                <div>
-                  <span className={s.l3name}>{formatCapabilityPath(item)}</span>
-                </div>
-                <span>
-                  {item.current_level}→{item.target_level}
-                </span>
-                <span>
-                  {formatEstimatedHours(
-                    item.estimated_hours,
-                    item.estimated_hours_parsed,
-                  )}
-                </span>
-                <span>{td ? td.task.actual_hours : 0} h</span>
-                <span>
-                  {item.plan_month ??
-                    (item.target_month ? `${item.target_month} 月` : '—')}
-                </span>
-                <span className={`${s.status} ${statusClass(st)}`}>
-                  {STATUS_LABELS[st] ?? st}
-                </span>
-                <span>{isExpanded ? '▾' : '▸'}</span>
-              </div>
-              {isExpanded && td && (
-                <TaskExecutionPanel
-                  item={item}
-                  year={year}
-                  detail={td}
-                  onTransition={(to, reason, date) =>
-                    void handleTransition(td.task, to, reason, date)
+                  aria-pressed={selectedMonth === token}
+                  aria-label={`${year} 年 ${month} 月，${monthItems.length} 项`}
+                >
+                  <b>{month} 月</b>
+                  <small>
+                    {year} 年 · {monthItems.length} 项
+                  </small>
+                  <i aria-hidden="true" className={s.timelineNode} />
+                </button>
+              )}
+              <div className={s.monthCard}>
+                <button
+                  type="button"
+                  className={s.monthCardHead}
+                  onClick={() =>
+                    setSelectedMonth(selectedMonth === token ? null : token)
                   }
-                  onComplete={(fields) => void handleComplete(td.task, fields)}
-                  onCreateLog={(fields) =>
-                    void handleCreateLog(td.task.id, fields)
-                  }
-                  onVoidLog={(log) => void handleVoidLog(td.task.id, log)}
-                  onSaveEvidence={(evidence, fields, superseded) =>
-                    handleSaveEvidenceDraft(
-                      td.task.id,
-                      evidence,
-                      fields,
-                      superseded,
+                  aria-expanded={expanded}
+                >
+                  <b>
+                    {month == null ? '未排期' : `${month} 月任务`}（
+                    {monthItems.length} 项）
+                  </b>
+                  <span>{monthStatusSummary(monthItems)}</span>
+                  <PrototypeMonthChevron expanded={expanded} />
+                </button>
+                {expanded &&
+                  monthItems.map((item) => {
+                    const td = tasks[item.id]
+                    const isExpanded = expandedId === item.id
+                    const st = item.status
+                    // Issue #194: 已有进度 = 实际时长/预计时长（仅在预计可
+                    // 解析且任务已 hydrate 时显示；缺失不编造）。
+                    const estHours =
+                      item.estimated_hours_parsed?.is_valid &&
+                      item.estimated_hours_parsed.min_hours != null &&
+                      item.estimated_hours_parsed.min_hours > 0
+                        ? item.estimated_hours_parsed.min_hours
+                        : null
+                    const progressPct =
+                      td && estHours != null
+                        ? Math.min(
+                            100,
+                            Math.round(
+                              ((td.task.actual_hours ?? 0) / estHours) * 100,
+                            ),
+                          )
+                        : null
+                    // 任务说明或预期输出；两者皆缺时不渲染占位。
+                    const output =
+                      item.learning_task_content ?? item.expected_output
+                    return (
+                      <div
+                        className={s.planItem}
+                        key={item.id}
+                        data-testid="plan-item"
+                      >
+                        {/* 定版原型 simple-row：编码/名称 · 说明 · 状态(+进度)
+                            · 计划月份 · 进入任务。Issue #194 R5：外层行不再
+                            以 role=button 暴露（避免与内层「进入任务」按钮
+                            语义重复）；「进入任务」是唯一可访问入口并承担展开。
+                            行身份只显示 L3 code + name，完整上下文见详情面板。 */}
+                        <div
+                          className={s.planHeader}
+                          data-testid="plan-header"
+                          onClick={() =>
+                            setExpandedId(isExpanded ? null : item.id)
+                          }
+                        >
+                          <span className={s.taskCode}>
+                            {item.l3_name
+                              ? `${item.l3_code} · ${item.l3_name}`
+                              : item.l3_code}
+                          </span>
+                          <div className={s.taskDesc}>
+                            {output ? (
+                              <p className="muted" data-testid="task-output">
+                                {output}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className={s.taskStatus}>
+                            <span className={`${s.status} ${statusClass(st)}`}>
+                              {STATUS_LABELS[st] ?? st}
+                            </span>
+                            {progressPct != null && progressPct > 0 ? (
+                              <small className={s.progressPct}>
+                                {progressPct}%
+                              </small>
+                            ) : null}
+                          </div>
+                          <span className={s.taskMonth}>
+                            {item.plan_month ??
+                              (item.target_month
+                                ? `${item.target_month} 月`
+                                : '—')}
+                          </span>
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setExpandedId(isExpanded ? null : item.id)
+                            }}
+                          >
+                            进入任务
+                          </button>
+                        </div>
+                        {isExpanded && td && (
+                          <TaskExecutionPanel
+                            item={item}
+                            year={year}
+                            detail={td}
+                            onTransition={(to, reason, date) =>
+                              void handleTransition(td.task, to, reason, date)
+                            }
+                            onComplete={(fields) =>
+                              void handleComplete(td.task, fields)
+                            }
+                            onCreateLog={(fields) =>
+                              void handleCreateLog(td.task.id, fields)
+                            }
+                            onVoidLog={(log) =>
+                              void handleVoidLog(td.task.id, log)
+                            }
+                            onSaveEvidence={(evidence, fields, superseded) =>
+                              handleSaveEvidenceDraft(
+                                td.task.id,
+                                evidence,
+                                fields,
+                                superseded,
+                              )
+                            }
+                            onSaveDates={(fields) =>
+                              handleSaveDates(item, fields)
+                            }
+                            onSubmitEvidence={(evidence) =>
+                              void handleSubmitEvidence(td.task.id, evidence)
+                            }
+                          />
+                        )}
+                        {isExpanded && !td && (
+                          <div className={s.taskPanel}>
+                            <p className="muted">暂无任务执行数据。</p>
+                          </div>
+                        )}
+                      </div>
                     )
-                  }
-                  onSaveDates={(fields) => handleSaveDates(item, fields)}
-                  onSubmitEvidence={(evidence) =>
-                    void handleSubmitEvidence(td.task.id, evidence)
-                  }
-                />
-              )}
-              {isExpanded && !td && (
-                <div className={s.taskPanel}>
-                  <p className="muted">暂无任务执行数据。</p>
-                </div>
-              )}
-            </div>
+                  })}
+              </div>
+            </article>
           )
         })}
       </div>
