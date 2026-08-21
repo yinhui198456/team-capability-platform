@@ -309,7 +309,7 @@ test.describe('capability standard targets', () => {
     })
 
     await loginAs(page, 'member')
-    await page.goto('/capability/assessment')
+    await page.goto('/capability/assessment?year=2026')
     await expect(page.getByText('4 · P4 标准')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
     // N/A row has no adjustment entry point
@@ -318,6 +318,7 @@ test.describe('capability standard targets', () => {
     ).toHaveCount(0)
 
     const okRow = page.locator('#row-1')
+    await okRow.locator('details > summary').click()
     await okRow.getByRole('button', { name: '调整▸' }).click()
     await page.getByLabel('启用个人调整 P01.01.01').check()
     await page.getByLabel('调整目标 P01.01.01').selectOption('5')
