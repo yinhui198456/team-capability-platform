@@ -31,7 +31,9 @@ describe('GrowthGoalPage route', () => {
       </MemoryRouter>,
     )
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '年度成长计划' })).toBeTruthy()
+      expect(
+        screen.getByRole('heading', { name: '月度计划时间轴' }),
+      ).toBeTruthy()
     })
   })
 })
