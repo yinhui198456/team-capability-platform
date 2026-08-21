@@ -1007,8 +1007,8 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert saved["plan_quarter"] == "Q2"
     assert saved["plan_month"] == "2026-06"
 
-    # Explicit null on priority while include_in_plan=TRUE → 422 conflict,
-    # zero writes (include requires a valid priority).
+    # Explicit null on priority while include_in_plan remains TRUE is a
+    # persistable incomplete plan draft.
     status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
@@ -1020,11 +1020,15 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         },
         cookies=cookies,
     )
-    assert status == 422, f"null priority + include=TRUE must 422: {body}"
+    assert status == 200, f"null priority + include=TRUE draft: {body}"
+    assert body["revision"] == 4
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["member_priority"] == "中"
-    assert int(assessment["revision"]) == 3
+    assert saved["member_priority"] is None
+    assert saved["include_in_plan"] is True
+    assert saved["plan_quarter"] == "Q2"
+    assert saved["plan_month"] == "2026-06"
+    assert int(assessment["revision"]) == 4
 
     # Patch with explicit null + include_in_plan=FALSE → priority cleared.
     status, _ = _request(
@@ -1039,7 +1043,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
                     "include_in_plan": False,
                 }
             ],
-            "expected_revision": 3,
+            "expected_revision": 4,
         },
         cookies=cookies,
     )
