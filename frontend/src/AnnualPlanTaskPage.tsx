@@ -253,6 +253,14 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   const [tasks, setTasks] = useState<Record<number, TaskDetail>>({})
   const [taskByItem, setTaskByItem] = useState<Record<number, LearningTask>>({})
   const [proposals, setProposals] = useState<ChangeProposal[]>([])
+  const proposalScope = `${year}:${taskId ?? ''}`
+  const [proposalState, setProposalState] = useState<
+    'loading' | 'loaded' | 'error'
+  >(taskId == null ? 'loaded' : 'loading')
+  const [loadedProposalScope, setLoadedProposalScope] = useState(
+    taskId == null ? proposalScope : '',
+  )
+  const [proposalReload, setProposalReload] = useState(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
@@ -387,11 +395,31 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   }, [year, taskId])
 
   useEffect(() => {
-    if (taskId != null)
-      void listChangeProposals(year)
-        .then(setProposals)
-        .catch(() => undefined)
-  }, [year, taskId])
+    if (taskId == null) {
+      setProposalState('loaded')
+      setLoadedProposalScope(proposalScope)
+      return
+    }
+    let cancelled = false
+    setProposalState('loading')
+    void listChangeProposals(year).then(
+      (next) => {
+        if (cancelled) return
+        setProposals(next)
+        setProposalState('loaded')
+        setLoadedProposalScope(proposalScope)
+      },
+      () => {
+        if (!cancelled) {
+          setProposalState('error')
+          setLoadedProposalScope(proposalScope)
+        }
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [year, taskId, proposalReload, proposalScope])
 
   const items = plan?.items ?? []
   // Issue #194 P1: 权威原型 M03 V1 按月份纵向分组（月份 marker + 月度卡片 +
@@ -641,6 +669,11 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   ) {
     try {
       await decideRequirementChange(proposalId, detailId, decision)
+    } catch (reason) {
+      setError(parseApiErrorDetail(reason).message)
+      return
+    }
+    try {
       const [nextDetail, nextProposals] = await Promise.all([
         loadTaskDetail(currentTaskId),
         listChangeProposals(year),
@@ -651,9 +684,13 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
         [nextDetail.task.plan_item_id]: nextDetail,
       }))
       setProposals(nextProposals)
+      setProposalState('loaded')
+      setLoadedProposalScope(proposalScope)
       setNotice('任务要求已确认。')
-    } catch (reason) {
-      setError(parseApiErrorDetail(reason).message)
+    } catch {
+      setProposalState('error')
+      setLoadedProposalScope(proposalScope)
+      setError('任务要求已确认，但最新要求加载失败，请重新加载要求变化。')
     }
   }
 
@@ -707,7 +744,22 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
         )}
         <section aria-labelledby="requirements-title">
           <h2 id="requirements-title">要求变化</h2>
-          {pendingChanges.length === 0 ? (
+          {loadedProposalScope !== proposalScope ||
+          proposalState === 'loading' ? (
+            <p className="muted" role="status">
+              正在加载任务要求变化…
+            </p>
+          ) : proposalState === 'error' ? (
+            <div>
+              <p className="error">任务要求变化加载失败，请重试。</p>
+              <button
+                type="button"
+                onClick={() => setProposalReload((value) => value + 1)}
+              >
+                重新加载要求变化
+              </button>
+            </div>
+          ) : pendingChanges.length === 0 ? (
             <p className="muted">当前任务没有待确认的能力要求变化。</p>
           ) : (
             pendingChanges.map(({ proposal, change }) => (
@@ -1257,136 +1309,6 @@ function TaskExecutionPanel({
     <div className={s.taskPanel} data-testid="task-detail-panel">
       {showLogs && (
         <>
-          <div className={s.taskGrid}>
-            <div className={s.taskField}>
-              <span>任务状态</span>
-              <strong>{task.status}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>实际耗时</span>
-              <strong>{task.actual_hours} h</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>计划开始日期</span>
-              <input
-                aria-label="计划开始日期"
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-              />
-            </div>
-            <div className={s.taskField}>
-              <span>计划结束日期</span>
-              <input
-                aria-label="计划结束日期"
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-              />
-            </div>
-            <div className={s.taskField}>
-              <span />
-              <button
-                type="button"
-                onClick={() => void saveDates()}
-                disabled={savingDates}
-              >
-                保存日期
-              </button>
-            </div>
-            <div className={s.taskField}>
-              <span>学习材料</span>
-              <strong>{item.learning_material ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>任务内容</span>
-              <strong>{item.learning_task_content ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>预期输出</span>
-              <strong>{item.expected_output ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>优先级</span>
-              <strong>{item.priority}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>来源评估</span>
-              <strong>
-                {item.source_assessment_id != null
-                  ? `评估 #${item.source_assessment_id}`
-                  : '—'}
-              </strong>
-            </div>
-            <div className={s.taskField}>
-              <span>计划季度</span>
-              <strong>{item.plan_quarter ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>计划月份</span>
-              {/* plan_month is 'YYYY-MM' (Issue #194) — display as-is. */}
-              <strong>{item.plan_month ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>来源类型</span>
-              <strong>
-                {item.planning_source_type === 'assessment_approval'
-                  ? '显式选择生成'
-                  : '—'}
-              </strong>
-            </div>
-            <div className={s.taskField}>
-              <span>评估版本</span>
-              <strong>{item.assessment_revision ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>纳入计划</span>
-              <strong>
-                {item.include_in_plan == null
-                  ? '—'
-                  : item.include_in_plan
-                    ? '是'
-                    : '否'}
-              </strong>
-            </div>
-            <div className={s.taskField}>
-              <span>实际开始时间</span>
-              <strong>{formatDateTime(task.actual_started_at)}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>完成时间</span>
-              <strong>{formatDateTime(task.actual_completed_at)}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>修订截止日期</span>
-              <strong>{task.revised_due_date ?? '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>延期原因</span>
-              <strong>{task.delay_reason || '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>暂停原因</span>
-              <strong>{task.pause_reason || '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>取消原因</span>
-              <strong>{task.cancel_reason || '—'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>复盘结论</span>
-              <strong>{task.review_conclusion || '待补充'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>下一步行动</span>
-              <strong>{task.next_action || '待补充'}</strong>
-            </div>
-            <div className={s.taskField}>
-              <span>完成质量</span>
-              <strong>{task.completion_quality || '待补充'}</strong>
-            </div>
-          </div>
-
           {/* Conditional actions */}
           {allowedActions.length > 0 && (
             <div className={s.actions}>
@@ -1600,6 +1522,134 @@ function TaskExecutionPanel({
                 <button type="submit">记录进展</button>
               </div>
             </form>
+          </div>
+          <div className={s.taskGrid}>
+            <div className={s.taskField}>
+              <span>任务状态</span>
+              <strong>{task.status}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>实际耗时</span>
+              <strong>{task.actual_hours} h</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划开始日期</span>
+              <input
+                aria-label="计划开始日期"
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </div>
+            <div className={s.taskField}>
+              <span>计划结束日期</span>
+              <input
+                aria-label="计划结束日期"
+                type="date"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </div>
+            <div className={s.taskField}>
+              <span />
+              <button
+                type="button"
+                onClick={() => void saveDates()}
+                disabled={savingDates}
+              >
+                保存日期
+              </button>
+            </div>
+            <div className={s.taskField}>
+              <span>学习材料</span>
+              <strong>{item.learning_material ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>任务内容</span>
+              <strong>{item.learning_task_content ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>预期输出</span>
+              <strong>{item.expected_output ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>优先级</span>
+              <strong>{item.priority}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>来源评估</span>
+              <strong>
+                {item.source_assessment_id != null
+                  ? `评估 #${item.source_assessment_id}`
+                  : '—'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划季度</span>
+              <strong>{item.plan_quarter ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划月份</span>
+              <strong>{item.plan_month ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>来源类型</span>
+              <strong>
+                {item.planning_source_type === 'assessment_approval'
+                  ? '显式选择生成'
+                  : '—'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>评估版本</span>
+              <strong>{item.assessment_revision ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>纳入计划</span>
+              <strong>
+                {item.include_in_plan == null
+                  ? '—'
+                  : item.include_in_plan
+                    ? '是'
+                    : '否'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>实际开始时间</span>
+              <strong>{formatDateTime(task.actual_started_at)}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>完成时间</span>
+              <strong>{formatDateTime(task.actual_completed_at)}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>修订截止日期</span>
+              <strong>{task.revised_due_date ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>延期原因</span>
+              <strong>{task.delay_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>暂停原因</span>
+              <strong>{task.pause_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>取消原因</span>
+              <strong>{task.cancel_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>复盘结论</span>
+              <strong>{task.review_conclusion || '待补充'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>下一步行动</span>
+              <strong>{task.next_action || '待补充'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>完成质量</span>
+              <strong>{task.completion_quality || '待补充'}</strong>
+            </div>
           </div>
         </>
       )}

@@ -48,6 +48,8 @@ export function TaskListPage() {
   const [rows, setRows] = useState<TaskRow[]>([])
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<TaskFilter>('全部')
+  const [month, setMonth] = useState('')
+  const [domain, setDomain] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -106,10 +108,18 @@ export function TaskListPage() {
       return (
         (status === '全部' ||
           task.status === (status === '逾期' ? '延期' : status)) &&
+        (!month || item.plan_month === month) &&
+        (!domain || item.l1_code === domain) &&
         (!keyword || text.includes(keyword))
       )
     })
-  }, [rows, query, status])
+  }, [rows, query, status, month, domain])
+  const months = [
+    ...new Set(rows.map(({ item }) => item.plan_month).filter(Boolean)),
+  ] as string[]
+  const domains = [
+    ...new Set(rows.map(({ item }) => item.l1_code).filter(Boolean)),
+  ] as string[]
   const counts = {
     total: rows.length,
     active: rows.filter(({ task }) => task.status === '进行中').length,
@@ -185,6 +195,36 @@ export function TaskListPage() {
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="搜索任务或能力项"
               />
+            </label>
+            <label>
+              月份
+              <select
+                aria-label="筛选月份"
+                value={month}
+                onChange={(event) => setMonth(event.target.value)}
+              >
+                <option value="">全部月份</option>
+                {months.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              能力域
+              <select
+                aria-label="筛选能力域"
+                value={domain}
+                onChange={(event) => setDomain(event.target.value)}
+              >
+                <option value="">全部能力域</option>
+                {domains.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="task-list">

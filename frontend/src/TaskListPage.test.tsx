@@ -61,6 +61,71 @@ describe('TaskListPage', () => {
     expect(screen.getByText('暂无符合条件的学习任务。')).toBeTruthy()
   })
 
+  it('composes status, month and capability-domain filters without losing task links', async () => {
+    const sameMonthOtherDomain = {
+      ...item,
+      id: 2,
+      l3_code: 'C02.01.01',
+      l3_name: '其他能力域任务',
+      l1_code: 'C02',
+    } as PlanItem
+    const sameDomainOtherStatus = {
+      ...item,
+      id: 3,
+      l3_code: 'C01.02.01',
+      l3_name: '未开始任务',
+      l1_code: 'C01',
+    } as PlanItem
+    vi.spyOn(planning, 'getAnnualPlan').mockResolvedValue({
+      items: [
+        { ...item, l1_code: 'C01' },
+        sameMonthOtherDomain,
+        sameDomainOtherStatus,
+      ],
+    } as never)
+    vi.spyOn(planning, 'listLearningTasks').mockResolvedValue([
+      task,
+      {
+        ...task,
+        id: 10,
+        plan_item_id: 2,
+        l3_code: sameMonthOtherDomain.l3_code,
+      },
+      {
+        ...task,
+        id: 11,
+        plan_item_id: 3,
+        l3_code: sameDomainOtherStatus.l3_code,
+        status: '未开始',
+      },
+    ])
+    vi.spyOn(planning, 'listChangeProposals').mockResolvedValue([
+      { details: [{ l3_code: item.l3_code, requirement_decision: null }] },
+    ] as never)
+    render(
+      <MemoryRouter>
+        <YearContext.Provider value={2026}>
+          <TaskListPage />
+        </YearContext.Provider>
+      </MemoryRouter>,
+    )
+    await screen.findByText('文件命名与目录结构规范')
+    fireEvent.click(screen.getByRole('button', { name: '进行中' }))
+    fireEvent.change(screen.getByLabelText('筛选月份'), {
+      target: { value: '2026-09' },
+    })
+    fireEvent.change(screen.getByLabelText('筛选能力域'), {
+      target: { value: 'C01' },
+    })
+    expect(screen.getByText('进行中 · 50%')).toBeTruthy()
+    expect(screen.getByText('能力要求已更新 · 待确认')).toBeTruthy()
+    expect(screen.queryByText('其他能力域任务')).toBeNull()
+    expect(screen.queryByText('未开始任务')).toBeNull()
+    expect(
+      screen.getByRole('link', { name: '进入任务' }).getAttribute('href'),
+    ).toBe('/growth/tasks/9?year=2026')
+  })
+
   it('shows a directed load failure', async () => {
     vi.spyOn(planning, 'getAnnualPlan').mockRejectedValue(
       new Error('网络不可用'),
