@@ -302,6 +302,9 @@ export type ChangeProposalDetail = {
   planning_snapshot_id: number | null
   assessment_revision: number
   planning_source_type: 'assessment_approval'
+  requirement_decision?: 'adopt_new' | 'keep_original' | null
+  decided_at?: string | null
+  decided_by?: number | null
 }
 
 export type ChangeProposal = {
@@ -310,7 +313,7 @@ export type ChangeProposal = {
   year: number
   source_assessment_id: number
   target_annual_growth_plan_id: number
-  status: '待处理'
+  status: '待处理' | '已处理'
   created_by: number
   summary: {
     source_assessment_id: number
@@ -335,6 +338,18 @@ export async function listChangeProposals(
   return request<ChangeProposal[]>(`/api/planning/change-proposals?${query}`, {
     method: 'GET',
   })
+}
+
+export async function decideRequirementChange(
+  proposalId: number,
+  detailId: number,
+  decision: 'adopt_new' | 'keep_original',
+): Promise<{ id: number; decision: string; idempotent: boolean }> {
+  return request(
+    `/api/planning/change-proposals/${proposalId}/details/${detailId}/requirement-decision`,
+    { method: 'PUT' },
+    { decision },
+  )
 }
 
 export type EvidenceStatus =

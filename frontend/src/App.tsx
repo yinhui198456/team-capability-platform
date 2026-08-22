@@ -10,6 +10,8 @@ import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
+import { TaskListPage } from './TaskListPage'
+import { TaskDetailPage } from './TaskDetailPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
@@ -67,10 +69,6 @@ export function App() {
 
         {/* Legacy redirects */}
         <Route
-          path="/growth/tasks"
-          element={<Navigate to="/growth/annual-plan" replace />}
-        />
-        <Route
           path="/mentoring/assessment-review"
           element={<Navigate to="/mentoring/evidence-review" replace />}
         />
@@ -100,6 +98,8 @@ export function App() {
             element={<Navigate to="/growth/annual-plan" replace />}
           />
           <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
+          <Route path="/growth/tasks" element={<TaskListPage />} />
+          <Route path="/growth/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/growth/profile" element={<ProfilePage />} />
           <Route
             path="/growth/review/monthly"

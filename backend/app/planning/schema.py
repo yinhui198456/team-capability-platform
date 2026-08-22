@@ -442,7 +442,7 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             target_annual_growth_plan_id BIGINT NOT NULL
                 REFERENCES annual_growth_plan(id) ON DELETE RESTRICT,
             status TEXT NOT NULL DEFAULT '待处理'
-                CHECK (status IN ('待处理')),
+                CHECK (status IN ('待处理', '已处理')),
             created_by BIGINT NOT NULL REFERENCES tcp_user(id) ON DELETE RESTRICT,
             summary JSONB NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -506,10 +506,20 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             capability_standard_version_id BIGINT NOT NULL,
             planning_snapshot_id BIGINT,
             assessment_revision BIGINT NOT NULL,
+            requirement_decision TEXT CHECK (
+                requirement_decision IS NULL
+                OR requirement_decision IN ('adopt_new', 'keep_original')
+            ),
+            decided_at TIMESTAMPTZ,
+            decided_by BIGINT REFERENCES tcp_user(id) ON DELETE RESTRICT,
             planning_source_type TEXT NOT NULL DEFAULT 'assessment_approval'
                 CHECK (planning_source_type IN ('assessment_approval')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (source_assessment_detail_id),
+            CHECK (
+                (requirement_decision IS NULL AND decided_at IS NULL AND decided_by IS NULL)
+                OR (requirement_decision IS NOT NULL AND decided_at IS NOT NULL AND decided_by IS NOT NULL)
+            ),
             CHECK (
                 plan_quarter IS NULL OR plan_month IS NULL
                 OR (plan_quarter = 'Q1' AND plan_month BETWEEN 1 AND 3)

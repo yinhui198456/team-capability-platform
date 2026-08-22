@@ -222,6 +222,16 @@ class EvidenceValidationError(PlanningDomainError):
     entity_type = "evidence"
 
 
+class RequirementDecisionConflict(PlanningDomainError):
+    code = "requirement_decision_conflict"
+    entity_type = "annual_plan_change_proposal_detail"
+
+
+class RequirementDecisionPending(PlanningDomainError):
+    code = "requirement_decision_pending"
+    entity_type = "learning_task"
+
+
 class EvidenceRevisionConflict(PlanningDomainError):
     code = "evidence_revision_conflict"
     entity_type = "evidence"
@@ -2668,7 +2678,7 @@ def submit_evidence(
     with connection.transaction():
         row = connection.execute(
             f"""
-            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status, pi.id
             FROM evidence e
             JOIN learning_task lt ON lt.id = e.learning_task_id
             JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -2695,6 +2705,25 @@ def submit_evidence(
                 entity_type="learning_task",
                 entity_id=int(evidence["learning_task_id"]),
                 field="status",
+            )
+        pending = connection.execute(
+            """
+            SELECT 1
+            FROM annual_plan_change_proposal_detail d
+            JOIN annual_plan_change_proposal p ON p.id = d.proposal_id
+            JOIN plan_item pi
+              ON pi.annual_growth_plan_id = p.target_annual_growth_plan_id
+            WHERE pi.id = %s AND pi.l3_code = d.l3_code
+              AND d.requirement_decision IS NULL
+            FOR KEY SHARE OF d
+            """,
+            (int(row[20]),),
+        ).fetchone()
+        if pending is not None:
+            raise RequirementDecisionPending(
+                "请先确认该任务的要求变化后再提交成果证明",
+                entity_id=int(evidence["learning_task_id"]),
+                field="requirement_decision",
             )
         submitted = connection.execute(
             f"""
@@ -4932,7 +4961,7 @@ def list_change_proposals(
                    standard_job_level_snapshot, member_current_level_snapshot,
                    member_target_level_snapshot, capability_standard_version_id,
                    planning_snapshot_id, assessment_revision,
-                   planning_source_type
+                   planning_source_type, requirement_decision, decided_at, decided_by
             FROM annual_plan_change_proposal_detail
             WHERE proposal_id = %s
             ORDER BY l3_code
@@ -4982,9 +5011,108 @@ def list_change_proposals(
                         "planning_snapshot_id": d[24],
                         "assessment_revision": d[25],
                         "planning_source_type": d[26],
+                        "requirement_decision": d[27],
+                        "decided_at": _serialize_datetime(d[28]),
+                        "decided_by": d[29],
                     }
                     for d in details
                 ],
             }
         )
     return result
+
+
+def decide_requirement_change(
+    connection: psycopg.Connection,
+    member_id: int,
+    proposal_id: int,
+    detail_id: int,
+    decision: str,
+) -> dict[str, object]:
+    if decision not in {"adopt_new", "keep_original"}:
+        raise PlanningDomainError(
+            "invalid requirement decision",
+            code="invalid_requirement_decision",
+            entity_type="annual_plan_change_proposal_detail",
+            entity_id=detail_id,
+            field="decision",
+        )
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT d.id, d.requirement_decision, d.planning_snapshot_id,
+                   p.target_annual_growth_plan_id, d.l3_code
+            FROM annual_plan_change_proposal_detail d
+            JOIN annual_plan_change_proposal p ON p.id = d.proposal_id
+            WHERE d.id = %s AND p.id = %s AND p.member_id = %s
+            FOR UPDATE OF d, p
+            """,
+            (detail_id, proposal_id, member_id),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("requirement decision does not belong to member")
+        existing = row[1]
+        if existing is not None:
+            if existing == decision:
+                return {"id": int(row[0]), "decision": decision, "idempotent": True}
+            raise RequirementDecisionConflict(
+                "requirement decision already recorded",
+                entity_id=detail_id,
+                field="decision",
+            )
+        item = connection.execute(
+            """
+            SELECT id FROM plan_item
+            WHERE annual_growth_plan_id=%s AND l3_code=%s
+            FOR UPDATE
+            """,
+            (int(row[3]), str(row[4])),
+        ).fetchone()
+        if item is None:
+            raise PlanningDomainError(
+                "proposal plan item not found",
+                code="proposal_plan_item_missing",
+                entity_type="annual_plan_change_proposal_detail",
+                entity_id=detail_id,
+            )
+        if decision == "adopt_new":
+            snapshot = connection.execute(
+                """
+                SELECT materials_text, expected_output, estimated_hours, l3_name
+                FROM capability_standard_planning_snapshot WHERE id=%s
+                """,
+                (row[2],),
+            ).fetchone()
+            if snapshot is None:
+                raise PlanningDomainError(
+                    "proposal planning snapshot missing",
+                    code="planning_snapshot_missing",
+                    entity_type="annual_plan_change_proposal_detail",
+                    entity_id=detail_id,
+                )
+            connection.execute(
+                """UPDATE plan_item SET planning_snapshot_id=%s, learning_material=%s,
+                   learning_task_content=%s, expected_output=%s, estimated_hours=%s,
+                   revision=revision+1 WHERE id=%s""",
+                (
+                    row[2],
+                    snapshot[0],
+                    snapshot[3],
+                    snapshot[1],
+                    snapshot[2],
+                    int(item[0]),
+                ),
+            )
+        connection.execute(
+            """UPDATE annual_plan_change_proposal_detail SET requirement_decision=%s,
+               decided_at=NOW(), decided_by=%s WHERE id=%s""",
+            (decision, member_id, detail_id),
+        )
+        connection.execute(
+            """UPDATE annual_plan_change_proposal SET status=CASE WHEN NOT EXISTS (
+                 SELECT 1 FROM annual_plan_change_proposal_detail
+                 WHERE proposal_id=%s AND requirement_decision IS NULL
+               ) THEN '已处理' ELSE '待处理' END WHERE id=%s""",
+            (proposal_id, proposal_id),
+        )
+    return {"id": detail_id, "decision": decision, "idempotent": False}

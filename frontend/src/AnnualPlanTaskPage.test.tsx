@@ -205,9 +205,11 @@ async function renderMember(
 }
 
 function expandItem(itemId: number) {
-  const rows = screen.getAllByTestId('plan-header')
-  const row = rows.find((r) => r.textContent?.includes(String(itemId)))
-  fireEvent.click(row ?? rows[0])
+  const links = screen.getAllByRole('link', { name: '进入任务' })
+  fireEvent.click(
+    links.find((link) => link.getAttribute('href')?.includes(`/${itemId}?`)) ??
+      links[0],
+  )
 }
 
 describe('AnnualPlanTaskPage display', () => {
@@ -230,6 +232,16 @@ describe('AnnualPlanTaskPage display', () => {
     expect(head.getAttribute('aria-expanded')).toBe('true')
     expect(head.textContent).toContain('1 项')
     expect(head.textContent).toContain('进行中 1')
+  })
+
+  it('uses the standalone task-detail route instead of expanding execution in M03', async () => {
+    await renderMember(
+      [makeItem({ id: 7 })],
+      [makeTask({ id: 9, plan_item_id: 7 })],
+    )
+    const entry = screen.getByRole('link', { name: '进入任务' })
+    expect(entry.getAttribute('href')).toBe('/growth/tasks/9?year=2026')
+    expect(screen.queryByTestId('task-detail-panel')).toBeNull()
   })
 
   it('month filter shows only selected month items', async () => {
@@ -432,7 +444,7 @@ describe('learning task execution (v0010)', () => {
     vi.restoreAllMocks()
   })
 
-  it('M03: hydrates only tasks of the current plan items, never other years', async () => {
+  it('M05: hydrates only the routed task of the current plan, never other years', async () => {
     // listLearningTasks returns tasks across ALL years. Only the task that
     // belongs to this plan's item 1 may be hydrated; the unrelated task
     // (other year / no current plan item) must never be loaded.
@@ -448,9 +460,7 @@ describe('learning task execution (v0010)', () => {
         unrelated,
       ],
     )
-    // Page completes loading and item 1's detail is hydrated.
-    const headers = screen.getAllByTestId('plan-header')
-    fireEvent.click(headers[0])
+    expandItem(1)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
     )
@@ -464,7 +474,7 @@ describe('learning task execution (v0010)', () => {
     ).not.toContain(99)
   })
 
-  it('shows conditional actions per task status', async () => {
+  it('M03 exposes one independent task entry per task status', async () => {
     await renderMember(
       [
         makeItem({ id: 1 }),
@@ -477,34 +487,12 @@ describe('learning task execution (v0010)', () => {
         makeTask({ id: 3, plan_item_id: 3, status: '已完成', revision: 5 }),
       ],
     )
-    const headers = screen.getAllByTestId('plan-header')
-    // 未开始 → 开始执行 + 取消任务
-    fireEvent.click(headers[0])
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: '开始执行' })).toBeTruthy(),
-    )
-    expect(screen.getByRole('button', { name: '取消任务' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '申请延期' })).toBeNull()
-    fireEvent.click(headers[0])
-
-    // 进行中 → 暂停 / 申请延期 / 完成任务 / 取消任务
-    fireEvent.click(headers[1])
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy(),
-    )
-    expect(screen.getByRole('button', { name: '申请延期' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '完成任务' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '取消任务' })).toBeTruthy()
-    fireEvent.click(headers[1])
-
-    // 已完成 → no actions
-    fireEvent.click(headers[2])
-    await waitFor(() => {
-      expect(screen.getAllByText('已完成').length).toBeGreaterThan(0)
-    })
-    expect(screen.queryByRole('button', { name: '开始执行' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '暂停' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '完成任务' })).toBeNull()
+    const entries = screen.getAllByRole('link', { name: '进入任务' })
+    expect(entries.map((entry) => entry.getAttribute('href'))).toEqual([
+      '/growth/tasks/1?year=2026',
+      '/growth/tasks/2?year=2026',
+      '/growth/tasks/3?year=2026',
+    ])
   })
 
   it('requires a reason before pausing', async () => {
@@ -892,9 +880,9 @@ describe('learning task execution (v0010)', () => {
       .mockRejectedValueOnce(conflict)
       .mockResolvedValueOnce({ ...draft, content: '修改后', revision: 1 })
     // The refresh after the conflict observes the newer evidence revision.
-    vi.mocked(planningApi.listEvidences).mockResolvedValueOnce([
-      { ...draft, revision: 1 },
-    ])
+    vi.mocked(planningApi.listEvidences)
+      .mockResolvedValueOnce([draft])
+      .mockResolvedValueOnce([{ ...draft, revision: 1 }])
     expandItem(1)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
@@ -1179,7 +1167,6 @@ describe('learning task execution (v0010)', () => {
     expect(march).toBeTruthy()
     expect(within(march!).getByText('完成管道设计')).toBeTruthy()
     expect(within(march!).getByText('进行中')).toBeTruthy()
-    expect(within(march!).getByText('50%')).toBeTruthy()
     expect(within(march!).getByText('2026-03')).toBeTruthy()
     expect(
       screen.getByRole('button', { name: '2026 年 3 月，1 项' }),
@@ -1199,7 +1186,7 @@ describe('learning task execution (v0010)', () => {
     // Issue #194 R5：行内唯一可访问「进入任务」入口（外层行不再以同名
     // button 暴露——外层 role 断言见专项回归）。
     expect(
-      within(march!).getAllByRole('button', { name: '进入任务' }),
+      within(march!).getAllByRole('link', { name: '进入任务' }),
     ).toHaveLength(1)
     // 说明缺失时不编造：4 月任务行无任务说明/预期输出占位
     fireEvent.click(screen.getByRole('button', { name: /4 月任务/ }))
@@ -1210,9 +1197,7 @@ describe('learning task execution (v0010)', () => {
       expect(april).toBeTruthy()
       expect(within(april!).queryByTestId('task-output')).toBeNull()
       expect(within(april!).getByText('延期')).toBeTruthy()
-      expect(
-        within(april!).getAllByRole('button', { name: '进入任务' }),
-      ).toHaveLength(1)
+      expect(within(april!).getByText('暂无任务')).toBeTruthy()
     })
   })
 
@@ -1227,20 +1212,12 @@ describe('learning task execution (v0010)', () => {
   })
 
   // Issue #194 R5：planHeader 曾以 role=button 暴露且包含内层「进入任务」
-  // button，getByRole(button, {name:'进入任务'}) 命中两个元素、语义不唯一。
-  // 外层行不再以 button 暴露；唯一可访问入口是真正的「进入任务」按钮，
-  // 展开功能由它承担（aria-expanded 随行展开/收起翻转）。
+  // button，M03 只保留一个独立 M05 路由入口。
   it('M03 row shell is not a button; the single accessible entry is 进入任务', async () => {
     await renderMember([makeItem({})])
     const row = screen.getByTestId('plan-header')
     expect(row.getAttribute('role')).not.toBe('button')
-    const entries = within(row).getAllByRole('button', { name: '进入任务' })
-    expect(entries).toHaveLength(1)
-    expect(entries[0].getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(entries[0])
-    await waitFor(() => {
-      expect(entries[0].getAttribute('aria-expanded')).toBe('true')
-    })
+    expect(within(row).getByText('暂无任务')).toBeTruthy()
   })
 
   it('继续本月任务 expands the current month card', async () => {
@@ -1528,9 +1505,9 @@ describe('plan item schedule editing (issue #63)', () => {
         revision: 2,
       })
     // The plan refresh after the conflict observes the bumped revision.
-    vi.mocked(planningApi.getAnnualPlan).mockResolvedValue(
-      makePlan([{ ...item, revision: 2 }]),
-    )
+    vi.mocked(planningApi.getAnnualPlan)
+      .mockResolvedValueOnce(makePlan([item]))
+      .mockResolvedValue(makePlan([{ ...item, revision: 2 }]))
     expandItem(1)
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '保存日期' })).toBeTruthy(),

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { newIdempotencyKey } from './assessment'
 import s from './AnnualPlanTaskPage.module.css'
 import { useYear } from './YearContext'
@@ -8,10 +9,12 @@ import {
   TASK_TRANSITIONS,
   createEvidence,
   createProgressLog,
+  decideRequirementChange,
   getAnnualPlan,
   getLearningTask,
   invalidateProgressLog,
   listEvidenceReviewsForTask,
+  listChangeProposals,
   listEvidences,
   listLearningTasks,
   listProgressLogs,
@@ -23,6 +26,7 @@ import {
   updateLearningTask,
   updatePlanItem,
   type AnnualPlan,
+  type ChangeProposal,
   type Evidence,
   type EvidenceReviewRecord,
   type LearningTask,
@@ -235,10 +239,12 @@ function PrototypeMonthChevron({ expanded }: { expanded: boolean }) {
   )
 }
 
-export function AnnualPlanTaskPage() {
+export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   const year = useYear()
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<Record<number, TaskDetail>>({})
+  const [taskIds, setTaskIds] = useState<Record<number, number>>({})
+  const [proposals, setProposals] = useState<ChangeProposal[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
@@ -250,6 +256,9 @@ export function AnnualPlanTaskPage() {
   )
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [conflictTask, setConflictTask] = useState<number | null>(null)
+  const [detailTab, setDetailTab] = useState<'overview' | 'execution'>(
+    'execution',
+  )
 
   // Idempotency keys: bound to the exact payload fingerprint, so an unchanged
   // retry replays server-side; a changed payload (or a revision 409 that
@@ -328,23 +337,23 @@ export function AnnualPlanTaskPage() {
         ])
         if (cancelled) return
         setPlan(p)
-        // M03/M04: hydrate only tasks belonging to this year's plan items.
-        // listLearningTasks returns tasks across ALL years; hydrating the
-        // full list stalls the page once E2E data accumulates. p=null or an
-        // empty plan yields an empty subset (nothing to hydrate).
         const itemIds = new Set((p?.items ?? []).map((item) => item.id))
-        const currentTasks = taskList.filter((task) =>
-          itemIds.has(task.plan_item_id),
+        setTaskIds(
+          Object.fromEntries(
+            taskList
+              .filter((task) => itemIds.has(task.plan_item_id))
+              .map((task) => [task.plan_item_id, task.id]),
+          ),
         )
-        const details = await Promise.all(
-          currentTasks.map((t) => loadTaskDetail(t.id).catch(() => null)),
-        )
-        if (cancelled) return
-        const record: Record<number, TaskDetail> = {}
-        currentTasks.forEach((task, index) => {
-          if (details[index]) record[task.plan_item_id] = details[index]
-        })
-        setTasks(record)
+        if (taskId != null) {
+          const requested = taskList.find((task) => task.id === taskId)
+          if (!requested || !itemIds.has(requested.plan_item_id)) {
+            throw new Error('任务不属于当前年度计划')
+          }
+          const detail = await loadTaskDetail(taskId)
+          if (cancelled) return
+          setTasks({ [detail.task.plan_item_id]: detail })
+        }
       } catch (err) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : '加载失败')
@@ -356,7 +365,14 @@ export function AnnualPlanTaskPage() {
     return () => {
       cancelled = true
     }
-  }, [year])
+  }, [year, taskId])
+
+  useEffect(() => {
+    if (taskId != null)
+      void listChangeProposals(year)
+        .then(setProposals)
+        .catch(() => undefined)
+  }, [year, taskId])
 
   const items = plan?.items ?? []
   // Issue #194 P1: 权威原型 M03 V1 按月份纵向分组（月份 marker + 月度卡片 +
@@ -600,6 +616,159 @@ export function AnnualPlanTaskPage() {
 
   if (loading) return <p className="muted">加载中…</p>
 
+  if (taskId != null) {
+    const detail = Object.values(tasks)[0]
+    const item = items.find(
+      (candidate) => candidate.id === detail?.task.plan_item_id,
+    )
+    if (!detail || !item) return <p className="muted">暂无任务执行数据。</p>
+    const pendingChanges = proposals.flatMap((proposal) =>
+      proposal.details
+        .filter(
+          (candidate) =>
+            candidate.l3_code === item.l3_code &&
+            !candidate.requirement_decision,
+        )
+        .map((change) => ({ proposal, change })),
+    )
+    return (
+      <section className="page annual-plan-page">
+        <header className={`page-heading ${s.pageHeader}`}>
+          <div>
+            <span className={s.eyebrow}>学习任务</span>
+            <h1>
+              {item.l3_name
+                ? `${item.l3_code} · ${item.l3_name}`
+                : item.l3_code}
+            </h1>
+            <p className="muted">
+              {detail.task.status} · {item.plan_month ?? '未排期'}
+            </p>
+          </div>
+          <Link to={`/growth/tasks?year=${year}`}>返回学习任务</Link>
+        </header>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="success" role="status">
+            {notice}
+          </p>
+        )}
+        {conflictTask !== null && (
+          <p className="error" role="alert">
+            任务数据已更新，请确认后重试。
+          </p>
+        )}
+        {pendingChanges.map(({ proposal, change }) => (
+          <section key={change.id} aria-labelledby={`requirement-${change.id}`}>
+            <h2 id={`requirement-${change.id}`}>要求变化</h2>
+            <p>请在提交成果前确认采用方式。</p>
+            <button
+              type="button"
+              onClick={() =>
+                void decideRequirementChange(
+                  proposal.id,
+                  change.id,
+                  'adopt_new',
+                )
+                  .then(() => listChangeProposals(year))
+                  .then(setProposals)
+                  .catch((reason) =>
+                    setError(parseApiErrorDetail(reason).message),
+                  )
+              }
+            >
+              采用新要求
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void decideRequirementChange(
+                  proposal.id,
+                  change.id,
+                  'keep_original',
+                )
+                  .then(() => listChangeProposals(year))
+                  .then(setProposals)
+                  .catch((reason) =>
+                    setError(parseApiErrorDetail(reason).message),
+                  )
+              }
+            >
+              按原任务要求继续
+            </button>
+          </section>
+        ))}
+        <div role="tablist" aria-label="任务详情页签">
+          {(['overview', 'execution'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={detailTab === value}
+              aria-controls={`task-panel-${value}`}
+              id={`task-tab-${value}`}
+              onClick={() => setDetailTab(value)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowRight' || event.key === 'ArrowLeft')
+                  setDetailTab(value === 'overview' ? 'execution' : 'overview')
+              }}
+            >
+              {value === 'overview' ? '任务概览' : '执行进展'}
+            </button>
+          ))}
+        </div>
+        <section
+          role="tabpanel"
+          id={`task-panel-${detailTab}`}
+          aria-labelledby={`task-tab-${detailTab}`}
+        >
+          {detailTab === 'overview' ? (
+            <dl className={s.taskGrid}>
+              <div className={s.taskField}>
+                <dt>学习材料</dt>
+                <dd>{item.learning_material ?? '—'}</dd>
+              </div>
+              <div className={s.taskField}>
+                <dt>预期输出</dt>
+                <dd>{item.expected_output ?? '—'}</dd>
+              </div>
+            </dl>
+          ) : (
+            <TaskExecutionPanel
+              item={item}
+              year={year}
+              detail={detail}
+              onTransition={(to, reason, date) =>
+                void handleTransition(detail.task, to, reason, date)
+              }
+              onComplete={(fields) => void handleComplete(detail.task, fields)}
+              onCreateLog={(fields) =>
+                void handleCreateLog(detail.task.id, fields)
+              }
+              onVoidLog={(log) => void handleVoidLog(detail.task.id, log)}
+              onSaveEvidence={(evidence, fields, superseded) =>
+                handleSaveEvidenceDraft(
+                  detail.task.id,
+                  evidence,
+                  fields,
+                  superseded,
+                )
+              }
+              onSaveDates={(fields) => handleSaveDates(item, fields)}
+              onSubmitEvidence={(evidence) =>
+                void handleSubmitEvidence(detail.task.id, evidence)
+              }
+            />
+          )}
+        </section>
+      </section>
+    )
+  }
+
   return (
     <section className="page annual-plan-page">
       <header className={`page-heading ${s.pageHeader}`}>
@@ -755,8 +924,6 @@ export function AnnualPlanTaskPage() {
                 </button>
                 {expanded &&
                   monthItems.map((item) => {
-                    const td = tasks[item.id]
-                    const isExpanded = expandedId === item.id
                     const st = item.status
                     // Issue #194: 已有进度 = 实际时长/预计时长（仅在预计可
                     // 解析且任务已 hydrate 时显示；缺失不编造）。
@@ -765,15 +932,6 @@ export function AnnualPlanTaskPage() {
                       item.estimated_hours_parsed.min_hours != null &&
                       item.estimated_hours_parsed.min_hours > 0
                         ? item.estimated_hours_parsed.min_hours
-                        : null
-                    const progressPct =
-                      td && estHours != null
-                        ? Math.min(
-                            100,
-                            Math.round(
-                              ((td.task.actual_hours ?? 0) / estHours) * 100,
-                            ),
-                          )
                         : null
                     // 任务说明或预期输出；两者皆缺时不渲染占位。
                     const output =
@@ -789,13 +947,7 @@ export function AnnualPlanTaskPage() {
                             以 role=button 暴露（避免与内层「进入任务」按钮
                             语义重复）；「进入任务」是唯一可访问入口并承担展开。
                             行身份只显示 L3 code + name，完整上下文见详情面板。 */}
-                        <div
-                          className={s.planHeader}
-                          data-testid="plan-header"
-                          onClick={() =>
-                            setExpandedId(isExpanded ? null : item.id)
-                          }
-                        >
+                        <div className={s.planHeader} data-testid="plan-header">
                           <span className={s.taskCode}>
                             {item.l3_name
                               ? `${item.l3_code} · ${item.l3_name}`
@@ -812,11 +964,6 @@ export function AnnualPlanTaskPage() {
                             <span className={`${s.status} ${statusClass(st)}`}>
                               {STATUS_LABELS[st] ?? st}
                             </span>
-                            {progressPct != null && progressPct > 0 ? (
-                              <small className={s.progressPct}>
-                                {progressPct}%
-                              </small>
-                            ) : null}
                           </div>
                           <span className={s.taskMonth}>
                             {item.plan_month ??
@@ -824,55 +971,17 @@ export function AnnualPlanTaskPage() {
                                 ? `${item.target_month} 月`
                                 : '—')}
                           </span>
-                          <button
-                            type="button"
-                            aria-expanded={isExpanded}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setExpandedId(isExpanded ? null : item.id)
-                            }}
-                          >
-                            进入任务
-                          </button>
+                          {taskIds[item.id] ? (
+                            <Link
+                              to={`/growth/tasks/${taskIds[item.id]}?year=${year}`}
+                              aria-label="进入任务"
+                            >
+                              进入任务
+                            </Link>
+                          ) : (
+                            <span className="muted">暂无任务</span>
+                          )}
                         </div>
-                        {isExpanded && td && (
-                          <TaskExecutionPanel
-                            item={item}
-                            year={year}
-                            detail={td}
-                            onTransition={(to, reason, date) =>
-                              void handleTransition(td.task, to, reason, date)
-                            }
-                            onComplete={(fields) =>
-                              void handleComplete(td.task, fields)
-                            }
-                            onCreateLog={(fields) =>
-                              void handleCreateLog(td.task.id, fields)
-                            }
-                            onVoidLog={(log) =>
-                              void handleVoidLog(td.task.id, log)
-                            }
-                            onSaveEvidence={(evidence, fields, superseded) =>
-                              handleSaveEvidenceDraft(
-                                td.task.id,
-                                evidence,
-                                fields,
-                                superseded,
-                              )
-                            }
-                            onSaveDates={(fields) =>
-                              handleSaveDates(item, fields)
-                            }
-                            onSubmitEvidence={(evidence) =>
-                              void handleSubmitEvidence(td.task.id, evidence)
-                            }
-                          />
-                        )}
-                        {isExpanded && !td && (
-                          <div className={s.taskPanel}>
-                            <p className="muted">暂无任务执行数据。</p>
-                          </div>
-                        )}
                       </div>
                     )
                   })}

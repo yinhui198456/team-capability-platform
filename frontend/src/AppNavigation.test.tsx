@@ -350,6 +350,32 @@ describe('role-based default routing', () => {
   })
 })
 
+describe('Issue #194 B1 task routes', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the requested year on the independent learning-task route', async () => {
+    stubYear()
+    stubApi()
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks?year=2025']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/growth/tasks?year=2025',
+      )
+    })
+    expect(screen.getByRole('heading', { name: '学习任务' })).toBeTruthy()
+  })
+})
+
 describe('authenticated route guard', () => {
   afterEach(() => {
     cleanup()
