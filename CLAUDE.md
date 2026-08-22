@@ -62,7 +62,7 @@ Migrations: add `backend/app/migrations/versions/vNNNN_<name>.py` and register i
 
 Loaded automatically; read the relevant piece instead of duplicating it here:
 
-- Rules — `.claude/rules/`: `delivery-boundaries.md` (global: repository/host boundaries, one writer, evidence, stop conditions), `backend.md`, `frontend.md`, `migrations.md`, `testing-and-evidence.md` (path-scoped).
+- Rules — `.claude/rules/`: `delivery-boundaries.md` (global: repository/host boundaries, one writer, evidence, stop conditions), `prototype-authority.md` (global: prototype is the implementation/acceptance authority, non-writer snapshot cross-check, role boundaries), `backend.md`, `frontend.md`, `migrations.md`, `testing-and-evidence.md` (path-scoped).
 - Skills — `.claude/skills/` (optional, invoked on demand): `tcp-uat-execution` (authorized UAT runs), `tcp-high-risk-gate` (gate before delivery/deployment for high-risk families).
 - Agents — `.claude/agents/` (read-only reviewers): `contract-reviewer`, `permission-concurrency-reviewer`, `test-gap-reviewer`.
 - Enforcement — `.claude/settings.json` + `.claude/hooks/pretool-guard.sh`: PreToolUse hook that deterministically blocks destructive/out-of-repo Bash commands and out-of-repo Edit/Write; browser automation comes from the installed `playwright-skill` plugin capability.

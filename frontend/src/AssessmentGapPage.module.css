@@ -35,15 +35,6 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
-.locateBtn {
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-xs);
-  background: var(--color-brand-50);
-  color: var(--color-brand-700);
-  border-color: var(--color-brand-100);
-  white-space: nowrap;
-}
-
 .domainGroup {
   margin-bottom: var(--space-3);
   border: 1px solid var(--color-gray-200);
@@ -95,31 +86,116 @@
   color: var(--color-gray-500);
 }
 
+/* Issue #194 P1: 权威原型 M02 V1 — 四区能力项行（能力项 / 当前评级 /
+   目标与差距 / 提升计划），窄宽单列重排；不使用横向滚动表格替代。 */
 .table {
-  width: 100%;
-  border-collapse: collapse;
+  display: flex;
+  flex-direction: column;
   font-size: 12px;
 }
-.table th {
-  padding: 3px 4px;
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+.abilityHead,
+.abilityRow {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 1fr) minmax(360px, 1.65fr) 128px
+    140px;
+  gap: 16px;
+  align-items: center;
+}
+.abilityHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 38px;
+  padding: 0 16px;
+  background: var(--color-white);
+  border-block: 1px solid var(--color-gray-200);
   color: var(--color-gray-500);
-  border-bottom: 1px solid var(--color-gray-200);
-  text-align: left;
-  white-space: nowrap;
+  font-size: 11px;
 }
-.table td {
-  padding: 0 4px;
+.abilityRow {
+  position: relative;
+  min-height: 92px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--color-gray-50);
-  vertical-align: middle;
+  overflow-wrap: anywhere;
 }
-.table select {
-  width: 52px;
+.abilityRow > div:first-child strong {
+  display: block;
+}
+.rating {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.rating button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px 6px;
+  border: 1px solid #cbd7e5;
+  border-radius: 0;
+  background: var(--color-white);
+  color: #354962;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.rating button + button {
+  margin-left: -1px;
+}
+.rating button:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.rating button:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.rating button small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.2;
+}
+.rating button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ratingActive {
+  z-index: 1;
+  border-color: var(--color-brand-500);
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+.planZone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+.planZone select {
+  width: auto;
+  min-width: 52px;
   padding: 2px 4px;
   font-size: var(--text-sm);
-  text-align: center;
+}
+.planEditor {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 2px -2px -3px;
+  padding: 12px 14px;
+  border: 1px solid #dce6f2;
+  border-radius: 7px;
+  background: #f7faff;
+}
+.planEditor label {
+  min-width: 80px;
+  font-size: var(--text-sm);
+  color: var(--color-gray-600);
+}
+.planEditor input[type='month'] {
+  width: 118px;
+  padding: 1px 2px;
+  font-size: 11px;
 }
 .rowFilled {
   background: rgba(2, 122, 72, 0.03);
@@ -141,6 +217,24 @@
   color: var(--color-gray-500);
   margin-top: 1px;
   line-height: 1.1;
+}
+.targetCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.targetLine {
+  color: var(--color-gray-700);
+  font-weight: 600;
+}
+.adjustTarget {
+  margin: 0;
+}
+.adjustTargetSummary {
+  color: var(--color-gray-500);
+  font-size: 0.65rem;
+  cursor: pointer;
 }
 .recommend {
   font-size: var(--text-xs);
@@ -179,6 +273,8 @@
 
 /* Inline evidence editor */
 .evidenceRow {
+  grid-column: 1 / -1;
+  padding: var(--space-2) 0;
   background: var(--color-gray-50);
 }
 .evidenceEditor {
@@ -291,29 +387,6 @@
   padding-left: var(--space-5);
 }
 
-/* Scope tag / level snapshot in column 1 */
-.scopeTag {
-  display: inline-block;
-  margin-right: 4px;
-  padding: 0 3px;
-  background: var(--color-brand-50);
-  color: var(--color-brand-700);
-  border-radius: var(--radius-sm);
-  font-size: 0.6rem;
-  font-weight: 600;
-  vertical-align: middle;
-}
-.levelSnapshot {
-  display: inline-block;
-  margin-left: 4px;
-  padding: 0 3px;
-  background: var(--color-gray-100);
-  color: var(--color-gray-600);
-  border-radius: var(--radius-sm);
-  font-size: 0.6rem;
-  vertical-align: middle;
-}
-
 /* Adjusted badge in column 3 */
 .adjustedBadge {
   display: inline-block;
@@ -372,6 +445,14 @@
   padding-bottom: 72px;
 }
 
+:global(.page.assessment-page) {
+  max-width: none;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
 .contentArea .assessment-header {
   margin-bottom: 0;
   flex-shrink: 0;
@@ -384,6 +465,13 @@
 }
 .assessment-header h1 {
   font-size: var(--text-xl);
+}
+.eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--color-brand-700);
+  font-size: var(--text-xs);
+  font-weight: 600;
 }
 
 .assessment-page .compact-summary {
@@ -409,7 +497,11 @@
   gap: var(--space-3);
   align-items: flex-start;
   margin: 4px 0;
+  padding: var(--space-2) var(--space-3);
   flex-shrink: 0;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
 }
 .l1Nav {
   display: flex;
@@ -494,41 +586,6 @@
   font: inherit;
   cursor: pointer;
 }
-.table {
-  display: table;
-  table-layout: fixed;
-}
-.table thead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--color-white);
-}
-/* 7-column layout */
-.table th:nth-child(1) {
-  width: 22%;
-}
-.table th:nth-child(2) {
-  width: 12%;
-}
-.table th:nth-child(3) {
-  width: 16%;
-}
-.table th:nth-child(4) {
-  width: 8%;
-}
-.table th:nth-child(5) {
-  width: 10%;
-}
-.table th:nth-child(6) {
-  width: 8%;
-}
-.table th:nth-child(7) {
-  width: 14%;
-}
-.table td {
-  overflow-wrap: anywhere;
-}
 .inheritanceTag {
   display: inline-block;
   margin-left: 4px;
@@ -537,21 +594,6 @@
   background: var(--color-brand-50);
   color: var(--color-brand-700);
   font-size: 0.65rem;
-}
-.gapDrawer {
-  position: fixed;
-  z-index: 10;
-  top: 0;
-  right: 0;
-  width: min(360px, 90vw);
-  height: 100vh;
-  padding: var(--space-5);
-  background: var(--color-white);
-  border-left: 1px solid var(--color-gray-200);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
-}
-.gapDrawer > button:first-child {
-  float: right;
 }
 .stickyActions {
   position: sticky;
@@ -576,15 +618,43 @@
   margin-right: auto;
 }
 
-/* Plan time layout */
-.planTime {
-  display: flex;
-  gap: 2px;
+/* M02 V1: 已加入提升计划的成功态按钮 + 页头自动保存徽标 */
+.planToggleJoined {
+  background: #ecfdf3;
+  color: var(--color-success);
+  border-color: var(--color-success);
 }
-.planTime select {
-  width: 44px;
-  padding: 1px 2px;
-  font-size: 11px;
+.autoSaveBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-lg);
+  background: #ecfdf3;
+  color: var(--color-success);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.ratingSaveControl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ratingSaveStatus {
+  color: var(--color-gray-500);
+  font-size: var(--text-xs);
+}
+.generationSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+  color: var(--color-success);
+  font-size: var(--text-sm);
+}
+
+.pendingMonth {
+  font-size: 10px;
+  color: var(--text-secondary, #888);
 }
 
 @media (max-width: 1280px) {
@@ -601,69 +671,99 @@
     min-height: 40px;
     padding: 2px var(--space-3);
   }
-  /* Tighter widths at 1280 */
-  .table th:nth-child(1) {
-    width: 20%;
-  }
-  .table th:nth-child(2) {
-    width: 10%;
-  }
-  .table th:nth-child(3) {
-    width: 16%;
-  }
-  .table th:nth-child(4) {
-    width: 8%;
-  }
-  .table th:nth-child(5) {
-    width: 10%;
-  }
-  .table th:nth-child(6) {
-    width: 8%;
-  }
-  .table th:nth-child(7) {
-    width: 16%;
-  }
 }
-@media (min-width: 1440px) {
-  /* Wider layout: give more space to col 1 and 3 */
-  .table th:nth-child(1) {
-    width: 24%;
-  }
-  .table th:nth-child(2) {
-    width: 11%;
-  }
-  .table th:nth-child(3) {
-    width: 18%;
-  }
-  .table th:nth-child(7) {
-    width: 13%;
-  }
-}
-@media (min-width: 1920px) {
-  .table th:nth-child(1) {
-    width: 25%;
-  }
-  .table th:nth-child(2) {
-    width: 10%;
-  }
-  .table th:nth-child(3) {
-    width: 20%;
-  }
-  .table th:nth-child(7) {
-    width: 12%;
-  }
-}
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
   .navigationRow {
     flex-direction: column;
   }
   .navigationRow .toolbar {
     width: 100%;
   }
-  .table {
-    min-width: 760px;
+  .l1Nav {
+    flex: none;
+    width: 100%;
+    margin-bottom: 0;
+    flex-wrap: wrap;
+    overflow: visible;
   }
-  .tableArea {
-    overflow-x: auto;
+  /* 1024 原型仍保留四区能力行，只压缩列宽和评级按钮。 */
+  .abilityHead,
+  .abilityRow {
+    grid-template-columns:
+      minmax(140px, 1.25fr) minmax(185px, 1fr) minmax(84px, 0.5fr)
+      minmax(96px, 0.56fr);
+    gap: 8px;
+  }
+  .abilityHead {
+    display: grid;
+    min-height: 34px;
+    padding: 0 10px;
+  }
+  .abilityRow {
+    min-height: 92px;
+    padding: 10px;
+  }
+  .rating {
+    max-width: 100%;
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+  .rating button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 40px;
+    padding: 3px 1px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .rating button small {
+    display: none;
+  }
+  .planEditor {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 820px) {
+  /* Issue #194: 定版原型 768——摘要与底部动作换行，不做横向表/裁切替代 */
+  .assessment-page .compact-summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .stickyActions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .stickyActions span:first-of-type {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+  .abilityHead {
+    display: none;
+  }
+  .abilityRow {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .rating {
+    flex-wrap: nowrap;
+  }
+  .rating button {
+    flex: 1;
+    min-width: 0;
+  }
+  .rating button small {
+    display: block;
+  }
+  .planEditor {
+    grid-column: 1;
+  }
+  .navigationRow .toolbar .searchBox {
+    width: 100%;
+  }
+  .contentArea .assessment-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
   }
 }

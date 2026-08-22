@@ -285,6 +285,17 @@ Assessment Detail 可记录：
 | 唯一性约束 | 同一 Learning Task 内版本号唯一 |
 | 维护角色 | Member |
 
+### 3.17.1 Annual Plan Change Proposal Detail
+
+| 项目 | 说明 |
+|---|---|
+| 业务定义 | 已生成任务对应 L3 的不可变要求变化决策；每条 proposal detail 只能由该 Member 决定一次。 |
+| 业务字段 | proposal、L3 与新 planning snapshot 溯源、`requirement_decision`（`adopt_new` / `keep_original`）、`decided_at`、`decided_by`。 |
+| 决策规则 | 相同决定幂等返回；首次不同决定返回 409。全部 detail 已决定后父 proposal 为「已处理」。 |
+| 采用新要求 | 复用生成链：snapshot 的 `materials_text`、`l3_name`、`expected_output`、`estimated_hours` 分别写 Plan Item 的材料、任务内容、预期输出、预计耗时；计划月份、优先级、任务状态、日志与 Evidence 保持不变，Plan Item revision 递增。 |
+| 证据门禁 | 同一 task/L3 存在未决定 proposal detail 时，Evidence 不得提交。 |
+| 维护角色 | 仅任务所属 Member；Buddy、Leader、Admin 无该写权限。 |
+
 ### 3.18 Evidence Review
 
 | 项目 | 说明 |

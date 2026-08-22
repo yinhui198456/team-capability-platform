@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { loginAs, logout } from '../fixtures/auth'
 
 test.describe('Member main flow', () => {
-  test('persists year param across 我的工作台 → 能力自评与 Gap → 年度成长计划', async ({
+  test('persists year param across 我的工作台 → 能力评级与提升计划 → 年度成长计划', async ({
     page,
   }) => {
     const year = '2026'
@@ -16,10 +16,10 @@ test.describe('Member main flow', () => {
     ).toBeVisible()
     await expect(page).toHaveURL(new RegExp(`/dashboard/member\\?year=${year}`))
 
-    // 2. 能力自评与 Gap
-    await page.getByRole('link', { name: '能力自评与 Gap' }).click()
+    // 2. 能力评级与提升计划
+    await page.getByRole('link', { name: '能力评级与提升计划' }).click()
     await expect(
-      page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
     ).toBeVisible()
     await expect(page).toHaveURL(
       new RegExp(`/capability/assessment\\?year=${year}`),
@@ -28,7 +28,7 @@ test.describe('Member main flow', () => {
     // 3. 年度成长计划
     await page.getByRole('link', { name: '年度成长计划' }).click()
     await expect(
-      page.getByRole('heading', { name: '年度成长计划' }),
+      page.getByRole('heading', { name: '月度计划时间轴' }),
     ).toBeVisible()
     await expect(page).toHaveURL(
       new RegExp(`/growth/annual-plan\\?year=${year}`),
@@ -49,18 +49,18 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
 
     await page.goto('/capability/assessment')
     await expect(
-      page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
     ).toBeVisible()
 
     // #62: the legacy growth-goals route redirects to the annual plan page
     await page.goto('/growth/goals')
     await expect(
-      page.getByRole('heading', { name: '年度成长计划' }),
+      page.getByRole('heading', { name: '月度计划时间轴' }),
     ).toBeVisible()
 
     await page.goto('/growth/annual-plan')
     await expect(
-      page.getByRole('heading', { name: '年度成长计划' }),
+      page.getByRole('heading', { name: '月度计划时间轴' }),
     ).toBeVisible()
 
     await page.goto('/growth/profile')
@@ -68,9 +68,11 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
 
     await logout(page)
     await loginAs(page, 'buddy')
+    // Issue #194 P1-3: 旧 Buddy 复核路由重定向到证据评审。
     await page.goto('/mentoring/dashboard')
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
 
     await logout(page)

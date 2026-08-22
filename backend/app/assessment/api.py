@@ -5,12 +5,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..access.policies import Connection, CurrentUser, require_any_role
 from . import policies
 from .repository import (
-    AssessmentValidationError,
     DetailValidationError,
     DraftTargetRepairError,
-    ReviewError,
     batch_fill_l2,
     create_assessment_draft,
+    generate_plan_items_for_selection,
     get_assessment,
     get_assessment_review_summary_for_buddy,
     get_assessment_reviews,
@@ -23,8 +22,6 @@ from .repository import (
     patch_assessment_draft,
     repair_draft_target_snapshots,
     save_assessment_draft,
-    submit_assessment,
-    submit_assessment_review,
     update_gap,
 )
 from .scope import AssessmentScopeError, compute_assessment_scope
@@ -64,11 +61,12 @@ class DetailItem(BaseModel):
     adjusted_target_level: int | None = Field(default=None, ge=1, le=5)
     target_adjustment_reason: str | None = None
     evidence_note: str | None = None
-    # Canonical plan fields
+    # Canonical plan fields (Issue #194: plan_month is TEXT 'YYYY-MM';
+    # plan_quarter is derived server-side and never accepted as input)
     member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
     include_in_plan: bool | None = None  # tri-state: None=未决定
     plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
-    plan_month: int | None = Field(default=None, ge=1, le=12)
+    plan_month: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     # Accepted for backward compat but rejected in handler
     plan_candidate: bool = False
 
@@ -92,7 +90,7 @@ class PatchDetailItem(BaseModel):
     member_priority: str | None = Field(default=None, pattern=r"^(高|中|低|暂缓)$")
     include_in_plan: bool | None = None
     plan_quarter: str | None = Field(default=None, pattern=r"^(Q1|Q2|Q3|Q4)$")
-    plan_month: int | None = Field(default=None, ge=1, le=12)
+    plan_month: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     # Accepted for backward compat but rejected in handler
     plan_candidate: bool | None = None
 
@@ -115,6 +113,30 @@ class BatchLevelRequest(BaseModel):
 
 class SubmitRequest(BaseModel):
     expected_revision: int = Field(ge=1)
+
+
+class GeneratePlanItemsRequest(BaseModel):
+    l3_codes: list[str] = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
+
+
+def _reject_plan_quarter(item: DetailItem) -> None:
+    """Issue #194: plan_quarter is a derived compat column — the frontend
+    must not send it (derive only happens from plan_month server-side)."""
+    quarter = item.plan_quarter
+    if quarter is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "plan_quarter_derived",
+                "field": "plan_quarter",
+                "reason": "derived_from_plan_month",
+                "message": (
+                    "plan_quarter 由 plan_month 自动推导，不接受前端输入；"
+                    "请仅提交 plan_month（YYYY-MM）"
+                ),
+            },
+        )
 
 
 class DraftTargetRepairRequest(BaseModel):
@@ -491,6 +513,7 @@ def save_draft(
                     ),
                 },
             )
+        _reject_plan_quarter(item)
     details: list[dict[str, object]] = [
         {
             "l3_node_id": item.l3_node_id,
@@ -502,7 +525,6 @@ def save_draft(
             "evidence_note": item.evidence_note,
             "member_priority": item.member_priority,
             "include_in_plan": item.include_in_plan,
-            "plan_quarter": item.plan_quarter,
             "plan_month": item.plan_month,
         }
         for item in request.details
@@ -560,6 +582,7 @@ def patch_draft(
                     ),
                 },
             )
+        _reject_plan_quarter(item)
     # Distinguish unset vs explicit-null via model_fields_set.
     details: list[dict[str, object]] = []
     for item in request.details:
@@ -575,7 +598,6 @@ def patch_draft(
             "evidence_note",
             "member_priority",
             "include_in_plan",
-            "plan_quarter",
             "plan_month",
         ):
             if key in item.model_fields_set:
@@ -635,16 +657,23 @@ def batch_level(
         raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
-@assessment_router.post(
-    "/{assessment_id}/submit",
-    dependencies=[require_any_role("Member")],
-)
-def submit(
+@assessment_router.post("/{assessment_id}/generate-plan-items")
+def generate_plan_items(
     assessment_id: int,
+    request: GeneratePlanItemsRequest,
     user: CurrentUser,
     connection: Connection,
-    request: SubmitRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
+    """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）。
+
+    Only the selected l3_codes are generated.  Any unready item fails the
+    whole batch with a per-L3 Chinese error (zero writes).  Idempotency:
+    the (annual_growth_plan_id, l3_code) unique kernel returns already
+    generated items as ``existing``, and the Idempotency-Key header (with a
+    payload fingerprint) replays the stored first response or 409s on reuse
+    with a different payload.
+    """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -657,34 +686,57 @@ def submit(
             detail="insufficient permissions",
         )
     try:
-        result = submit_assessment(
+        result = generate_plan_items_for_selection(
             connection,
             assessment_id,
             int(user["id"]),
+            request.l3_codes,
             expected_revision=request.expected_revision,
+            idempotency_key=idempotency_key,
         )
-    except AssessmentValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": exc.code,
-                "l3_code": exc.l3_code,
-                "l3_node_id": exc.l3_node_id,
-                "field": exc.field,
-                "reason": exc.reason,
-                "message": str(exc),
-            },
-        ) from exc
+    except AssessmentScopeError as exc:
+        raise _scope_error(exc) from exc
+    except DetailValidationError as exc:
+        raise _detail_validation_error(exc) from exc
     except ValueError as exc:
         if str(exc) == "revision conflict":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     return {"ok": True, **result}
+
+
+@assessment_router.post(
+    "/{assessment_id}/submit",
+    dependencies=[require_any_role("Member")],
+)
+def submit(
+    assessment_id: int,
+    user: CurrentUser,
+    connection: Connection,
+    request: SubmitRequest,
+) -> dict[str, object]:
+    """Issue #194: 退役 — 生成学习任务已改为显式动作（M02 三个独立动作）。
+
+    旧的一键 submit-and-generate 契约被替换；该端点保持存在但零写入，
+    返回 422 legacy_assessment_submit_disabled 提示迁移到新动作。
+    """
+    del assessment_id, user, connection, request  # zero-write by design
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": "legacy_assessment_submit_disabled",
+            "message": (
+                "提交并自动生成学习任务已退役：请使用"
+                "保存能力评级 → 加入/移出提升计划草稿 → "
+                "生成所选学习任务（POST /generate-plan-items）三个独立动作"
+            ),
+        },
+    )
 
 
 @assessment_router.get("/{assessment_id}/history")
@@ -751,6 +803,11 @@ def submit_review(
     connection: Connection,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
+    """Issue #194 P1-3: 退役 — Buddy 自评复核改为 Evidence Review。
+
+    Assessment Review 写端点保持存在但零写入（稳定 410），自评复核流程
+    已由 Evidence Review（证据评审）取代；GET 历史（/history）只读保持。
+    """
     assessment = get_assessment(connection, assessment_id)
     if assessment is None:
         raise HTTPException(
@@ -762,60 +819,17 @@ def submit_review(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="insufficient permissions",
         )
-    try:
-        return submit_assessment_review(
-            connection,
-            review_id,
-            int(user["id"]),
-            request.conclusion,
-            request.feedback,
-            expected_revision=request.expected_revision,
-            assessment_id_from_url=assessment_id,
-            idempotency_key=idempotency_key,
-        )
-    except ReviewError as exc:
-        detail: dict[str, object] = {
-            "code": exc.code,
-            "message": str(exc),
-        }
-        if exc.l3_node_id is not None:
-            detail["l3_node_id"] = exc.l3_node_id
-        if exc.l3_code is not None:
-            detail["l3_code"] = exc.l3_code
-        if exc.field is not None:
-            detail["field"] = exc.field
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=detail,
-        ) from exc
-    except AssessmentValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "code": exc.code,
-                "l3_code": exc.l3_code,
-                "l3_node_id": exc.l3_node_id,
-                "field": exc.field,
-                "reason": exc.reason,
-                "message": str(exc),
-            },
-        ) from exc
-    except psycopg.errors.UniqueViolation as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "business_key_conflict",
-                "message": "concurrent business key conflict",
-            },
-        ) from exc
-    except psycopg.errors.RaiseException as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "database_guard_rejected",
-                "message": "database integrity guard rejected the write",
-            },
-        ) from exc
+    del request, idempotency_key, review_id  # zero-write by design
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "assessment_review_write_disabled",
+            "message": (
+                "自评复核提交已退役（410）：请改用证据评审 Evidence Review"
+                "（/mentoring/evidence-review）评审证据并推进学习任务闭环"
+            ),
+        },
+    )
 
 
 # ponytail: archive remains a repository function only; not exposed via API.

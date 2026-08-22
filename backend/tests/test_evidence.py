@@ -12,8 +12,10 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -173,6 +175,11 @@ def evidence_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_assessment_schema(connection)
     _reset_planning_schema(connection)
     _reset_catalog_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -284,11 +291,12 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
+    publish_test_standard(connection, ["P01-L2A-L3A"])
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -317,32 +325,25 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
 def _approve_assessment(
     connection: psycopg.Connection, assessment_id: int, buddy_username: str
 ) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(connection, assessment_id, buddy_username)
 
 
 def _seed_learning_task(
@@ -470,6 +471,34 @@ def test_submit_evidence_creates_review(evidence_schema: psycopg.Connection) -> 
         (evidence_id,),
     ).fetchone()
     assert row is None
+
+
+def test_submit_evidence_requires_resolving_pending_requirement_change(
+    evidence_schema: psycopg.Connection,
+) -> None:
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+    second = _create_and_submit_assessment(evidence_schema, "member_evidence")
+    _approve_assessment(evidence_schema, second, "buddy_evidence")
+
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "等待确认的成果", "evidence_link": "http://example.com/pending"},
+        cookies=cookies,
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{int(evidence['id'])}/submit",
+        {},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "requirement_decision_pending"
+    assert body["detail"]["entity_type"] == "learning_task"
+    assert body["detail"]["entity_id"] == task_id
+    assert body["detail"]["field"] == "requirement_decision"
 
 
 def test_update_non_draft_evidence_returns_422(
@@ -1143,3 +1172,94 @@ def test_concurrent_evidence_creation_only_one_succeeds(
     assert status == 200
     assert len(evidences) == 1
     assert evidences[0]["version_number"] == 1
+
+
+def test_approval_and_evidence_submit_serialize_on_plan_lock(
+    evidence_schema: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A submit waiting behind approval must see the new pending proposal."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    from app.assessment import repository as assessment_repository
+    from app.planning.repository import RequirementDecisionPending, submit_evidence
+    from tests.conftest import TEST_DATABASE_URL
+
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "并发成果", "evidence_link": "http://example.com/race"},
+        cookies=cookies,
+    )
+    assert status == 200
+    evidence_id = int(evidence["id"])
+    member_id, buddy_id = (
+        int(value)
+        for value in evidence_schema.execute(
+            "SELECT (SELECT id FROM tcp_user WHERE username='member_evidence'), "
+            "(SELECT id FROM tcp_user WHERE username='buddy_evidence')"
+        ).fetchone()
+    )
+    second = _create_and_submit_assessment(evidence_schema, "member_evidence")
+    review_id = int(
+        evidence_schema.execute(
+            "SELECT id FROM assessment_review WHERE assessment_id=%s", (second,)
+        ).fetchone()[0]
+    )
+    evidence_schema.commit()
+
+    plan_locked = Event()
+    release_approval = Event()
+    submit_started = Event()
+    original = assessment_repository._approve_with_proposal
+
+    def hold_after_plan_lock(*args: object, **kwargs: object) -> dict[str, object]:
+        plan_locked.set()
+        assert release_approval.wait(timeout=5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        assessment_repository, "_approve_with_proposal", hold_after_plan_lock
+    )
+
+    def approve() -> dict[str, object]:
+        with psycopg.connect(TEST_DATABASE_URL) as connection:
+            return assessment_repository.submit_assessment_review(
+                connection,
+                review_id,
+                buddy_id,
+                "认可",
+                "并发批准",
+                expected_revision=3,
+                assessment_id_from_url=second,
+            )
+
+    def submit() -> str:
+        assert plan_locked.wait(timeout=5)
+        submit_started.set()
+        with psycopg.connect(TEST_DATABASE_URL) as connection:
+            try:
+                submit_evidence(connection, member_id, evidence_id)
+            except RequirementDecisionPending:
+                return "blocked"
+        return "submitted"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        approval = pool.submit(approve)
+        assert plan_locked.wait(timeout=5)
+        submission = pool.submit(submit)
+        assert submit_started.wait(timeout=5)
+        with pytest.raises(TimeoutError):
+            submission.result(timeout=0.1)
+        release_approval.set()
+        assert approval.result(timeout=5)["proposal"] is not None
+        assert submission.result(timeout=5) == "blocked"
+
+    assert (
+        evidence_schema.execute(
+            "SELECT status FROM evidence WHERE id=%s", (evidence_id,)
+        ).fetchone()[0]
+        == "草稿"
+    )

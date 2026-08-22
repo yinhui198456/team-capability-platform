@@ -170,8 +170,8 @@ export function AssessmentHistoryPage() {
                             detail.member_priority === undefined
                           ? ' · 历史系统优先级'
                           : ''}
-                      {detail.plan_quarter && detail.plan_month
-                        ? ` · 计划时间: ${detail.plan_quarter} ${detail.plan_month}月`
+                      {detail.plan_month
+                        ? ` · 计划时间: ${detail.plan_month}`
                         : ''}
                     </li>
                   ))}

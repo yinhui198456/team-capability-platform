@@ -758,6 +758,112 @@ select {
   margin-top: 8px;
 }
 
+/* Issue #194 M04: match the selected task-list hierarchy. */
+.task-summary {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.task-summary .metric {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: flex;
+  min-height: 82px;
+  padding: 14px 18px;
+}
+
+.task-summary .metric dd {
+  font-size: 24px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.task-summary .pending {
+  border-left: 3px solid #eaaa08;
+}
+
+.task-summary .overdue {
+  border-left: 3px solid #d92d20;
+}
+
+.task-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.seg-group {
+  display: flex;
+  gap: 5px;
+}
+
+.seg {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #52637c;
+  min-height: 36px;
+  padding: 0 13px;
+}
+
+.seg.active {
+  background: #175cd3;
+  border-color: #175cd3;
+  color: #fff;
+}
+
+.task-search {
+  flex: 1;
+}
+
+.task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-card {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-left: 3px solid #175cd3;
+  border-radius: 8px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr auto;
+  min-height: 116px;
+  padding: 16px 18px;
+}
+
+.task-card.changed {
+  background: #fffdf8;
+  border-left-color: #eaaa08;
+}
+
+.task-card-main {
+  align-items: start;
+  display: grid;
+  gap: 7px 18px;
+  grid-template-columns: 1fr auto;
+}
+
+.task-card-main h2 {
+  font-size: 15px;
+  margin: 3px 0 0;
+}
+
+.task-card-main p,
+.task-card-main > span:last-child {
+  grid-column: 1 / 3;
+  margin: 0;
+}
+
+.task-card-actions {
+  border-left: 1px solid #e4e7ec;
+  padding-left: 18px;
+}
+
 .buddy-summary button {
   background: #fff;
   border: 1px solid #e4e7ec;
@@ -1273,6 +1379,30 @@ select {
 @media (max-width: 720px) {
   .task-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .seg-group {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .task-search {
+    flex-basis: 100%;
+  }
+
+  .task-card {
+    grid-template-columns: 1fr;
+  }
+
+  .task-card-actions {
+    border-left: 0;
+    border-top: 1px solid #e4e7ec;
+    padding: 10px 0 0;
   }
 }
 

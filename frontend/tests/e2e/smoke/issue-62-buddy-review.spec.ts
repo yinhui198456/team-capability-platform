@@ -1,4 +1,11 @@
-/** Issue #62: Buddy Review atomic plan generation — E2E scenarios.
+/** Issue #62: 显式生成学习任务（#194 兼容改造）— E2E scenarios.
+
+  Issue #194 将“提交自评并自动生成学习任务”废止为三个独立动作：
+  保存能力评级 → 加入/移出计划草稿（include_in_plan）→ 显式生成所选学习任务
+  （POST /generate-plan-items，Idempotency-Key 前缀 generate-plan-items:）。
+  原 10 个场景以“Buddy 自评复核认可 → 自动生成计划”为主线（已废止），现按
+  新合同重写：每条场景保留原意图（零写入、幂等重放、冲突恢复、权限边界、
+  工作区 UI），断言对象改为显式生成、唯一核去重与退役端点的 422/410 零写入。
 
   Isolation contract (same as issue-61 spec):
   - Each scenario owns a FIXED unique year (E2E-62-NN → 2260+NN), independent
@@ -6,7 +13,8 @@
   - Drafts are looked up by the exact business key (member, year, '年度') and
     reused with their real revision instead of blindly re-created.
   - Scenarios run through the REAL API (request fixture) and verify the UI for
-    the Buddy workspace; nothing is page-routed away.
+    the surviving Buddy workspace (Evidence Review); nothing is page-routed
+    away.
  */
 
 import { expect, test } from '@playwright/test'
@@ -77,11 +85,9 @@ async function ensureDraft(
 interface DesiredDetail {
   l3_code: string
   current_level: number | null
-  target_level: number | null
   member_priority?: string | null
   include_in_plan?: boolean | null
-  plan_quarter?: string | null
-  plan_month?: number | null
+  plan_month?: string | null // Issue #194: YYYY-MM
 }
 
 /** Pick the first N applicable details from the real assessment scope. */
@@ -89,6 +95,7 @@ interface ScopeSnapshot {
   l3_code: string
   l3_node_id: number | null
   standard_target_applicable: boolean
+  target_level?: number | null
 }
 
 async function pickApplicableDetails(
@@ -108,9 +115,9 @@ async function pickApplicableDetails(
     .map((d) => ({ l3_code: d.l3_code, l3_node_id: d.l3_node_id }))
 }
 
+/** Full-replacement save (PUT) — the first of the three independent
+  actions.  plan_quarter must never be sent (#194: derived server-side). */
 async function fillDetails(
-  page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-
   request: ApiRequest,
   draft: DraftState,
   details: DesiredDetail[],
@@ -133,7 +140,6 @@ async function fillDetails(
       current_level: wanted.current_level,
       member_priority: wanted.member_priority ?? null,
       include_in_plan: wanted.include_in_plan ?? null,
-      plan_quarter: wanted.plan_quarter ?? null,
       plan_month: wanted.plan_month ?? null,
     }
   })
@@ -147,61 +153,77 @@ async function fillDetails(
     )
   }
   const saved = await saveResp.json()
-  const submitResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/submit`,
-    { data: { expected_revision: saved.revision } },
-  )
-  if (!submitResp.ok()) {
-    throw new Error(
-      `submit failed: ${submitResp.status()} ${await submitResp.text()}`,
-    )
-  }
-  const submitted = await submitResp.json()
-  return submitted.revision
+  // Success path only: keep the shared draft state's revision in sync so a
+  // later save/generate in the same scenario never sends a stale revision.
+  // Real conflict scenarios capture a stale value explicitly instead.
+  draft.revision = saved.revision
+  return saved.revision
 }
 
-async function pendingReviewId(
-  page: Parameters<Parameters<typeof test>[1]>[0]['page'],
+interface PickSpec {
+  current_level: number
+  member_priority: string
+  include_in_plan: boolean | null
+  plan_month?: string // Issue #194: YYYY-MM
+}
 
+interface PickedDetail {
+  l3_code: string
+  l3_node_id: number | null
+}
+
+/** Pick applicable details for a draft, build member decisions, save. */
+async function pickAndFill(
   request: ApiRequest,
-  assessmentId: number,
-): Promise<number> {
-  const resp = await request.get(`${BACKEND}/api/assessments/reviews/pending`)
-  if (!resp.ok()) {
-    throw new Error(`pending reviews failed: ${resp.status()}`)
-  }
-  const pending = await resp.json()
-  const review = pending.find(
-    (r: { assessment_id: number }) => r.assessment_id === assessmentId,
-  )
-  if (!review) {
-    throw new Error(`no pending review for assessment ${assessmentId}`)
-  }
-  return review.id
+  draft: DraftState,
+  picks: PickSpec[],
+): Promise<{ codes: string[]; revision: number }> {
+  const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
+  const assessment = await getResp.json()
+  const picked = await pickApplicableDetails(assessment, picks.length)
+  const details = picked.map((detail: PickedDetail, index: number) => {
+    const pick = picks[index]
+    const snapshot = assessment.details.find(
+      (d: ScopeSnapshot) => d.l3_code === detail.l3_code,
+    )
+    // Clamp to a positive gap against the frozen scope target so the plan
+    // choice is never auto-cleared (#194: gap-zero rows cannot plan).
+    const target = snapshot?.target_level ?? 4
+    const currentLevel =
+      pick.include_in_plan && target != null
+        ? Math.min(pick.current_level, Math.max(0, target - 1))
+        : pick.current_level
+    return {
+      l3_code: detail.l3_code,
+      current_level: currentLevel,
+      member_priority: pick.member_priority,
+      include_in_plan: pick.include_in_plan,
+      ...(pick.plan_month ? { plan_month: pick.plan_month } : {}),
+    }
+  })
+  const revision = await fillDetails(request, draft, details)
+  return { codes: picked.map((d) => d.l3_code), revision }
 }
 
-interface ReviewResult {
+interface ApiResult {
   status: number
   body: Record<string, unknown> | null
 }
 
-async function submitReview(
-  page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-
+/** Issue #194: explicit generation of the selected plan items (idempotent:
+  same key + same payload replays the stored first response, same key +
+  different payload → 409). */
+async function generatePlan(
   request: ApiRequest,
-  assessmentId: number,
-  reviewId: number,
-  payload: {
-    conclusion: '认可' | '建议调整'
-    feedback?: string
-    expected_revision: number
-  },
+  draft: DraftState,
+  revision: number,
+  codes: string[],
   idempotencyKey?: string,
-): Promise<ReviewResult> {
+): Promise<ApiResult> {
   const resp = await request.post(
-    `${BACKEND}/api/assessments/${assessmentId}/reviews/${reviewId}`,
+    `${BACKEND}/api/assessments/${draft.id}/generate-plan-items`,
     {
-      data: payload,
+      data: { expected_revision: revision, l3_codes: codes },
       headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
     },
   )
@@ -214,215 +236,140 @@ async function submitReview(
   return { status: resp.status(), body }
 }
 
-interface PickedDetail {
-  l3_code: string
-  l3_node_id: number | null
-}
-
-/** Pick applicable details for a draft and build member decisions. */
-async function pickAndFill(
-  page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-
+/** Annual plan for the year, or null when generation never created one. */
+async function annualPlanOf(
   request: ApiRequest,
-  draft: DraftState,
-  picks: Array<{
-    current_level: number
-    target_level: number
-    member_priority: string
-    include_in_plan: boolean
-    plan_quarter?: string
-    plan_month?: number
-  }>,
-): Promise<number> {
-  const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
-  const assessment = await getResp.json()
-  const picked = await pickApplicableDetails(assessment, picks.length)
-  const details = picked.map((detail: PickedDetail, index: number) => {
-    const pick = picks[index]
-    const snapshot = assessment.details.find(
-      (d) => d.l3_code === detail.l3_code,
-    )
-    // Derive a current level that guarantees a positive gap against the
-    // frozen scope target, so the plan choice is not auto-cleared on submit.
-    const target = snapshot?.target_level ?? pick.target_level
-    const currentLevel =
-      pick.include_in_plan && target != null
-        ? Math.min(pick.current_level, Math.max(0, target - 1))
-        : pick.current_level
-    return {
-      l3_code: detail.l3_code,
-      current_level: currentLevel,
-      target_level: pick.target_level,
-      member_priority: pick.member_priority,
-      include_in_plan: pick.include_in_plan,
-      plan_quarter: pick.plan_quarter ?? null,
-      plan_month: pick.plan_month ?? null,
-    }
-  })
-  return fillDetails(page, request, draft, details)
+  year: number,
+): Promise<Record<string, unknown> | null> {
+  const resp = await request.get(
+    `${BACKEND}/api/planning/annual-plan?year=${year}`,
+  )
+  if (!resp.ok()) {
+    throw new Error(`annual-plan failed: ${resp.status()}`)
+  }
+  return (await resp.json()) as Record<string, unknown> | null
 }
 
-test.describe('Issue #62 Buddy Review atomic plan generation', () => {
-  test('E2E-62-01 建议调整闭环：调整后零计划写入，重新提交后认可生成计划', async ({
+function detailOf(
+  result: ApiResult,
+): { code?: string; reason?: string; message?: string } | null {
+  return (
+    (result.body?.detail as
+      { code?: string; reason?: string; message?: string } | undefined) ?? null
+  )
+}
+
+test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自评复核认可自动生成已废止）', () => {
+  test('E2E-62-01 生成前未就绪零写入，完善后生成成功（原建议调整闭环）', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-01')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    const revision = await pickAndFill(page, request, draft, [
+    // 未选择纳入 → 显式生成被拒（not_in_plan），零计划写入。
+    const undecided = await pickAndFill(request, draft, [
+      { current_level: 2, member_priority: '高', include_in_plan: null },
+    ])
+    const rejected = await generatePlan(
+      request,
+      draft,
+      undecided.revision,
+      undecided.codes,
+    )
+    expect(rejected.status).toBe(422)
+    expect(detailOf(rejected)?.reason).toBe('not_in_plan')
+    expect(await annualPlanOf(request, year)).toBeNull()
+
+    // 完善（纳入 + 月份）→ 生成成功，计划与 Item 落库。
+    const decided = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
     ])
-    await loginAs(page, 'buddy')
-    const reviewId = await pendingReviewId(page, request, draft.id)
-    const adjust = await submitReview(page, request, draft.id, reviewId, {
-      conclusion: '建议调整',
-      feedback: '请补充说明',
-      expected_revision: revision,
-    })
-    expect(adjust.status).toBe(200)
-    expect(adjust.body.assessment_status).toBe('建议调整')
-    expect(adjust.body.plan).toBeNull()
-    // zero plan writes after 建议调整
-    const planResp = await request.get(
-      `${BACKEND}/api/planning/annual-plan?year=${year}`,
+    const ok = await generatePlan(
+      request,
+      draft,
+      decided.revision,
+      decided.codes,
     )
-    const plan = await planResp.json()
-    expect(plan).toBeNull()
-
-    // member resubmits after 建议调整 → #82 atomic generation creates plan
-    await loginAs(page, 'member')
-    const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
-    const afterAdjust = await getResp.json()
-    const resubmitResp = await request.post(
-      `${BACKEND}/api/assessments/${draft.id}/submit`,
-      { data: { expected_revision: afterAdjust.revision } },
-    )
-    expect(resubmitResp.ok()).toBeTruthy()
-    const resubmitted = await resubmitResp.json()
-    // Issue #82: plan generated on self-submit
-    expect(resubmitted.plan_generation.created).toBe(true)
-    expect(resubmitted.plan_generation.items_created).toBeGreaterThanOrEqual(1)
-
-    // buddy approves the new round → plan already exists (created=false)
-    await loginAs(page, 'buddy')
-    const newReviewId = await pendingReviewId(page, request, draft.id)
-    const approve = await submitReview(page, request, draft.id, newReviewId, {
-      conclusion: '认可',
-      feedback: '已确认',
-      expected_revision: resubmitted.revision,
-    })
-    expect(approve.status).toBe(200)
-    expect(approve.body.assessment_status).toBe('已归档')
-    // Issue #82: plan already created by self-submit
-    expect(approve.body.plan.created).toBe(false)
-    expect(approve.body.plan.plan_id).toBeDefined()
-    // plan reads happen as the member (the annual-plan endpoint is member-scoped)
-    await loginAs(page, 'member')
-    const planAfter = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfter.source_assessment_id).toBe(draft.id)
-    expect(planAfter.planning_source_type).toBe('assessment_approval')
-    expect(planAfter.items.length).toBe(resubmitted.plan_generation.items_created)
+    expect(ok.status).toBe(200)
+    expect(ok.body?.created).toEqual(decided.codes)
+    const plan = await annualPlanOf(request, year)
+    expect(plan).not.toBeNull()
+    expect(
+      (plan?.items as Array<Record<string, unknown>> | undefined)?.length,
+    ).toBe(1)
   })
 
-  test('E2E-62-02 首次认可零纳入项生成计划壳', async ({ page }) => {
+  test('E2E-62-02 空选择被拒零写入；单纳入显式生成创建计划（原零纳入计划壳）', async ({
+    page,
+  }) => {
     const request = page.request
     const year = yearFor('E2E-62-02')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    const revision = await pickAndFill(page, request, draft, [
+    // 零纳入项：空选择被 l3_codes 最小长度校验拒绝，零写入。
+    const revision = await fillDetails(request, draft, [])
+    const empty = await generatePlan(request, draft, revision, [])
+    expect(empty.status).toBe(422)
+    expect(await annualPlanOf(request, year)).toBeNull()
+
+    // 单纳入 → 生成成功：计划、Item 与 1:1 学习任务创建。
+    const { codes, revision: decided } = await pickAndFill(request, draft, [
       {
-        current_level: 3,
-        target_level: 3,
-        member_priority: '中',
-        include_in_plan: false,
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan shell created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
+    const ok = await generatePlan(request, draft, decided, codes)
+    expect(ok.status).toBe(200)
+    expect(ok.body?.annual_plan_id).toBeDefined()
+    expect(ok.body?.created).toEqual(codes)
+    const plan = await annualPlanOf(request, year)
+    const item = (
+      plan?.items as Array<Record<string, unknown>> | undefined
+    )?.[0]
+    expect(item?.l3_code).toBe(codes[0])
+    const tasks = await (
+      await request.get(`${BACKEND}/api/planning/learning-tasks`)
     ).json()
-    expect(planAfterSubmit.source_assessment_id).toBe(draft.id)
-    expect(planAfterSubmit.items.length).toBe(0)
-
-    await loginAs(page, 'buddy')
-    const reviewId = await pendingReviewId(page, request, draft.id)
-    const approve = await submitReview(page, request, draft.id, reviewId, {
-      conclusion: '认可',
-      feedback: '零项计划壳',
-      expected_revision: revision,
-    })
-    expect(approve.status).toBe(200)
-    // Issue #82: plan already exists (created by self-submit)
-    expect(approve.body.plan.created).toBe(false)
-    expect(approve.body.plan.plan_id).toBeDefined()
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.source_assessment_id).toBe(draft.id)
-    expect(plan.items.length).toBe(0)
+    expect(
+      tasks.some((t: { plan_item_id: number }) => t.plan_item_id === item?.id),
+    ).toBe(true)
   })
 
-  test('E2E-62-03 首次认可生成多项 Item/Task，来源快照完整', async ({
-    page,
-  }) => {
+  test('E2E-62-03 首次生成多项 Item/Task，来源快照完整', async ({ page }) => {
     const request = page.request
     const year = yearFor('E2E-62-03')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    const revision = await pickAndFill(page, request, draft, [
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
       {
         current_level: 1,
-        target_level: 3,
         member_priority: '中',
         include_in_plan: true,
-        plan_quarter: 'Q3',
-        plan_month: 8,
+        plan_month: `${year}-06`,
       },
     ])
-    // Issue #82: verify plan created on self-submit with 2 items
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(2)
-
-    await loginAs(page, 'buddy')
-    const reviewId = await pendingReviewId(page, request, draft.id)
-    const approve = await submitReview(page, request, draft.id, reviewId, {
-      conclusion: '认可',
-      feedback: '两项纳入',
-      expected_revision: revision,
-    })
-    expect(approve.status).toBe(200)
-    // Issue #82: plan already exists (created by self-submit)
-    expect(approve.body.plan.created).toBe(false)
-    expect(approve.body.plan.plan_id).toBeDefined()
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.items.length).toBe(2)
-    for (const item of plan.items) {
+    const ok = await generatePlan(request, draft, revision, codes)
+    expect(ok.status).toBe(200)
+    expect(ok.body?.created).toEqual(codes)
+    const plan = await annualPlanOf(request, year)
+    const items = (plan?.items ?? []) as Array<Record<string, unknown>>
+    expect(items.length).toBe(2)
+    for (const item of items) {
       expect(item.source_assessment_id).toBe(draft.id)
       expect(item.source_assessment_detail_id).not.toBeNull()
       expect(item.capability_standard_version_id).not.toBeNull()
@@ -431,87 +378,69 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
       expect(item.include_in_plan).toBe(true)
       expect(item.gap_value).toBeGreaterThan(0)
       expect(item.priority).toBeTruthy()
-      expect(item.plan_quarter).toBeTruthy()
-      expect(item.plan_month).toBeGreaterThan(0)
+      expect(item.status).toBe('未开始')
+      // Issue #194: plan_month is TEXT 'YYYY-MM'; plan_quarter derived.
+      expect(item.plan_month).toMatch(/^[0-9]{4}-(0[1-9]|1[0-2])$/)
+      expect(item.plan_quarter).toMatch(/^Q[1-4]$/)
+      // frozen source snapshot from the planning template
+      expect(item.l3_name).toBeTruthy()
+      expect(item.learning_task_content).toBeTruthy()
+      expect(item.estimated_hours).toBeTruthy()
+    }
+    // 1:1 learning task per generated item
+    const tasks = await (
+      await request.get(`${BACKEND}/api/planning/learning-tasks`)
+    ).json()
+    for (const item of items) {
+      expect(
+        tasks.some((t: { plan_item_id: number }) => t.plan_item_id === item.id),
+      ).toBe(true)
     }
   })
 
-  test('E2E-62-04 后续认可只生成 Change Proposal，正式计划不变', async ({
+  test('E2E-62-04 草稿修改后再次生成不重复写入，正式计划不变（原后续认可）', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-04')
     await loginAs(page, 'member')
-    const first = await ensureDraft(page, request, year, 'member')
-    const firstRevision = await pickAndFill(page, request, first, [
+    const draft = await ensureDraft(page, request, year, 'member')
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: first plan created on self-submit
-    const planAfterFirstSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterFirstSubmit.source_assessment_id).toBe(first.id)
+    const first = await generatePlan(request, draft, revision, codes)
+    expect(first.status).toBe(200)
+    const planBefore = await annualPlanOf(request, year)
+    const itemBefore = (planBefore?.items as Array<Record<string, unknown>>)[0]
+    const itemRevisionBefore = itemBefore.revision
 
-    await loginAs(page, 'buddy')
-    const review1 = await pendingReviewId(page, request, first.id)
-    const approve1 = await submitReview(page, request, first.id, review1, {
-      conclusion: '认可',
-      feedback: '首次认可',
-      expected_revision: firstRevision,
-    })
-    expect(approve1.status).toBe(200)
-    // Issue #82: plan already exists
-    expect(approve1.body.plan.created).toBe(false)
-
-    // second assessment (年中更新) same member+year
-    await loginAs(page, 'member')
-    const second = await ensureDraft(page, request, year, 'member', '年中更新')
-    const secondRevision = await pickAndFill(page, request, second, [
+    // 草稿后续修改（revision 前进）后再生成同一 code → 唯一核去重：
+    // created 为空、existing 返回、正式计划（Item 数与 revision）不变。
+    // 注意：full-replacement 空数组会把所选 code 的 include/month 清空
+    // （新合同下变未选择 → generate 422），故复用同一首项配置保存以推进
+    // revision，保持合法正 Gap + include=true + YYYY-MM。
+    const { revision: revised } = await pickAndFill(request, draft, [
       {
-        current_level: 3,
-        target_level: 4,
-        member_priority: '中',
+        current_level: 2,
+        member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q3',
-        plan_month: 8,
+        plan_month: `${year}-05`,
       },
     ])
-    const planBefore = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    await loginAs(page, 'buddy')
-    const review2 = await pendingReviewId(page, request, second.id)
-    const approve2 = await submitReview(page, request, second.id, review2, {
-      conclusion: '认可',
-      feedback: '后续认可',
-      expected_revision: secondRevision,
-    })
-    expect(approve2.status).toBe(200)
-    expect(approve2.body.plan).toBeNull()
-    expect(approve2.body.proposal.created).toBe(true)
-    expect(approve2.body.proposal.target_is_legacy).toBe(false)
-
-    await loginAs(page, 'member')
-    const proposals = await (
-      await request.get(`${BACKEND}/api/planning/change-proposals?year=${year}`)
-    ).json()
-    expect(proposals.length).toBe(1)
-    expect(proposals[0].source_assessment_id).toBe(second.id)
-    expect(proposals[0].target_annual_growth_plan_id).toBe(planBefore.id)
-    expect(proposals[0].status).toBe('待处理')
-    expect(proposals[0].details.length).toBe(1)
-
-    const planAfter = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfter.items.length).toBe(planBefore.items.length)
+    const again = await generatePlan(request, draft, revised, codes)
+    expect(again.status).toBe(200)
+    expect(again.body?.created).toEqual([])
+    expect(again.body?.existing).toEqual(codes)
+    const planAfter = await annualPlanOf(request, year)
+    expect((planAfter?.items as Array<Record<string, unknown>>)?.length).toBe(1)
+    expect(
+      (planAfter?.items as Array<Record<string, unknown>>)[0].revision,
+    ).toBe(itemRevisionBefore)
   })
 
   test('E2E-62-05 幂等重放：同 key 同 payload 返回首次响应，不重复写入', async ({
@@ -521,402 +450,219 @@ test.describe('Issue #62 Buddy Review atomic plan generation', () => {
     const year = yearFor('E2E-62-05')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    const revision = await pickAndFill(page, request, draft, [
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
-        current_level: 3,
-        target_level: 3,
-        member_priority: '中',
-        include_in_plan: false,
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit).toBeDefined()
-
-    await loginAs(page, 'buddy')
-    const reviewId = await pendingReviewId(page, request, draft.id)
-    const payload = {
-      conclusion: '认可' as const,
-      feedback: '幂等',
-      expected_revision: revision,
-    }
-    const first = await submitReview(
-      page,
-      request,
-      draft.id,
-      reviewId,
-      payload,
-      'e2e-idem-key-1',
-    )
+    const key = `generate-plan-items:e2e62-05-${year}`
+    const first = await generatePlan(request, draft, revision, codes, key)
     expect(first.status).toBe(200)
-    expect(first.body.idempotent_replayed).toBe(false)
-    // Issue #82: plan already exists (created by self-submit)
-    expect(first.body.plan.created).toBe(false)
-    const second = await submitReview(
-      page,
-      request,
-      draft.id,
-      reviewId,
-      payload,
-      'e2e-idem-key-1',
-    )
-    expect(second.status).toBe(200)
-    expect(second.body.idempotent_replayed).toBe(true)
-    expect(second.body.plan.plan_id).toBe(first.body.plan.plan_id)
-    // single plan row
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.items.length).toBe(0)
+    const replay = await generatePlan(request, draft, revision, codes, key)
+    expect(replay.status).toBe(200)
+    expect(replay.body).toEqual(first.body)
+    expect((await annualPlanOf(request, year))?.items?.length).toBe(1)
   })
 
-  test('E2E-62-06 无幂等 key 的重复提交返回 409，不二次写入', async ({
+  test('E2E-62-06 无幂等 key 的重复生成由唯一核去重，零新增（原重复提交 409）', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-06')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    const revision = await pickAndFill(page, request, draft, [
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
-        current_level: 3,
-        target_level: 3,
-        member_priority: '中',
-        include_in_plan: false,
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit).toBeDefined()
-
-    await loginAs(page, 'buddy')
-    const reviewId = await pendingReviewId(page, request, draft.id)
-    const first = await submitReview(page, request, draft.id, reviewId, {
-      conclusion: '认可',
-      feedback: '首次',
-      expected_revision: revision,
-    })
+    const first = await generatePlan(request, draft, revision, codes)
     expect(first.status).toBe(200)
-    // Issue #82: plan already exists
-    expect(first.body.plan.created).toBe(false)
-    const second = await submitReview(page, request, draft.id, reviewId, {
-      conclusion: '认可',
-      feedback: '重复',
-      expected_revision: revision,
-    })
-    expect(second.status).toBe(409)
-    expect(
-      (second.body as { detail?: { code?: string } } | null)?.detail?.code,
-    ).toBe('assessment_already_reviewed')
+    expect(first.body?.created).toEqual(codes)
+    const again = await generatePlan(request, draft, revision, codes)
+    expect(again.status).toBe(200)
+    expect(again.body?.created).toEqual([])
+    expect(again.body?.existing).toEqual(codes)
+    expect((await annualPlanOf(request, year))?.items?.length).toBe(1)
   })
 
-  test('E2E-62-07 Buddy 工作区 UI：汇总、提示与提交', async ({ page }) => {
+  test('E2E-62-07 Buddy 旧复核工作区退役：路由重定向、写端点 410 零写入、证据评审保留', async ({
+    page,
+  }) => {
     const request = page.request
     const year = yearFor('E2E-62-07')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
-      {
-        current_level: 2,
-        target_level: 4,
-        member_priority: '高',
-        include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
-      },
-    ])
+    // 非 Buddy 调用旧复核写端点 → 403（权限先于退役判断）。
+    const asMember = await request.post(
+      `${BACKEND}/api/assessments/${draft.id}/reviews/1`,
+      { data: { conclusion: '认可', feedback: 'x', expected_revision: 1 } },
+    )
+    expect(asMember.status()).toBe(403)
+
     await loginAs(page, 'buddy')
+    // 旧复核工作区路由重定向到证据评审；复核中心不再渲染。
     await page.goto('/mentoring/dashboard')
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
-    // select THIS scenario's pending review (other suites may leave pending
-    // reviews for other members/years in the shared queue)
-    await page
-      .locator('tr', { hasText: String(year) })
-      .getByRole('button')
-      .first()
-      .click()
-    // summary grid + first-approval notice (Issue #82: notice may need update)
-    await expect(
-      page.getByText(/首次认可将原子生成正式年度计划/).first(),
-    ).toBeVisible()
-    // detail table shows the frozen facts
-    await expect(page.getByText('高').first()).toBeVisible()
-    // submit approve via the UI with real API
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('UI 认可')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already created by self-submit, success message may differ
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
+    await expect(page.getByText('数据范围：负责成员')).toBeVisible()
+    await expect(page.getByText('Buddy 复核中心')).toHaveCount(0)
+    // 旧复核写端点稳定 410 且零写入（Buddy 且有负责关系）。
+    const asBuddy = await request.post(
+      `${BACKEND}/api/assessments/${draft.id}/reviews/1`,
+      { data: { conclusion: '认可', feedback: 'x', expected_revision: 1 } },
+    )
+    expect(asBuddy.status()).toBe(410)
+    const retired = await asBuddy.json()
+    expect(retired.detail.code).toBe('assessment_review_write_disabled')
+    // 只读队列端点保持可用。
+    const pending = await request.get(
+      `${BACKEND}/api/assessments/reviews/pending`,
+    )
+    expect(pending.status()).toBe(200)
   })
 
-  // ── P1-5: frontend idempotency-key lifecycle ──────────────────────────────
-
-  /** Open the Buddy workspace and select THIS scenario's pending review. */
-  async function openWorkspaceForYear(
-    page: Parameters<Parameters<typeof test>[1]>[0]['page'],
-    year: number,
-  ) {
-    await page.goto('/mentoring/dashboard')
-    await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
-    await page
-      .locator('tr', { hasText: String(year) })
-      .getByRole('button')
-      .first()
-      .click()
-    await expect(
-      page.getByText(/首次认可将原子生成正式年度计划/).first(),
-    ).toBeVisible()
-  }
-
-  test('E2E-62-08 真实响应丢失：服务端已提交但浏览器未收到响应，同 key 重试幂等重放', async ({
+  test('E2E-62-08 响应丢失后同 key 异 payload → 409；换新 key 成功且首次结果保留', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-08')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
+    const key = `generate-plan-items:e2e62-08-${year}`
+    const first = await generatePlan(request, draft, revision, codes, key)
+    expect(first.status).toBe(200)
+    expect(first.body?.created).toEqual(codes)
 
-    await loginAs(page, 'buddy')
-    // P2-1: the first request REALLY reaches the backend and commits (the
-    // plan already exists from self-submit), but the client response is suppressed —
-    // the browser sees a gateway failure.  The retry with the SAME key then
-    // hits the server's idempotency replay: idempotent_replayed=true and no
-    // second write anywhere.
-    const keys: string[] = []
-    let replayed = false
-    let call = 0
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      const headers = route.request().headers()
-      keys.push(headers['idempotency-key'] ?? '')
-      call += 1
-      const response = await route.fetch()
-      if (call === 1) {
-        // Server committed; the response is dropped on the floor.
-        await route.fulfill({
-          status: 504,
-          contentType: 'application/json',
-          body: JSON.stringify({ detail: 'gateway timeout' }),
-        })
-        return
-      }
-      const body = (await response.json()) as {
-        idempotent_replayed?: boolean
-      }
-      if (body.idempotent_replayed === true) {
-        replayed = true
-      }
-      await route.fulfill({ response })
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('重试认可')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByRole('alert').first()).toBeVisible()
-    // same payload, unchanged input -> retry reuses the same idempotency key
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByText(/已提交（幂等重放/).first()).toBeVisible()
-    // the server-side replay flag was observed on the real response
-    expect(replayed).toBe(true)
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).toBe(keys[0])
-    // queue decremented exactly once: no pending review remains
-    const pending = await (
-      await request.get(`${BACKEND}/api/assessments/reviews/pending`)
-    ).json()
-    expect(
-      pending.filter(
-        (r: { assessment_id: number }) => r.assessment_id === draft.id,
-      ),
-    ).toHaveLength(0)
-    // exactly 1 review closed, 1 plan, 1 item, 1 task, 0 proposals
-    const reviews = await (
-      await request.get(`${BACKEND}/api/assessments/${draft.id}/history`)
-    ).json()
-    expect(
-      reviews.filter((r: { status: string }) => r.status === '已闭环'),
-    ).toHaveLength(1)
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.items.length).toBe(1)
-    // exactly one learning task exists for the plan item
-    const tasks = await (
-      await request.get(`${BACKEND}/api/planning/learning-tasks`)
-    ).json()
-    expect(
-      tasks.filter((t: { plan_item_id: number }) =>
-        plan.items.some((i: { id: number }) => i.id === t.plan_item_id),
-      ),
-    ).toHaveLength(1)
-    const proposals = await (
-      await request.get(`${BACKEND}/api/planning/change-proposals?year=${year}`)
-    ).json()
-    expect(proposals.length).toBe(0)
+    // “响应丢失后前端刷新 revision 重试”：同 key、同 l3_codes、新 revision
+    // → fingerprint 不同 → 409 拒绝，提示换新 key。
+    // revision 前进时保持所选 code 合法（full-replacement 空数组会清空
+    // include/month → 422），复用同一首项配置保存。
+    const { revision: revised } = await pickAndFill(request, draft, [
+      {
+        current_level: 2,
+        member_priority: '高',
+        include_in_plan: true,
+        plan_month: `${year}-05`,
+      },
+    ])
+    const conflict = await generatePlan(request, draft, revised, codes, key)
+    expect(conflict.status).toBe(409)
+    expect(detailOf(conflict)?.code).toBe('idempotency_key_reused')
+
+    // 换新 key 重试：首次生成结果保留（existing），不重复写入。
+    const retry = await generatePlan(
+      request,
+      draft,
+      revised,
+      codes,
+      `generate-plan-items:e2e62-08b-${year}`,
+    )
+    expect(retry.status).toBe(200)
+    expect(retry.body?.created).toEqual([])
+    expect(retry.body?.existing).toEqual(codes)
+    expect((await annualPlanOf(request, year))?.items?.length).toBe(1)
   })
 
-  test('E2E-62-09 失败后修改反馈：新 payload 用新 key，正常重新提交', async ({
+  test('E2E-62-09 失败不消耗幂等 key：修复后同 key 重试成功并可重放', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-09')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    const key = `generate-plan-items:e2e62-09-${year}`
+    // 未就绪（未选择纳入）→ 422，幂等 key 未被占用。
+    const undecided = await pickAndFill(request, draft, [
+      { current_level: 2, member_priority: '高', include_in_plan: null },
+    ])
+    const failed = await generatePlan(
+      request,
+      draft,
+      undecided.revision,
+      undecided.codes,
+      key,
+    )
+    expect(failed.status).toBe(422)
+    expect(detailOf(failed)?.reason).toBe('not_in_plan')
+    expect(await annualPlanOf(request, year)).toBeNull()
+
+    // 修复（纳入 + 月份）后同 key 重试成功。
+    const decided = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
-
-    await loginAs(page, 'buddy')
-    const keys: string[] = []
-    let call = 0
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      keys.push(route.request().headers()['idempotency-key'] ?? '')
-      call += 1
-      if (call === 1) {
-        await route.abort('failed')
-        return
-      }
-      await route.continue()
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('初版反馈')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    await expect(page.getByRole('alert').first()).toBeVisible()
-    // the member edits the feedback before retrying -> a NEW key must be used
-    await page.getByLabel('反馈').first().fill('修订后反馈')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already exists, success message may vary
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).not.toBe(keys[0])
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.items.length).toBe(1)
+    const ok = await generatePlan(
+      request,
+      draft,
+      decided.revision,
+      decided.codes,
+      key,
+    )
+    expect(ok.status).toBe(200)
+    expect(ok.body?.created).toEqual(decided.codes)
+    // 同 key 同 payload 重放 → 首次响应，单次写入。
+    const replay = await generatePlan(
+      request,
+      draft,
+      decided.revision,
+      decided.codes,
+      key,
+    )
+    expect(replay.status).toBe(200)
+    expect(replay.body).toEqual(ok.body)
+    expect((await annualPlanOf(request, year))?.items?.length).toBe(1)
   })
 
-  test('E2E-62-10 409 版本冲突：输入保留、工作区刷新、新 key 重新提交成功', async ({
+  test('E2E-62-10 409 版本冲突：刷新 revision 后重试成功（原工作区刷新）', async ({
     page,
   }) => {
     const request = page.request
     const year = yearFor('E2E-62-10')
     await loginAs(page, 'member')
     const draft = await ensureDraft(page, request, year, 'member')
-    await pickAndFill(page, request, draft, [
+    // 捕获保存前的 revision 作为过期值（fillDetails 成功后共享状态会同步）。
+    const staleRevision = draft.revision
+    const { codes, revision } = await pickAndFill(request, draft, [
       {
         current_level: 2,
-        target_level: 4,
         member_priority: '高',
         include_in_plan: true,
-        plan_quarter: 'Q2',
-        plan_month: 5,
+        plan_month: `${year}-05`,
       },
     ])
-    // Issue #82: plan created on self-submit
-    await loginAs(page, 'member')
-    const planAfterSubmit = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(planAfterSubmit.items.length).toBe(1)
+    // 过期 revision → 409 revision conflict，零写入。
+    const stale = await generatePlan(request, draft, staleRevision, codes)
+    expect(stale.status).toBe(409)
+    expect(await annualPlanOf(request, year)).toBeNull()
 
-    await loginAs(page, 'buddy')
-    const keys: string[] = []
-    let call = 0
-    let workspaceGets = 0
-    await page.route('**/api/assessments/*/buddy-review', async (route) => {
-      workspaceGets += 1
-      await route.continue()
-    })
-    await page.route('**/api/assessments/*/reviews/*', async (route) => {
-      keys.push(route.request().headers()['idempotency-key'] ?? '')
-      call += 1
-      if (call === 1) {
-        // A stale revision: the server would answer 409 revision_conflict.
-        await route.fulfill({
-          status: 409,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            detail: { code: 'revision_conflict', message: 'revision conflict' },
-          }),
-        })
-        return
-      }
-      await route.continue()
-    })
-    await openWorkspaceForYear(page, year)
-    await page.getByLabel('认可').first().click()
-    await page.getByLabel('反馈').first().fill('冲突后保留')
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // 409 keeps the input and explains the situation
-    await expect(page.getByRole('alert').first()).toContainText(
-      '复核版本已更新，请确认后重新提交。',
-    )
-    await expect(page.getByLabel('反馈').first()).toHaveValue('冲突后保留')
-    await expect(page.getByLabel('认可').first()).toBeChecked()
-    // the workspace was refreshed (fresh expected_revision)...
-    await expect.poll(() => workspaceGets).toBeGreaterThan(1)
-    // ...and the resubmit uses a NEW key and succeeds
-    await page.getByRole('button', { name: '提交复核反馈' }).first().click()
-    // Issue #82: plan already exists, success message may vary
-    await expect(
-      page.getByText(/年度计划已生成|已提交/).first()
-    ).toBeVisible()
-    expect(keys.length).toBeGreaterThanOrEqual(2)
-    expect(keys[0]).toBeTruthy()
-    expect(keys[1]).not.toBe(keys[0])
-    // exactly one plan; no duplicates anywhere
-    await loginAs(page, 'member')
-    const plan = await (
-      await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-    ).json()
-    expect(plan.items.length).toBe(1)
+    // 刷新（读取当前 revision）→ 同 payload 重试成功。
+    const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
+    const fresh = (await getResp.json()).revision
+    expect(fresh).toBe(revision)
+    const ok = await generatePlan(request, draft, fresh, codes)
+    expect(ok.status).toBe(200)
+    expect(ok.body?.created).toEqual(codes)
+    expect((await annualPlanOf(request, year))?.items?.length).toBe(1)
   })
 })

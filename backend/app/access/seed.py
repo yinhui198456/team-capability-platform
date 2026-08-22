@@ -203,8 +203,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
                     ),
                     "member_priority": "高" if is_demo_gap else None,
                     "include_in_plan": True if is_demo_gap else None,
-                    "plan_quarter": "Q1" if is_demo_gap else None,
-                    "plan_month": 3 if is_demo_gap else None,
+                    # Issue #194: TEXT 'YYYY-MM'; plan_quarter is derived
+                    # server-side and never accepted as input.
+                    "plan_month": f"{year}-03" if is_demo_gap else None,
                 }
             )
         save_assessment_draft(
@@ -222,7 +223,7 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             (assessment_id,),
         ).fetchone()[0]
         # Approval atomically creates the Annual Plan, Plan Item and Task.
-        review_result = submit_assessment_review(
+        submit_assessment_review(
             connection,
             assessment_review_id,
             buddy_id,

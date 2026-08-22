@@ -27,7 +27,7 @@ _L3 = "P01-L2A-L3A"
 
 
 class TestReviewPlanAtomic(ReviewTestBase):
-    def test_approve_zero_items_creates_plan_shell(
+    def test_approve_keeps_zero_item_plan_shell(
         self, review_schema: psycopg.Connection
     ) -> None:
         member_id, buddy_id = self.setup_users(review_schema)
@@ -40,7 +40,9 @@ class TestReviewPlanAtomic(ReviewTestBase):
         )
         result = self.approve(review_schema, assessment_id, buddy_id)
         assert result["assessment_status"] == "已归档"
-        assert result["plan"]["created"] is True
+        # Issue #82+#194: the plan shell was created atomically at submit;
+        # approval keeps it without creating anything new.
+        assert result["plan"]["created"] is False
         assert result["plan"]["items_created"] == 0
         assert result["plan"]["tasks_created"] == 0
         plan = get_annual_plan_with_items(review_schema, member_id, 2026)
@@ -53,7 +55,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
             == 0
         )
 
-    def test_approve_multiple_items_one_item_one_task_and_full_snapshot(
+    def test_approve_preserves_submit_generated_full_snapshot(
         self, review_schema: psycopg.Connection
     ) -> None:
         member_id, buddy_id = self.setup_users(review_schema)
@@ -69,14 +71,15 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
         result = self.approve(review_schema, assessment_id, buddy_id)
-        assert result["plan"]["items_created"] == 1
-        assert result["plan"]["tasks_created"] == 1
+        # Issue #82+#194: item + task were generated atomically at submit;
+        # approval keeps them (nothing new created).
+        assert result["plan"]["items_created"] == 0
+        assert result["plan"]["tasks_created"] == 0
 
         plan = get_annual_plan_with_items(review_schema, member_id, 2026)
         assert plan is not None
@@ -91,24 +94,34 @@ class TestReviewPlanAtomic(ReviewTestBase):
         assert item["include_in_plan"] is True
         assert item["priority"] == "高"
         assert item["plan_quarter"] == "Q2"
-        assert item["plan_month"] == 5
+        assert item["plan_month"] == "2026-05"
         assert item["gap_value"] == 2
         assert item["current_level"] == 2
         assert item["target_level"] == 4
         assert item["effective_target_level"] == 4
         assert item["member_current_level_snapshot"] == "P4"
         assert item["member_target_level_snapshot"] == "P5"
-        assert item["assessment_revision"] == 3
+        # Revision stamped at generation time (submit, revision 2).
+        assert item["assessment_revision"] == 2
         assert item["l1_code"] is not None
         assert item["l2_code"] is not None
         assert item["l3_name"] is not None
         assert item["scope_type"] is not None
         # frozen planning source: material/output/hours come from the immutable
-        # snapshot, never from live catalog recomputation
-        assert (
-            item["learning_material"] is not None
-            or item["learning_task_content"] is not None
-        )
+        # snapshot, never from live catalog recomputation (the fixture nodes
+        # carry no materials, so the frozen values are NULL here — the wiring
+        # is what this asserts)
+        snapshot_row = review_schema.execute(
+            """
+            SELECT materials_text, expected_output, estimated_hours
+            FROM capability_standard_planning_snapshot WHERE id=%s
+            """,
+            (item["planning_snapshot_id"],),
+        ).fetchone()
+        assert snapshot_row is not None
+        assert item["learning_material"] == snapshot_row[0]
+        assert item["expected_output"] == snapshot_row[1]
+        assert item["estimated_hours"] == snapshot_row[2]
         tasks = review_schema.execute(
             """
             SELECT lt.id, lt.plan_item_id, lt.status FROM learning_task lt
@@ -136,8 +149,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -155,7 +167,9 @@ class TestReviewPlanAtomic(ReviewTestBase):
         with pytest.raises(ReviewError) as excinfo:
             self.approve(review_schema, assessment_id, buddy_id)
         assert excinfo.value.code == "planning_snapshot_missing"
-        # zero partial writes: assessment still pending, no plan/items/tasks
+        # zero partial writes from the failed approve: assessment still
+        # pending; the plan/items/tasks were already created atomically at
+        # submit (#82), so the failed approve adds nothing on top.
         assessment = get_assessment(review_schema, assessment_id)
         assert assessment is not None
         assert assessment["status"] == "待复核"
@@ -163,14 +177,14 @@ class TestReviewPlanAtomic(ReviewTestBase):
             review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
                 0
             ]
-            == 0
+            == 1
         )
         assert (
-            review_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 0
+            review_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 1
         )
         assert (
             review_schema.execute("SELECT COUNT(*) FROM learning_task").fetchone()[0]
-            == 0
+            == 1
         )
         reviews = get_assessment_reviews(review_schema, assessment_id)
         assert reviews[0]["status"] == "待复核"
@@ -191,8 +205,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -208,10 +221,22 @@ class TestReviewPlanAtomic(ReviewTestBase):
         assert result["proposal"] is None
         assessment = get_assessment(review_schema, assessment_id)
         assert assessment["status"] == "建议调整"
+        # The adjustment writes no plan data, but the plan/items/tasks
+        # already exist from the atomic submit-time generation (#82).
+        assert (
+            review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
+                0
+            ]
+            == 1
+        )
+        assert (
+            review_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 1
+        )
+        assert (
+            review_schema.execute("SELECT COUNT(*) FROM learning_task").fetchone()[0]
+            == 1
+        )
         for table in (
-            "annual_growth_plan",
-            "plan_item",
-            "learning_task",
             "annual_plan_change_proposal",
             "annual_plan_change_proposal_detail",
         ):
@@ -254,8 +279,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -272,8 +296,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "中",
                     "include_in_plan": True,
-                    "plan_quarter": "Q3",
-                    "plan_month": 8,
+                    "plan_month": "2026-08",
                 }
             ],
         )
@@ -294,7 +317,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
         assert len(proposal["details"]) == 1
         detail = proposal["details"][0]
         assert detail["plan_quarter"] == "Q3"
-        assert detail["plan_month"] == 8
+        assert detail["plan_month"] == "2026-08"
         assert detail["capability_standard_version_id"] is not None
         assert detail["planning_snapshot_id"] is not None
         assert detail["assessment_revision"] == 3
@@ -351,8 +374,7 @@ class TestReviewPlanAtomic(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -366,7 +388,9 @@ class TestReviewPlanAtomic(ReviewTestBase):
         assert summary["high"] == 1
         assert summary["in_plan"] == 1
         assert summary["by_quarter"]["Q2"] == 1
-        assert summary["existing_formal_plan"] is False
+        # Issue #82+#194: the plan exists from submit-time generation; its
+        # source is this assessment, so no proposal would be created.
+        assert summary["existing_formal_plan"] is True
         assert summary["will_create_proposal"] is False
         detail = workspace["details"][0]
         # canonical facts read straight from assessment_detail, no recomputation
@@ -423,8 +447,7 @@ class TestApproveLegacyNullNodeDetail(ReviewTestBase):
         "target_level": 4,
         "member_priority": "高",
         "include_in_plan": True,
-        "plan_quarter": "Q2",
-        "plan_month": 5,
+        "plan_month": "2026-05",
     }
 
     @staticmethod
@@ -435,6 +458,14 @@ class TestApproveLegacyNullNodeDetail(ReviewTestBase):
             (assessment_id,),
         ).fetchone()
         assert row is not None and row[0] is not None
+        # Issue #82+#194: submit already generated a plan whose item pins the
+        # detail triple (plan_item_source_detail_assessment_node_fk).  Drop
+        # that plan (cascades items/tasks) so the legacy-corrupted detail can
+        # be written and the approve path re-derives from it.
+        connection.execute(
+            "DELETE FROM annual_growth_plan WHERE source_assessment_id=%s",
+            (assessment_id,),
+        )
         connection.execute(
             "UPDATE assessment_detail SET l3_node_id=NULL WHERE assessment_id=%s",
             (assessment_id,),
@@ -590,8 +621,7 @@ class _LegacyNullScopeBase(ReviewTestBase):
         "target_level": 4,
         "member_priority": "高",
         "include_in_plan": True,
-        "plan_quarter": "Q2",
-        "plan_month": 5,
+        "plan_month": "2026-05",
     }
 
     # Fixture Legacy Baseline for _L3 (recommended_start_level P4):
@@ -615,6 +645,15 @@ class _LegacyNullScopeBase(ReviewTestBase):
             (assessment_id,),
         ).fetchone()
         assert row is not None and row[0] is not None
+        # Issue #82+#194: drop the submit-generated plan (cascades items/
+        # tasks) so the legacy-corrupted detail can be written and the
+        # approve path re-derives from it.  Proposal-path callers pass a
+        # second assessment whose plan belongs to the first one, so no plan
+        # is deleted there.
+        connection.execute(
+            "DELETE FROM annual_growth_plan WHERE source_assessment_id=%s",
+            (assessment_id,),
+        )
         connection.execute(
             "UPDATE assessment SET assessment_scope_version=NULL WHERE id=%s",
             (assessment_id,),

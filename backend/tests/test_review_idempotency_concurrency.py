@@ -48,8 +48,7 @@ class TestIdempotencyConcurrency(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -158,11 +157,13 @@ class TestIdempotencyConcurrency(ReviewTestBase):
             ).fetchone()[0]
             == 0
         )
+        # Issue #82+#194: the plan already exists (created atomically at
+        # submit); the stale approve writes nothing new.
         assert (
             review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
                 0
             ]
-            == 0
+            == 1
         )
 
     def test_concurrent_approvals_only_one_succeeds(
@@ -181,8 +182,7 @@ class TestIdempotencyConcurrency(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -256,8 +256,7 @@ class TestIdempotencyConcurrency(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )

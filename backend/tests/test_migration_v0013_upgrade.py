@@ -229,15 +229,16 @@ def test_first_assessment_approval_on_upgraded_database(
                 "target_level": 4,
                 "member_priority": "高",
                 "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
+                "plan_month": "2026-05",
             }
         ],
     )
     result = base.approve(pre_v0013_db, assessment_id, buddy_id)
     assert result["assessment_status"] == "已归档"
-    assert result["plan"]["items_created"] == 1
-    assert result["plan"]["tasks_created"] == 1
+    # Issue #82+#194: item + task were generated atomically at submit;
+    # approval keeps them (nothing new created).
+    assert result["plan"]["items_created"] == 0
+    assert result["plan"]["tasks_created"] == 0
 
     item = pre_v0013_db.execute(
         """

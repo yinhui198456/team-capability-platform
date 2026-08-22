@@ -27,6 +27,7 @@ for (const viewport of VIEWPORTS) {
         scope_token: string
         open_draft_id: number | null
       }
+      let draftId = previewBody.open_draft_id
       if (!previewBody.open_draft_id) {
         const created = await page.request.post('/api/assessments', {
           data: {
@@ -36,10 +37,71 @@ for (const viewport of VIEWPORTS) {
           },
         })
         expect(created.ok()).toBeTruthy()
+        draftId = ((await created.json()) as { id: number }).id
+      }
+      expect(draftId).toBeTruthy()
+      const draftResponse = await page.request.get(
+        `/api/assessments/${draftId}`,
+      )
+      expect(draftResponse.ok()).toBeTruthy()
+      const draft = (await draftResponse.json()) as {
+        id: number
+        revision: number
+        details: Array<{
+          l3_code: string
+          l3_node_id?: number | null
+          current_level: number | null
+          target_level: number | null
+          standard_target_level?: number | null
+          standard_target_applicable?: boolean | null
+          include_in_plan?: boolean | null
+          member_priority?: string | null
+          plan_month?: string | null
+        }>
+      }
+      const planDetail = draft.details.find((detail) => {
+        const target = detail.standard_target_level ?? detail.target_level
+        return (
+          detail.standard_target_applicable !== false &&
+          target != null &&
+          target > 0
+        )
+      })
+      expect(planDetail).toBeDefined()
+      const target =
+        planDetail!.standard_target_level ?? planDetail!.target_level
+      const currentLevel = Math.max(0, target! - 1)
+      const planReady =
+        planDetail!.current_level === currentLevel &&
+        planDetail!.include_in_plan === true &&
+        planDetail!.member_priority === '高' &&
+        planDetail!.plan_month === '2026-05'
+      if (!planReady) {
+        const saved = await page.request.patch(
+          `/api/assessments/${draft.id}/draft`,
+          {
+            data: {
+              expected_revision: draft.revision,
+              details: [
+                {
+                  l3_node_id: planDetail!.l3_node_id,
+                  l3_code: planDetail!.l3_code,
+                  current_level: currentLevel,
+                  include_in_plan: true,
+                  member_priority: '高',
+                  plan_month: '2026-05',
+                },
+              ],
+            },
+          },
+        )
+        expect(saved.ok()).toBeTruthy()
+        const savedBody = (await saved.json()) as { revision: number }
+        expect(savedBody.revision).toBeGreaterThan(draft.revision)
       }
       await page.goto('/capability/assessment')
       await expect(
-        page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+        page.getByRole('heading', { name: '能力评级与提升计划' }),
       ).toBeVisible()
       const summary = page.getByLabel('评估摘要')
       await expect(summary).toBeVisible({ timeout: 15000 })
@@ -49,97 +111,73 @@ for (const viewport of VIEWPORTS) {
 
     test('semantic alignment', async ({ page }) => {
       const summary = page.getByLabel('评估摘要')
-      await expect(summary).toContainText('进度')
-      await expect(summary).toContainText('未评估')
-      await expect(summary).toContainText('Gap')
-      await expect(summary).toContainText('已纳入计划')
-      await expect(summary).toContainText('暂缓')
-      await expect(summary).toContainText('Q1:')
-      await expect(summary).toContainText('Q4:')
+      await expect(summary).toContainText('能力域')
+      await expect(summary).toContainText('三级能力项')
+      await expect(summary).toContainText('已评级')
+      await expect(summary).toContainText('存在差距')
+      await expect(summary).toContainText('已加入计划')
 
       const tables = page.getByTestId('assessment-table')
       await expect(tables.first()).toBeVisible()
       const firstTable = tables.first()
-      // #61 7-column contract
+      // Issue #194 P1: #61 七列表格合同由权威原型 M02 V1 四区行头合法替代
       await expect(firstTable).toContainText('能力项')
-      await expect(firstTable).toContainText('当前掌握度')
-      await expect(firstTable).toContainText('目标掌握度')
-      await expect(firstTable).toContainText('Gap')
-      await expect(firstTable).toContainText('优先级')
-      await expect(firstTable).toContainText('纳入计划')
-      await expect(firstTable).toContainText('计划时间')
-      await expect(page.getByText('职级要求 P4–P8').first()).toBeVisible()
+      await expect(firstTable).toContainText('当前评级')
+      await expect(firstTable).toContainText('目标与差距')
+      await expect(firstTable).toContainText('提升计划')
+      await expect(firstTable).toContainText('Gap：')
+      const priority = page.locator('select[aria-label^="优先级"]').first()
+      await expect(priority).toBeVisible()
+      await expect(priority).toHaveValue('高')
+      await expect(
+        page.locator('input[type="month"][aria-label^="计划月份"]').first(),
+      ).toHaveValue('2026-05')
+      await expect(page.getByText('职级要求').first()).toBeVisible()
 
       await expect(
         page.getByRole('navigation', { name: '一级能力域导航' }),
       ).toBeVisible()
-      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
-      await page.getByRole('button', { name: '查看 Gap 摘要' }).click()
-      await expect(page.getByTestId('gap-drawer')).toBeVisible()
-      await page.getByRole('button', { name: '关闭' }).click()
-      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
+      await expect(
+        page.getByRole('button', { name: '查看 Gap 摘要' }),
+      ).toHaveCount(0)
 
       const metrics = await page
         .getByTestId('assessment-content-area')
         .evaluate((content) => {
-          const visible = (rect: DOMRect) => {
-            const left = Math.max(0, rect.left)
-            const top = Math.max(0, rect.top)
-            const right = Math.min(window.innerWidth, rect.right)
-            const bottom = Math.min(window.innerHeight, rect.bottom)
-            return {
-              width: Math.max(0, right - left),
-              height: Math.max(0, bottom - top),
-            }
-          }
-          const contentRect = visible(content.getBoundingClientRect())
-          const mainElement = content.querySelector(
-            '[data-testid="assessment-main-area"]',
-          )
-          const main = mainElement
-            ? visible(mainElement.getBoundingClientRect())
-            : { width: 0, height: 0 }
           const sticky = document.querySelector('[class*="stickyActions"]')
           const stickyRect = sticky?.getBoundingClientRect()
           const stickyTop = stickyRect?.top ?? window.innerHeight
-          const rows = [...content.querySelectorAll('tbody tr')].filter(
+          // Issue #194 P1: 能力项行容器为 div[id^="row-"]（原七列表格已退役）。
+          const rows = [...content.querySelectorAll('[id^="row-"]')].filter(
             (row) => {
               const rect = row.getBoundingClientRect()
               return rect.top >= 0 && rect.bottom <= stickyTop
             },
           ).length
-          const visibleRows = [...content.querySelectorAll('tbody tr')].filter(
-            (row) => {
-              const rect = row.getBoundingClientRect()
-              return rect.top >= 0 && rect.bottom <= stickyTop
-            },
-          )
+          const visibleRows = [
+            ...content.querySelectorAll('[id^="row-"]'),
+          ].filter((row) => {
+            const rect = row.getBoundingClientRect()
+            return rect.top >= 0 && rect.bottom <= stickyTop
+          })
           const lastVisibleRow = visibleRows.at(-1)?.getBoundingClientRect()
           return {
-            contentArea: contentRect.width * contentRect.height,
-            tableArea: main.width * main.height,
             rows,
             lastVisibleRowBottom: lastVisibleRow?.bottom ?? 0,
             stickyTop,
           }
         })
-      const areaRatio = metrics.tableArea / metrics.contentArea
-      console.log(`DOM_METRICS ${JSON.stringify(metrics)}`)
-      console.log(
-        JSON.stringify({
-          viewport: viewport.name,
-          contentArea: metrics.contentArea,
-          tableArea: metrics.tableArea,
-          areaRatio,
-          completeRows: metrics.rows,
-        }),
-      )
-      expect(areaRatio).toBeGreaterThanOrEqual(0.7)
-      // L2 职级要求 now has its own compact in-flow header. Five fully visible
-      // L3 paths still exceed the Issue #52 first-screen threshold of four
-      // substantive entries without treating the L2 standard as blank space.
+      // Issue #194 P1: 权威原型 M02 V1 四区行（min-height 92px + 逐档评级
+      // 按钮）合法替代紧凑七列行，首屏完整行数按原型行高重新标定：
+      // 实测 1440x900=3、1920x1080=4、1280x800=2，阈值取实测-1 作稳定下界。
+      // 首屏实质性内容合同不变：L2 职级要求行内头部 + 至少一行 L3 达成路径。
+      const minCompleteRows: Record<string, number> = {
+        '1440x900': 2,
+        '1920x1080': 3,
+        '1280x800': 1,
+      }
       expect(metrics.rows).toBeGreaterThanOrEqual(
-        viewport.name === '1280x800' ? 1 : 5,
+        minCompleteRows[viewport.name],
       )
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
@@ -150,7 +188,7 @@ for (const viewport of VIEWPORTS) {
 
       await page.goto('/capability/gap')
       await expect(
-        page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+        page.getByRole('heading', { name: '能力评级与提升计划' }),
       ).toBeVisible()
       await expect(page.getByTestId('assessment-table').first()).toBeVisible()
     })

@@ -336,8 +336,7 @@ class TestBuddyWorkspacePermissions(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )

@@ -171,7 +171,9 @@ describe('MemberDashboardPage', () => {
       expect(screen.getByText('计划执行中')).toBeTruthy()
     })
     expect(screen.getByText('数据范围：本人')).toBeTruthy()
-    expect(screen.getByRole('link', { name: '能力自评与 Gap' })).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: '能力评级与提升计划' }),
+    ).toBeTruthy()
     expect(screen.getByText('全年累计时长')).toBeTruthy()
     expect(screen.getByText('全年计划时长')).toBeTruthy()
     expect(screen.getByText('当月累计时长')).toBeTruthy()

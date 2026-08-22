@@ -138,7 +138,7 @@ export type PlanItem = CapabilityContext & {
   member_current_level_snapshot?: string | null
   member_target_level_snapshot?: string | null
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month?: number | null
+  plan_month?: string | null // 'YYYY-MM' (Issue #194)
   planning_source_type?: 'assessment_approval' | null
   assessment_revision?: number | null
   gap_value?: number | null
@@ -294,14 +294,18 @@ export type ChangeProposalDetail = {
   member_priority: '高' | '中' | '低' | '暂缓' | null
   include_in_plan: boolean | null
   plan_quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month: number | null
+  plan_month: string | null // 'YYYY-MM' (Issue #194)
   standard_job_level_snapshot: string | null
   member_current_level_snapshot: string | null
   member_target_level_snapshot: string | null
   capability_standard_version_id: number
   planning_snapshot_id: number | null
+  previous_planning_snapshot_id?: number | null
   assessment_revision: number
   planning_source_type: 'assessment_approval'
+  requirement_decision?: 'adopt_new' | 'keep_original' | null
+  decided_at?: string | null
+  decided_by?: number | null
 }
 
 export type ChangeProposal = {
@@ -310,7 +314,7 @@ export type ChangeProposal = {
   year: number
   source_assessment_id: number
   target_annual_growth_plan_id: number
-  status: '待处理'
+  status: '待处理' | '已处理'
   created_by: number
   summary: {
     source_assessment_id: number
@@ -335,6 +339,18 @@ export async function listChangeProposals(
   return request<ChangeProposal[]>(`/api/planning/change-proposals?${query}`, {
     method: 'GET',
   })
+}
+
+export async function decideRequirementChange(
+  proposalId: number,
+  detailId: number,
+  decision: 'adopt_new' | 'keep_original',
+): Promise<{ id: number; decision: string; idempotent: boolean }> {
+  return request(
+    `/api/planning/change-proposals/${proposalId}/details/${detailId}/requirement-decision`,
+    { method: 'PUT' },
+    { decision },
+  )
 }
 
 export type EvidenceStatus =

@@ -41,32 +41,35 @@ test.describe('four-role core read paths', () => {
     await page.goto('/capability/assessment')
 
     await expect(
-      page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
     ).toBeVisible()
     await expect(page.getByText('数据范围：本人')).toBeVisible()
   })
 
-  test('Buddy: assessment review stays on the review center; evidence review is a standalone page', async ({
+  test('Buddy: legacy review routes redirect to evidence review; 复核中心 已退役', async ({
     page,
   }) => {
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
 
-    await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
+    // Issue #194 P1-3: 旧默认页重定向到证据评审。
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
     await expect(page.getByText('数据范围：负责成员')).toBeVisible()
-    await expect(page.getByRole('heading', { name: '辅导成员' })).toBeVisible()
-
-    // Legacy assessment-review alias still resolves to the review center.
-    await page.goto('/mentoring/assessment-review')
-    await expect(page).toHaveURL(/\/mentoring\/dashboard$/)
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
     await expect(
       page.getByRole('heading', { name: 'Buddy 复核中心' }),
+    ).toHaveCount(0)
+
+    // Legacy assessment-review alias also resolves to evidence review.
+    await page.goto('/mentoring/assessment-review')
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
 
-    // Evidence review is its own route now — it must NOT redirect to the
-    // assessment review center, and it must render the evidence page.
+    // Evidence review keeps rendering the evidence page on direct entry.
     await page.goto('/mentoring/evidence-review')
     await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
     await expect(

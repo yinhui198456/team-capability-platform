@@ -3,7 +3,6 @@ import { expect, test } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 import {
   mockBuddyReviewData,
-  mockBuddyReviewWorkspaceRoutes,
   mockBuddyReviewEmptyData,
 } from '../fixtures/buddy-review-mock'
 
@@ -14,122 +13,78 @@ const VIEWPORTS = [
 ] as const
 
 for (const viewport of VIEWPORTS) {
-  test.describe(`UI-04 Buddy review center visual regression @ ${viewport.name}`, () => {
+  test.describe(`UI-04 legacy buddy route redirect compat @ ${viewport.name}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport)
       await mockBuddyReviewData(page)
-      await mockBuddyReviewWorkspaceRoutes(page)
       await loginAs(page, 'buddy')
+      // Issue #194: the Buddy Review Center is retired. The legacy route
+      // must land on the standalone evidence review surface.
       await page.goto('/mentoring/dashboard')
+      await page.waitForURL(
+        (url) => url.pathname === '/mentoring/evidence-review',
+      )
       await expect(
-        page.getByRole('heading', { name: 'Buddy 复核中心' }),
+        page.getByRole('heading', { name: '待验收成果' }),
       ).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
     })
 
-    test('semantic alignment', async ({ page }) => {
-      // Assessment-only summary: the evidence metrics were split out of this
-      // page into the standalone /mentoring/evidence-review surface.
-      const summary = page.getByLabel('Buddy 待办摘要')
-      await expect(summary).toContainText('待复核自评')
-      await expect(summary).toContainText('本年度已完成复核')
-      await expect(summary).not.toContainText('待验收成果')
-      await expect(summary).not.toContainText('需跟进')
-      await expect(summary).not.toContainText('辅导成员')
-
-      const members = page.locator('.buddy-member-list')
-      await expect(
-        members.getByRole('heading', { name: '辅导成员' }),
-      ).toBeVisible()
-      await expect(
-        members.getByRole('button', { name: '全部成员' }),
-      ).toBeVisible()
-      await expect(
-        members.getByRole('button', { name: /Member User/ }),
-      ).toBeVisible()
-      await expect(
-        members.getByRole('button', { name: /Member Two/ }),
-      ).toBeVisible()
-      // The stray comma from a JSX expression must not render as a text node.
-      await expect(members.getByText(',')).toHaveCount(0)
-      await expect(page.getByText('’')).toHaveCount(0)
-
-      const queue = page.locator('.buddy-queue')
-      await expect(
-        queue.getByRole('heading', { name: '复核队列' }),
-      ).toBeVisible()
-      await expect(
-        queue.getByRole('tablist', { name: '复核队列类型' }),
-      ).toContainText('全部待处理')
-      await expect(queue.getByRole('tab', { name: '自评复核' })).toBeVisible()
-      // Isolation: the Evidence Review tab was removed from this page — it
-      // lives only on the standalone /mentoring/evidence-review route.
-      await expect(
-        queue.getByRole('tab', { name: '任务成果证明 Review' }),
-      ).toHaveCount(0)
-
-      const workspace = page.locator('.buddy-workspace')
-      await expect(
-        workspace.getByRole('heading', { name: '复核工作区' }),
-      ).toBeVisible()
-      // #62 workspace: frozen summary grid + first-approval notice
-      await expect(workspace).toContainText('适用 3')
-      await expect(workspace).toContainText('必备 2')
-      await expect(workspace).toContainText('纳入计划 1')
-      await expect(workspace).toContainText('个人调整 1')
-      await expect(workspace).toContainText('首次认可将原子生成正式年度计划')
-      // personal adjustment shown only when it happened
-      await expect(workspace).toContainText('3 → 4（岗位项目要求：本年度负责')
-      // No evidence-review surface leaks onto the assessment page.
-      await expect(
-        page.getByRole('heading', { name: '待验收成果' }),
-      ).toHaveCount(0)
-      await expect(
-        page.getByRole('button', { name: '提交评审结论' }),
-      ).toHaveCount(0)
-    })
-
-    test('layout integrity: real detail table scroll container, submit unobstructed', async ({
+    test('legacy route: retired review-center surfaces never render', async ({
       page,
     }) => {
-      // P2 (3rd review): the Buddy detail table is the real local scroll
-      // container — a stable locator, never a scan of all DOM elements.
-      // every group renders its own scrollable table; assert on the first
-      const table = page.getByTestId('buddy-detail-table-scroll').first()
-      await expect(table).toBeVisible()
-      const dims = await table.evaluate((el) => ({
-        clientWidth: el.clientWidth,
-        scrollWidth: el.scrollWidth,
-        scrollLeft: el.scrollLeft,
-        ws: document.querySelector('.buddy-workspace')?.clientWidth ?? -1,
-        groups:
-          document.querySelector('.review-detail-groups')?.clientWidth ?? -1,
-      }))
+      // None of the retired assessment-review workspace surfaces survive
+      // behind the redirect: no old summary, member list, queue tabs,
+      // workspace copy, or the dead first-approval auto-generation notice.
+      await expect(
+        page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      ).toHaveCount(0)
+      await expect(page.getByText('待复核自评')).toHaveCount(0)
+      await expect(page.getByRole('tab', { name: '自评复核' })).toHaveCount(0)
+      await expect(
+        page.getByRole('button', { name: '提交复核反馈' }),
+      ).toHaveCount(0)
+      await expect(
+        page.getByText('首次认可将原子生成正式年度计划'),
+      ).toHaveCount(0)
+      await expect(page.getByText('适用 3')).toHaveCount(0)
 
-      // the table is genuinely wider than its box: local horizontal scroll
-      expect(dims.scrollWidth).toBeGreaterThan(dims.clientWidth)
-      // scroll to the maximum and verify the actual scrollLeft reached it
-      await table.evaluate((el) => {
-        el.scrollLeft = el.scrollWidth
-      })
-      const after = await table.evaluate((el) => ({
-        scrollLeft: el.scrollLeft,
-        maxScrollLeft: el.scrollWidth - el.clientWidth,
-      }))
-      expect(
-        Math.abs(after.scrollLeft - after.maxScrollLeft),
-      ).toBeLessThanOrEqual(2)
-      // the page itself never overflows horizontally, even at max local scroll
-      const pageDims = await page.evaluate(() => ({
+      // The evidence review surface is exactly what the legacy entry point
+      // yields: queue + workspace on the standalone page.
+      const queue = page.locator('.buddy-member-list')
+      await expect(
+        queue.getByRole('heading', { name: '待验收队列' }),
+      ).toBeVisible()
+      await expect(
+        queue.getByRole('button', { name: /^member / }),
+      ).toBeVisible()
+      const workspace = page.locator('.buddy-workspace')
+      await expect(
+        workspace.getByRole('heading', { name: '验收工作区' }),
+      ).toBeVisible()
+      await expect(
+        workspace.getByRole('button', { name: '提交评审结论' }),
+      ).toBeVisible()
+      // No stray comma / curly-quote text nodes in the queue list.
+      await expect(queue.getByText(',')).toHaveCount(0)
+      await expect(queue.getByText('’')).toHaveCount(0)
+      // No page-level horizontal overflow at any viewport.
+      const dims = await page.evaluate(() => ({
         docScrollWidth: document.documentElement.scrollWidth,
         bodyScrollWidth: document.body.scrollWidth,
         innerWidth: window.innerWidth,
       }))
-      expect(pageDims.docScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
-      expect(pageDims.bodyScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
-      // the submit action stays reachable and is not covered by the table or
-      // any sticky/overlay element
-      const submit = page.getByRole('button', { name: '提交复核反馈' })
+      expect(dims.docScrollWidth).toBeLessThanOrEqual(dims.innerWidth)
+      expect(dims.bodyScrollWidth).toBeLessThanOrEqual(dims.innerWidth)
+    })
+
+    test('layout integrity after redirect: submit unobstructed and clickable', async ({
+      page,
+    }) => {
+      // Same layout guarantee as the retired review center: the submit action
+      // is reachable, in viewport, and not covered by any sticky/overlay
+      // element — now on the redirect target's workspace.
+      const submit = page.getByRole('button', { name: '提交评审结论' })
       await expect(submit).toBeVisible()
       await submit.scrollIntoViewIfNeeded()
       await expect(submit).toBeInViewport()
@@ -150,45 +105,48 @@ for (const viewport of VIEWPORTS) {
         },
         [box!.x + box!.width / 2, box!.y + box!.height / 2],
       )
-      expect(coveredBy).toContain('提交复核反馈')
-      // the feedback field is part of the submit area and is not clipped
+      expect(coveredBy).toContain('提交评审结论')
+      // The feedback field is part of the submit area and is not clipped.
       await expect(page.getByLabel('反馈').first()).toBeVisible()
+      // The page itself never overflows horizontally.
+      const pageDims = await page.evaluate(() => ({
+        docScrollWidth: document.documentElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        innerWidth: window.innerWidth,
+      }))
+      expect(pageDims.docScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
+      expect(pageDims.bodyScrollWidth).toBeLessThanOrEqual(pageDims.innerWidth)
     })
 
-    test('default all members screenshot', async ({ page }) => {
-      const filename =
-        viewport.name === '1280x800'
-          ? 'ui-04-buddy-review-center-top-1280x800.png'
-          : `ui-04-buddy-review-center-default-${viewport.name}.png`
-      await expect(page).toHaveScreenshot(filename, {
-        fullPage: false,
-        maxDiffPixelRatio: 0.05,
-      })
-    })
-
-    test('single member selected screenshot', async ({ page }) => {
-      await page
-        .locator('.buddy-member-list')
-        .getByRole('button', { name: /Member Two/ })
-        .click()
-      await expect(
-        page
-          .locator('.buddy-member-list .active')
-          .filter({ hasText: 'Member Two' }),
-      ).toBeVisible()
-      await page.evaluate(() => window.scrollTo(0, 0))
+    test('redirected default screenshot', async ({ page }) => {
       await expect(page).toHaveScreenshot(
-        `ui-04-buddy-review-center-member-selected-${viewport.name}.png`,
+        `ui-04-legacy-dashboard-redirect-${viewport.name}.png`,
         { fullPage: false, maxDiffPixelRatio: 0.05 },
       )
     })
 
-    test('assessment conclusion selected screenshot', async ({ page }) => {
-      await page.getByLabel('建议调整').check()
-      await page.getByLabel('反馈').fill('请补充更多自评依据并细化 Gap 说明。')
+    test('redirected queue item selected screenshot', async ({ page }) => {
+      await page
+        .locator('.buddy-member-list')
+        .getByRole('button', { name: /^member / })
+        .click()
+      await expect(
+        page
+          .locator('.buddy-member-list .active')
+          .filter({ hasText: 'member' }),
+      ).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
-        `ui-04-buddy-review-center-assessment-${viewport.name}.png`,
+        `ui-04-legacy-dashboard-redirect-member-selected-${viewport.name}.png`,
+        { fullPage: false, maxDiffPixelRatio: 0.05 },
+      )
+    })
+
+    test('redirected conclusion selected screenshot', async ({ page }) => {
+      await page.getByRole('radio', { name: '通过' }).check()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page).toHaveScreenshot(
+        `ui-04-legacy-dashboard-redirect-conclusion-${viewport.name}.png`,
         { fullPage: false, maxDiffPixelRatio: 0.05 },
       )
     })
@@ -352,33 +310,43 @@ for (const viewport of VIEWPORTS) {
   })
 }
 
-test.describe('UI-04 Buddy review center empty state', () => {
+test.describe('UI-04 legacy buddy route empty state', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await mockBuddyReviewEmptyData(page)
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
+    await page.waitForURL(
+      (url) => url.pathname === '/mentoring/evidence-review',
+    )
     await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+      page.getByRole('heading', { name: '待验收成果' }),
     ).toBeVisible()
     await page.evaluate(() => window.scrollTo(0, 0))
   })
 
-  test('empty queue semantic alignment', async ({ page }) => {
-    const queue = page.locator('.buddy-queue')
-    await expect(queue).toContainText('当前范围暂无待处理项。')
-
-    const workspace = page.locator('.buddy-workspace')
-    await expect(workspace).toContainText(
-      '选择一项待复核内容后查看依据和历史反馈。',
-    )
+  test('legacy route redirects to the empty evidence page', async ({
+    page,
+  }) => {
+    // The retired review center has no empty state of its own anymore: the
+    // legacy entry point lands on the standalone evidence page, which owns
+    // the empty state.
+    await expect(page.getByText('暂无待验收成果。')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Buddy 复核中心' }),
+    ).toHaveCount(0)
+    await expect(page.locator('.buddy-member-list')).toHaveCount(0)
+    await expect(page.locator('.buddy-workspace')).toHaveCount(0)
   })
 
   test('empty queue screenshot', async ({ page }) => {
-    await expect(page).toHaveScreenshot('ui-04-buddy-review-center-empty.png', {
-      fullPage: false,
-      maxDiffPixels: 1000,
-    })
+    await expect(page).toHaveScreenshot(
+      'ui-04-legacy-dashboard-redirect-empty-1440x900.png',
+      {
+        fullPage: false,
+        maxDiffPixels: 1000,
+      },
+    )
   })
 
   test('evidence page shows its own empty state', async ({ page }) => {
@@ -465,8 +433,8 @@ test.describe('UI-04 Buddy evidence review loading and error states', () => {
   })
 })
 
-test.describe('UI-04 Buddy review center permission boundary', () => {
-  test('evidence queue data never leaks onto the assessment center', async ({
+test.describe('UI-04 Buddy review permission boundary (legacy route + evidence)', () => {
+  test('legacy dashboard redirect: evidence feed is the single queue surface', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -497,21 +465,25 @@ test.describe('UI-04 Buddy review center permission boundary', () => {
     )
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
+    await page.waitForURL(
+      (url) => url.pathname === '/mentoring/evidence-review',
+    )
+    await expect(
+      page.getByRole('heading', { name: '待验收成果' }),
+    ).toBeVisible()
+    // The evidence feed has exactly one consumer — the standalone queue —
+    // rendered verbatim; member scoping is enforced by the Buddy-only
+    // backend endpoint, never duplicated or leaked by another surface.
+    await expect(
+      page.locator('.buddy-member-list').getByRole('button', {
+        name: /^unassigned /,
+      }),
+    ).toBeVisible()
+    // The retired assessment-review surfaces are gone entirely.
     await expect(
       page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
-    await expect(page.getByText('当前范围暂无待处理项。')).toBeVisible()
-    await expect(page.locator('.buddy-workspace')).toContainText(
-      '选择一项待复核内容后查看依据和历史反馈。',
-    )
-    // The evidence pending feed is consumed only by the standalone page:
-    // nothing from it renders here, no evidence metric or tab either.
-    await expect(
-      page.locator('.buddy-summary button', { hasText: '待验收成果' }),
     ).toHaveCount(0)
-    await expect(page.locator('text=不属于当前 Buddy 的 evidence')).toHaveCount(
-      0,
-    )
+    await expect(page.getByText('待复核自评')).toHaveCount(0)
   })
 
   test('expired review permission: 403 keeps the item, no fake success', async ({

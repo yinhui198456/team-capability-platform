@@ -13,6 +13,7 @@ from app.assessment.schema import create_assessment_schema
 from app.main import app
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -56,7 +57,8 @@ def _create_test_user(
     for role_code in roles:
         assign_role(connection, user_id, role_code)
     connection.execute(
-        "UPDATE tcp_user SET target_level = 'P8' WHERE id = %s", (user_id,)
+        "UPDATE tcp_user SET current_level = 'P4', target_level = 'P8' WHERE id = %s",
+        (user_id,),
     )
     connection.commit()
     return user_id
@@ -66,6 +68,13 @@ def _create_test_user(
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+    from app.planning.schema import create_planning_schema
+
+    create_planning_schema(connection)
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -168,7 +177,7 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(
+def _create_and_save_draft_assessment(
     connection: psycopg.Connection,
     username: str,
     details: list[dict[str, object]] | None = None,
@@ -181,13 +190,16 @@ def _create_and_submit_assessment(
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(
         connection, [str(detail["l3_code"]) for detail in desired_details]
     )
+    publish_test_standard(
+        connection, [str(detail["l3_code"]) for detail in desired_details]
+    )
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -204,6 +216,8 @@ def _create_and_submit_assessment(
     assert status == 200
     assert body is not None
     assessment_id = body["id"]
+    # Issue #194: gaps project from assessment_detail at draft save (no
+    # submit step); the explicit generation action creates plan items.
     status, body, _ = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
@@ -216,23 +230,16 @@ def _create_and_submit_assessment(
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
     return assessment_id
 
 
-def test_gap_generated_on_submit(assessment_schema: psycopg.Connection) -> None:
+def test_gap_projected_on_draft_save(assessment_schema: psycopg.Connection) -> None:
     member_id = _create_test_user(assessment_schema, "member_gap", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_gap", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_gap")
+    assessment_id = _create_and_save_draft_assessment(assessment_schema, "member_gap")
 
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     assert len(gaps) == 1
@@ -252,7 +259,7 @@ def test_gap_not_generated_when_gap_value_zero(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
+    assessment_id = _create_and_save_draft_assessment(
         assessment_schema,
         "member_zero",
         [
@@ -278,7 +285,9 @@ def test_member_update_gap_blocked_by_scope_v1(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_update")
+    assessment_id = _create_and_save_draft_assessment(
+        assessment_schema, "member_update"
+    )
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     gap_id = int(gaps[0]["id"])
 
@@ -303,7 +312,7 @@ def test_non_member_update_gap_blocked_by_scope_v1(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_owner")
+    assessment_id = _create_and_save_draft_assessment(assessment_schema, "member_owner")
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     gap_id = int(gaps[0]["id"])
 
@@ -327,7 +336,7 @@ def test_buddy_can_view_assigned_member_gaps(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
+    assessment_id = _create_and_save_draft_assessment(
         assessment_schema, "member_buddy_view"
     )
 
@@ -349,7 +358,7 @@ def test_buddy_can_view_assigned_member_gaps(
 def test_leader_can_view_all_gaps(assessment_schema: psycopg.Connection) -> None:
     _create_test_user(assessment_schema, "member_leader", ["Member"])
     _create_test_user(assessment_schema, "leader_gap", ["Leader"])
-    _create_and_submit_assessment(assessment_schema, "member_leader")
+    _create_and_save_draft_assessment(assessment_schema, "member_leader")
 
     leader_cookies = _login(assessment_schema, "leader_gap")
     status, body, _ = _request("GET", "/api/gaps", cookies=leader_cookies)
@@ -357,29 +366,20 @@ def test_leader_can_view_all_gaps(assessment_schema: psycopg.Connection) -> None
     assert len(body) == 1
 
 
-def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) -> None:
+def test_resave_draft_does_not_duplicate_gap(
+    assessment_schema: psycopg.Connection,
+) -> None:
     member_id = _create_test_user(assessment_schema, "member_resubmit", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_resubmit", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_resubmit")
-
-    buddy_cookies = _login(assessment_schema, "buddy_resubmit")
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
+    assessment_id = _create_and_save_draft_assessment(
+        assessment_schema, "member_resubmit"
     )
-    assert status == 200
-    review_id = pending[0]["id"]
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "建议调整", "feedback": "请补充", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
-
+    # Issue #194: no submit step — the member re-saves the draft with a
+    # revised target; the gap projection upserts, never duplicates.
     member_cookies = _login(assessment_schema, "member_resubmit")
     status, body, _ = _request(
         "PUT",
@@ -396,21 +396,12 @@ def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) 
                         "evidence_note": "已补充",
                         "member_priority": "高",
                         "include_in_plan": True,
-                        "plan_quarter": "Q2",
-                        "plan_month": 5,
+                        "plan_month": "2026-05",
                     }
                 ],
             ),
-            "expected_revision": 4,
+            "expected_revision": 2,
         },
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
         cookies=member_cookies,
     )
     assert status == 200

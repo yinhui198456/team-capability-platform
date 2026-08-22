@@ -16,6 +16,7 @@ from .repository import (
     create_evidence_draft,
     create_or_publish_team_annual_plan,
     create_progress_log,
+    decide_requirement_change,
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
@@ -60,6 +61,7 @@ _CONFLICT_CODES = {
     "review_idempotency_conflict",
     "review_already_submitted",
     "monthly_review_revision_conflict",
+    "requirement_decision_conflict",
 }
 
 
@@ -375,6 +377,33 @@ def get_change_proposals(
             detail="insufficient permissions",
         )
     return list_change_proposals(connection, target_member_id, year)
+
+
+@planning_router.put(
+    "/change-proposals/{proposal_id}/details/{detail_id}/requirement-decision"
+)
+def put_requirement_decision(
+    user: CurrentUser,
+    connection: Connection,
+    proposal_id: int,
+    detail_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    try:
+        return decide_requirement_change(
+            connection,
+            int(user["id"]),
+            proposal_id,
+            detail_id,
+            str(body.get("decision", "")),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @planning_router.post("/annual-plan/generate")

@@ -14,6 +14,7 @@ from app.assessment.repository import (
 )
 from app.assessment.schema import create_assessment_schema
 from app.main import app
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
     standard_target_payload,
@@ -67,8 +68,11 @@ def _create_test_user(
 
 @pytest.fixture
 def assessment_schema(connection: psycopg.Connection) -> psycopg.Connection:
-    _reset_access_schema(connection)
-    _reset_assessment_schema(connection)
+    # Full chain: catalog + v0004-published baseline cover the synthetic
+    # P01 node for scope-preview; v0015 brings plan_month to TEXT.
+    from tests.review_support import reset_full_schema
+
+    reset_full_schema(connection)
     return connection
 
 
@@ -182,8 +186,7 @@ def _create_and_submit_assessment(
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
@@ -215,13 +218,17 @@ def _create_and_submit_assessment(
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
@@ -241,20 +248,14 @@ def test_buddy_approve_archives_assessment(
     )
     assert status == 200
     assert len(pending) == 1
-    review_id = pending[0]["id"]
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
-    assert body is not None
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    body = submit_review(assessment_schema, assessment_id, "buddy_approve")
     assert body["assessment_status"] == "已归档"
-    assert body["plan"]["created"] is True
-    assert body["plan"]["items_created"] == 1
-    assert body["plan"]["tasks_created"] == 1
+    # Issue #194: the retained seed path generates the plan atomically at
+    # submit, so approval finds it already created by this assessment.
+    assert body["plan"]["created"] is False
+    assert body["plan"]["plan_id"] is not None
 
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -267,6 +268,64 @@ def test_buddy_approve_archives_assessment(
     assert reviews[0]["conclusion"] == "认可"
     assert reviews[0]["feedback"] == "符合预期"
     assert reviews[0]["reviewed_at"] is not None
+
+
+def test_review_post_retired_stable_410_zero_write(
+    assessment_schema: psycopg.Connection,
+) -> None:
+    """Issue #194 P1-3: POST 自评复核写端点退役 — 稳定 410，零写入。
+
+    GET 历史（/history）仍只读可用；写必须走 Evidence Review 流程。
+    """
+    member_id = _create_test_user(assessment_schema, "member_retire", ["Member"])
+    buddy_id = _create_test_user(assessment_schema, "buddy_retire", ["Buddy"])
+    create_buddy_relationship(assessment_schema, member_id, buddy_id)
+    assessment_schema.commit()
+
+    assessment_id = _create_and_submit_assessment(assessment_schema, "member_retire")
+    buddy_cookies = _login(assessment_schema, "buddy_retire")
+    status, pending, _ = _request(
+        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
+    )
+    assert status == 200
+    review_id = pending[0]["id"]
+
+    status, body, _ = _request(
+        "POST",
+        f"/api/assessments/{assessment_id}/reviews/{review_id}",
+        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
+        cookies=buddy_cookies,
+    )
+    assert status == 410, f"expected stable 410, got {status}: {body}"
+    assert "assessment_review_write_disabled" in json.dumps(body, ensure_ascii=False)
+
+    # 零写入：review 保持待复核、assessment 状态不变、无新增行。
+    row = assessment_schema.execute(
+        "SELECT ar.status, a.status FROM assessment_review ar "
+        "JOIN assessment a ON a.id = ar.assessment_id "
+        "WHERE ar.id = %s",
+        (review_id,),
+    ).fetchone()
+    assert row[0] == "待复核", f"review must stay 待复核, got {row[0]}"
+    assert row[1] == "待复核", f"assessment must stay 待复核, got {row[1]}"
+    review_count = assessment_schema.execute(
+        "SELECT COUNT(*) FROM assessment_review WHERE assessment_id = %s",
+        (assessment_id,),
+    ).fetchone()[0]
+    assert review_count == 1, f"no new review row expected, got {review_count}"
+    key_count = assessment_schema.execute(
+        "SELECT COUNT(*) FROM review_idempotency_key"
+    ).fetchone()[0]
+    assert key_count == 0, "no idempotency key row may be written"
+
+    # GET 历史只读保持。
+    status, body, _ = _request(
+        "GET",
+        f"/api/assessments/{assessment_id}/history",
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    assert len(body) == 1
 
 
 def test_buddy_request_adjustment_and_resubmit(
@@ -286,17 +345,14 @@ def test_buddy_request_adjustment_and_resubmit(
     assert status == 200
     review_id = pending[0]["id"]
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {
-            "conclusion": "建议调整",
-            "feedback": "请补充 P01-L2A-L3A 的项目实践依据",
-            "expected_revision": 3,
-        },
-        cookies=buddy_cookies,
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(
+        assessment_schema,
+        assessment_id,
+        "buddy_adjust",
+        conclusion="建议调整",
+        feedback="请补充 P01-L2A-L3A 的项目实践依据",
     )
-    assert status == 200
 
     assessment = get_assessment(assessment_schema, assessment_id)
     assert assessment is not None
@@ -318,8 +374,7 @@ def test_buddy_request_adjustment_and_resubmit(
                         "evidence_note": "已补充项目实践依据",
                         "member_priority": "高",
                         "include_in_plan": True,
-                        "plan_quarter": "Q2",
-                        "plan_month": 5,
+                        "plan_month": "2026-05",
                     }
                 ],
             ),
@@ -329,13 +384,17 @@ def test_buddy_request_adjustment_and_resubmit(
     )
     assert status == 200
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
-        cookies=member_cookies,
+    # Issue #194: the API submit is retired; reseed through the retained
+    # repository-level path (assessment is 建议调整, revision 5).
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        assessment_schema.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(assessment_schema, assessment_id, member_id, 5)
+    assessment_schema.commit()
 
     status, pending, _ = _request(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
@@ -345,13 +404,14 @@ def test_buddy_request_adjustment_and_resubmit(
     review_id2 = pending[0]["id"]
     assert review_id2 != review_id
 
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id2}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 6},
-        cookies=buddy_cookies,
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(
+        assessment_schema,
+        assessment_id,
+        "buddy_adjust",
+        expected_revision=6,
+        review_id=int(review_id2),
     )
-    assert status == 200
 
     reviews = get_assessment_reviews(assessment_schema, assessment_id)
     assert len(reviews) == 2
@@ -499,13 +559,13 @@ def test_assessment_review_summary_counts_pending_and_completed(
         "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
     )
     review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(
+        assessment_schema,
+        assessment_id,
+        "buddy_summary",
+        review_id=int(review_id),
     )
-    assert status == 200
 
     status, body = _summary(assessment_schema, "buddy_summary", 2026)
     assert status == 200

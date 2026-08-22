@@ -101,11 +101,13 @@ interface ScopeSnapshot {
   target_level?: number | null
 }
 
-/** Fill the draft with one plan-bound detail, submit, buddy-approve. */
-async function fillSubmitApprove(
-  page: Page,
+/** Fill the draft with one plan-bound detail, then explicitly generate its
+  plan item and learning task (Issue #194: generation is the third of the
+  three independent actions — legacy submit/approve no longer exists). */
+async function fillAndGenerate(
   request: APIRequestContext,
   draft: DraftState,
+  year: number,
 ): Promise<{ l3Code: string }> {
   const getResp = await request.get(`${BACKEND}/api/assessments/${draft.id}`)
   const assessment = await getResp.json()
@@ -132,8 +134,7 @@ async function fillSubmitApprove(
         ? {
             member_priority: '高',
             include_in_plan: true,
-            plan_quarter: 'Q2',
-            plan_month: 5,
+            plan_month: `${year}-05`,
           }
         : {}),
     }
@@ -148,41 +149,21 @@ async function fillSubmitApprove(
     )
   }
   const saved = await saveResp.json()
-  const submitResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/submit`,
-    { data: { expected_revision: saved.revision } },
-  )
-  if (!submitResp.ok()) {
-    throw new Error(
-      `submit failed: ${submitResp.status()} ${await submitResp.text()}`,
-    )
-  }
-  const submitted = await submitResp.json()
-
-  await loginAs(page, 'buddy')
-  const pendingResp = await request.get(
-    `${BACKEND}/api/assessments/reviews/pending`,
-  )
-  const pending = await pendingResp.json()
-  const review = pending.find(
-    (r: { assessment_id: number }) => r.assessment_id === draft.id,
-  )
-  if (!review) {
-    throw new Error(`no pending review for assessment ${draft.id}`)
-  }
-  const reviewResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/reviews/${review.id}`,
+  const genResp = await request.post(
+    `${BACKEND}/api/assessments/${draft.id}/generate-plan-items`,
     {
+      headers: {
+        'Idempotency-Key': `generate-plan-items:e2e63-${year}`,
+      },
       data: {
-        conclusion: '认可',
-        feedback: 'E2E-63 认可',
-        expected_revision: submitted.revision,
+        expected_revision: saved.revision,
+        l3_codes: [picked.l3_code],
       },
     },
   )
-  if (!reviewResp.ok()) {
+  if (!genResp.ok()) {
     throw new Error(
-      `approve failed: ${reviewResp.status()} ${await reviewResp.text()}`,
+      `generate-plan-items failed: ${genResp.status()} ${await genResp.text()}`,
     )
   }
   return { l3Code: picked.l3_code }
@@ -196,13 +177,12 @@ interface SeedResult {
   taskRevision: number
 }
 
-/** member-login → draft → approve → plan/item/task ids for `year`. */
+/** member-login → draft → generate → plan/item/task ids for `year`. */
 async function seedExecution(page: Page, year: number): Promise<SeedResult> {
   const request = page.request
   await loginAs(page, 'member')
   const draft = await ensureDraft(request, year)
-  const { l3Code } = await fillSubmitApprove(page, request, draft)
-  await loginAs(page, 'member')
+  const { l3Code } = await fillAndGenerate(request, draft, year)
   const planResp = await request.get(
     `${BACKEND}/api/planning/annual-plan?year=${year}`,
   )
@@ -341,6 +321,31 @@ async function selectQueueItemByMarker(
   throw new Error(`queue item for ${l3Code} with marker ${marker} not found`)
 }
 
+async function openTaskFromAnnualPlan(
+  page: Page,
+  year: number,
+  l3Code: string,
+  taskId: number,
+) {
+  const itemCard = page.locator('[data-testid="plan-item"]', {
+    hasText: l3Code,
+  })
+  await expect(itemCard).toBeVisible({ timeout: 20_000 })
+  const enterTask = itemCard.getByRole('link', { name: '进入任务' })
+  await expect(enterTask).toHaveAttribute(
+    'href',
+    `/growth/tasks/${taskId}?year=${year}`,
+  )
+  await enterTask.click()
+  await expect(page).toHaveURL(
+    new RegExp(`/growth/tasks/${taskId}\\?year=${year}$`),
+  )
+  await page.getByRole('tab', { name: '学习记录' }).click()
+  const panel = page.locator('[data-testid="task-detail-panel"]')
+  await expect(panel).toBeVisible()
+  return panel
+}
+
 // ── E2E-63-01: member execution chain ────────────────────────────────────────
 
 test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与作废更正、Evidence 提交与完成门禁', async ({
@@ -353,14 +358,12 @@ test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与
 
   // ── plan page renders the generated item; restricted date edit succeeds ──
   await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  // the page chains several API calls before items render — allow real
-  // backend latency on the constrained host
-  await expect(itemCard).toBeVisible({ timeout: 20_000 })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
+  const panel = await openTaskFromAnnualPlan(
+    page,
+    year,
+    seed.l3Code,
+    seed.taskId,
+  )
   await expect(panel.getByText('任务内容')).toBeVisible()
 
   // client guard: end outside the source month is rejected before any request
@@ -573,7 +576,26 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // queue effect refetches and sees v2
   await page.goto('/mentoring/evidence-review')
   await page.reload()
+  const historyPromise = page.waitForResponse(
+    (resp) =>
+      resp
+        .url()
+        .includes(
+          `/api/planning/learning-tasks/${seed.taskId}/evidence-reviews`,
+        ) && resp.request().method() === 'GET',
+  )
   await selectQueueItemByMarker(page, seed.l3Code, v2Marker)
+  const historyResponse = await historyPromise
+  expect(historyResponse.status()).toBe(200)
+  expect(await historyResponse.json()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        evidence_id: v1.id,
+        conclusion: '需补充',
+        feedback: 'E2E-63-02 请补充口径说明',
+      }),
+    ]),
+  )
   // dual-role buddy accounts load the review history through the buddy path:
   // v1's 需补充 feedback is visible (regression: member-path 403 hid it)
   await expect(page.getByText(/请补充口径说明/).first()).toBeVisible()
@@ -723,11 +745,12 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
 
   // member has the plan page open with a stale revision in memory…
   await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
+  const panel = await openTaskFromAnnualPlan(
+    page,
+    year,
+    seed.l3Code,
+    seed.taskId,
+  )
   // …while a concurrent writer bumps the item revision via the real API
   const bump = await request.put(
     `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
@@ -750,11 +773,8 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
 
   // refresh (fresh revision) then the exact retry succeeds — no partial write
   await page.reload()
-  const itemCardAfter = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCardAfter.locator('[data-testid="plan-header"]').click()
   const panelAfter = page.locator('[data-testid="task-detail-panel"]')
+  await expect(panelAfter).toBeVisible()
   await panelAfter.getByLabel('计划开始日期').fill(`${year}-04-10`)
   await panelAfter.getByLabel('计划结束日期').fill(`${year}-05-20`)
   // Wait for the real retry PUT to finish before reading back: the alert
@@ -900,7 +920,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   await page.getByLabel('用户名').fill(STRANGER_BUDDY.username)
   await page.getByLabel('密码').fill(STRANGER_BUDDY.password)
   await page.getByRole('button', { name: '登录' }).click()
-  await page.waitForURL((url) => url.pathname === '/mentoring/dashboard')
+  await page.waitForURL((url) => url.pathname === '/mentoring/evidence-review')
   await page.setViewportSize(viewports[0])
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByText('暂无待验收成果。')).toBeVisible()

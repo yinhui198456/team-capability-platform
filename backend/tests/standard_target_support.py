@@ -5,6 +5,95 @@ from app.assessment.scope import compute_assessment_scope
 from app.migrations import run_migrations
 
 
+def publish_test_standard(connection: psycopg.Connection, l3_codes: list[str]) -> None:
+    """Publish a minimal standard covering the synthetic test nodes.
+
+    The real workbook has no P01-* codes, so scope-preview's completeness
+    check needs a published version whose matrix covers exactly the seeded
+    nodes.  Always builds a fresh draft version so planning snapshots can
+    be captured (v0009 forbids appending snapshots to a published/archived
+    version), then archives the previous published one and publishes.
+    """
+    model_id = int(
+        connection.execute(
+            "SELECT id FROM capability_model ORDER BY id LIMIT 1"
+        ).fetchone()[0]
+    )
+    old_row = connection.execute(
+        "SELECT id FROM capability_standard_version "
+        "WHERE status = '已发布' ORDER BY id LIMIT 1"
+    ).fetchone()
+    if old_row is None:
+        version_id = int(
+            connection.execute(
+                """
+                INSERT INTO capability_standard_version (
+                    model_id, version_no, label, status, revision
+                )
+                VALUES (%s, 1, 'test-standard', '草稿', 1)
+                RETURNING id
+                """,
+                (model_id,),
+            ).fetchone()[0]
+        )
+    else:
+        version_id = int(
+            connection.execute(
+                """
+                INSERT INTO capability_standard_version (
+                    model_id, version_no, label, status, revision
+                )
+                SELECT model_id, version_no + 1, 'test-standard', '草稿', 1
+                FROM capability_standard_version WHERE id = %s
+                RETURNING id
+                """,
+                (int(old_row[0]),),
+            ).fetchone()[0]
+        )
+    for l3_code in dict.fromkeys(l3_codes):
+        connection.execute(
+            """
+            INSERT INTO capability_standard_planning_snapshot (
+                capability_standard_version_id, l3_node_id, l3_code, l3_name,
+                materials_text, expected_output, estimated_hours,
+                source_type, source_hash
+            )
+            SELECT %s, n.id, n.code, n.name, n.materials_text,
+                   n.expected_output, n.estimated_hours,
+                   'version_publish', 'test'
+            FROM capability_node n WHERE n.code = %s
+            """,
+            (version_id, l3_code),
+        )
+        for job_level, target in (("P4", 3), ("P8", 5)):
+            connection.execute(
+                """
+                INSERT INTO capability_standard_item (
+                    version_id, l3_node_id, l1_code, l1_name, l2_code,
+                    l2_name, l3_code, l3_name, job_level, applicable,
+                    target_level, source
+                )
+                SELECT %s, n.id, l1.code, l1.name, l2.code, l2.name,
+                       n.code, n.name, %s, TRUE, %s, 'explicit'
+                FROM capability_node n
+                JOIN capability_node l2 ON l2.id = n.parent_node_id
+                JOIN capability_node l1 ON l1.id = l2.parent_node_id
+                WHERE n.code = %s
+                ON CONFLICT (version_id, l3_node_id, job_level) DO NOTHING
+                """,
+                (version_id, job_level, target, l3_code),
+            )
+    if old_row is not None:
+        connection.execute(
+            "UPDATE capability_standard_version SET status = '已归档' " "WHERE id = %s",
+            (int(old_row[0]),),
+        )
+    connection.execute(
+        "UPDATE capability_standard_version SET status = '已发布' " "WHERE id = %s",
+        (version_id,),
+    )
+
+
 def create_scoped_draft(
     connection: psycopg.Connection,
     member_id: int,

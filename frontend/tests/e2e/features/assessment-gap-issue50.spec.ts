@@ -17,7 +17,7 @@ type AssessmentDetail = {
   member_priority?: '高' | '中' | '低' | '暂缓' | null
   include_in_plan?: boolean | null
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month?: number | null
+  plan_month?: string | null // Issue #194: YYYY-MM
   inherited_current_level?: number | null
   inherited_evidence_note?: string | null
   inherited_from_assessment_id?: number | null
@@ -40,6 +40,7 @@ async function currentDraft(
   const assessments = (await response.json()) as Array<{
     id: number
     status: string
+    year: number
   }>
   const draft = assessmentId
     ? assessments.find((assessment) => assessment.id === assessmentId)
@@ -78,10 +79,7 @@ async function fillAllApplicable(page: Parameters<typeof loginAs>[0]) {
 
 test.describe('Issue #50 assessment gap workflow', () => {
   test.beforeEach(async ({ page }) => {
-    test.skip(
-      !process.env.TCP_E2E_ISOLATED,
-      'Issue #50 writes assessment data and requires an isolated database',
-    )
+    // 隔离由 CI 既有 per-run 隔离栈提供（e2e.yml），不再用测试级条件跳过。
     await loginAs(page, 'member2')
     const preview = await page.request.get(
       '/api/assessments/scope-preview?year=2026',
@@ -109,7 +107,9 @@ test.describe('Issue #50 assessment gap workflow', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([{ id: activeDraftId, status: '草稿' }]),
+        body: JSON.stringify([
+          { id: activeDraftId, status: '草稿', year: 2026 },
+        ]),
       })
     })
     await page.goto('/capability/assessment')
@@ -148,13 +148,12 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await expect(search).toBeFocused()
   })
 
-  test('Gap Drawer is on demand and L2 batch fill requires confirmation', async ({
+  test('retired Gap Drawer stays absent and L2 batch fill requires confirmation', async ({
     page,
   }) => {
-    await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
-    await page.getByRole('button', { name: '查看 Gap 摘要' }).click()
-    await expect(page.getByTestId('gap-drawer')).toBeVisible()
-    await page.getByRole('button', { name: '关闭' }).click()
+    await expect(
+      page.getByRole('button', { name: '查看 Gap 摘要' }),
+    ).toHaveCount(0)
 
     const batch = page.getByRole('button', { name: '批量填 2' }).first()
     if (await batch.isVisible()) {
@@ -163,24 +162,31 @@ test.describe('Issue #50 assessment gap workflow', () => {
     }
   })
 
-  test('unassessed level 3 is visibly incomplete before submit', async ({
+  test('unassessed level 3 is visibly incomplete and cannot enter the plan', async ({
     page,
   }) => {
-    const current = page.getByRole('combobox', { name: /当前等级/ }).first()
+    // Issue #194 P1: 当前评级为逐档按钮（M02 V1 原型），选中态以
+    // aria-pressed 表达；点击已选中按钮清空评级。
+    const rating = page.locator('[aria-label^="当前等级"]').first()
     // the draft is shared across tests — clear the row first so the
     // unfilled state is deterministic
-    if ((await current.inputValue()) !== '') await current.selectOption('')
-    const row = current.locator('xpath=ancestor::tr')
+    if ((await rating.locator('button[aria-pressed="true"]').count()) > 0) {
+      await rating.locator('button[aria-pressed="true"]').first().click()
+    }
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
     await expect(row.getByText('需评估等级')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
-    await current.selectOption('3')
+    // Issue #194: 提交自评已退役；未评估项无法纳入计划草稿（前置校验）。
+    // M02 V1：行内加入/移出按钮在未评估时禁用（gap 未知，无加入资格）。
+    const planButton = row.getByRole('button', { name: /加入提升计划/ })
+    await expect(planButton).toBeDisabled()
+    await rating.getByRole('button', { name: /^3 ·/ }).click()
     await expect(row.getByText('需评估等级')).toHaveCount(0)
-    await current.selectOption('')
+    await rating.locator('button[aria-pressed="true"]').first().click()
     await expect(row.getByText('需评估等级')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
+    await expect(planButton).toBeDisabled()
   })
 
-  test('excludes N/A items from progress and unfinished-item location', async ({
+  test('excludes N/A items from progress without a retired locator control', async ({
     page,
   }) => {
     const draft = await fillAllApplicable(page)
@@ -188,15 +194,14 @@ test.describe('Issue #50 assessment gap workflow', () => {
       (detail) => detail.standard_target_applicable !== false,
     )
     const summary = page.getByLabel('评估摘要')
-    await expect(summary).toContainText(
-      `进度 ${applicable.length}/${applicable.length}`,
+    await expect(summary).toContainText(`三级能力项 ${applicable.length}`)
+    await expect(summary).toContainText(`已评级 ${applicable.length}`)
+    await expect(page.getByRole('button', { name: '定位未完成' })).toHaveCount(
+      0,
     )
-    await expect(summary).toContainText('未评估 0')
-    await page.getByRole('button', { name: '定位未完成' }).click()
-    await expect(page.locator('[id^="row-"]:focus')).toHaveCount(0)
   })
 
-  test('personal adjustment requires a valid target and reason, and cancel unblocks submit', async ({
+  test('personal adjustment requires a valid target and reason; cancel clears errors', async ({
     page,
   }) => {
     await fillAllApplicable(page)
@@ -204,24 +209,29 @@ test.describe('Issue #50 assessment gap workflow', () => {
     const search = page.getByLabel('搜索全部能力项')
     await search.fill(code)
     await search.press('Enter')
-    const current = page.getByLabel(`当前等级 ${code}`)
-    if ((await current.inputValue()) === '') await current.selectOption('1')
-    const row = current.locator('xpath=ancestor::tr')
+    const rating = page.getByLabel(`当前等级 ${code}`)
+    if ((await rating.locator('button[aria-pressed="true"]').count()) === 0) {
+      await rating.getByRole('button', { name: /^1 ·/ }).click()
+    }
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
+    await row.locator('details > summary').click()
     await row.getByRole('button', { name: '调整▸' }).click()
     const enable = page.getByLabel(`启用个人调整 ${code}`)
     await enable.check()
     await page.getByLabel(`调整目标 ${code}`).selectOption('')
     await expect(page.getByText('需填写调整目标')).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeDisabled()
     await page.getByLabel(`调整目标 ${code}`).selectOption('4')
     await expect(page.getByText('需填写调整原因')).toBeVisible()
     await page.getByLabel(`调整原因 ${code}`).fill('合法调整原因')
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
+    await expect(page.getByText('需填写调整原因')).toHaveCount(0)
+    await expect(page.getByText('需填写调整目标')).toHaveCount(0)
+    // cancel clears the adjustment errors again (调整必填校验恢复)
     await enable.uncheck()
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
+    await expect(page.getByText('需填写调整目标')).toHaveCount(0)
+    await expect(page.getByText('需填写调整原因')).toHaveCount(0)
   })
 
-  test('structured submit validation switches domain and focuses the failing L3', async ({
+  test('structured generation validation switches domain and focuses the failing L3', async ({
     page,
   }) => {
     const draft = await fillAllApplicable(page)
@@ -230,27 +240,52 @@ test.describe('Issue #50 assessment gap workflow', () => {
         detail.standard_target_applicable !== false &&
         (detail.l1_code ?? detail.l3_code.split('.')[0]) !== 'P01',
     )!
+    // Issue #194: 生成前置满足（纳入计划 + 优先级 + YYYY-MM），
+    // 服务端逐项校验失败时定位失败 L3 并切换域。
+    const patched = await page.request.patch(
+      `/api/assessments/${draft.id}/draft`,
+      {
+        data: {
+          expected_revision: draft.revision,
+          details: [
+            {
+              l3_node_id: target.l3_node_id,
+              l3_code: target.l3_code,
+              member_priority: '高',
+              include_in_plan: true,
+              plan_month: '2026-06',
+            },
+          ],
+        },
+      },
+    )
+    expect(patched.ok()).toBeTruthy()
+    await page.reload()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
     await page
       .getByRole('navigation', { name: '一级能力域导航' })
       .getByRole('button', { name: /^P01 · / })
       .click()
-    await page.route('**/api/assessments/*/submit', async (route) => {
-      await route.fulfill({
-        status: 422,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          detail: {
-            code: target.l3_code,
-            l3_code: target.l3_code,
-            l3_node_id: target.l3_node_id,
-            field: 'member_priority',
-            reason: 'priority_required',
-            message: `${target.l3_code} requires member_priority`,
-          },
-        }),
-      })
-    })
-    await page.getByRole('button', { name: '提交自评' }).click()
+    await page.route(
+      '**/api/assessments/*/generate-plan-items',
+      async (route) => {
+        await route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            detail: {
+              code: target.l3_code,
+              l3_code: target.l3_code,
+              l3_node_id: target.l3_node_id,
+              field: 'member_priority',
+              reason: 'priority_required',
+              message: `${target.l3_code} requires member_priority`,
+            },
+          }),
+        })
+      },
+    )
+    await page.getByRole('button', { name: '生成所选学习任务' }).click()
     await expect(
       page.getByText(`${target.l3_code} requires member_priority`),
     ).toBeVisible()
@@ -268,11 +303,12 @@ test.describe('Issue #50 assessment gap workflow', () => {
     page,
   }) => {
     test.setTimeout(120_000)
-    const firstCurrent = page
-      .getByRole('combobox', { name: /当前等级/ })
-      .first()
-    if ((await firstCurrent.inputValue()) === '') {
-      await firstCurrent.selectOption('1')
+    // Issue #194 P1: 逐档评级按钮；未选中任何档位视为未评估。
+    const firstRating = page.locator('[aria-label^="当前等级"]').first()
+    if (
+      (await firstRating.locator('button[aria-pressed="true"]').count()) === 0
+    ) {
+      await firstRating.getByRole('button', { name: /^1 ·/ }).click()
     }
     for (const domain of await page
       .getByRole('navigation', { name: '一级能力域导航' })
@@ -316,9 +352,47 @@ test.describe('Issue #50 assessment gap workflow', () => {
       await page.reload()
       await expect(page.getByLabel('评估摘要')).toBeVisible()
     }
-    await expect(page.getByRole('button', { name: '提交自评' })).toBeEnabled()
-    await page.getByRole('button', { name: '提交自评' }).click()
-    await expect(page.getByText(/已提交/)).toBeVisible({ timeout: 15000 })
+    // Issue #194: 提交自评退役；三动作之一「保存能力评级」保留脏输入。
+    // 批量填写与 gap 修正均已保存（无 dirty 行）：先通过可见控件制造
+    // 一个合法脏变更（applicable 行的当前等级 +1），再保存验证 UI 提示
+    // 与持久化。
+    const ratings = page.locator('[aria-label^="当前等级"]')
+    const ratingCount = await ratings.count()
+    let ratingIndex = -1
+    for (let i = 0; i < ratingCount; i += 1) {
+      if (await ratings.nth(i).locator('button').first().isEnabled()) {
+        ratingIndex = i
+        break
+      }
+    }
+    expect(ratingIndex).toBeGreaterThanOrEqual(0)
+    const rating = ratings.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
+    const rowId = await row.getAttribute('id')
+    expect(rowId).toMatch(/^row-\d+$/)
+    const previous = Number(
+      (await rating
+        .locator('button[aria-pressed="true"]')
+        .first()
+        .textContent())!.split(' ')[0],
+    )
+    expect(previous).toBeGreaterThanOrEqual(0)
+    await rating
+      .getByRole('button', { name: new RegExp(`^${previous + 1} ·`) })
+      .click()
+    await expect(
+      page.getByRole('button', { name: '保存能力评级' }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: '保存能力评级' }).click()
+    await expect(page.getByText('能力评级已保存')).toBeVisible({
+      timeout: 15000,
+    })
+    // 持久化：该行评级已落库。
+    const persisted = await currentDraft(page)
+    const changedRow = persisted.details.find(
+      (detail) => detail.id === Number(rowId.slice(4)),
+    )
+    expect(changedRow?.current_level).toBe(previous + 1)
   })
 
   test('partial save keeps the page dense and avoids viewport overflow', async ({
@@ -327,41 +401,137 @@ test.describe('Issue #50 assessment gap workflow', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
-    await expect(page.getByRole('button', { name: '保存草稿' })).toBeVisible()
+    // Issue #194 M02: 三动作之一「保存能力评级」。
+    await expect(
+      page.getByRole('button', { name: '保存能力评级' }),
+    ).toBeVisible()
     const metrics = await page
       .getByTestId('assessment-content-area')
       .evaluate((content) => {
-        const visible = (rect: DOMRect) => {
-          const left = Math.max(0, rect.left)
-          const top = Math.max(0, rect.top)
-          const right = Math.min(window.innerWidth, rect.right)
-          const bottom = Math.min(window.innerHeight, rect.bottom)
-          return {
-            width: Math.max(0, right - left),
-            height: Math.max(0, bottom - top),
-          }
-        }
-        const contentRect = visible(content.getBoundingClientRect())
-        const main = content.querySelector(
-          '[data-testid="assessment-main-area"]',
-        )
-        const mainRect = main
-          ? visible(main.getBoundingClientRect())
-          : { width: 0, height: 0 }
-        const rows = [...content.querySelectorAll('tbody tr')].filter((row) => {
-          const rect = row.getBoundingClientRect()
-          return rect.top >= 0 && rect.bottom <= window.innerHeight
-        }).length
-        return {
-          contentArea: contentRect.width * contentRect.height,
-          tableArea: mainRect.width * mainRect.height,
-          rows,
-        }
+        // Issue #194 P1: 能力项行容器为 div[id^="row-"]（原七列表格已退役）。
+        const rows = [...content.querySelectorAll('[id^="row-"]')].filter(
+          (row) => {
+            const rect = row.getBoundingClientRect()
+            return rect.top >= 0 && rect.bottom <= window.innerHeight
+          },
+        ).length
+        return { rows }
       })
-    expect(metrics.tableArea / metrics.contentArea).toBeGreaterThanOrEqual(0.7)
+    expect(metrics.rows).toBeGreaterThan(0)
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(viewport!.width)
+  })
+
+  test('768 viewport: M02 same-item controls measured together at scrollLeft=0 without horizontal scroll', async ({
+    page,
+  }) => {
+    // 权威原型 M02 V1 在窄宽做响应式重排；横向滚动桌面表格不是合法替代。
+    await page.setViewportSize({ width: 768, height: 900 })
+    const draft = await currentDraft(page)
+    const target = draft.details.find(
+      (detail) =>
+        detail.standard_target_applicable !== false && detail.id != null,
+    )!
+    const patched = await page.request.patch(
+      `/api/assessments/${draft.id}/draft`,
+      {
+        data: {
+          expected_revision: draft.revision,
+          details: [
+            {
+              l3_node_id: target.l3_node_id,
+              l3_code: target.l3_code,
+              current_level: 1,
+              member_priority: '高',
+              include_in_plan: true,
+              plan_month: '2026-06',
+            },
+          ],
+        },
+      },
+    )
+    expect(patched.ok()).toBeTruthy()
+    await page.reload()
+    await expect(page.getByLabel('评估摘要')).toBeVisible({ timeout: 15000 })
+    // 先定位稳定的能力项容器（id^=row-；未来 article/card 保留该 id），
+    // 不要求 table 结构存在。
+    const row = page.locator(`#row-${target.id}`)
+    await expect(row).toBeVisible()
+    // 垂直方向单独处理：只做纵向滚动让目标行可见，禁止触发横向滚动。
+    await row.evaluate((element) => {
+      const scroller = element.closest('[data-testid="assessment-main-area"]')
+      if (scroller) {
+        scroller.scrollBy({
+          top:
+            element.getBoundingClientRect().top -
+            scroller.getBoundingClientRect().top -
+            8,
+          behavior: 'auto',
+        })
+      } else {
+        window.scrollBy({
+          top: element.getBoundingClientRect().top - 80,
+          behavior: 'auto',
+        })
+      }
+    })
+    // 测量前提：scrollLeft 保持 0，不得靠横向滚动逐一暴露右侧控件。
+    const scrollLeft = await page.evaluate(() => {
+      const element = document.querySelector(
+        '[data-testid="assessment-main-area"]',
+      )
+      return element ? element.scrollLeft : 0
+    })
+    expect(scrollLeft).toBe(0)
+    const code = target.l3_code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const controls = [
+      // 当前评级：item 内按稳定 aria-label 前缀定位，兼容旧 select 与
+      // 未来分段容器/按钮。
+      row.locator('[aria-label^="当前等级"]').first(),
+      page.getByLabel(`优先级 ${target.l3_code}`),
+      page.getByRole('button', { name: new RegExp(`提升计划 ${code}`) }),
+      page.getByLabel(`计划月份 ${target.l3_code}`),
+      page.getByRole('button', { name: '生成所选学习任务' }),
+    ]
+    const viewportWidth = await page.evaluate(() => window.innerWidth)
+    // 同一能力项的五个控件同时测量水平边界与裁切祖先（整数像素判定）。
+    for (const control of controls) {
+      const box = await control.boundingBox()
+      expect(box).not.toBeNull()
+      expect(Math.floor(box!.x)).toBeGreaterThanOrEqual(0)
+      expect(Math.ceil(box!.x + box!.width)).toBeLessThanOrEqual(viewportWidth)
+      const clipping = await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        let left = Math.max(0, rect.left)
+        let right = Math.min(window.innerWidth, rect.right)
+        let node = element.parentElement
+        while (node) {
+          const overflowX = window.getComputedStyle(node).overflowX
+          if (/(hidden|auto|scroll)/.test(overflowX)) {
+            const clip = node.getBoundingClientRect()
+            left = Math.max(left, clip.left)
+            right = Math.min(right, clip.right)
+          }
+          node = node.parentElement
+        }
+        return {
+          visibleWidth: Math.max(0, right - left),
+          fullWidth: rect.width,
+        }
+      })
+      expect(Math.round(clipping.visibleWidth)).toBe(
+        Math.round(clipping.fullWidth),
+      )
+    }
+    // 主区域自身不得以横向滚动承载表格（真实横向溢出判定）。
+    const overflow = await page
+      .getByTestId('assessment-main-area')
+      .evaluate((element) => ({
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+      }))
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
   })
 
   test('sparse PATCH preserves a hidden L1 detail', async ({ page }) => {
@@ -450,8 +620,8 @@ test.describe('Issue #50 assessment gap workflow', () => {
               current_level: 1,
               member_priority: '高',
               include_in_plan: true,
-              plan_quarter: 'Q1',
-              plan_month: 2,
+              // Issue #194: plan_quarter 派生列不接受输入；月份为 YYYY-MM。
+              plan_month: '2026-02',
             },
           ],
         },
@@ -491,7 +661,6 @@ test.describe('Issue #50 assessment gap workflow', () => {
       expect.arrayContaining([
         'member_priority',
         'include_in_plan',
-        'plan_quarter',
         'plan_month',
       ]),
     )
@@ -514,17 +683,15 @@ test.describe('Issue #50 assessment gap workflow', () => {
   })
 })
 
-test.describe('Issue #50 historical inheritance and evidence gates', () => {
-  test('creates a cross-year snapshot and keeps inherited evidence readable and writable', async ({
+test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役', () => {
+  test('legacy assessment writes are retired; drafts stay readable and editable', async ({
     page,
     browser,
   }) => {
     test.setTimeout(120_000)
-    test.skip(
-      !process.env.TCP_E2E_ISOLATED,
-      'Issue #50 writes assessment data and requires an isolated database',
-    )
+    // 隔离由 CI 既有 per-run 隔离栈提供（同前），测试级无条件执行。
     await loginAs(page, 'member2')
+    // 新合同动作：创建 2025 草稿并保存评级。
     const previousPreview = await page.request.get(
       '/api/assessments/scope-preview?year=2025',
     )
@@ -557,11 +724,6 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
         detail.target_level != null,
     )
     const low = applicable.find((detail) => (detail.target_level ?? 0) >= 2)!
-    const high =
-      applicable.find(
-        (detail) =>
-          detail.l3_code !== low.l3_code && (detail.target_level ?? 0) >= 4,
-      ) ?? applicable.find((detail) => detail.l3_code !== low.l3_code)!
     const details = previous.details.map((detail) => {
       if (detail.standard_target_applicable === false) {
         return {
@@ -571,23 +733,13 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
         }
       }
       const current =
-        detail.l3_code === low.l3_code
-          ? 1
-          : detail.l3_code === high.l3_code
-            ? 3
-            : (detail.target_level ?? 1)
-      const hasGap =
-        detail.target_level != null && current < detail.target_level
+        detail.l3_code === low.l3_code ? 1 : (detail.target_level ?? 1)
       return {
         l3_node_id: detail.l3_node_id,
         l3_code: detail.l3_code,
         current_level: current,
         evidence_note:
           detail.l3_code === low.l3_code ? null : `历史依据-${detail.l3_code}`,
-        // positive-Gap items need an explicit plan decision before submit
-        ...(hasGap
-          ? { member_priority: '中' as const, include_in_plan: false }
-          : {}),
       }
     })
     const saved = await page.request.put(
@@ -598,133 +750,104 @@ test.describe('Issue #50 historical inheritance and evidence gates', () => {
     )
     expect(saved.ok()).toBeTruthy()
     const savedBody = (await saved.json()) as { revision: number }
+
+    // Issue #194: 旧提交端点退役 → 422 零写入，评估保持草稿。
     const submitted = await page.request.post(
       `/api/assessments/${previousId}/submit`,
       { data: { expected_revision: savedBody.revision } },
     )
-    expect(submitted.ok()).toBeTruthy()
+    expect(submitted.status()).toBe(422)
+    expect(await submitted.text()).toContain(
+      'legacy_assessment_submit_disabled',
+    )
+    const afterRejected = await page.request.get(
+      `/api/assessments/${previousId}`,
+    )
+    expect((await afterRejected.json()).status).toBe('草稿')
 
+    // 旧 review 写路径退役：Buddy 关系有效 → 410 assessment_review_write_disabled
+    // 零写入；GET 历史保持只读。
     const buddy = await browser.newContext()
     await loginAs(buddy.pages()[0] ?? (await buddy.newPage()), 'buddy')
-    const pending = await buddy.request.get('/api/assessments/reviews/pending')
-    expect(pending.ok()).toBeTruthy()
-    const review = (
-      (await pending.json()) as Array<{
-        assessment_id: number
-        id: number
-      }>
-    ).find((item) => item.assessment_id === previousId)!
-    const reviewed = await buddy.request.post(
-      `/api/assessments/${previousId}/reviews/${review.id}`,
+    const rejectedReview = await buddy.request.post(
+      `/api/assessments/${previousId}/reviews/1`,
       {
         data: {
           conclusion: '认可',
           feedback: 'E2E 认可',
-          expected_revision: (await submitted.json()).revision,
+          expected_revision: savedBody.revision,
         },
       },
     )
-    expect(reviewed.ok()).toBeTruthy()
+    expect(rejectedReview.status()).toBe(410)
+    expect(await rejectedReview.text()).toContain(
+      'assessment_review_write_disabled',
+    )
+    const history = await buddy.request.get(
+      `/api/assessments/${previousId}/history`,
+    )
+    expect(history.status()).toBe(200)
     await buddy.close()
 
-    const currentPreview = await page.request.get(
-      `/api/assessments/scope-preview?year=2026&assessment_type=${encodeURIComponent('晋升复核')}`,
-    )
-    expect(currentPreview.ok()).toBeTruthy()
-    const currentPreviewBody = (await currentPreview.json()) as {
-      scope_token: string
-      open_draft_id: number | null
+    // UI：2025 草稿可继续编辑保存（保存能力评级）。
+    await page.goto('/capability/assessment?year=2025')
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
+    // 与 first-evaluation 同根因：无 dirty 行时保存不产生提示。先通过
+    // 可见控件制造一个合法脏变更（applicable 行当前等级 +1）再保存。
+    const ratings = page.locator('[aria-label^="当前等级"]')
+    const ratingCount = await ratings.count()
+    let ratingIndex = -1
+    for (let i = 0; i < ratingCount; i += 1) {
+      if (await ratings.nth(i).locator('button').first().isEnabled()) {
+        ratingIndex = i
+        break
+      }
     }
-    let currentId: number
-    if (currentPreviewBody.open_draft_id) {
-      currentId = currentPreviewBody.open_draft_id
-    } else {
-      const currentCreated = await page.request.post('/api/assessments', {
-        data: {
-          year: 2026,
-          assessment_type: '晋升复核',
-          scope_token: currentPreviewBody.scope_token,
-        },
-      })
-      expect(currentCreated.ok()).toBeTruthy()
-      currentId = ((await currentCreated.json()) as { id: number }).id
-    }
-    const currentResponse = await page.request.get(
-      `/api/assessments/${currentId}`,
+    expect(ratingIndex).toBeGreaterThanOrEqual(0)
+    const rating = ratings.nth(ratingIndex)
+    const row = rating.locator('xpath=ancestor::div[starts-with(@id,"row-")]')
+    const rowId = await row.getAttribute('id')
+    expect(rowId).toMatch(/^row-\d+$/)
+    const priorLevel = Number(
+      (await rating
+        .locator('button[aria-pressed="true"]')
+        .first()
+        .textContent())!.split(' ')[0],
     )
-    const current = (await currentResponse.json()) as Assessment
-    const inheritedLow = current.details.find(
-      (detail) => detail.l3_code === low.l3_code,
-    )!
-    const inheritedHigh = current.details.find(
-      (detail) => detail.l3_code === high.l3_code,
-    )!
-    expect(inheritedLow.inherited_from_assessment_id).toBe(previousId)
-    expect(inheritedLow.current_level).toBe(1)
-    expect(inheritedLow.target_level).toBe(low.target_level)
-    expect(inheritedLow.inherited_evidence_note).toBe(
-      inheritedLow.evidence_note,
+    expect(priorLevel).toBeGreaterThanOrEqual(0)
+    await rating
+      .getByRole('button', { name: new RegExp(`^${priorLevel + 1} ·`) })
+      .click()
+    await page.getByRole('button', { name: '保存能力评级' }).click()
+    await expect(page.getByText('能力评级已保存')).toBeVisible({
+      timeout: 15000,
+    })
+
+    // 显式生成前置校验：未纳入计划的项 → 422 且零写入。
+    const afterUi = await currentDraft(page, previousId)
+    // 持久化：该行评级已落库（afterUi 读取于保存之后）。
+    const changedRow = afterUi.details.find(
+      (detail) => detail.id === Number(rowId.slice(4)),
     )
-    expect(inheritedHigh.current_level).toBe(3)
-
-    await page.goto('/capability/assessment')
-    await expect(page.getByText('沿用上次评估').first()).toBeVisible()
-    const lowSelect = page.getByLabel(`当前等级 ${low.l3_code}`)
-    await expect(lowSelect).toBeVisible()
-    await lowSelect.selectOption('2')
-    // evidence is no longer a submit gate — saving the updated level works
-    // without touching the inherited evidence
-    await page.getByRole('button', { name: '保存草稿' }).click()
-    await expect(page.getByText('草稿已保存')).toBeVisible()
-
-    const afterUi = await currentDraft(page, currentId)
-    const lowUpdate = await page.request.patch(
-      `/api/assessments/${currentId}/draft`,
+    expect(changedRow?.current_level).toBe(priorLevel + 1)
+    const beforeGenerate = await page.request.get(
+      `/api/planning/annual-plan?year=2025`,
+    )
+    const beforeBody = await beforeGenerate.json()
+    const generate = await page.request.post(
+      `/api/assessments/${previousId}/generate-plan-items`,
       {
         data: {
+          l3_codes: [low.l3_code],
           expected_revision: afterUi.revision,
-          details: [
-            {
-              l3_node_id: inheritedLow.l3_node_id,
-              l3_code: low.l3_code,
-              current_level: 2,
-              evidence_note: inheritedLow.evidence_note,
-            },
-          ],
         },
       },
     )
-    expect(lowUpdate.ok()).toBeTruthy()
-    const lowBody = (await lowUpdate.json()) as { revision: number }
-    const highUpdate = await page.request.patch(
-      `/api/assessments/${currentId}/draft`,
-      {
-        data: {
-          expected_revision: lowBody.revision,
-          details: [
-            {
-              l3_node_id: inheritedHigh.l3_node_id,
-              l3_code: high.l3_code,
-              current_level: 4,
-              evidence_note: inheritedHigh.evidence_note,
-            },
-          ],
-        },
-      },
+    expect(generate.status()).toBe(422)
+    expect(await generate.text()).toContain('未加入提升计划')
+    const afterGenerate = await page.request.get(
+      `/api/planning/annual-plan?year=2025`,
     )
-    expect(highUpdate.ok()).toBeTruthy()
-    const highBody = (await highUpdate.json()) as { revision: number }
-    const rejected = await page.request.post(
-      `/api/assessments/${currentId}/submit`,
-      {
-        data: { expected_revision: highBody.revision },
-      },
-    )
-    expect(rejected.status()).toBe(422)
-    const rejectedBody = await rejected.text()
-    // unchanged inherited evidence is accepted; the submit is rejected only
-    // because positive-gap items still lack a member_priority decision
-    expect(rejectedBody).not.toContain('requires updated evidence')
-    expect(rejectedBody).toContain('priority_required')
+    expect(await afterGenerate.json()).toEqual(beforeBody)
   })
 })

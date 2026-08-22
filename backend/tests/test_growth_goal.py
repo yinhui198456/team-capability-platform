@@ -11,8 +11,10 @@ from app.access.schema import create_access_schema
 from app.assessment.schema import create_assessment_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -76,6 +78,11 @@ def planning_schema(connection: psycopg.Connection) -> psycopg.Connection:
     _reset_access_schema(connection)
     _reset_assessment_schema(connection)
     _reset_planning_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -183,8 +190,7 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
         {
             "l3_code": "P01-L2A-L3B",
@@ -193,11 +199,12 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    publish_test_standard(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -226,32 +233,25 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
 def _approve_assessment(
     connection: psycopg.Connection, assessment_id: int, buddy_username: str
 ) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(connection, assessment_id, buddy_username)
 
 
 def test_legacy_goal_creation_blocked(
