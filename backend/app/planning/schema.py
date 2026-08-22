@@ -505,6 +505,8 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             ),
             capability_standard_version_id BIGINT NOT NULL,
             planning_snapshot_id BIGINT,
+            previous_planning_snapshot_id BIGINT
+                REFERENCES capability_standard_planning_snapshot(id) ON DELETE RESTRICT,
             assessment_revision BIGINT NOT NULL,
             requirement_decision TEXT CHECK (
                 requirement_decision IS NULL
@@ -517,8 +519,10 @@ def create_planning_schema(connection: psycopg.Connection) -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (source_assessment_detail_id),
             CHECK (
-                (requirement_decision IS NULL AND decided_at IS NULL AND decided_by IS NULL)
-                OR (requirement_decision IS NOT NULL AND decided_at IS NOT NULL AND decided_by IS NOT NULL)
+                (requirement_decision IS NULL AND decided_at IS NULL
+                    AND decided_by IS NULL)
+                OR (requirement_decision IS NOT NULL AND decided_at IS NOT NULL
+                    AND decided_by IS NOT NULL)
             ),
             CHECK (
                 plan_quarter IS NULL OR plan_month IS NULL

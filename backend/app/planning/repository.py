@@ -2678,13 +2678,13 @@ def submit_evidence(
     with connection.transaction():
         row = connection.execute(
             f"""
-            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status, pi.id
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status, pi.id, agp.id
             FROM evidence e
             JOIN learning_task lt ON lt.id = e.learning_task_id
             JOIN plan_item pi ON pi.id = lt.plan_item_id
             JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
             WHERE e.id = %s AND agp.member_id = %s
-            FOR UPDATE OF e
+            FOR UPDATE OF agp, e
             """,
             (evidence_id, member_id),
         ).fetchone()
@@ -4960,7 +4960,8 @@ def list_change_proposals(
                    member_priority, include_in_plan, plan_quarter, plan_month,
                    standard_job_level_snapshot, member_current_level_snapshot,
                    member_target_level_snapshot, capability_standard_version_id,
-                   planning_snapshot_id, assessment_revision,
+                   planning_snapshot_id, previous_planning_snapshot_id,
+                   assessment_revision,
                    planning_source_type, requirement_decision, decided_at, decided_by
             FROM annual_plan_change_proposal_detail
             WHERE proposal_id = %s
@@ -5009,11 +5010,12 @@ def list_change_proposals(
                         "member_target_level_snapshot": d[22],
                         "capability_standard_version_id": d[23],
                         "planning_snapshot_id": d[24],
-                        "assessment_revision": d[25],
-                        "planning_source_type": d[26],
-                        "requirement_decision": d[27],
-                        "decided_at": _serialize_datetime(d[28]),
-                        "decided_by": d[29],
+                        "previous_planning_snapshot_id": d[25],
+                        "assessment_revision": d[26],
+                        "planning_source_type": d[27],
+                        "requirement_decision": d[28],
+                        "decided_at": _serialize_datetime(d[29]),
+                        "decided_by": d[30],
                     }
                     for d in details
                 ],
@@ -5044,8 +5046,9 @@ def decide_requirement_change(
                    p.target_annual_growth_plan_id, d.l3_code
             FROM annual_plan_change_proposal_detail d
             JOIN annual_plan_change_proposal p ON p.id = d.proposal_id
+            JOIN annual_growth_plan agp ON agp.id = p.target_annual_growth_plan_id
             WHERE d.id = %s AND p.id = %s AND p.member_id = %s
-            FOR UPDATE OF d, p
+            FOR UPDATE OF agp, p, d
             """,
             (detail_id, proposal_id, member_id),
         ).fetchone()
@@ -5062,7 +5065,7 @@ def decide_requirement_change(
             )
         item = connection.execute(
             """
-            SELECT id FROM plan_item
+            SELECT id, planning_snapshot_id FROM plan_item
             WHERE annual_growth_plan_id=%s AND l3_code=%s
             FOR UPDATE
             """,
@@ -5078,7 +5081,8 @@ def decide_requirement_change(
         if decision == "adopt_new":
             snapshot = connection.execute(
                 """
-                SELECT materials_text, expected_output, estimated_hours, l3_name
+                SELECT materials_text, expected_output, estimated_hours, l3_name,
+                       capability_standard_version_id, l3_node_id
                 FROM capability_standard_planning_snapshot WHERE id=%s
                 """,
                 (row[2],),
@@ -5091,11 +5095,16 @@ def decide_requirement_change(
                     entity_id=detail_id,
                 )
             connection.execute(
-                """UPDATE plan_item SET planning_snapshot_id=%s, learning_material=%s,
-                   learning_task_content=%s, expected_output=%s, estimated_hours=%s,
+                """UPDATE plan_item SET planning_snapshot_id=%s,
+                   capability_standard_version_id=%s, l3_node_id=%s, l3_name=%s,
+                   learning_material=%s, learning_task_content=%s,
+                   expected_output=%s, estimated_hours=%s,
                    revision=revision+1 WHERE id=%s""",
                 (
                     row[2],
+                    snapshot[4],
+                    snapshot[5],
+                    snapshot[3],
                     snapshot[0],
                     snapshot[3],
                     snapshot[1],
@@ -5105,8 +5114,9 @@ def decide_requirement_change(
             )
         connection.execute(
             """UPDATE annual_plan_change_proposal_detail SET requirement_decision=%s,
+               previous_planning_snapshot_id=%s,
                decided_at=NOW(), decided_by=%s WHERE id=%s""",
-            (decision, member_id, detail_id),
+            (decision, item[1], member_id, detail_id),
         )
         connection.execute(
             """UPDATE annual_plan_change_proposal SET status=CASE WHEN NOT EXISTS (

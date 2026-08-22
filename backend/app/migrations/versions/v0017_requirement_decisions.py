@@ -8,6 +8,8 @@ def upgrade(connection: psycopg.Connection) -> None:
         """
         ALTER TABLE annual_plan_change_proposal_detail
         ADD COLUMN IF NOT EXISTS requirement_decision TEXT,
+        ADD COLUMN IF NOT EXISTS previous_planning_snapshot_id BIGINT
+            REFERENCES capability_standard_planning_snapshot(id) ON DELETE RESTRICT,
         ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ,
         ADD COLUMN IF NOT EXISTS decided_by BIGINT
             REFERENCES tcp_user(id) ON DELETE RESTRICT

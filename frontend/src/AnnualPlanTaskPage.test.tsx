@@ -212,6 +212,10 @@ function expandItem(itemId: number) {
   )
 }
 
+async function openTaskTab(name: '阶段产出' | '提交成果') {
+  fireEvent.click(await screen.findByRole('tab', { name }))
+}
+
 describe('AnnualPlanTaskPage display', () => {
   afterEach(() => {
     cleanup()
@@ -770,6 +774,7 @@ describe('learning task execution (v0010)', () => {
       }),
     )
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
     )
@@ -804,6 +809,7 @@ describe('learning task execution (v0010)', () => {
       .spyOn(planningApi, 'updateEvidence')
       .mockResolvedValue({ ...draft, content: '修改后', revision: 1 })
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
     )
@@ -842,6 +848,7 @@ describe('learning task execution (v0010)', () => {
       revision: 1,
     })
     expandItem(1)
+    await openTaskTab('提交成果')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '提交评审' })).toBeTruthy(),
     )
@@ -884,6 +891,7 @@ describe('learning task execution (v0010)', () => {
       .mockResolvedValueOnce([draft])
       .mockResolvedValueOnce([{ ...draft, revision: 1 }])
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
     )
@@ -951,6 +959,7 @@ describe('learning task execution (v0010)', () => {
         }),
       )
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
     )
@@ -1011,6 +1020,7 @@ describe('learning task execution (v0010)', () => {
       })
       vi.spyOn(planningApi, 'updateEvidence').mockRejectedValue(error)
       expandItem(1)
+      await openTaskTab('阶段产出')
       await waitFor(() =>
         expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
       )
@@ -1068,6 +1078,7 @@ describe('learning task execution (v0010)', () => {
       })
       vi.spyOn(planningApi, 'createEvidence').mockRejectedValue(error)
       expandItem(1)
+      await openTaskTab('阶段产出')
       await waitFor(() =>
         expect(screen.getByRole('button', { name: '创建新版本' })).toBeTruthy(),
       )
@@ -1167,6 +1178,7 @@ describe('learning task execution (v0010)', () => {
     expect(march).toBeTruthy()
     expect(within(march!).getByText('完成管道设计')).toBeTruthy()
     expect(within(march!).getByText('进行中')).toBeTruthy()
+    expect(within(march!).getByText('50%')).toBeTruthy()
     expect(within(march!).getByText('2026-03')).toBeTruthy()
     expect(
       screen.getByRole('button', { name: '2026 年 3 月，1 项' }),
@@ -1280,7 +1292,7 @@ describe('plan item source summary (issue #63)', () => {
     const panel = screen.getByTestId('task-detail-panel')
     expect(within(panel).getByText('完成管道设计')).toBeTruthy()
     expect(screen.getByText('预期输出')).toBeTruthy()
-    expect(screen.getByText('设计文档与评审记录')).toBeTruthy()
+    expect(within(panel).getByText('设计文档与评审记录')).toBeTruthy()
     // #62 frozen source snapshot, read-only.
     expect(screen.getByText('来源评估')).toBeTruthy()
     expect(screen.getByText('评估 #1')).toBeTruthy()
@@ -1607,6 +1619,7 @@ describe('evidence draft link persistence (issue #63)', () => {
       revision: 1,
     })
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
     )
@@ -1639,6 +1652,7 @@ describe('evidence draft link persistence (issue #63)', () => {
       .spyOn(planningApi, 'updateEvidence')
       .mockResolvedValue({ ...draft, evidence_link: null, revision: 1 })
     expandItem(1)
+    await openTaskTab('阶段产出')
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '编辑草稿' })).toBeTruthy(),
     )

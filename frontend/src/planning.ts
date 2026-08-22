@@ -300,6 +300,7 @@ export type ChangeProposalDetail = {
   member_target_level_snapshot: string | null
   capability_standard_version_id: number
   planning_snapshot_id: number | null
+  previous_planning_snapshot_id?: number | null
   assessment_revision: number
   planning_source_type: 'assessment_approval'
   requirement_decision?: 'adopt_new' | 'keep_original' | null

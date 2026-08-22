@@ -473,6 +473,34 @@ def test_submit_evidence_creates_review(evidence_schema: psycopg.Connection) -> 
     assert row is None
 
 
+def test_submit_evidence_requires_resolving_pending_requirement_change(
+    evidence_schema: psycopg.Connection,
+) -> None:
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+    second = _create_and_submit_assessment(evidence_schema, "member_evidence")
+    _approve_assessment(evidence_schema, second, "buddy_evidence")
+
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "等待确认的成果", "evidence_link": "http://example.com/pending"},
+        cookies=cookies,
+    )
+    assert status == 200
+    status, body, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{int(evidence['id'])}/submit",
+        {},
+        cookies=cookies,
+    )
+    assert status == 422
+    assert body["detail"]["code"] == "requirement_decision_pending"
+    assert body["detail"]["entity_type"] == "learning_task"
+    assert body["detail"]["entity_id"] == task_id
+    assert body["detail"]["field"] == "requirement_decision"
+
+
 def test_update_non_draft_evidence_returns_422(
     evidence_schema: psycopg.Connection,
 ) -> None:
@@ -1144,3 +1172,94 @@ def test_concurrent_evidence_creation_only_one_succeeds(
     assert status == 200
     assert len(evidences) == 1
     assert evidences[0]["version_number"] == 1
+
+
+def test_approval_and_evidence_submit_serialize_on_plan_lock(
+    evidence_schema: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A submit waiting behind approval must see the new pending proposal."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    from app.assessment import repository as assessment_repository
+    from app.planning.repository import RequirementDecisionPending, submit_evidence
+    from tests.conftest import TEST_DATABASE_URL
+
+    cookies, task = _seed_learning_task(evidence_schema)
+    task_id = int(task["id"])
+    status, evidence, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {"content": "并发成果", "evidence_link": "http://example.com/race"},
+        cookies=cookies,
+    )
+    assert status == 200
+    evidence_id = int(evidence["id"])
+    member_id, buddy_id = (
+        int(value)
+        for value in evidence_schema.execute(
+            "SELECT (SELECT id FROM tcp_user WHERE username='member_evidence'), "
+            "(SELECT id FROM tcp_user WHERE username='buddy_evidence')"
+        ).fetchone()
+    )
+    second = _create_and_submit_assessment(evidence_schema, "member_evidence")
+    review_id = int(
+        evidence_schema.execute(
+            "SELECT id FROM assessment_review WHERE assessment_id=%s", (second,)
+        ).fetchone()[0]
+    )
+    evidence_schema.commit()
+
+    plan_locked = Event()
+    release_approval = Event()
+    submit_started = Event()
+    original = assessment_repository._approve_with_proposal
+
+    def hold_after_plan_lock(*args: object, **kwargs: object) -> dict[str, object]:
+        plan_locked.set()
+        assert release_approval.wait(timeout=5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        assessment_repository, "_approve_with_proposal", hold_after_plan_lock
+    )
+
+    def approve() -> dict[str, object]:
+        with psycopg.connect(TEST_DATABASE_URL) as connection:
+            return assessment_repository.submit_assessment_review(
+                connection,
+                review_id,
+                buddy_id,
+                "认可",
+                "并发批准",
+                expected_revision=3,
+                assessment_id_from_url=second,
+            )
+
+    def submit() -> str:
+        assert plan_locked.wait(timeout=5)
+        submit_started.set()
+        with psycopg.connect(TEST_DATABASE_URL) as connection:
+            try:
+                submit_evidence(connection, member_id, evidence_id)
+            except RequirementDecisionPending:
+                return "blocked"
+        return "submitted"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        approval = pool.submit(approve)
+        assert plan_locked.wait(timeout=5)
+        submission = pool.submit(submit)
+        assert submit_started.wait(timeout=5)
+        with pytest.raises(TimeoutError):
+            submission.result(timeout=0.1)
+        release_approval.set()
+        assert approval.result(timeout=5)["proposal"] is not None
+        assert submission.result(timeout=5) == "blocked"
+
+    assert (
+        evidence_schema.execute(
+            "SELECT status FROM evidence WHERE id=%s", (evidence_id,)
+        ).fetchone()[0]
+        == "草稿"
+    )

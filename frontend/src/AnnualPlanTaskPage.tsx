@@ -113,6 +113,14 @@ type TaskDetail = {
   history: TransitionHistoryItem[]
 }
 
+const TASK_DETAIL_TABS = ['logs', 'outputs', 'evidence'] as const
+type TaskDetailTab = (typeof TASK_DETAIL_TABS)[number]
+const TASK_DETAIL_TAB_LABELS: Record<TaskDetailTab, string> = {
+  logs: '学习记录',
+  outputs: '阶段产出',
+  evidence: '提交成果',
+}
+
 function statusClass(st: string) {
   return st === '已完成'
     ? s.statusDone
@@ -243,7 +251,7 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   const year = useYear()
   const [plan, setPlan] = useState<AnnualPlan | null>(null)
   const [tasks, setTasks] = useState<Record<number, TaskDetail>>({})
-  const [taskIds, setTaskIds] = useState<Record<number, number>>({})
+  const [taskByItem, setTaskByItem] = useState<Record<number, LearningTask>>({})
   const [proposals, setProposals] = useState<ChangeProposal[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -254,11 +262,13 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
   const [selectedMonth, setSelectedMonth] = useState<number | null | undefined>(
     undefined,
   )
-  const [expandedId, setExpandedId] = useState<number | null>(null)
   const [conflictTask, setConflictTask] = useState<number | null>(null)
-  const [detailTab, setDetailTab] = useState<'overview' | 'execution'>(
-    'execution',
-  )
+  const [detailTab, setDetailTab] = useState<TaskDetailTab>('logs')
+  const taskTabRefs = useRef<Record<TaskDetailTab, HTMLButtonElement | null>>({
+    logs: null,
+    outputs: null,
+    evidence: null,
+  })
 
   // Idempotency keys: bound to the exact payload fingerprint, so an unchanged
   // retry replays server-side; a changed payload (or a revision 409 that
@@ -296,9 +306,24 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
     return detail
   }
 
+  function indexTasks(plan: AnnualPlan | null, taskList: LearningTask[]) {
+    const itemIds = new Set((plan?.items ?? []).map((item) => item.id))
+    setTaskByItem(
+      Object.fromEntries(
+        taskList
+          .filter((task) => itemIds.has(task.plan_item_id))
+          .map((task) => [task.plan_item_id, task]),
+      ),
+    )
+  }
+
   async function reloadPlan() {
-    const p = await getAnnualPlan(year)
+    const [p, taskList] = await Promise.all([
+      getAnnualPlan(year),
+      listLearningTasks(),
+    ])
     setPlan(p)
+    indexTasks(p, taskList)
     return p
   }
 
@@ -337,16 +362,10 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
         ])
         if (cancelled) return
         setPlan(p)
-        const itemIds = new Set((p?.items ?? []).map((item) => item.id))
-        setTaskIds(
-          Object.fromEntries(
-            taskList
-              .filter((task) => itemIds.has(task.plan_item_id))
-              .map((task) => [task.plan_item_id, task.id]),
-          ),
-        )
+        indexTasks(p, taskList)
         if (taskId != null) {
           const requested = taskList.find((task) => task.id === taskId)
+          const itemIds = new Set((p?.items ?? []).map((item) => item.id))
           if (!requested || !itemIds.has(requested.plan_item_id)) {
             throw new Error('任务不属于当前年度计划')
           }
@@ -614,6 +633,30 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
     }
   }
 
+  async function handleRequirementDecision(
+    proposalId: number,
+    detailId: number,
+    decision: 'adopt_new' | 'keep_original',
+    currentTaskId: number,
+  ) {
+    try {
+      await decideRequirementChange(proposalId, detailId, decision)
+      const [nextDetail, nextProposals] = await Promise.all([
+        loadTaskDetail(currentTaskId),
+        listChangeProposals(year),
+        reloadPlan(),
+      ])
+      setTasks((previous) => ({
+        ...previous,
+        [nextDetail.task.plan_item_id]: nextDetail,
+      }))
+      setProposals(nextProposals)
+      setNotice('任务要求已确认。')
+    } catch (reason) {
+      setError(parseApiErrorDetail(reason).message)
+    }
+  }
+
   if (loading) return <p className="muted">加载中…</p>
 
   if (taskId != null) {
@@ -662,48 +705,73 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
             任务数据已更新，请确认后重试。
           </p>
         )}
-        {pendingChanges.map(({ proposal, change }) => (
-          <section key={change.id} aria-labelledby={`requirement-${change.id}`}>
-            <h2 id={`requirement-${change.id}`}>要求变化</h2>
-            <p>请在提交成果前确认采用方式。</p>
-            <button
-              type="button"
-              onClick={() =>
-                void decideRequirementChange(
-                  proposal.id,
-                  change.id,
-                  'adopt_new',
-                )
-                  .then(() => listChangeProposals(year))
-                  .then(setProposals)
-                  .catch((reason) =>
-                    setError(parseApiErrorDetail(reason).message),
-                  )
-              }
-            >
-              采用新要求
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                void decideRequirementChange(
-                  proposal.id,
-                  change.id,
-                  'keep_original',
-                )
-                  .then(() => listChangeProposals(year))
-                  .then(setProposals)
-                  .catch((reason) =>
-                    setError(parseApiErrorDetail(reason).message),
-                  )
-              }
-            >
-              按原任务要求继续
-            </button>
-          </section>
-        ))}
+        <section aria-labelledby="requirements-title">
+          <h2 id="requirements-title">要求变化</h2>
+          {pendingChanges.length === 0 ? (
+            <p className="muted">当前任务没有待确认的能力要求变化。</p>
+          ) : (
+            pendingChanges.map(({ proposal, change }) => (
+              <div key={change.id}>
+                <p>原任务仍可继续；请在提交成果前确认采用方式。</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleRequirementDecision(
+                      proposal.id,
+                      change.id,
+                      'adopt_new',
+                      detail.task.id,
+                    )
+                  }
+                >
+                  采用新要求
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleRequirementDecision(
+                      proposal.id,
+                      change.id,
+                      'keep_original',
+                      detail.task.id,
+                    )
+                  }
+                >
+                  按原任务要求继续
+                </button>
+              </div>
+            ))
+          )}
+        </section>
+        <section aria-labelledby="task-overview-title">
+          <h2 id="task-overview-title">任务概览</h2>
+          <dl className={s.taskGrid}>
+            <div className={s.taskField}>
+              <dt>目标等级</dt>
+              <dd>
+                {item.current_level} → {item.target_level}
+              </dd>
+            </div>
+            <div className={s.taskField}>
+              <dt>期望产出</dt>
+              <dd>{item.expected_output ?? '—'}</dd>
+            </div>
+            <div className={s.taskField}>
+              <dt>累计投入</dt>
+              <dd>{detail.task.actual_hours} h</dd>
+            </div>
+            <div className={s.taskField}>
+              <dt>成果材料</dt>
+              <dd>
+                {detail.evidences.length
+                  ? `${detail.evidences.length} 个版本`
+                  : '尚未提交'}
+              </dd>
+            </div>
+          </dl>
+        </section>
         <div role="tablist" aria-label="任务详情页签">
-          {(['overview', 'execution'] as const).map((value) => (
+          {TASK_DETAIL_TABS.map((value, index) => (
             <button
               key={value}
               type="button"
@@ -711,13 +779,34 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
               aria-selected={detailTab === value}
               aria-controls={`task-panel-${value}`}
               id={`task-tab-${value}`}
+              ref={(node) => {
+                taskTabRefs.current[value] = node
+              }}
+              tabIndex={detailTab === value ? 0 : -1}
               onClick={() => setDetailTab(value)}
               onKeyDown={(event) => {
-                if (event.key === 'ArrowRight' || event.key === 'ArrowLeft')
-                  setDetailTab(value === 'overview' ? 'execution' : 'overview')
+                const move =
+                  event.key === 'ArrowRight'
+                    ? 1
+                    : event.key === 'ArrowLeft'
+                      ? -1
+                      : event.key === 'Home'
+                        ? -index
+                        : event.key === 'End'
+                          ? TASK_DETAIL_TABS.length - index - 1
+                          : 0
+                if (!move) return
+                event.preventDefault()
+                const next =
+                  TASK_DETAIL_TABS[
+                    (index + move + TASK_DETAIL_TABS.length) %
+                      TASK_DETAIL_TABS.length
+                  ]
+                setDetailTab(next)
+                taskTabRefs.current[next]?.focus()
               }}
             >
-              {value === 'overview' ? '任务概览' : '执行进展'}
+              {TASK_DETAIL_TAB_LABELS[value]}
             </button>
           ))}
         </div>
@@ -726,44 +815,32 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
           id={`task-panel-${detailTab}`}
           aria-labelledby={`task-tab-${detailTab}`}
         >
-          {detailTab === 'overview' ? (
-            <dl className={s.taskGrid}>
-              <div className={s.taskField}>
-                <dt>学习材料</dt>
-                <dd>{item.learning_material ?? '—'}</dd>
-              </div>
-              <div className={s.taskField}>
-                <dt>预期输出</dt>
-                <dd>{item.expected_output ?? '—'}</dd>
-              </div>
-            </dl>
-          ) : (
-            <TaskExecutionPanel
-              item={item}
-              year={year}
-              detail={detail}
-              onTransition={(to, reason, date) =>
-                void handleTransition(detail.task, to, reason, date)
-              }
-              onComplete={(fields) => void handleComplete(detail.task, fields)}
-              onCreateLog={(fields) =>
-                void handleCreateLog(detail.task.id, fields)
-              }
-              onVoidLog={(log) => void handleVoidLog(detail.task.id, log)}
-              onSaveEvidence={(evidence, fields, superseded) =>
-                handleSaveEvidenceDraft(
-                  detail.task.id,
-                  evidence,
-                  fields,
-                  superseded,
-                )
-              }
-              onSaveDates={(fields) => handleSaveDates(item, fields)}
-              onSubmitEvidence={(evidence) =>
-                void handleSubmitEvidence(detail.task.id, evidence)
-              }
-            />
-          )}
+          <TaskExecutionPanel
+            item={item}
+            year={year}
+            detail={detail}
+            section={detailTab}
+            onTransition={(to, reason, date) =>
+              void handleTransition(detail.task, to, reason, date)
+            }
+            onComplete={(fields) => void handleComplete(detail.task, fields)}
+            onCreateLog={(fields) =>
+              void handleCreateLog(detail.task.id, fields)
+            }
+            onVoidLog={(log) => void handleVoidLog(detail.task.id, log)}
+            onSaveEvidence={(evidence, fields, superseded) =>
+              handleSaveEvidenceDraft(
+                detail.task.id,
+                evidence,
+                fields,
+                superseded,
+              )
+            }
+            onSaveDates={(fields) => handleSaveDates(item, fields)}
+            onSubmitEvidence={(evidence) =>
+              void handleSubmitEvidence(detail.task.id, evidence)
+            }
+          />
         </section>
       </section>
     )
@@ -925,13 +1002,16 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
                 {expanded &&
                   monthItems.map((item) => {
                     const st = item.status
-                    // Issue #194: 已有进度 = 实际时长/预计时长（仅在预计可
-                    // 解析且任务已 hydrate 时显示；缺失不编造）。
-                    const estHours =
-                      item.estimated_hours_parsed?.is_valid &&
-                      item.estimated_hours_parsed.min_hours != null &&
-                      item.estimated_hours_parsed.min_hours > 0
-                        ? item.estimated_hours_parsed.min_hours
+                    const task = taskByItem[item.id]
+                    const estimated = item.estimated_hours_parsed
+                    const progress =
+                      task &&
+                      estimated?.is_valid &&
+                      estimated.min_hours != null &&
+                      estimated.min_hours > 0
+                        ? Math.round(
+                            (task.actual_hours / estimated.min_hours) * 100,
+                          )
                         : null
                     // 任务说明或预期输出；两者皆缺时不渲染占位。
                     const output =
@@ -964,6 +1044,9 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
                             <span className={`${s.status} ${statusClass(st)}`}>
                               {STATUS_LABELS[st] ?? st}
                             </span>
+                            {progress != null && (
+                              <span className={s.progressPct}>{progress}%</span>
+                            )}
                           </div>
                           <span className={s.taskMonth}>
                             {item.plan_month ??
@@ -971,9 +1054,9 @@ export function AnnualPlanTaskPage({ taskId }: { taskId?: number }) {
                                 ? `${item.target_month} 月`
                                 : '—')}
                           </span>
-                          {taskIds[item.id] ? (
+                          {task ? (
                             <Link
-                              to={`/growth/tasks/${taskIds[item.id]}?year=${year}`}
+                              to={`/growth/tasks/${task.id}?year=${year}`}
                               aria-label="进入任务"
                             >
                               进入任务
@@ -998,6 +1081,7 @@ type PanelProps = {
   item: PlanItem
   year: number
   detail: TaskDetail
+  section: TaskDetailTab
   onTransition: (
     to: LearningTaskStatus,
     reason: string,
@@ -1038,6 +1122,7 @@ function TaskExecutionPanel({
   onSaveEvidence,
   onSubmitEvidence,
   onSaveDates,
+  section,
 }: PanelProps) {
   const { task, logs, evidences, reviews } = detail
   const [actionTo, setActionTo] = useState<LearningTaskStatus | null>(null)
@@ -1071,6 +1156,9 @@ function TaskExecutionPanel({
   const hasPendingReview = evidences.some((e) => e.status === '待 Review')
   const taskIsClosed = ['已完成', '暂停', '取消'].includes(task.status)
   const reviewByVersion = new Map(reviews.map((r) => [r.version_number, r]))
+  const showLogs = section === 'logs'
+  const showOutputs = section === 'outputs'
+  const showEvidence = section === 'evidence'
 
   function beginAction(to: LearningTaskStatus) {
     setActionTo(actionTo === to ? null : to)
@@ -1167,521 +1255,538 @@ function TaskExecutionPanel({
 
   return (
     <div className={s.taskPanel} data-testid="task-detail-panel">
-      <div className={s.taskGrid}>
-        <div className={s.taskField}>
-          <span>任务状态</span>
-          <strong>{task.status}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>实际耗时</span>
-          <strong>{task.actual_hours} h</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划开始日期</span>
-          <input
-            aria-label="计划开始日期"
-            type="date"
-            value={startDate}
-            onChange={(event) => setStartDate(event.target.value)}
-          />
-        </div>
-        <div className={s.taskField}>
-          <span>计划结束日期</span>
-          <input
-            aria-label="计划结束日期"
-            type="date"
-            value={endDate}
-            onChange={(event) => setEndDate(event.target.value)}
-          />
-        </div>
-        <div className={s.taskField}>
-          <span />
-          <button
-            type="button"
-            onClick={() => void saveDates()}
-            disabled={savingDates}
-          >
-            保存日期
-          </button>
-        </div>
-        <div className={s.taskField}>
-          <span>学习材料</span>
-          <strong>{item.learning_material ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>任务内容</span>
-          <strong>{item.learning_task_content ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>预期输出</span>
-          <strong>{item.expected_output ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>优先级</span>
-          <strong>{item.priority}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>来源评估</span>
-          <strong>
-            {item.source_assessment_id != null
-              ? `评估 #${item.source_assessment_id}`
-              : '—'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划季度</span>
-          <strong>{item.plan_quarter ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划月份</span>
-          {/* plan_month is 'YYYY-MM' (Issue #194) — display as-is. */}
-          <strong>{item.plan_month ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>来源类型</span>
-          <strong>
-            {item.planning_source_type === 'assessment_approval'
-              ? '显式选择生成'
-              : '—'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>评估版本</span>
-          <strong>{item.assessment_revision ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>纳入计划</span>
-          <strong>
-            {item.include_in_plan == null
-              ? '—'
-              : item.include_in_plan
-                ? '是'
-                : '否'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>实际开始时间</span>
-          <strong>{formatDateTime(task.actual_started_at)}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>完成时间</span>
-          <strong>{formatDateTime(task.actual_completed_at)}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>修订截止日期</span>
-          <strong>{task.revised_due_date ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>延期原因</span>
-          <strong>{task.delay_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>暂停原因</span>
-          <strong>{task.pause_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>取消原因</span>
-          <strong>{task.cancel_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>复盘结论</span>
-          <strong>{task.review_conclusion || '待补充'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>下一步行动</span>
-          <strong>{task.next_action || '待补充'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>完成质量</span>
-          <strong>{task.completion_quality || '待补充'}</strong>
-        </div>
-      </div>
-
-      {/* Conditional actions */}
-      {allowedActions.length > 0 && (
-        <div className={s.actions}>
-          {allowedActions.map((to) => (
-            <button key={to} type="button" onClick={() => beginAction(to)}>
-              {actionLabel(task, to)}
-            </button>
-          ))}
-        </div>
-      )}
-      {panelError && (
-        <p className="error" role="alert">
-          {panelError}
-        </p>
-      )}
-
-      {actionTo && actionTo !== '已完成' && (
-        <form
-          className={s.actionForm}
-          onSubmit={(event) => {
-            event.preventDefault()
-            confirmAction()
-          }}
-        >
-          {reasonField && (
-            <label>
-              {REASON_LABELS[reasonField]}
-              <textarea
-                aria-label={REASON_LABELS[reasonField]}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder={`填写${REASON_LABELS[reasonField]}（必填）`}
-              />
-            </label>
-          )}
-          {actionTo === '延期' && (
-            <label>
-              修订截止日期
+      {showLogs && (
+        <>
+          <div className={s.taskGrid}>
+            <div className={s.taskField}>
+              <span>任务状态</span>
+              <strong>{task.status}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>实际耗时</span>
+              <strong>{task.actual_hours} h</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划开始日期</span>
               <input
+                aria-label="计划开始日期"
                 type="date"
-                aria-label="修订截止日期"
-                value={revisedDueDate}
-                onChange={(event) => setRevisedDueDate(event.target.value)}
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
               />
-            </label>
-          )}
-          <div className={s.actions}>
-            <button type="submit">{CONFIRM_LABELS[actionTo]}</button>
-            <button type="button" onClick={() => setActionTo(null)}>
-              取消操作
-            </button>
+            </div>
+            <div className={s.taskField}>
+              <span>计划结束日期</span>
+              <input
+                aria-label="计划结束日期"
+                type="date"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </div>
+            <div className={s.taskField}>
+              <span />
+              <button
+                type="button"
+                onClick={() => void saveDates()}
+                disabled={savingDates}
+              >
+                保存日期
+              </button>
+            </div>
+            <div className={s.taskField}>
+              <span>学习材料</span>
+              <strong>{item.learning_material ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>任务内容</span>
+              <strong>{item.learning_task_content ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>预期输出</span>
+              <strong>{item.expected_output ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>优先级</span>
+              <strong>{item.priority}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>来源评估</span>
+              <strong>
+                {item.source_assessment_id != null
+                  ? `评估 #${item.source_assessment_id}`
+                  : '—'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划季度</span>
+              <strong>{item.plan_quarter ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>计划月份</span>
+              {/* plan_month is 'YYYY-MM' (Issue #194) — display as-is. */}
+              <strong>{item.plan_month ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>来源类型</span>
+              <strong>
+                {item.planning_source_type === 'assessment_approval'
+                  ? '显式选择生成'
+                  : '—'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>评估版本</span>
+              <strong>{item.assessment_revision ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>纳入计划</span>
+              <strong>
+                {item.include_in_plan == null
+                  ? '—'
+                  : item.include_in_plan
+                    ? '是'
+                    : '否'}
+              </strong>
+            </div>
+            <div className={s.taskField}>
+              <span>实际开始时间</span>
+              <strong>{formatDateTime(task.actual_started_at)}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>完成时间</span>
+              <strong>{formatDateTime(task.actual_completed_at)}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>修订截止日期</span>
+              <strong>{task.revised_due_date ?? '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>延期原因</span>
+              <strong>{task.delay_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>暂停原因</span>
+              <strong>{task.pause_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>取消原因</span>
+              <strong>{task.cancel_reason || '—'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>复盘结论</span>
+              <strong>{task.review_conclusion || '待补充'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>下一步行动</span>
+              <strong>{task.next_action || '待补充'}</strong>
+            </div>
+            <div className={s.taskField}>
+              <span>完成质量</span>
+              <strong>{task.completion_quality || '待补充'}</strong>
+            </div>
           </div>
-        </form>
-      )}
 
-      {actionTo === '已完成' && (
-        <form
-          className={s.actionForm}
-          onSubmit={(event) => {
-            event.preventDefault()
-            confirmAction()
-          }}
-        >
-          <label>
-            复盘结论
-            <textarea
-              aria-label="复盘结论"
-              value={reviewConclusion}
-              onChange={(event) => setReviewConclusion(event.target.value)}
-              placeholder="回顾执行过程、产出与收获"
-            />
-          </label>
-          <label>
-            完成质量
-            <select
-              aria-label="完成质量"
-              value={completionQuality}
-              onChange={(event) => setCompletionQuality(event.target.value)}
-            >
-              <option value="">请选择</option>
-              {COMPLETION_QUALITY_VALUES.map((q) => (
-                <option key={q} value={q}>
-                  {q}
-                </option>
+          {/* Conditional actions */}
+          {allowedActions.length > 0 && (
+            <div className={s.actions}>
+              {allowedActions.map((to) => (
+                <button key={to} type="button" onClick={() => beginAction(to)}>
+                  {actionLabel(task, to)}
+                </button>
               ))}
-            </select>
-          </label>
-          <label>
-            下一步行动
-            <input
-              aria-label="下一步行动"
-              maxLength={200}
-              value={nextAction}
-              onChange={(event) => setNextAction(event.target.value)}
-              placeholder="接下来的具体行动（200 字内）"
-            />
-          </label>
-          <div className={s.actions}>
-            <button type="submit">确认完成</button>
-            <button type="button" onClick={() => setActionTo(null)}>
-              取消操作
-            </button>
-          </div>
-        </form>
-      )}
+            </div>
+          )}
+          {panelError && (
+            <p className="error" role="alert">
+              {panelError}
+            </p>
+          )}
 
-      {/* Progress logs */}
-      <div className={s.logSection}>
-        <h4>学习日志（{task.actual_hours} h，服务端聚合）</h4>
-        <ul className={s.logList}>
-          {logs.length === 0 && <li className="muted">暂无日志。</li>}
-          {logs.map((log) => (
-            <li
-              key={log.id}
-              className={`${s.logItem} ${log.invalidated_at ? s.logVoided : ''}`}
+          {actionTo && actionTo !== '已完成' && (
+            <form
+              className={s.actionForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                confirmAction()
+              }}
             >
-              <span className={s.logDate}>{log.record_date}</span>
-              <span className={s.logHours}>{log.actual_hours} h</span>
-              <span className={s.logNote}>
-                {log.note ?? ''}
-                {log.invalidated_at && <em>（已作废）</em>}
-                {log.correction_of_log_id && (
-                  <em>（更正 #{log.correction_of_log_id}）</em>
-                )}
-              </span>
-              {!log.invalidated_at && (
-                <span className={s.logActions}>
-                  {confirmVoidId === log.id ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConfirmVoidId(null)
-                          onVoidLog(log)
-                        }}
-                      >
-                        确认作废
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmVoidId(null)}
-                      >
-                        取消
-                      </button>
-                    </>
-                  ) : (
+              {reasonField && (
+                <label>
+                  {REASON_LABELS[reasonField]}
+                  <textarea
+                    aria-label={REASON_LABELS[reasonField]}
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                    placeholder={`填写${REASON_LABELS[reasonField]}（必填）`}
+                  />
+                </label>
+              )}
+              {actionTo === '延期' && (
+                <label>
+                  修订截止日期
+                  <input
+                    type="date"
+                    aria-label="修订截止日期"
+                    value={revisedDueDate}
+                    onChange={(event) => setRevisedDueDate(event.target.value)}
+                  />
+                </label>
+              )}
+              <div className={s.actions}>
+                <button type="submit">{CONFIRM_LABELS[actionTo]}</button>
+                <button type="button" onClick={() => setActionTo(null)}>
+                  取消操作
+                </button>
+              </div>
+            </form>
+          )}
+
+          {actionTo === '已完成' && (
+            <form
+              className={s.actionForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                confirmAction()
+              }}
+            >
+              <label>
+                复盘结论
+                <textarea
+                  aria-label="复盘结论"
+                  value={reviewConclusion}
+                  onChange={(event) => setReviewConclusion(event.target.value)}
+                  placeholder="回顾执行过程、产出与收获"
+                />
+              </label>
+              <label>
+                完成质量
+                <select
+                  aria-label="完成质量"
+                  value={completionQuality}
+                  onChange={(event) => setCompletionQuality(event.target.value)}
+                >
+                  <option value="">请选择</option>
+                  {COMPLETION_QUALITY_VALUES.map((q) => (
+                    <option key={q} value={q}>
+                      {q}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                下一步行动
+                <input
+                  aria-label="下一步行动"
+                  maxLength={200}
+                  value={nextAction}
+                  onChange={(event) => setNextAction(event.target.value)}
+                  placeholder="接下来的具体行动（200 字内）"
+                />
+              </label>
+              <div className={s.actions}>
+                <button type="submit">确认完成</button>
+                <button type="button" onClick={() => setActionTo(null)}>
+                  取消操作
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Progress logs */}
+          <div className={s.logSection}>
+            <h4>学习日志（{task.actual_hours} h，服务端聚合）</h4>
+            <ul className={s.logList}>
+              {logs.length === 0 && <li className="muted">暂无日志。</li>}
+              {logs.map((log) => (
+                <li
+                  key={log.id}
+                  className={`${s.logItem} ${log.invalidated_at ? s.logVoided : ''}`}
+                >
+                  <span className={s.logDate}>{log.record_date}</span>
+                  <span className={s.logHours}>{log.actual_hours} h</span>
+                  <span className={s.logNote}>
+                    {log.note ?? ''}
+                    {log.invalidated_at && <em>（已作废）</em>}
+                    {log.correction_of_log_id && (
+                      <em>（更正 #{log.correction_of_log_id}）</em>
+                    )}
+                  </span>
+                  {!log.invalidated_at && (
+                    <span className={s.logActions}>
+                      {confirmVoidId === log.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmVoidId(null)
+                              onVoidLog(log)
+                            }}
+                          >
+                            确认作废
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmVoidId(null)}
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmVoidId(log.id)}
+                        >
+                          作废
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {log.invalidated_at && (
                     <button
                       type="button"
-                      onClick={() => setConfirmVoidId(log.id)}
+                      onClick={() => {
+                        setLogDate(log.record_date)
+                        setLogHours(String(log.actual_hours))
+                        setLogNote(log.note ?? '')
+                        setCorrectionOfLogId(log.id)
+                      }}
                     >
-                      作废
+                      更正
                     </button>
                   )}
+                </li>
+              ))}
+            </ul>
+            {correctionOfLogId !== null && (
+              <p className="muted">基于已作废日志 #{correctionOfLogId} 更正</p>
+            )}
+            <form
+              className={s.actionForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                submitLog()
+              }}
+            >
+              <label>
+                记录日期
+                <input
+                  type="date"
+                  aria-label="记录日期"
+                  value={logDate}
+                  onChange={(event) => setLogDate(event.target.value)}
+                />
+              </label>
+              <label>
+                本次时长（小时）
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  aria-label="本次时长（小时）"
+                  value={logHours}
+                  onChange={(event) => setLogHours(event.target.value)}
+                />
+              </label>
+              <label>
+                备注
+                <input
+                  aria-label="备注"
+                  value={logNote}
+                  onChange={(event) => setLogNote(event.target.value)}
+                />
+              </label>
+              <div className={s.actions}>
+                <button type="submit">记录进展</button>
+              </div>
+            </form>
+          </div>
+        </>
+      )}
+
+      {/* Evidence versions */}
+      {(showOutputs || showEvidence) && (
+        <div className={s.logSection}>
+          <h4>{showOutputs ? '阶段产出' : '提交成果'}</h4>
+          {evidences.length === 0 && (
+            <p className="muted">暂无任务成果证明。</p>
+          )}
+          {evidences.map((ev) => {
+            const review = reviewByVersion.get(ev.version_number)
+            return (
+              <div key={ev.id} className={s.logItem}>
+                <span className={s.logDate}>v{ev.version_number}</span>
+                <span className={s.logNote}>
+                  {ev.content?.slice(0, 80) ?? '—'}
+                  {ev.supersedes_evidence_id && (
+                    <em>
+                      （取代 v{evsVersion(evidences, ev.supersedes_evidence_id)}
+                      ）
+                    </em>
+                  )}
                 </span>
-              )}
-              {log.invalidated_at && (
+                {evBadge(ev)}
+                {ev.evidence_link && (
+                  <a
+                    href={ev.evidence_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ fontSize: 'var(--text-xs)' }}
+                  >
+                    链接
+                  </a>
+                )}
+                {review?.conclusion && (
+                  <span className={s.reviewFeedback}>
+                    {review.conclusion}：{review.feedback}
+                  </span>
+                )}
+                {ev.status === '草稿' && (
+                  <span className={s.logActions}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEvidenceContent(ev.content ?? '')
+                        setEvidenceDescription(ev.description ?? '')
+                        setEvidenceLink(ev.evidence_link ?? '')
+                        setNewVersionOf(null)
+                        setCreatingDraft(true)
+                      }}
+                    >
+                      编辑草稿
+                    </button>
+                    {showEvidence && (
+                      <button
+                        type="button"
+                        onClick={() => onSubmitEvidence(ev)}
+                      >
+                        提交评审
+                      </button>
+                    )}
+                  </span>
+                )}
+                {showOutputs && ev.status === '需补充' && (
+                  <span className={s.logActions}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEvidenceContent('')
+                        setEvidenceDescription('')
+                        setEvidenceLink('')
+                        setNewVersionOf(ev)
+                        setCreatingDraft(true)
+                      }}
+                    >
+                      创建新版本
+                    </button>
+                  </span>
+                )}
+              </div>
+            )
+          })}
+          {taskIsClosed && (
+            <p className="muted">
+              任务已结束。如需继续提交任务成果证明，请创建新任务或调整计划。
+            </p>
+          )}
+          {showOutputs &&
+            !taskIsClosed &&
+            !draft &&
+            needMore.length === 0 &&
+            !hasPendingReview && (
+              <div className={s.actions}>
                 <button
                   type="button"
                   onClick={() => {
-                    setLogDate(log.record_date)
-                    setLogHours(String(log.actual_hours))
-                    setLogNote(log.note ?? '')
-                    setCorrectionOfLogId(log.id)
+                    setEvidenceContent('')
+                    setEvidenceDescription('')
+                    setEvidenceLink('')
+                    setNewVersionOf(null)
+                    setCreatingDraft(true)
                   }}
                 >
-                  更正
+                  新建草稿
                 </button>
-              )}
-            </li>
-          ))}
-        </ul>
-        {correctionOfLogId !== null && (
-          <p className="muted">基于已作废日志 #{correctionOfLogId} 更正</p>
-        )}
-        <form
-          className={s.actionForm}
-          onSubmit={(event) => {
-            event.preventDefault()
-            submitLog()
-          }}
-        >
-          <label>
-            记录日期
-            <input
-              type="date"
-              aria-label="记录日期"
-              value={logDate}
-              onChange={(event) => setLogDate(event.target.value)}
-            />
-          </label>
-          <label>
-            本次时长（小时）
-            <input
-              type="number"
-              min={1}
-              max={24}
-              aria-label="本次时长（小时）"
-              value={logHours}
-              onChange={(event) => setLogHours(event.target.value)}
-            />
-          </label>
-          <label>
-            备注
-            <input
-              aria-label="备注"
-              value={logNote}
-              onChange={(event) => setLogNote(event.target.value)}
-            />
-          </label>
-          <div className={s.actions}>
-            <button type="submit">记录进展</button>
-          </div>
-        </form>
-      </div>
-
-      {/* Evidence versions */}
-      <div className={s.logSection}>
-        <h4>任务成果证明（版本链，历史只读）</h4>
-        {evidences.length === 0 && <p className="muted">暂无任务成果证明。</p>}
-        {evidences.map((ev) => {
-          const review = reviewByVersion.get(ev.version_number)
-          return (
-            <div key={ev.id} className={s.logItem}>
-              <span className={s.logDate}>v{ev.version_number}</span>
-              <span className={s.logNote}>
-                {ev.content?.slice(0, 80) ?? '—'}
-                {ev.supersedes_evidence_id && (
-                  <em>
-                    （取代 v{evsVersion(evidences, ev.supersedes_evidence_id)}）
-                  </em>
-                )}
-              </span>
-              {evBadge(ev)}
-              {ev.evidence_link && (
-                <a
-                  href={ev.evidence_link}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: 'var(--text-xs)' }}
-                >
-                  链接
-                </a>
-              )}
-              {review?.conclusion && (
-                <span className={s.reviewFeedback}>
-                  {review.conclusion}：{review.feedback}
-                </span>
-              )}
-              {ev.status === '草稿' && (
-                <span className={s.logActions}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEvidenceContent(ev.content ?? '')
-                      setEvidenceDescription(ev.description ?? '')
-                      setEvidenceLink(ev.evidence_link ?? '')
-                      setNewVersionOf(null)
-                      setCreatingDraft(true)
-                    }}
-                  >
-                    编辑草稿
-                  </button>
-                  <button type="button" onClick={() => onSubmitEvidence(ev)}>
-                    提交评审
-                  </button>
-                </span>
-              )}
-              {ev.status === '需补充' && (
-                <span className={s.logActions}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEvidenceContent('')
-                      setEvidenceDescription('')
-                      setEvidenceLink('')
-                      setNewVersionOf(ev)
-                      setCreatingDraft(true)
-                    }}
-                  >
-                    创建新版本
-                  </button>
-                </span>
-              )}
-            </div>
-          )
-        })}
-        {taskIsClosed && (
-          <p className="muted">
-            任务已结束。如需继续提交任务成果证明，请创建新任务或调整计划。
-          </p>
-        )}
-        {!taskIsClosed &&
-          !draft &&
-          needMore.length === 0 &&
-          !hasPendingReview && (
-            <div className={s.actions}>
-              <button
-                type="button"
-                onClick={() => {
-                  setEvidenceContent('')
-                  setEvidenceDescription('')
-                  setEvidenceLink('')
-                  setNewVersionOf(null)
-                  setCreatingDraft(true)
-                }}
-              >
-                新建草稿
-              </button>
-            </div>
-          )}
-        {creatingDraft && (
-          <form
-            className={s.actionForm}
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (submitting) return
-              setSubmitting(true)
-              onSaveEvidence(
-                draft && !newVersionOf ? draft : null,
-                {
-                  content: evidenceContent,
-                  description: evidenceDescription,
-                  link: evidenceLink,
-                },
-                newVersionOf,
-              )
-                .then((result) => {
-                  // Only a confirmed save closes the form; conflicts and
-                  // validation errors keep it open with the typed input.
-                  if (result === 'saved') setCreatingDraft(false)
-                })
-                .finally(() => setSubmitting(false))
-            }}
-          >
-            {newVersionOf && (
-              <p className="muted">
-                基于需补充版本 v{newVersionOf.version_number}{' '}
-                创建新版本，旧版本保持只读。
-              </p>
+              </div>
             )}
-            <label>
-              任务成果证明 内容
-              <textarea
-                aria-label="任务成果证明 内容"
-                value={evidenceContent}
-                onChange={(event) => setEvidenceContent(event.target.value)}
-                placeholder="说明完成了什么、如何验证"
-              />
-            </label>
-            <label>
-              补充描述
-              <input
-                aria-label="补充描述"
-                value={evidenceDescription}
-                onChange={(event) => setEvidenceDescription(event.target.value)}
-              />
-            </label>
-            <label>
-              证据链接
-              <input
-                aria-label="证据链接"
-                value={evidenceLink}
-                onChange={(event) => setEvidenceLink(event.target.value)}
-              />
-            </label>
-            <div className={s.actions}>
-              <button disabled={submitting} type="submit">
-                保存草稿
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreatingDraft(false)
-                  setNewVersionOf(null)
-                }}
-              >
-                取消
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+          {creatingDraft && (
+            <form
+              className={s.actionForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (submitting) return
+                setSubmitting(true)
+                onSaveEvidence(
+                  draft && !newVersionOf ? draft : null,
+                  {
+                    content: evidenceContent,
+                    description: evidenceDescription,
+                    link: evidenceLink,
+                  },
+                  newVersionOf,
+                )
+                  .then((result) => {
+                    // Only a confirmed save closes the form; conflicts and
+                    // validation errors keep it open with the typed input.
+                    if (result === 'saved') setCreatingDraft(false)
+                  })
+                  .finally(() => setSubmitting(false))
+              }}
+            >
+              {newVersionOf && (
+                <p className="muted">
+                  基于需补充版本 v{newVersionOf.version_number}{' '}
+                  创建新版本，旧版本保持只读。
+                </p>
+              )}
+              <label>
+                任务成果证明 内容
+                <textarea
+                  aria-label="任务成果证明 内容"
+                  value={evidenceContent}
+                  onChange={(event) => setEvidenceContent(event.target.value)}
+                  placeholder="说明完成了什么、如何验证"
+                />
+              </label>
+              <label>
+                补充描述
+                <input
+                  aria-label="补充描述"
+                  value={evidenceDescription}
+                  onChange={(event) =>
+                    setEvidenceDescription(event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                证据链接
+                <input
+                  aria-label="证据链接"
+                  value={evidenceLink}
+                  onChange={(event) => setEvidenceLink(event.target.value)}
+                />
+              </label>
+              <div className={s.actions}>
+                <button disabled={submitting} type="submit">
+                  保存草稿
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingDraft(false)
+                    setNewVersionOf(null)
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
 
       {/* Transition history */}
-      {detail.history.length > 0 && (
+      {showLogs && detail.history.length > 0 && (
         <div className={s.logSection}>
           <h4>任务流转历史</h4>
           <ul className={s.logList}>
