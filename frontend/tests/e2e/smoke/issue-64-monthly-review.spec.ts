@@ -192,12 +192,31 @@ test('E2E-64-02 字段超长 422：保留输入，修正后精确重试成功', 
 
   await openMonthlyReview(page, year, month)
   const tooLong = 'a'.repeat(3001)
-  await page.getByLabel('备注').fill(tooLong)
+  const notes = page.getByLabel('备注')
+  await notes.fill(tooLong)
+  await expect(notes).toHaveValue(tooLong)
+  const validationPromise = page.waitForResponse((resp) => {
+    const url = new URL(resp.url())
+    return (
+      url.pathname === '/api/planning/monthly-reviews' &&
+      url.searchParams.get('year') === String(year) &&
+      url.searchParams.get('month') === String(month) &&
+      resp.request().method() === 'PUT'
+    )
+  })
   await page.getByRole('button', { name: '保存月度复盘' }).click()
+  const validationResponse = await validationPromise
+  expect(validationResponse.status()).toBe(422)
+  expect(await validationResponse.json()).toMatchObject({
+    detail: {
+      code: 'monthly_review_validation_error',
+      field: 'notes',
+    },
+  })
   await expect(page.getByRole('alert')).toContainText(
     'must be a string of at most 3000 characters',
   )
-  await expect(page.getByLabel('备注')).toHaveValue(tooLong)
+  await expect(notes).toHaveValue(tooLong)
   // No partial write happened.
   expect((await fetchReview(request, year, month)).written).toBeNull()
 

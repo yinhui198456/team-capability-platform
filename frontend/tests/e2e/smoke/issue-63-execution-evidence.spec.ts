@@ -321,6 +321,31 @@ async function selectQueueItemByMarker(
   throw new Error(`queue item for ${l3Code} with marker ${marker} not found`)
 }
 
+async function openTaskFromAnnualPlan(
+  page: Page,
+  year: number,
+  l3Code: string,
+  taskId: number,
+) {
+  const itemCard = page.locator('[data-testid="plan-item"]', {
+    hasText: l3Code,
+  })
+  await expect(itemCard).toBeVisible({ timeout: 20_000 })
+  const enterTask = itemCard.getByRole('link', { name: '进入任务' })
+  await expect(enterTask).toHaveAttribute(
+    'href',
+    `/growth/tasks/${taskId}?year=${year}`,
+  )
+  await enterTask.click()
+  await expect(page).toHaveURL(
+    new RegExp(`/growth/tasks/${taskId}\\?year=${year}$`),
+  )
+  await page.getByRole('tab', { name: '学习记录' }).click()
+  const panel = page.locator('[data-testid="task-detail-panel"]')
+  await expect(panel).toBeVisible()
+  return panel
+}
+
 // ── E2E-63-01: member execution chain ────────────────────────────────────────
 
 test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与作废更正、Evidence 提交与完成门禁', async ({
@@ -333,14 +358,12 @@ test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与
 
   // ── plan page renders the generated item; restricted date edit succeeds ──
   await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  // the page chains several API calls before items render — allow real
-  // backend latency on the constrained host
-  await expect(itemCard).toBeVisible({ timeout: 20_000 })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
+  const panel = await openTaskFromAnnualPlan(
+    page,
+    year,
+    seed.l3Code,
+    seed.taskId,
+  )
   await expect(panel.getByText('任务内容')).toBeVisible()
 
   // client guard: end outside the source month is rejected before any request
@@ -553,7 +576,26 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // queue effect refetches and sees v2
   await page.goto('/mentoring/evidence-review')
   await page.reload()
+  const historyPromise = page.waitForResponse(
+    (resp) =>
+      resp
+        .url()
+        .includes(
+          `/api/planning/learning-tasks/${seed.taskId}/evidence-reviews`,
+        ) && resp.request().method() === 'GET',
+  )
   await selectQueueItemByMarker(page, seed.l3Code, v2Marker)
+  const historyResponse = await historyPromise
+  expect(historyResponse.status()).toBe(200)
+  expect(await historyResponse.json()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        evidence_id: v1.id,
+        conclusion: '需补充',
+        feedback: 'E2E-63-02 请补充口径说明',
+      }),
+    ]),
+  )
   // dual-role buddy accounts load the review history through the buddy path:
   // v1's 需补充 feedback is visible (regression: member-path 403 hid it)
   await expect(page.getByText(/请补充口径说明/).first()).toBeVisible()
@@ -703,11 +745,12 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
 
   // member has the plan page open with a stale revision in memory…
   await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
+  const panel = await openTaskFromAnnualPlan(
+    page,
+    year,
+    seed.l3Code,
+    seed.taskId,
+  )
   // …while a concurrent writer bumps the item revision via the real API
   const bump = await request.put(
     `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
@@ -730,11 +773,8 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
 
   // refresh (fresh revision) then the exact retry succeeds — no partial write
   await page.reload()
-  const itemCardAfter = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCardAfter.locator('[data-testid="plan-header"]').click()
   const panelAfter = page.locator('[data-testid="task-detail-panel"]')
+  await expect(panelAfter).toBeVisible()
   await panelAfter.getByLabel('计划开始日期').fill(`${year}-04-10`)
   await panelAfter.getByLabel('计划结束日期').fill(`${year}-05-20`)
   // Wait for the real retry PUT to finish before reading back: the alert

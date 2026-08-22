@@ -73,10 +73,14 @@ for (const viewport of VIEWPORTS) {
       ).toBeAttached()
 
       // Issue #194 R5：展开月卡内每个任务行有且仅有一个可访问「进入任务」
-      // 按钮（外层行不再以同名 button 暴露）；行身份只显示 L3 编码/名称。
-      const enterButtons = timeline.getByRole('button', { name: '进入任务' })
-      await expect(enterButtons.first()).toBeVisible()
-      await expect(enterButtons).toHaveCount(await planItems.count())
+      // 链接，指向独立 M05 任务详情；行身份只显示 L3 编码/名称。
+      const enterLinks = timeline.getByRole('link', { name: '进入任务' })
+      await expect(enterLinks.first()).toBeVisible()
+      await expect(enterLinks).toHaveCount(await planItems.count())
+      await expect(enterLinks.first()).toHaveAttribute(
+        'href',
+        /\/growth\/tasks\/\d+\?year=2026$/,
+      )
       await expect(
         timeline.getByTestId('plan-header').first(),
       ).not.toHaveAttribute('role', 'button')
@@ -89,14 +93,25 @@ for (const viewport of VIEWPORTS) {
       )
     })
 
-    test('tasks route uses the unified annual-plan workspace', async ({
+    test('tasks route exposes independent M04 task-list semantics', async ({
       page,
     }) => {
-      await page.goto('/growth/tasks')
-      await expect(page).toHaveURL(/\/growth\/annual-plan/)
+      await page.goto('/growth/tasks?year=2026')
+      await expect(page).toHaveURL(/\/growth\/tasks\?year=2026$/)
       await expect(
-        page.getByRole('heading', { name: '月度计划时间轴' }),
+        page.getByRole('heading', { name: '学习任务' }),
       ).toBeVisible()
+      const filters = page.getByLabel('任务筛选')
+      await expect(filters.getByRole('button', { name: '全部' })).toBeVisible()
+      await expect(filters.getByLabel('搜索任务')).toBeVisible()
+      await expect(filters.getByLabel('筛选月份')).toBeVisible()
+      await expect(filters.getByLabel('筛选能力域')).toBeVisible()
+      const taskLinks = page.getByRole('link', { name: '进入任务' })
+      await expect(taskLinks.first()).toBeVisible()
+      await expect(taskLinks.first()).toHaveAttribute(
+        'href',
+        /\/growth\/tasks\/\d+\?year=2026$/,
+      )
     })
   })
 }
