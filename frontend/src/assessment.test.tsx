@@ -1091,6 +1091,66 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.calls[1][2]).toBe(3)
   })
 
+  it('queues a plan PATCH behind an in-flight batch fill (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        mockDraft().details![0],
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_code: 'P01.01.02',
+          current_level: 2,
+          gap_value: 2,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveBatch!: (value: {
+      revision: number
+      updated_l3_codes: string[]
+      skipped_l3_codes: string[]
+    }) => void
+    const batch = vi.spyOn(assessmentApi, 'batchFillL2').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBatch = resolve
+        }),
+    )
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
+    await waitFor(() => expect(batch).toHaveBeenCalledTimes(1))
+    expect(batch.mock.calls[0][3]).toBe(1)
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '加入提升计划 P01.01.02' }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(save).not.toHaveBeenCalled()
+
+    resolveBatch({
+      revision: 2,
+      updated_l3_codes: ['P01.01.01'],
+      skipped_l3_codes: [],
+    })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][2]).toBe(2)
+    expect(save.mock.calls[0][1][0]).toMatchObject({
+      l3_code: 'P01.01.02',
+      include_in_plan: true,
+    })
+  })
+
   it('sends canonical fields instead of plan_candidate in saveDraft', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {

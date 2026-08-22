@@ -696,18 +696,14 @@ export function AssessmentGapPage() {
 
   async function handleBatchFill(l2Code: string, currentLevel: 0 | 1 | 2) {
     if (!assessment) return
-    // Issue #194 P1: 批量填与评级/计划草稿保存走同一 revision 序列——先等待
-    // 在途计划自动保存完成，成功后用服务端返回的新 revision 推进 revisionRef，
-    // 保证下一次计划草稿 PATCH 使用该新 revision（避免陈旧值触发 409）。
+    // 批量填与评级/计划草稿保存走同一 mutation tail；先等待在途计划自动保存，
+    // 再接入同一 revision 序列，保证后续计划 PATCH 使用新 revision。
     await pumpPlanSaves()
     setError('')
     setMessage('')
     try {
-      const result = await batchFillL2(
-        assessment.id,
-        l2Code,
-        currentLevel,
-        revisionRef.current,
+      const result = await enqueueMutation(() =>
+        batchFillL2(assessment.id, l2Code, currentLevel, revisionRef.current),
       )
       revisionRef.current = result.revision ?? revisionRef.current + 1
       setDetails((current) =>
