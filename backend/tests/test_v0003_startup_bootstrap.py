@@ -19,7 +19,7 @@ passed before the crash at planning/schema.py:298-303.
 
 The tests then run the production startup order of app.main.lifespan
 (create_access_schema → create_assessment_schema → create_planning_schema →
-run_migrations) and verify the full upgrade: a complete 0001–0014 ledger,
+run_migrations) and verify the full upgrade: a complete 0001–0017 ledger,
 the v0009 columns/indexes/constraints/triggers, preserved legacy business
 data and an idempotent second start.
 """
@@ -57,6 +57,7 @@ _EXPECTED_VERSIONS = (
     "0014_evidence_archive_backfill",
     "0015_plan_month_text",
     "0016_plan_item_later_assessment",
+    "0017_requirement_decisions",
 )
 
 
@@ -365,7 +366,7 @@ def test_v0003_database_boots_through_full_startup_order(
         )
     }
     _full_startup_order(connection)
-    # Ledger: exactly 0001–0014, once each, in order.
+    # Ledger: exactly 0001–0017, once each, in order.
     rows = connection.execute(
         "SELECT version FROM schema_migration ORDER BY version"
     ).fetchall()

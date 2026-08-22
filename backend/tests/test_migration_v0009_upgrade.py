@@ -670,6 +670,7 @@ def test_full_startup_order_boots_v0008_database(
         "0014_evidence_archive_backfill",
         "0015_plan_month_text",
         "0016_plan_item_later_assessment",
+        "0017_requirement_decisions",
     ]
     # Legacy data preserved through the full startup path.
     for table, expected in counts_before.items():
@@ -697,7 +698,7 @@ def test_full_startup_order_boots_v0008_database(
     run_migrations(connection)
     connection.commit()
     assert (
-        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 16
+        connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 17
     )
 
 
