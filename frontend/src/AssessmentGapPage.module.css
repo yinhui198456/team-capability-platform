@@ -634,6 +634,24 @@
   font-weight: 600;
 }
 
+.ratingSaveControl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ratingSaveStatus {
+  color: var(--color-gray-500);
+  font-size: var(--text-xs);
+}
+.generationSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+  color: var(--color-success);
+  font-size: var(--text-sm);
+}
+
 .pendingMonth {
   font-size: 10px;
   color: var(--text-secondary, #888);

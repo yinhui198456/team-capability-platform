@@ -21,6 +21,7 @@ import {
   selectL2Requirement,
 } from './assessment'
 import { type ApiError } from './shared/api'
+import { getAnnualPlan } from './planning'
 import {
   mockAssessment,
   mockAssessmentSubmitted,
@@ -241,6 +242,14 @@ export function AssessmentGapPage() {
   // M02 V1: 计划草稿无全局保存按钮——变更入队后由泵串行提交（任务载荷为
   // 变更时刻的行快照），revision 用 ref 跨请求推进，避免并发 PATCH 冲突。
   const [ratingDirtyIds, setRatingDirtyIds] = useState<Set<number>>(new Set())
+  const [ratingSaveState, setRatingSaveState] = useState<
+    '评级已保存' | '评级未保存' | '评级保存中' | '评级保存失败'
+  >('评级已保存')
+  const [generationSummary, setGenerationSummary] = useState<{
+    created: number
+    existing: number
+    planTotal: number | null
+  } | null>(null)
   const planQueueRef = useRef<DraftDetailInput[]>([])
   const planPumpingRef = useRef(false)
   const planFlushPromiseRef = useRef<Promise<void> | null>(null)
@@ -291,6 +300,8 @@ export function AssessmentGapPage() {
     detailsRef.current = value.details ?? []
     planQueueRef.current = []
     revisionRef.current = value.revision ?? 1
+    setRatingSaveState('评级已保存')
+    setGenerationSummary(null)
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     setActiveDomain((current) => current || firstDomain)
@@ -429,6 +440,7 @@ export function AssessmentGapPage() {
       )
       if (hasRatingField) {
         setRatingDirtyIds((current) => new Set(current).add(detail.id!))
+        setRatingSaveState('评级未保存')
       }
       if (hasPlanField) {
         const task = buildDraftRows([next[index]], 'plan')[0]
@@ -602,10 +614,12 @@ export function AssessmentGapPage() {
     await pumpPlanSaves()
     setError('')
     setMessage('')
+    setRatingSaveState('评级保存中')
     try {
       if (isMockEnabled()) {
         setMessage('草稿已保存')
         setRatingDirtyIds(new Set())
+        setRatingSaveState('评级已保存')
         return
       }
       const result = await saveDraft(
@@ -626,7 +640,9 @@ export function AssessmentGapPage() {
       setRatingDirtyIds(new Set())
       applyAutoCleared(result.auto_cleared ?? [])
       setMessage('草稿已保存')
+      setRatingSaveState('评级已保存')
     } catch (err: unknown) {
+      setRatingSaveState('评级保存失败')
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
@@ -709,6 +725,7 @@ export function AssessmentGapPage() {
     if (!assessment) return
     setError('')
     setMessage('')
+    setGenerationSummary(null)
     try {
       if (isMockEnabled()) {
         setAssessment({ ...mockAssessmentSubmitted, details })
@@ -757,12 +774,12 @@ export function AssessmentGapPage() {
       // 旧值覆盖本地未保存评级，违背输入保留。本地计划选择与月份保留。
       const created = result.created ?? []
       const existing = result.existing ?? []
-      const total = created.length + existing.length
-      setMessage(
-        total === 0
-          ? '所选提升项均已生成过学习任务。'
-          : `✅ 已生成 ${created.length} 个学习任务${existing.length > 0 ? `（${existing.length} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看`,
-      )
+      const annualPlan = await getAnnualPlan(year).catch(() => null)
+      setGenerationSummary({
+        created: created.length,
+        existing: existing.length,
+        planTotal: annualPlan?.items.length ?? null,
+      })
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
@@ -1034,6 +1051,22 @@ export function AssessmentGapPage() {
             </p>
           </div>
           <div className="assessment-actions">
+            <div className={s.ratingSaveControl}>
+              <span
+                className={s.ratingSaveStatus}
+                role="status"
+                aria-label="评级保存状态"
+              >
+                {ratingSaveState}
+              </span>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={ratingSaveState === '评级保存中'}
+              >
+                保存能力评级
+              </button>
+            </div>
             <span className={s.autoSaveBadge}>计划草稿自动保存</span>
           </div>
         </header>
@@ -1115,6 +1148,19 @@ export function AssessmentGapPage() {
         )}
         {error && <p className="error global-assessment-error">{error}</p>}
         {message && <p className="success">{message}</p>}
+        {generationSummary && (
+          <section className={s.generationSummary} aria-label="生成结果摘要">
+            <span>当前草稿已选 {stickyStats.inPlan} 项</span>
+            <span>本次新建 {generationSummary.created} 项</span>
+            <span>已有任务 {generationSummary.existing} 项</span>
+            <span>
+              计划总计{' '}
+              {generationSummary.planTotal === null
+                ? '读取失败'
+                : `${generationSummary.planTotal} 项`}
+            </span>
+          </section>
+        )}
 
         <div
           className={s.navigationRow}
@@ -1650,6 +1696,14 @@ export function AssessmentGapPage() {
                                       id={`plan-month-${detail.id}`}
                                       type="month"
                                       value={detail.plan_month ?? ''}
+                                      onClick={(event) => {
+                                        event.currentTarget.focus()
+                                        try {
+                                          event.currentTarget.showPicker?.()
+                                        } catch {
+                                          // Unsupported or blocked native picker: keep focus.
+                                        }
+                                      }}
                                       onChange={(event) =>
                                         updateDetail(index, {
                                           plan_month:
@@ -1708,18 +1762,15 @@ export function AssessmentGapPage() {
           </div>
         </div>
 
-        {/* Sticky action bar — M02 V1：仅一条计划草稿状态 + 两个主操作 */}
+        {/* Sticky action bar — A1：仅计划草稿状态 + 显式生成。 */}
         {editable && (
-          <footer className={s.stickyActions}>
+          <footer className={s.stickyActions} aria-label="计划草稿操作">
             <span>
               计划草稿：已选 {stickyStats.inPlan} 项 ·{' '}
               {stickyStats.inPlanNoMonth > 0
                 ? '仍有月份待补'
                 : '计划月份已完整'}
             </span>
-            <button type="button" onClick={handleSave}>
-              保存能力评级
-            </button>
             <button
               type="button"
               className="primary"
