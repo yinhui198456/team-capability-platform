@@ -1183,7 +1183,7 @@ describe('AssessmentGapPage', () => {
     ).toBeNull()
   })
 
-  it('A1 shows rating save state and opens the month picker from the input', async () => {
+  it('A1 shows rating save state', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1219,7 +1219,27 @@ describe('AssessmentGapPage', () => {
     expect(screen.getByText('评级保存中')).toBeTruthy()
     resolveRatingSave({ ok: true, revision: 2 })
     await waitFor(() => expect(screen.getByText('评级已保存')).toBeTruthy())
+  })
 
+  it('A1 month input opens the native picker and safely keeps focus', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
     fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
     const month = screen.getByLabelText(
       '计划月份 P01.01.01',
@@ -1229,6 +1249,101 @@ describe('AssessmentGapPage', () => {
     fireEvent.click(month)
     expect(showPicker).toHaveBeenCalledTimes(1)
     expect(document.activeElement).toBe(month)
+  })
+
+  it('queues a plan PATCH behind an in-flight rating PATCH (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveRating!: (value: { ok: boolean; revision: number }) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRating = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][2]).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(save).toHaveBeenCalledTimes(1)
+
+    resolveRating({ ok: true, revision: 2 })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][2]).toBe(2)
+    expect(save.mock.calls[1][1][0]).toMatchObject({
+      include_in_plan: true,
+      member_priority: null,
+      plan_month: null,
+    })
+  })
+
+  it('keeps ratings edited during an in-flight rating save dirty (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveFirstSave!: (value: { ok: boolean; revision: number }) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstSave = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
+    resolveFirstSave({ ok: true, revision: 2 })
+
+    await waitFor(() => expect(screen.getByText('评级未保存')).toBeTruthy())
+    expect(
+      screen
+        .getByRole('button', { name: /4 · 精通/ })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][2]).toBe(2)
+    expect(save.mock.calls[1][1][0]).toMatchObject({ current_level: 4 })
   })
 
   it('row plan control is a single join/leave action (#194 M02 V1)', async () => {

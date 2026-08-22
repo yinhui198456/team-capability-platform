@@ -384,7 +384,9 @@ test.describe('Issue #50 assessment gap workflow', () => {
       page.getByRole('button', { name: '保存能力评级' }),
     ).toBeVisible()
     await page.getByRole('button', { name: '保存能力评级' }).click()
-    await expect(page.getByText('草稿已保存')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('能力评级已保存')).toBeVisible({
+      timeout: 15000,
+    })
     // 持久化：该行评级已落库。
     const persisted = await currentDraft(page)
     const changedRow = persisted.details.find(
@@ -817,7 +819,9 @@ test.describe('Issue #50 兼容改造：历史数据只读与旧写端点退役'
       .getByRole('button', { name: new RegExp(`^${priorLevel + 1} ·`) })
       .click()
     await page.getByRole('button', { name: '保存能力评级' }).click()
-    await expect(page.getByText('草稿已保存')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('能力评级已保存')).toBeVisible({
+      timeout: 15000,
+    })
 
     // 显式生成前置校验：未纳入计划的项 → 422 且零写入。
     const afterUi = await currentDraft(page, previousId)

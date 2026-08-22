@@ -241,7 +241,8 @@ export function AssessmentGapPage() {
   // 走 ratingDirtyIds；计划字段（优先级/纳入/月份）随行内变更自动保存。
   // M02 V1: 计划草稿无全局保存按钮——变更入队后由泵串行提交（任务载荷为
   // 变更时刻的行快照），revision 用 ref 跨请求推进，避免并发 PATCH 冲突。
-  const [ratingDirtyIds, setRatingDirtyIds] = useState<Set<number>>(new Set())
+  const ratingDirtyIdsRef = useRef<Set<number>>(new Set())
+  const ratingChangeVersionsRef = useRef<Map<number, number>>(new Map())
   const [ratingSaveState, setRatingSaveState] = useState<
     '评级已保存' | '评级未保存' | '评级保存中' | '评级保存失败'
   >('评级已保存')
@@ -253,6 +254,7 @@ export function AssessmentGapPage() {
   const planQueueRef = useRef<DraftDetailInput[]>([])
   const planPumpingRef = useRef(false)
   const planFlushPromiseRef = useRef<Promise<void> | null>(null)
+  const mutationTailRef = useRef<Promise<void>>(Promise.resolve())
   const revisionRef = useRef<number>(1)
   const detailsRef = useRef<AssessmentDetail[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -300,6 +302,8 @@ export function AssessmentGapPage() {
     detailsRef.current = value.details ?? []
     planQueueRef.current = []
     revisionRef.current = value.revision ?? 1
+    ratingDirtyIdsRef.current = new Set()
+    ratingChangeVersionsRef.current = new Map()
     setRatingSaveState('评级已保存')
     setGenerationSummary(null)
     const firstDomain =
@@ -439,7 +443,12 @@ export function AssessmentGapPage() {
         (key) => !PLAN_FIELDS.has(key),
       )
       if (hasRatingField) {
-        setRatingDirtyIds((current) => new Set(current).add(detail.id!))
+        const dirty = new Set(ratingDirtyIdsRef.current).add(detail.id)
+        ratingDirtyIdsRef.current = dirty
+        ratingChangeVersionsRef.current.set(
+          detail.id,
+          (ratingChangeVersionsRef.current.get(detail.id) ?? 0) + 1,
+        )
         setRatingSaveState('评级未保存')
       }
       if (hasPlanField) {
@@ -485,6 +494,15 @@ export function AssessmentGapPage() {
     })
   }
 
+  function enqueueMutation<T>(mutation: () => Promise<T>) {
+    const run = mutationTailRef.current.then(mutation, mutation)
+    mutationTailRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   /** Issue #194 M02 V1: 计划草稿自动保存泵 — 串行提交队列中的计划行快照。
     失败时队列保留（本地输入不丢）并给出中文可操作提示；下次计划变更或
     生成前自动重试。revision 用 ref 跨请求推进，避免并发 PATCH 冲突。 */
@@ -496,7 +514,7 @@ export function AssessmentGapPage() {
     }
     if (!assessment) return
     planPumpingRef.current = true
-    const flush = (async () => {
+    const flush = enqueueMutation(async () => {
       try {
         // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
         // 去重替换队首，首个请求总是携带最新快照。
@@ -549,7 +567,7 @@ export function AssessmentGapPage() {
       } finally {
         planPumpingRef.current = false
       }
-    })()
+    })
     planFlushPromiseRef.current = flush
     await flush
   }
@@ -605,27 +623,34 @@ export function AssessmentGapPage() {
   async function handleSave() {
     if (!assessment) return
     const changed = details.filter(
-      (detail) => detail.id != null && ratingDirtyIds.has(detail.id),
+      (detail) => detail.id != null && ratingDirtyIdsRef.current.has(detail.id),
     )
     if (!changed.length) return
-    // Issue #194 M02 V1: 先等待在途计划自动保存完成再提交评级——两个 PATCH
-    // 走同一 revision 序列，串行化避免并发冲突。评级只提交评级/调整/依据
-    // 字段（稀疏 PATCH），不清计划自动保存队列。
+    const savedVersions = new Map(
+      changed.map((detail) => [
+        detail.id!,
+        ratingChangeVersionsRef.current.get(detail.id!) ?? 0,
+      ]),
+    )
+    // 评级与计划泵共用 mutation tail；先清空已排队计划，再把评级接在同一
+    // revision 链尾端。评级只提交评级/调整/依据字段（稀疏 PATCH）。
     await pumpPlanSaves()
     setError('')
     setMessage('')
     setRatingSaveState('评级保存中')
     try {
       if (isMockEnabled()) {
-        setMessage('草稿已保存')
-        setRatingDirtyIds(new Set())
+        setMessage('能力评级已保存')
+        ratingDirtyIdsRef.current = new Set()
         setRatingSaveState('评级已保存')
         return
       }
-      const result = await saveDraft(
-        assessment.id,
-        buildDraftRows(changed, 'rating'),
-        revisionRef.current,
+      const result = await enqueueMutation(() =>
+        saveDraft(
+          assessment.id,
+          buildDraftRows(changed, 'rating'),
+          revisionRef.current,
+        ),
       )
       revisionRef.current = result.revision ?? revisionRef.current + 1
       setAssessment((current) =>
@@ -637,10 +662,16 @@ export function AssessmentGapPage() {
             }
           : current,
       )
-      setRatingDirtyIds(new Set())
+      const remaining = new Set(ratingDirtyIdsRef.current)
+      for (const [id, version] of savedVersions) {
+        if (ratingChangeVersionsRef.current.get(id) === version) {
+          remaining.delete(id)
+        }
+      }
+      ratingDirtyIdsRef.current = remaining
       applyAutoCleared(result.auto_cleared ?? [])
-      setMessage('草稿已保存')
-      setRatingSaveState('评级已保存')
+      setMessage('能力评级已保存')
+      setRatingSaveState(remaining.size ? '评级未保存' : '评级已保存')
     } catch (err: unknown) {
       setRatingSaveState('评级保存失败')
       const status = (err as { status?: number }).status
@@ -832,7 +863,6 @@ export function AssessmentGapPage() {
       )
       loadAssessment(await getAssessment(assessment.id))
       setRepairPreview(null)
-      setRatingDirtyIds(new Set())
       // loadAssessment 已重置自动保存队列与 revision。
       setMessage(
         result.result === 'noop'
