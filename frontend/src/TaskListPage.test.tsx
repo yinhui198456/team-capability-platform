@@ -55,7 +55,17 @@ describe('TaskListPage', () => {
     )
     expect(screen.getByText('待确认')).toBeTruthy()
     expect(screen.getByText('能力要求已更新 · 待确认')).toBeTruthy()
-    expect(screen.getByText('进行中 · 50%')).toBeTruthy()
+    const card = screen.getByTestId('task-card-9')
+    expect(card.querySelector('[data-testid="task-card-content"]')).toBeTruthy()
+    expect(
+      card.querySelector('[data-testid="task-card-content"]')?.textContent,
+    ).toContain('文件命名与目录结构规范')
+    expect(card.querySelector('.task-card-status')?.textContent).toBe('进行中')
+    expect(card.querySelector('[data-testid="task-progress"]')).toBeTruthy()
+    expect(
+      card.querySelector('[data-testid="task-progress"]')?.textContent,
+    ).toContain('50%')
+    expect(card.querySelector('[data-testid="task-card-enter"]')).toBeTruthy()
     expect(screen.getByRole('button', { name: '逾期' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '已完成' }))
     expect(screen.getByText('暂无符合条件的学习任务。')).toBeTruthy()
@@ -117,7 +127,11 @@ describe('TaskListPage', () => {
     fireEvent.change(screen.getByLabelText('筛选能力域'), {
       target: { value: 'C01' },
     })
-    expect(screen.getByText('进行中 · 50%')).toBeTruthy()
+    expect(
+      screen.getByTestId('task-card-9').querySelector('.task-card-status')
+        ?.textContent,
+    ).toBe('进行中')
+    expect(screen.getByTestId('task-progress').textContent).toContain('50%')
     expect(screen.getByText('能力要求已更新 · 待确认')).toBeTruthy()
     expect(screen.queryByText('其他能力域任务')).toBeNull()
     expect(screen.queryByText('未开始任务')).toBeNull()

@@ -76,6 +76,97 @@
   background: transparent;
 }
 
+/* M05 task-detail hierarchy: decision before work, a compact overview beside
+   the active execution tab, and no metadata before the core controls. */
+.pageHeader {
+  margin-bottom: var(--space-3);
+}
+.requirementChange {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+.requirementChange h2,
+.taskOverview h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+}
+.pendingRequirement {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid #fecd89;
+  border-radius: var(--radius-md);
+  background: #fffaeb;
+}
+.pendingRequirement p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.pendingRequirement strong {
+  flex: 1 1 100%;
+  color: #7a2e0e;
+}
+.taskDetailLayout {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.38fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.taskOverview {
+  padding: var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+.taskOverview .taskGrid {
+  grid-template-columns: 1fr;
+  margin: 0;
+}
+.taskWorkspace {
+  min-width: 0;
+}
+.taskMetadata {
+  margin-top: var(--space-4);
+}
+.taskMetadata summary {
+  color: var(--color-gray-600);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.taskMetadata[open] summary {
+  margin-bottom: var(--space-3);
+}
+.taskTabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-gray-200);
+}
+.taskTabs [role='tab'] {
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-gray-600);
+  cursor: pointer;
+}
+.taskTabs [role='tab'][aria-selected='true'] {
+  border-bottom-color: var(--color-brand-700);
+  color: var(--color-brand-700);
+  font-weight: 600;
+}
+.taskTabs [role='tab']:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: -2px;
+}
+
 /* Issue #194 P1: 权威原型 M03 V1 — 纵向月度时间轴
    （月份 marker + 月度卡片 + 组内计划项） */
 .monthTimeline {
@@ -473,6 +564,15 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-3);
+  }
+  .taskDetailLayout {
+    grid-template-columns: 1fr;
+  }
+  .taskTabs {
+    overflow-x: auto;
+  }
+  .taskTabs [role='tab'] {
+    flex: 1 0 auto;
   }
   .headerActions {
     width: 100%;

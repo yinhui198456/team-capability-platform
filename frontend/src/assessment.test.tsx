@@ -1281,7 +1281,7 @@ describe('AssessmentGapPage', () => {
     await waitFor(() => expect(screen.getByText('评级已保存')).toBeTruthy())
   })
 
-  it('A1 month input opens the native picker and safely keeps focus', async () => {
+  it('A1 month control keeps YYYY-MM visible and opens the native picker from its whole frame', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1306,9 +1306,47 @@ describe('AssessmentGapPage', () => {
     ) as HTMLInputElement & { showPicker?: () => void }
     const showPicker = vi.fn()
     Object.defineProperty(month, 'showPicker', { value: showPicker })
-    fireEvent.click(month)
+    fireEvent.change(month, { target: { value: '2026-09' } })
+    const control = screen.getByTestId('plan-month-control-P01.01.01')
+    expect(control.textContent).toContain('2026-09')
+    fireEvent.click(control)
     expect(showPicker).toHaveBeenCalledTimes(1)
     expect(document.activeElement).toBe(month)
+  })
+
+  it('does not focus or open a disabled month control', async () => {
+    const draft = mockDraft({
+      status: '草稿',
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+          plan_month: '2026-09',
+          target_compatibility_error: '当前版本不可编辑',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+    const month = screen.getByLabelText(
+      '计划月份 P01.01.01',
+    ) as HTMLInputElement & { showPicker?: () => void }
+    const showPicker = vi.fn()
+    Object.defineProperty(month, 'showPicker', { value: showPicker })
+    const control = screen.getByTestId('plan-month-control-P01.01.01')
+    expect(control.getAttribute('aria-disabled')).toBe('true')
+    expect(month.disabled).toBe(true)
+    fireEvent.click(control)
+    expect(showPicker).not.toHaveBeenCalled()
+    expect(document.activeElement).not.toBe(month)
   })
 
   it('queues a plan PATCH behind an in-flight rating PATCH (#194)', async () => {

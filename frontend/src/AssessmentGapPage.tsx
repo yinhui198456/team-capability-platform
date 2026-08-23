@@ -89,6 +89,16 @@ function domainLabel(code: string) {
   return DOMAINS[code] ? `${code} · ${DOMAINS[code]}` : code
 }
 
+function openMonthPicker(input: HTMLInputElement | null) {
+  if (!input || input.disabled) return
+  input?.focus()
+  try {
+    input?.showPicker?.()
+  } catch {
+    // Unsupported or blocked native picker: keep focus.
+  }
+}
+
 function effectiveTarget(detail: AssessmentDetail): number | null {
   if (!isApplicableDetail(detail)) return null
   return detail.target_adjusted
@@ -1718,27 +1728,39 @@ export function AssessmentGapPage() {
                                     <label htmlFor={`plan-month-${detail.id}`}>
                                       计划月份 *
                                     </label>
-                                    <input
-                                      id={`plan-month-${detail.id}`}
-                                      type="month"
-                                      value={detail.plan_month ?? ''}
-                                      onClick={(event) => {
-                                        event.currentTarget.focus()
-                                        try {
-                                          event.currentTarget.showPicker?.()
-                                        } catch {
-                                          // Unsupported or blocked native picker: keep focus.
-                                        }
-                                      }}
-                                      onChange={(event) =>
-                                        updateDetail(index, {
-                                          plan_month:
-                                            event.target.value || null,
-                                        })
+                                    <div
+                                      className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''}`}
+                                      data-testid={`plan-month-control-${detail.l3_code}`}
+                                      aria-disabled={!editable}
+                                      onClick={() =>
+                                        openMonthPicker(
+                                          document.getElementById(
+                                            `plan-month-${detail.id}`,
+                                          ) as HTMLInputElement | null,
+                                        )
                                       }
-                                      disabled={!editable}
-                                      aria-label={`计划月份 ${detail.l3_code}`}
-                                    />
+                                    >
+                                      <span>
+                                        {detail.plan_month ?? '选择 YYYY-MM'}
+                                      </span>
+                                      <input
+                                        id={`plan-month-${detail.id}`}
+                                        type="month"
+                                        value={detail.plan_month ?? ''}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          openMonthPicker(event.currentTarget)
+                                        }}
+                                        onChange={(event) =>
+                                          updateDetail(index, {
+                                            plan_month:
+                                              event.target.value || null,
+                                          })
+                                        }
+                                        disabled={!editable}
+                                        aria-label={`计划月份 ${detail.l3_code}`}
+                                      />
+                                    </div>
                                     {!detail.plan_month && editable && (
                                       <small
                                         className={s.pendingMonth}
@@ -1791,7 +1813,13 @@ export function AssessmentGapPage() {
         {/* Sticky action bar — A1：仅计划草稿状态 + 显式生成。 */}
         {editable && (
           <footer className={s.stickyActions} aria-label="计划草稿操作">
-            <span>
+            <span
+              className={
+                stickyStats.inPlanNoMonth > 0
+                  ? s.draftIncomplete
+                  : s.draftComplete
+              }
+            >
               计划草稿：已选 {stickyStats.inPlan} 项 ·{' '}
               {stickyStats.inPlanNoMonth > 0
                 ? '仍有月份待补'

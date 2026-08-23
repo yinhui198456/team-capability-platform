@@ -33,7 +33,7 @@ const task = {
   actual_hours: 4,
 } as LearningTask
 
-function renderPage() {
+function renderPage(proposals: unknown[] = []) {
   vi.spyOn(planning, 'getAnnualPlan').mockResolvedValue({
     items: [item],
   } as never)
@@ -43,7 +43,9 @@ function renderPage() {
   vi.spyOn(planning, 'listEvidences').mockResolvedValue([])
   vi.spyOn(planning, 'listEvidenceReviewsForTask').mockResolvedValue([])
   vi.spyOn(planning, 'listTaskTransitionHistory').mockResolvedValue([])
-  vi.spyOn(planning, 'listChangeProposals').mockResolvedValue([])
+  vi.spyOn(planning, 'listChangeProposals').mockResolvedValue(
+    proposals as never,
+  )
   render(
     <MemoryRouter initialEntries={['/growth/tasks/9?year=2026']}>
       <YearContext.Provider value={2026}>
@@ -66,6 +68,9 @@ describe('TaskDetailPage', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: '要求变化' })).toBeTruthy(),
     )
+    expect(screen.getByTestId('task-requirement-change')).toBeTruthy()
+    expect(screen.getByTestId('task-detail-layout')).toBeTruthy()
+    expect(screen.getByTestId('task-detail-workspace')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '任务概览' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
     expect(
@@ -85,6 +90,24 @@ describe('TaskDetailPage', () => {
     expect(outputs.getAttribute('aria-selected')).toBe('true')
     fireEvent.keyDown(outputs, { key: 'Home' })
     expect(screen.getByRole('button', { name: '暂停' })).toBeTruthy()
+  })
+
+  it('renders a pending requirement as the dedicated decision band', async () => {
+    renderPage([
+      {
+        id: 1,
+        details: [{ id: 2, l3_code: item.l3_code, requirement_decision: null }],
+      },
+    ])
+    expect(await screen.findByTestId('pending-requirement')).toBeTruthy()
+    expect(screen.getByText('能力要求已更新，等待你确认')).toBeTruthy()
+    expect(
+      screen.getByText('原任务仍可继续；请在提交成果前确认采用方式。'),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: '采用新要求' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: '按原任务要求继续' }),
+    ).toBeTruthy()
   })
 
   it('keeps log work before legacy metadata and makes proposal loading failures retryable', async () => {

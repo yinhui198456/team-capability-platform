@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ClockCircleOutlined,
+  ExclamationCircleOutlined,
+  PlayCircleOutlined,
+  UnorderedListOutlined,
+} from '@ant-design/icons'
+import {
   getAnnualPlan,
   listChangeProposals,
   listLearningTasks,
@@ -158,18 +164,22 @@ export function TaskListPage() {
         <>
           <dl className="metric-grid task-summary" aria-label="任务概览">
             <div className="metric">
+              <UnorderedListOutlined aria-hidden="true" />
               <dt>全部任务</dt>
               <dd>{counts.total}</dd>
             </div>
             <div className="metric">
+              <PlayCircleOutlined aria-hidden="true" />
               <dt>进行中</dt>
               <dd>{counts.active}</dd>
             </div>
             <div className="metric pending">
+              <ExclamationCircleOutlined aria-hidden="true" />
               <dt>待确认</dt>
               <dd>{counts.pending}</dd>
             </div>
             <div className="metric overdue">
+              <ClockCircleOutlined aria-hidden="true" />
               <dt>逾期</dt>
               <dd>{counts.overdue}</dd>
             </div>
@@ -232,8 +242,9 @@ export function TaskListPage() {
               <article
                 key={task.id}
                 className={`task-card ${pending ? 'changed' : ''}`}
+                data-testid={`task-card-${task.id}`}
               >
-                <div className="task-card-main">
+                <div className="task-card-main" data-testid="task-card-content">
                   <small className="muted">
                     {item.l3_code} · {item.plan_month ?? '未排期'}
                   </small>
@@ -244,14 +255,25 @@ export function TaskListPage() {
                   <p className="muted">
                     {item.learning_task_content ?? item.expected_output ?? '—'}
                   </p>
-                  <span>
-                    {task.status}
-                    {progress(task, item) ? ` · ${progress(task, item)}` : ''}
-                  </span>
+                  <span className="task-card-status">{task.status}</span>
+                  {progress(task, item) && (
+                    <span className="task-progress" data-testid="task-progress">
+                      <progress
+                        aria-label={`任务进度 ${progress(task, item)}`}
+                        max="100"
+                        value={Number.parseInt(progress(task, item)!, 10)}
+                      />
+                      {progress(task, item)}
+                    </span>
+                  )}
                 </div>
                 <div className="task-card-actions">
-                  <Link to={`/growth/tasks/${task.id}?year=${year}`}>
-                    进入任务
+                  <Link
+                    className="task-card-enter"
+                    data-testid="task-card-enter"
+                    to={`/growth/tasks/${task.id}?year=${year}`}
+                  >
+                    进入任务 <span aria-hidden="true">→</span>
                   </Link>
                 </div>
               </article>
