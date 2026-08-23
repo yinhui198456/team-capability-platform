@@ -457,6 +457,33 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     await waitFor(() => expect(screen.getByText(/第二版通过/)).toBeTruthy())
   })
 
+  it('keeps active-item history and feedback when its queue item is clicked again', async () => {
+    vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([
+      {
+        id: 1,
+        evidence_id: 10,
+        version_number: 1,
+        status: '已闭环',
+        conclusion: '需补充',
+        feedback: '补充接口说明',
+        reviewed_at: '2026-05-02T00:00:00Z',
+        created_at: '2026-05-02T00:00:00Z',
+      },
+    ])
+    await renderEvidencePage([makePending()])
+    await waitFor(() => expect(screen.getByText(/补充接口说明/)).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('反馈建议'), {
+      target: { value: '已填写但尚未提交' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: /member.*数据管道基础/ }),
+    )
+    expect(screen.getByText(/补充接口说明/)).toBeTruthy()
+    expect(
+      (screen.getByLabelText('反馈建议') as HTMLTextAreaElement).value,
+    ).toBe('已填写但尚未提交')
+  })
+
   it('a history load failure for the current item leaves history empty and shows the error', async () => {
     const a = makePending({ id: 10 })
     const b = makePending({

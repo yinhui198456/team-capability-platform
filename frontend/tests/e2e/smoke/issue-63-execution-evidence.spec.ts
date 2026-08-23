@@ -343,6 +343,10 @@ async function openTaskFromAnnualPlan(
   await page.getByRole('tab', { name: '学习记录' }).click()
   const panel = page.locator('[data-testid="task-detail-panel"]')
   await expect(panel).toBeVisible()
+  await panel.locator('summary', { hasText: '扩展任务信息' }).click()
+  await expect(
+    panel.locator('details', { hasText: '扩展任务信息' }),
+  ).toHaveAttribute('open', '')
   return panel
 }
 
@@ -775,6 +779,10 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
   await page.reload()
   const panelAfter = page.locator('[data-testid="task-detail-panel"]')
   await expect(panelAfter).toBeVisible()
+  await panelAfter.locator('summary', { hasText: '扩展任务信息' }).click()
+  await expect(
+    panelAfter.locator('details', { hasText: '扩展任务信息' }),
+  ).toHaveAttribute('open', '')
   await panelAfter.getByLabel('计划开始日期').fill(`${year}-04-10`)
   await panelAfter.getByLabel('计划结束日期').fill(`${year}-05-20`)
   // Wait for the real retry PUT to finish before reading back: the alert

@@ -143,6 +143,7 @@ export function EvidenceReviewPage() {
   }, [selectedEvidenceId, selectedTaskId])
 
   function selectItem(id: number) {
+    if (id === selectedId) return
     setSelectedId(id)
     // Clear the previous item's history before the new one loads, so a slow
     // or failing response can never show stale records under the new item.

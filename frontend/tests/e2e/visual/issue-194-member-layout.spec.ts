@@ -75,7 +75,7 @@ const plan = {
 
 async function mockMember(page: Page, proposal: 'pending' | 'none' | 'error') {
   let authenticated = false
-  let proposalLoads = 0
+  let allowProposalSuccess = proposal !== 'error'
   const member = {
     id: 1,
     username: 'member',
@@ -151,10 +151,7 @@ async function mockMember(page: Page, proposal: 'pending' | 'none' | 'error') {
   await page.route(
     '/api/planning/change-proposals?year=2026',
     async (route) => {
-      // Vite development StrictMode invokes the initial loader twice; both
-      // attempts model the same failed initial request, while the explicit
-      // retry receives the succeeding response below.
-      if (proposal === 'error' && proposalLoads++ < 2)
+      if (!allowProposalSuccess)
         return route.fulfill({
           status: 500,
           json: { detail: 'mock proposal failure' },
@@ -178,6 +175,11 @@ async function mockMember(page: Page, proposal: 'pending' | 'none' | 'error') {
       })
     },
   )
+  return {
+    allowProposalSuccess: () => {
+      allowProposalSuccess = true
+    },
+  }
 }
 
 async function mockEditableAssessmentDraft(page: Page) {
@@ -288,7 +290,7 @@ for (const viewport of viewports) {
       page,
     }) => {
       await page.setViewportSize(viewport)
-      await mockMember(page, state)
+      const mock = await mockMember(page, state)
       await loginAs(page, 'member')
       await page.goto('/growth/tasks/9?year=2026')
       await expect(
@@ -309,6 +311,7 @@ for (const viewport of viewports) {
           `issue-194-m05-${state}-${viewport.name}.png`,
           { fullPage: false, maxDiffPixelRatio: 0.05 },
         )
+        mock.allowProposalSuccess()
         await retry.click()
         await expect(
           page.getByText('当前任务没有待确认的能力要求变化。'),
