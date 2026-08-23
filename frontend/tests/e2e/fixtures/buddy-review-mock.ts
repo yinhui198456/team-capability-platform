@@ -6,26 +6,51 @@ export type AssignedMember = {
   full_name: string
 }
 
+async function mockBuddySession(
+  page: Page,
+  assigned_members: AssignedMember[],
+): Promise<void> {
+  let authenticated = false
+  const buddy = {
+    id: 2,
+    username: 'buddy',
+    full_name: 'Buddy User',
+    roles: ['Buddy'],
+    primary_buddy: null,
+    assigned_members,
+  }
+
+  // This fixture is deliberately stateless: block every API request first,
+  // then register the exact login/session/page routes below. The later,
+  // specific routes take precedence in Playwright, so no request can reach a
+  // real backend while visual snapshots are generated.
+  await page.route('**/api/**', (route) => route.abort('blockedbyclient'))
+  await page.route('**/api/auth/login', async (route) => {
+    authenticated = true
+    await route.fulfill({ status: 200, json: buddy })
+  })
+  await page.route('**/api/auth/me', async (route) => {
+    await route.fulfill(
+      authenticated
+        ? { status: 200, json: buddy }
+        : { status: 401, json: { detail: 'Unauthorized' } },
+    )
+  })
+  await page.route('/api/planning/available-years', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ available_years: [2026], active_year: 2026 }),
+    })
+  })
+}
+
 export async function mockBuddyReviewData(page: Page): Promise<void> {
   const assignedMembers: AssignedMember[] = [
     { id: 3, username: 'member', full_name: 'Member User' },
     { id: 5, username: 'member2', full_name: 'Member Two' },
   ]
-
-  await page.route('/api/auth/me', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: 2,
-        username: 'buddy',
-        full_name: 'Buddy User',
-        roles: ['Buddy'],
-        primary_buddy: null,
-        assigned_members: assignedMembers,
-      }),
-    })
-  })
+  await mockBuddySession(page, assignedMembers)
 
   await page.route('/api/assessments/reviews/pending', async (route) => {
     await route.fulfill({
@@ -92,6 +117,49 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
           l3_name: '数据管道基础',
           content: '完成数据管道基础文档与示例代码。',
           evidence_link: 'https://example.invalid/tcp-demo-evidence',
+          queue_status: '待验收',
+        },
+        {
+          id: 302,
+          evidence_id: 402,
+          version_number: 1,
+          status: '待 Review',
+          conclusion: null,
+          feedback: null,
+          reviewed_at: null,
+          created_at: '2026-07-20T10:00:00+08:00',
+          submitted_at: '2026-07-20T10:00:00+08:00',
+          member_id: 5,
+          username: 'member2',
+          learning_task_id: 502,
+          l3_code: 'P02.01.01',
+          l2_code: 'P02.01',
+          l2_name: '平台工程',
+          l3_name: '服务发布基础',
+          content: '完成服务发布流程和回滚演练记录。',
+          evidence_link: 'https://example.invalid/tcp-release-evidence',
+          queue_status: '待验收',
+        },
+        {
+          id: 303,
+          evidence_id: 403,
+          version_number: 2,
+          status: '待 Review',
+          conclusion: null,
+          feedback: null,
+          reviewed_at: null,
+          created_at: '2026-07-21T10:00:00+08:00',
+          submitted_at: '2026-07-21T10:00:00+08:00',
+          member_id: 3,
+          username: 'member',
+          learning_task_id: 503,
+          l3_code: 'P01.02.03',
+          l2_code: 'P01.02',
+          l2_name: '数据治理',
+          l3_name: '数据质量监控',
+          content: '补充数据质量监控截图和运行日志。',
+          evidence_link: 'https://example.invalid/tcp-quality-evidence',
+          queue_status: '补充后重提',
         },
       ]),
     })
@@ -101,7 +169,12 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ pending_count: 1, completed_count: 2 }),
+      body: JSON.stringify({
+        pending_count: 3,
+        needs_supplement_count: 1,
+        monthly_approved_count: 8,
+        average_response_seconds: 103680,
+      }),
     })
   })
 
@@ -368,26 +441,6 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
             reviewed_at: '2026-02-10T11:00:00+08:00',
             created_at: '2026-02-10T11:00:00+08:00',
           },
-          {
-            id: 2002,
-            evidence_id: 401,
-            version_number: 1,
-            status: '需补充',
-            conclusion: '需补充',
-            feedback: '请补充数据质量监控截图。',
-            reviewed_at: '2026-03-05T14:00:00+08:00',
-            created_at: '2026-03-05T14:00:00+08:00',
-          },
-          {
-            id: 2003,
-            evidence_id: 401,
-            version_number: 1,
-            status: '驳回',
-            conclusion: '驳回',
-            feedback: '链接无法访问，请重新提交。',
-            reviewed_at: '2026-04-12T09:30:00+08:00',
-            created_at: '2026-04-12T09:30:00+08:00',
-          },
         ]),
       })
     },
@@ -395,22 +448,9 @@ export async function mockBuddyReviewData(page: Page): Promise<void> {
 }
 
 export async function mockBuddyReviewEmptyData(page: Page): Promise<void> {
-  await page.route('/api/auth/me', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: 2,
-        username: 'buddy',
-        full_name: 'Buddy User',
-        roles: ['Buddy'],
-        primary_buddy: null,
-        assigned_members: [
-          { id: 3, username: 'member', full_name: 'Member User' },
-        ],
-      }),
-    })
-  })
+  await mockBuddySession(page, [
+    { id: 3, username: 'member', full_name: 'Member User' },
+  ])
 
   await page.route('/api/assessments/reviews/pending', async (route) => {
     await route.fulfill({ status: 200, body: JSON.stringify([]) })
@@ -427,7 +467,12 @@ export async function mockBuddyReviewEmptyData(page: Page): Promise<void> {
   await page.route('/api/planning/evidence-reviews/summary*', async (route) => {
     await route.fulfill({
       status: 200,
-      body: JSON.stringify({ pending_count: 0, completed_count: 0 }),
+      body: JSON.stringify({
+        pending_count: 0,
+        needs_supplement_count: 0,
+        monthly_approved_count: 0,
+        average_response_seconds: null,
+      }),
     })
   })
 }

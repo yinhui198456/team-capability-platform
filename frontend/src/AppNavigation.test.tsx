@@ -533,6 +533,12 @@ describe('evidence review route boundary', () => {
       active_year: 2026,
     })
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+    vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+      pending_count: 0,
+      needs_supplement_count: 0,
+      monthly_approved_count: 0,
+      average_response_seconds: null,
+    })
     render(
       <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
         <App />
@@ -540,7 +546,7 @@ describe('evidence review route boundary', () => {
       </MemoryRouter>,
     )
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: '待验收成果' })).toBeTruthy(),
+      expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy(),
     )
     // Inside the auth shell: brand, identity, sign-out and Buddy nav all render.
     expect(
@@ -548,9 +554,9 @@ describe('evidence review route boundary', () => {
     ).toBeTruthy()
     expect(screen.getByText('Buddy')).toBeTruthy()
     expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
-    // Issue #194 P1-3: Buddy 自评复核导航已退役 — 仅保留待验收成果。
+    // Issue #194: Buddy 自评复核导航已退役 — 仅保留成果验收。
     expect(screen.queryByRole('link', { name: 'Buddy 复核中心' })).toBeNull()
-    expect(screen.getByRole('link', { name: '待验收成果' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '成果验收' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe(
       '/mentoring/evidence-review',
     )
@@ -571,6 +577,12 @@ describe('evidence review route boundary', () => {
         active_year: 2026,
       })
       vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+      vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+        pending_count: 0,
+        needs_supplement_count: 0,
+        monthly_approved_count: 0,
+        average_response_seconds: null,
+      })
       render(
         <MemoryRouter initialEntries={[path]}>
           <App />
@@ -578,9 +590,7 @@ describe('evidence review route boundary', () => {
         </MemoryRouter>,
       )
       await waitFor(() =>
-        expect(
-          screen.getByRole('heading', { name: '待验收成果' }),
-        ).toBeTruthy(),
+        expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy(),
       )
       expect(screen.getByTestId('location').textContent).toBe(
         '/mentoring/evidence-review',
@@ -621,7 +631,7 @@ describe('evidence review route boundary', () => {
         expect(screen.getByTestId('location').textContent).toBe(expected)
       })
       // No operable 任务成果证明 page for non-Buddy roles.
-      expect(screen.queryByRole('heading', { name: '待验收成果' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: '成果验收' })).toBeNull()
     },
   )
 })

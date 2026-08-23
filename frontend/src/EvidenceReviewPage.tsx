@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  ExclamationCircleOutlined,
+  FileTextOutlined,
+  InboxOutlined,
+} from '@ant-design/icons'
 
 import {
+  getEvidenceReviewSummary,
   listEvidenceReviewsForTask,
   listPendingEvidenceReviews,
   parseApiErrorDetail,
@@ -8,6 +16,7 @@ import {
   type EvidenceReviewConclusion,
   type EvidenceReviewRecord,
   type PendingEvidenceReview,
+  type ReviewSummary,
 } from './planning'
 import type { ApiError } from './shared/api'
 
@@ -20,16 +29,16 @@ function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString('zh-CN')
 }
 
-function capabilityPath(ev: PendingEvidenceReview): string {
-  const l2 = ev.l2_name
-    ? `${ev.l2_code ?? '未映射'} · ${ev.l2_name}`
-    : (ev.l2_code ?? '未映射')
-  const l3 = ev.l3_name ? `${ev.l3_code} · ${ev.l3_name}` : ev.l3_code
-  return `${l2} → ${l3}`
+function formatResponseTime(seconds: number | null | undefined): string {
+  if (seconds == null) return '—'
+  const hours = seconds / 3600
+  if (hours >= 24) return `${(hours / 24).toFixed(1)} 天`
+  return `${hours.toFixed(hours % 1 === 0 ? 0 : 1)} 小时`
 }
 
 export function EvidenceReviewPage() {
   const [queue, setQueue] = useState<PendingEvidenceReview[]>([])
+  const [summary, setSummary] = useState<ReviewSummary | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [history, setHistory] = useState<EvidenceReviewRecord[]>([])
   const [conclusion, setConclusion] = useState<EvidenceReviewConclusion | ''>(
@@ -40,6 +49,7 @@ export function EvidenceReviewPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const historyRef = useRef<HTMLElement | null>(null)
   // Idempotency: the key is bound to the exact payload fingerprint; an
   // unchanged retry replays server-side, a changed payload gets a new key.
   const idemRef = useRef<{ key: string; fp: string } | null>(null)
@@ -49,6 +59,8 @@ export function EvidenceReviewPage() {
   // silently retargeted to whatever happens to be first afterwards — a
   // conflict that removes the item must end the form, not re-target it.
   const selected = queue.find((ev) => ev.id === selectedId) ?? null
+  const selectedEvidenceId = selected?.id ?? null
+  const selectedTaskId = selected?.learning_task_id ?? null
 
   async function loadQueue() {
     const list = await listPendingEvidenceReviews()
@@ -56,23 +68,44 @@ export function EvidenceReviewPage() {
     return list
   }
 
+  async function loadSummary() {
+    const metrics = await getEvidenceReviewSummary()
+    setSummary(metrics)
+    return metrics
+  }
+
   useEffect(() => {
     let cancelled = false
     async function load() {
-      try {
-        const list = await listPendingEvidenceReviews()
-        if (!cancelled) {
+      const [queueResult, summaryResult] = await Promise.allSettled([
+        listPendingEvidenceReviews(),
+        getEvidenceReviewSummary(),
+      ])
+      if (!cancelled) {
+        if (queueResult.status === 'fulfilled') {
+          const list = queueResult.value
           setQueue(list)
           // First load picks the first item; later refreshes (e.g. after a
           // conflict) never re-target a selection the user already made.
           setSelectedId((prev) => prev ?? list[0]?.id ?? null)
         }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : '加载失败')
+        if (summaryResult.status === 'fulfilled') {
+          setSummary(summaryResult.value)
         }
-      } finally {
-        if (!cancelled) setLoading(false)
+        if (queueResult.status === 'rejected') {
+          setError(
+            queueResult.reason instanceof Error
+              ? queueResult.reason.message
+              : '加载待办队列失败',
+          )
+        } else if (summaryResult.status === 'rejected') {
+          setError(
+            summaryResult.reason instanceof Error
+              ? summaryResult.reason.message
+              : '加载验收指标失败',
+          )
+        }
+        setLoading(false)
       }
     }
     load()
@@ -82,12 +115,11 @@ export function EvidenceReviewPage() {
   }, [])
 
   useEffect(() => {
-    if (!selected) {
+    if (selectedTaskId === null) {
       setHistory([])
       return
     }
-    // Capture before the closure so the narrowed non-null value stays typed.
-    const taskId = selected.learning_task_id
+    const taskId = selectedTaskId
     let cancelled = false
     async function loadHistory() {
       try {
@@ -108,7 +140,7 @@ export function EvidenceReviewPage() {
     return () => {
       cancelled = true
     }
-  }, [selected?.id, selected?.learning_task_id])
+  }, [selectedEvidenceId, selectedTaskId])
 
   function selectItem(id: number) {
     setSelectedId(id)
@@ -163,6 +195,7 @@ export function EvidenceReviewPage() {
       setSelectedId(null)
       setConclusion('')
       setFeedback('')
+      void loadSummary().catch(() => setError('验收指标刷新失败，请稍后重试。'))
     } catch (err) {
       const mapped = parseApiErrorDetail(err as ApiError)
       if (mapped.status === 403) {
@@ -178,6 +211,7 @@ export function EvidenceReviewPage() {
         const submittedId = selected.id
         try {
           const refreshed = await loadQueue()
+          void loadSummary().catch(() => undefined)
           if (!refreshed.some((ev) => ev.id === submittedId)) {
             setSelectedId(null)
             setConclusion('')
@@ -203,19 +237,55 @@ export function EvidenceReviewPage() {
     }
   }
 
-  if (loading) return <p className="muted">加载中…</p>
+  function focusHistory() {
+    historyRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    historyRef.current?.focus()
+  }
 
   return (
     <section className="page evidence-review-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Buddy 工作台 / 验收</p>
-          <h1>待验收成果</h1>
+          <p className="eyebrow">导师指导</p>
+          <h1>成果验收</h1>
           <p className="muted">
-            仅展示当前有效辅导关系下的待评审任务成果证明，与自评复核相互独立。
+            筛选成员、处理成果验收队列并留下反馈；不审核评级或计划。
           </p>
         </div>
+        <button disabled={!selected} onClick={focusHistory} type="button">
+          查看历史反馈
+        </button>
       </header>
+      <dl className="metric-grid evidence-review-summary" aria-label="验收概览">
+        <div className="metric amber">
+          <InboxOutlined aria-hidden="true" className="metric-icon" />
+          <dt>待验收</dt>
+          <dd>{summary?.pending_count ?? '—'}</dd>
+        </div>
+        <div className="metric red">
+          <ExclamationCircleOutlined
+            aria-hidden="true"
+            className="metric-icon"
+          />
+          <dt>需补充</dt>
+          <dd>{summary?.needs_supplement_count ?? '—'}</dd>
+        </div>
+        <div className="metric green">
+          <CheckCircleOutlined aria-hidden="true" className="metric-icon" />
+          <dt>本月通过</dt>
+          <dd>{summary?.monthly_approved_count ?? '—'}</dd>
+        </div>
+        <div className="metric">
+          <ClockCircleOutlined aria-hidden="true" className="metric-icon" />
+          <dt>平均响应</dt>
+          <dd>{formatResponseTime(summary?.average_response_seconds)}</dd>
+        </div>
+      </dl>
+      {loading && (
+        <p className="muted" role="status">
+          加载中…
+        </p>
+      )}
       {message && (
         <p className="success" role="status">
           {message}
@@ -226,94 +296,84 @@ export function EvidenceReviewPage() {
           {error}
         </p>
       )}
-      {queue.length === 0 ? (
-        <p className="muted">暂无待验收成果。</p>
-      ) : (
-        <div className="buddy-review-layout">
-          <aside className="dashboard-card buddy-member-list">
-            <h2>待验收队列</h2>
-            {queue.map((ev) => (
+      <div className="buddy-review-layout">
+        <aside className="dashboard-card buddy-member-list">
+          <h2>待办队列</h2>
+          {queue.length === 0 ? (
+            <p className="muted">暂无待验收成果。</p>
+          ) : (
+            queue.map((ev) => (
               <button
                 className={selected?.id === ev.id ? 'active' : ''}
                 key={ev.id}
                 onClick={() => selectItem(ev.id)}
+                aria-pressed={selected?.id === ev.id}
                 type="button"
               >
-                <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
-                <span className="member-count">
-                  版本 {ev.version_number} · {ev.l3_code}
-                </span>
-              </button>
-            ))}
-          </aside>
-
-          <article className="dashboard-card buddy-workspace">
-            <h2>验收工作区</h2>
-            {!selected ? (
-              <p className="muted">选择一项待验收成果后查看依据和历史反馈。</p>
-            ) : (
-              <>
-                <p>
-                  <strong>
-                    {selected.username ?? `成员 ${selected.member_id}`}
-                  </strong>{' '}
-                  · {capabilityPath(selected)} · 任务成果证明 版本{' '}
-                  {selected.version_number} · 提交于{' '}
-                  {formatDateTime(selected.submitted_at)}
-                </p>
-                <div className="evidence-content">
-                  <h3>提交内容</h3>
-                  {selected.description && (
-                    <p className="muted">{selected.description}</p>
-                  )}
-                  <p>{selected.content || '未提供提交内容。'}</p>
-                  {selected.evidence_link && (
-                    <a
-                      href={selected.evidence_link}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      查看任务成果证明链接
-                    </a>
-                  )}
-                </div>
-                <fieldset>
-                  <legend>评审结论</legend>
-                  {CONCLUSIONS.map((value) => (
-                    <label className="radio" key={value}>
-                      <input
-                        checked={conclusion === value}
-                        name="conclusion"
-                        onChange={() => setConclusion(value)}
-                        type="radio"
-                        value={value}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </fieldset>
-                <label>
-                  反馈
-                  <textarea
-                    onChange={(event) => setFeedback(event.target.value)}
-                    placeholder="请输入评审反馈"
-                    value={feedback}
-                  />
-                </label>
-                {conclusion === '需补充' && (
-                  <p className="muted">需补充必须填写反馈。</p>
-                )}
-                <div className="actions">
-                  <button
-                    disabled={!conclusion || submitting}
-                    onClick={() => void handleSubmit()}
-                    type="button"
+                <span className="review-queue-heading">
+                  <span
+                    className={`review-queue-status ${
+                      ev.queue_status === '补充后重提' ? 'red' : 'amber'
+                    }`}
                   >
-                    提交评审结论
-                  </button>
-                </div>
+                    {ev.queue_status}
+                  </span>
+                  <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
+                </span>
+                <small>{ev.l3_name ?? ev.l3_code}</small>
+              </button>
+            ))
+          )}
+        </aside>
 
-                <h3>历史版本与评审（只读）</h3>
+        <article className="dashboard-card buddy-workspace">
+          {!selected ? (
+            <>
+              <h2>验收工作区</h2>
+              <p className="muted">选择一项待办成果后查看预览和历史反馈。</p>
+            </>
+          ) : (
+            <>
+              <div className="review-workspace-title">
+                <div>
+                  <small>
+                    {selected.username ?? `成员 ${selected.member_id}`} ·{' '}
+                    {selected.l3_code}
+                  </small>
+                  <h2>{selected.l3_name ?? selected.l3_code}</h2>
+                </div>
+                <span aria-label={`成果 v${selected.version_number}`}>
+                  <small>成果</small> v{selected.version_number}
+                </span>
+              </div>
+              <p className="muted">
+                提交于 {formatDateTime(selected.submitted_at)}
+              </p>
+              <div className="evidence-content">
+                <h3>
+                  <FileTextOutlined aria-hidden="true" /> Evidence 预览
+                </h3>
+                {selected.description && (
+                  <p className="muted">{selected.description}</p>
+                )}
+                <p>{selected.content || '未提供提交内容。'}</p>
+                {selected.evidence_link && (
+                  <a
+                    href={selected.evidence_link}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    查看任务成果证明链接
+                  </a>
+                )}
+              </div>
+              <section
+                aria-label="当前任务历史反馈"
+                className="review-history"
+                ref={historyRef}
+                tabIndex={-1}
+              >
+                <h3>历史反馈（只读）</h3>
                 {history.length === 0 ? (
                   <p className="muted">暂无历史评审记录。</p>
                 ) : (
@@ -331,11 +391,46 @@ export function EvidenceReviewPage() {
                     ))}
                   </ul>
                 )}
-              </>
-            )}
-          </article>
-        </div>
-      )}
+              </section>
+              <fieldset>
+                <legend>验收结果</legend>
+                {CONCLUSIONS.map((value) => (
+                  <label className="radio" key={value}>
+                    <input
+                      checked={conclusion === value}
+                      name="conclusion"
+                      onChange={() => setConclusion(value)}
+                      type="radio"
+                      value={value}
+                    />
+                    {value}
+                  </label>
+                ))}
+              </fieldset>
+              <label>
+                反馈建议
+                <textarea
+                  onChange={(event) => setFeedback(event.target.value)}
+                  placeholder="通过时可填写建议；需补充时请具体说明缺少什么。"
+                  value={feedback}
+                />
+              </label>
+              {conclusion === '需补充' && (
+                <p className="muted">需补充必须填写反馈。</p>
+              )}
+              <div className="actions">
+                <button
+                  disabled={!conclusion || submitting}
+                  onClick={() => void handleSubmit()}
+                  type="button"
+                >
+                  提交验收结果
+                </button>
+              </div>
+            </>
+          )}
+        </article>
+      </div>
     </section>
   )
 }

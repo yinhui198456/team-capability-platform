@@ -839,10 +839,10 @@ def get_pending_evidence_reviews(
 
 @planning_router.get("/evidence-reviews/summary")
 def get_evidence_review_summary(
-    user: CurrentUser, connection: Connection, year: int
-) -> dict[str, int]:
+    user: CurrentUser, connection: Connection
+) -> dict[str, int | float | None]:
     _require_buddy(user)
-    return get_evidence_review_summary_for_buddy(connection, int(user["id"]), year)
+    return get_evidence_review_summary_for_buddy(connection, int(user["id"]))
 
 
 @planning_router.post("/evidences/{evidence_id}/review")

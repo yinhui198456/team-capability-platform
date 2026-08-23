@@ -855,7 +855,7 @@ flowchart LR
 
 - **M02 同页渐进式操作：** 评级保存状态与显式「保存能力评级」同区显示；加入后在同一能力项展开紧凑优先级与整框可点击的 `plan_month=YYYY-MM`。页底只保留草稿摘要与「生成所选学习任务」。生成结果明确区分当前草稿已选、本次新建、已有任务、计划总计；计划总计读取该年度正式计划的 canonical 数据，不以本次结果相加替代。
 - **M03 / M04 / M05：** M03 `/growth/annual-plan?year=` 为独立年度时间轴；M04 `/growth/tasks?year=` 为独立任务列表；M05 纳入 #194 核心流程，提供独立任务详情入口/页面，首屏含概览、要求变化、阶段页签与核心操作。
-- **B01：** Evidence Review 对齐 B01 V2 的标题、四张指标卡、队列命名/状态色、评审工作区比例和响应式/可访问性；权限及 Evidence Review 业务语义不变，不恢复 Assessment Review。
+- **B01：** Evidence Review 对齐 B01 V2 的标题、四张指标卡、队列命名/状态色、评审工作区比例和响应式/可访问性；权限及 Evidence Review 业务语义不变，不恢复 Assessment Review。工作台的 `待验收` 是当前真实可操作的 pending 队列；`需补充` 是当前有效辅导关系下每个任务最新 Evidence 仍等待 Member 补充的数量；`本月通过` 是当前 Buddy 在当前自然月结论为「通过」的 review 数；`平均响应` 是当前 Buddy 在当前自然月全部已完成 review 的 `submitted_at` 至 `reviewed_at` 平均时长，无样本为 `null`（页面显示 `—`）。队列仍只含可操作 pending：其紧邻上一版本 review 为「需补充」时显示红色「补充后重提」，否则显示琥珀色「待验收」；Member 侧待补充项不得回流到 Buddy 队列。
 
 ### 原型定位
 

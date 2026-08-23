@@ -2795,12 +2795,19 @@ def list_pending_evidence_reviews_for_buddy(
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
-               agp.member_id, u.username
+               agp.member_id, u.username,
+               CASE
+                   WHEN previous_review.conclusion = '需补充' THEN '补充后重提'
+                   ELSE '待验收'
+               END AS queue_status
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         JOIN tcp_user u ON u.id = agp.member_id
+        LEFT JOIN evidence previous ON previous.id = e.supersedes_evidence_id
+        LEFT JOIN evidence_review previous_review
+          ON previous_review.evidence_id = previous.id
         JOIN buddy_relationship br
           ON br.member_id = agp.member_id
          AND br.buddy_id = %s
@@ -2816,6 +2823,7 @@ def list_pending_evidence_reviews_for_buddy(
         evidence = _evidence_row(row[:19])
         evidence["member_id"] = row[19]
         evidence["username"] = row[20]
+        evidence["queue_status"] = row[21]
         items.append(evidence)
     return _attach_l3_contexts(connection, items)
 
@@ -3012,13 +3020,8 @@ def submit_evidence_review(
 def get_evidence_review_summary_for_buddy(
     connection: psycopg.Connection,
     buddy_id: int,
-    year: int,
-) -> dict[str, int]:
-    """Return pending and completed evidence review counts for a Buddy in a year.
-
-    Pending counts come from evidence awaiting review for assigned members;
-    completed counts come from the immutable review history.
-    """
+) -> dict[str, int | float | None]:
+    """Return B01's current actionable queue and current-month metrics."""
     pending = connection.execute(
         """
         SELECT COUNT(*)
@@ -3031,26 +3034,53 @@ def get_evidence_review_summary_for_buddy(
          AND br.buddy_id = %s
          AND br.is_primary = TRUE
          AND br.effective_to IS NULL
-        WHERE e.status = '待 Review' AND agp.year = %s
+        WHERE e.status = '待 Review'
         """,
-        (buddy_id, year),
+        (buddy_id,),
     ).fetchone()
-    completed = connection.execute(
+    needs_supplement = connection.execute(
         """
         SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT ON (e.learning_task_id) e.status
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            JOIN buddy_relationship br
+              ON br.member_id = agp.member_id
+             AND br.buddy_id = %s
+             AND br.is_primary = TRUE
+             AND br.effective_to IS NULL
+            ORDER BY e.learning_task_id, e.version_number DESC
+        ) latest
+        WHERE latest.status = '需补充'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    monthly = connection.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE er.conclusion = '通过'),
+               AVG(EXTRACT(EPOCH FROM (er.reviewed_at - e.submitted_at)))
         FROM evidence_review er
         JOIN evidence e ON e.id = er.evidence_id
-        JOIN learning_task lt ON lt.id = e.learning_task_id
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE er.buddy_id = %s
-          AND EXTRACT(YEAR FROM er.reviewed_at)::INT = %s
+          AND er.reviewed_at >= date_trunc('month', CURRENT_TIMESTAMP)
+          AND er.reviewed_at < date_trunc('month', CURRENT_TIMESTAMP)
+                               + INTERVAL '1 month'
         """,
-        (buddy_id, year),
+        (buddy_id,),
     ).fetchone()
+    assert monthly is not None
     return {
         "pending_count": int(pending[0] or 0) if pending else 0,
-        "completed_count": int(completed[0] or 0) if completed else 0,
+        "needs_supplement_count": (
+            int(needs_supplement[0] or 0) if needs_supplement else 0
+        ),
+        "monthly_approved_count": int(monthly[0] or 0),
+        "average_response_seconds": (
+            float(monthly[1]) if monthly[1] is not None else None
+        ),
     }
 
 
