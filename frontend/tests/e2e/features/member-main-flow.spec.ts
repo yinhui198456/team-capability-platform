@@ -71,9 +71,7 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
     // Issue #194 P1-3: 旧 Buddy 复核路由重定向到证据评审。
     await page.goto('/mentoring/dashboard')
     await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
 
     await logout(page)
     await loginAs(page, 'leader')

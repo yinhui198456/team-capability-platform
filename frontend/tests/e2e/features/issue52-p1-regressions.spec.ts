@@ -24,9 +24,7 @@ test.describe('Issue #52 P1 regressions', () => {
     // Issue #194 P1-3: 旧复核工作区已退役，路由重定向到证据评审。
     await page.goto('/mentoring/dashboard')
     await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
     // 待验收证据保持可见（mock 数据：P01.01.01 数据管道基础）。
     // 标题渲染在组合段落内，按验收工作区约束并用包含语义匹配。
     const workspace = page.locator('.buddy-workspace')

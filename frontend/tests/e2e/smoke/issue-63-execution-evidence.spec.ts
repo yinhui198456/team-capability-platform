@@ -545,7 +545,7 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // ── buddy queue shows the pending version; 需补充 requires feedback ──
   await loginAs(page, 'buddy')
   await page.goto('/mentoring/evidence-review')
-  await expect(page.getByRole('heading', { name: '待验收成果' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
   await selectQueueItemByMarker(page, seed.l3Code, v1Marker)
   await page.getByLabel('需补充').click()
   // client gate: empty feedback blocked before any request
@@ -907,9 +907,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   for (const viewport of viewports) {
     await page.setViewportSize(viewport)
     await page.goto('/mentoring/evidence-review')
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
     await expectNoHorizontalOverflow()
   }
 
@@ -945,5 +943,5 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   )
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByText('加载中…')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '待验收成果' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
 })

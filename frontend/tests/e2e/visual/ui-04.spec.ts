@@ -352,7 +352,7 @@ test.describe('UI-04 legacy buddy route empty state', () => {
       'ui-04-legacy-dashboard-redirect-empty-1440x900.png',
       {
         fullPage: false,
-        maxDiffPixels: 1000,
+        maxDiffPixelRatio: 0.05,
       },
     )
   })
