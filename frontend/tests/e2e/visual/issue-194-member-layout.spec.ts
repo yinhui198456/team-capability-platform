@@ -233,6 +233,22 @@ for (const viewport of viewports) {
     await expect(page.getByTestId('assessment-content-area')).toContainText(
       '计划月份已完整',
     )
+    const layout = await page.evaluate(() => {
+      const priority = document.querySelector(
+        '[aria-label="优先级 P01.01.01"]',
+      )!
+      const month = document.querySelector(
+        '[data-testid="plan-month-control-P01.01.01"]',
+      )!
+      return {
+        monthWidth: month.getBoundingClientRect().width,
+        priorityWidth: priority.getBoundingClientRect().width,
+        scrollWidth: document.documentElement.scrollWidth,
+      }
+    })
+    expect(layout.priorityWidth).toBeLessThanOrEqual(96)
+    expect(layout.monthWidth).toBeGreaterThanOrEqual(118)
+    expect(layout.scrollWidth).toBeLessThanOrEqual(viewport.width)
     if (viewport.width <= 1024) {
       const geometry = await page.evaluate(() => {
         const content = document.querySelector(

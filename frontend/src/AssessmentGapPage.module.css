@@ -192,6 +192,12 @@
   font-size: var(--text-sm);
   color: var(--color-gray-600);
 }
+.planEditor select {
+  width: auto;
+  min-width: 52px;
+  padding: 2px 4px;
+  font-size: var(--text-sm);
+}
 .monthControl {
   position: relative;
   display: inline-flex;
