@@ -299,7 +299,7 @@ async function selectQueueItemByMarker(
   l3Code: string,
   marker: string,
 ): Promise<void> {
-  const candidates = page.locator('aside button', { hasText: l3Code })
+  const candidates = page.locator('.buddy-member-list button')
   // after goto/reload the queue fetch is still in flight — wait for the
   // list to render before counting, otherwise count() is 0 and the loop
   // exits immediately
