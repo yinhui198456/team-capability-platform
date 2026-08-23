@@ -57,8 +57,8 @@ def check_member_navigation(browser, password: str) -> None:
             ("我的工作台", "/dashboard/member"),
             ("能力评级与提升计划", "/capability/assessment"),
             ("年度成长计划", "/growth/annual-plan"),
-            # Issue #194 兼容入口：/growth/tasks 统一重定向到年度成长计划。
-            ("学习任务", "/growth/annual-plan"),
+            # Issue #194 B1: M04 学习任务为独立页面。
+            ("学习任务", "/growth/tasks"),
         ):
             page.get_by_role("link", name=link, exact=True).click()
             # SPA 客户端导航可能在 networkidle 之后才落地；先等到预期 path
@@ -78,9 +78,7 @@ def check_buddy_redirects(browser, password: str) -> None:
         for path in ("/mentoring/dashboard", "/mentoring/assessment-review"):
             page.goto(f"{BASE_URL}{path}", wait_until="networkidle")
             assert urlsplit(page.url).path == "/mentoring/evidence-review", page.url
-            assert page.get_by_role(
-                "heading", name="待验收成果", exact=True
-            ).is_visible()
+            assert page.get_by_role("heading", name="成果验收", exact=True).is_visible()
         # The retired self-review center entry is gone.
         assert page.get_by_text("Buddy 复核中心").count() == 0
         print("PASS buddy-legacy-redirect")
@@ -109,7 +107,7 @@ def main() -> None:
         try:
             for case in (
                 ("member", "/dashboard/member", None),
-                ("buddy", "/mentoring/evidence-review", "待验收成果"),
+                ("buddy", "/mentoring/evidence-review", "成果验收"),
                 ("leader", "/operations/analytics", "团队能力分析"),
                 ("admin", "/system/users", "系统管理"),
             ):
