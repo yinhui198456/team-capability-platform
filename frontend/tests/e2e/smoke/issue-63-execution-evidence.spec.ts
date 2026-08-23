@@ -549,10 +549,10 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   await selectQueueItemByMarker(page, seed.l3Code, v1Marker)
   await page.getByLabel('需补充').click()
   // client gate: empty feedback blocked before any request
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByRole('alert')).toContainText('需补充必须填写反馈')
-  await page.getByLabel('反馈').fill('E2E-63-02 请补充口径说明')
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByLabel('反馈建议').fill('E2E-63-02 请补充口径说明')
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByText('已要求补充，等待成员提交新版本。')).toBeVisible()
 
   // ── member submits v2 superseding v1; queue shows only the current version ──
@@ -600,8 +600,8 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // v1's 需补充 feedback is visible (regression: member-path 403 hid it)
   await expect(page.getByText(/请补充口径说明/).first()).toBeVisible()
   await page.getByLabel('通过').click()
-  await page.getByLabel('反馈').fill('E2E-63-02 第二版通过')
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByLabel('反馈建议').fill('E2E-63-02 第二版通过')
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByText(/已通过/).first()).toBeVisible()
 
   // immutable history: both reviews recorded, second review attempt → 409
