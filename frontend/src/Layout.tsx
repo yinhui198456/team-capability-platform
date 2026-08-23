@@ -33,13 +33,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: '能力成长',
     items: [
       {
-        label: '能力自评与 Gap',
+        label: '能力评级与提升计划',
         href: '/capability/assessment',
-        roles: ['Member'],
-      },
-      {
-        label: '评估历史',
-        href: '/capability/assessment/history',
         roles: ['Member'],
       },
     ],
@@ -52,30 +47,11 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    label: '成长管理',
-    items: [
-      {
-        label: '月度复盘',
-        href: '/growth/review/monthly',
-        roles: ['Member', 'Buddy', 'Leader', 'Admin'],
-      },
-      {
-        label: '成长档案',
-        href: '/growth/profile',
-        roles: ['Member', 'Buddy', 'Leader', 'Admin'],
-      },
-    ],
-  },
-  {
     label: '导师指导',
     items: [
+      // Issue #194 P1-3: Buddy 自评复核退役 — 仅保留证据评审
       {
-        label: 'Buddy 复核中心',
-        href: '/mentoring/dashboard',
-        roles: ['Buddy'],
-      },
-      {
-        label: '待验收成果',
+        label: '成果验收',
         href: '/mentoring/evidence-review',
         roles: ['Buddy'],
       },
@@ -99,7 +75,13 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: '能力标准',
-    items: [{ label: '能力地图', href: '/capability/model' }],
+    items: [
+      {
+        label: '能力地图',
+        href: '/capability/model',
+        roles: ['Buddy', 'Leader', 'Admin'],
+      },
+    ],
   },
 ]
 
@@ -229,12 +211,20 @@ export function Layout() {
               .map((item) => (
                 <NavLink
                   to={yHref(item.href)}
+                  aria-label={item.label}
                   className={({ isActive }: { isActive: boolean }) =>
                     `app-sidebar-item${isActive ? ' active' : ''}`
                   }
                   key={item.href}
                 >
-                  {item.label}
+                  {item.label === '能力评级与提升计划' ? (
+                    <>
+                      <span>能力评级与</span>
+                      <span>提升计划</span>
+                    </>
+                  ) : (
+                    item.label
+                  )}
                 </NavLink>
               ))}
           </div>

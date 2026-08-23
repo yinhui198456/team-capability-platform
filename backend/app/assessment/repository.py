@@ -1391,6 +1391,11 @@ def list_member_assessments(
     ]
 
 
+def _quarter_of(month: str) -> str:
+    """Derive the compat plan_quarter from a TEXT 'YYYY-MM' month."""
+    return "Q" + str((int(month[5:7]) - 1) // 3 + 1)
+
+
 def save_assessment_draft(
     connection: psycopg.Connection,
     assessment_id: int,
@@ -1599,7 +1604,10 @@ def save_assessment_draft(
             # ── Canonical plan fields ──────────────────────────
             member_priority = detail.get("member_priority")
             include_in_plan = detail.get("include_in_plan")  # tri-state
-            plan_quarter = detail.get("plan_quarter")
+            # Issue #194: plan_quarter is a derived compat column — never
+            # accepted as input (the API handlers reject non-None); it is
+            # derived from plan_month below and written to the DB.
+            plan_quarter = None
             plan_month = detail.get("plan_month")
 
             legacy_preserved = (
@@ -1700,7 +1708,6 @@ def save_assessment_draft(
             cleared_fields: list[str] = []
             orig_priority = member_priority
             orig_include_in_plan = include_in_plan
-            orig_quarter = plan_quarter
             orig_month = plan_month
 
             if not can_plan:
@@ -1748,57 +1755,40 @@ def save_assessment_draft(
                 plan_quarter = None
                 plan_month = None
 
-            # include_in_plan tri-state validation.
-            if include_in_plan is True:
-                if member_priority is None or member_priority == "暂缓":
+            # Issue #194: plan_month is TEXT 'YYYY-MM'.  Format is enforced
+            # here at the repository level (covers non-API callers too); the
+            # compat plan_quarter is always derived so the pair stays
+            # consistent with the DB-level derived-quarter constraint.
+            if plan_month is not None:
+                if (
+                    not isinstance(plan_month, str)
+                    or len(plan_month) != 7
+                    or plan_month[4] != "-"
+                    or not plan_month[:4].isdigit()
+                    or not plan_month[5:7].isdigit()
+                    or not 1 <= int(plan_month[5:7]) <= 12
+                ):
                     raise DetailValidationError(
                         "plan_validation",
-                        f"include_in_plan requires valid priority for {code}",
+                        f"plan_month must be YYYY-MM for {code}",
                         l3_code=str(code),
-                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_valid_priority",
+                        l3_node_id=(
+                            l3_node_id if isinstance(l3_node_id, int) else None
+                        ),
+                        field="plan_month",
+                        reason="invalid_month_format",
                     )
-                if plan_quarter is None or plan_month is None:
-                    raise DetailValidationError(
-                        "plan_validation",
-                        f"include_in_plan requires quarter and month for {code}",
-                        l3_code=str(code),
-                        l3_node_id=l3_node_id if isinstance(l3_node_id, int) else None,
-                        field="include_in_plan",
-                        reason="requires_quarter_and_month",
-                    )
-                # Validate quarter-month mapping
-                if plan_quarter is not None and plan_month is not None:
-                    valid = True
-                    if plan_quarter == "Q1" and not (1 <= plan_month <= 3):
-                        valid = False
-                    elif plan_quarter == "Q2" and not (4 <= plan_month <= 6):
-                        valid = False
-                    elif plan_quarter == "Q3" and not (7 <= plan_month <= 9):
-                        valid = False
-                    elif plan_quarter == "Q4" and not (10 <= plan_month <= 12):
-                        valid = False
-                    if not valid:
-                        raise DetailValidationError(
-                            "plan_validation",
-                            f"invalid quarter-month combination: "
-                            f"{plan_quarter}+{plan_month}",
-                            l3_code=str(code),
-                            l3_node_id=(
-                                l3_node_id if isinstance(l3_node_id, int) else None
-                            ),
-                            field="plan_quarter",
-                            reason="invalid_quarter_month",
-                        )
+                plan_quarter = _quarter_of(plan_month)
+
+            # 已选提升项可作为不完整计划草稿持久化；优先级和月份均由显式
+            # 生成前校验，避免首个「加入提升计划」动作因 UI 尚未展示编辑区
+            # 而失败。
 
             # Track auto-cleared fields
             if orig_priority != member_priority:
                 cleared_fields.append("member_priority")
             if orig_include_in_plan != include_in_plan:
                 cleared_fields.append("include_in_plan")
-            if orig_quarter != plan_quarter:
-                cleared_fields.append("plan_quarter")
             if orig_month != plan_month:
                 cleared_fields.append("plan_month")
             if cleared_fields:
@@ -2137,7 +2127,7 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
         compatibility_error,
         member_priority,
         include_in_plan,
-        plan_quarter,
+        _plan_quarter,  # derived-only compat column (issue #194); kept positionally
         plan_month,
         gap_value,
         l3_node_id,
@@ -2208,13 +2198,14 @@ def _validate_submission(connection: psycopg.Connection, assessment_id: int) -> 
                         l3_node_id=l3_node_id,
                         field="include_in_plan",
                     )
-                if plan_quarter is None or plan_month is None:
+                if plan_month is None:
                     raise AssessmentValidationError(
                         code,
                         "plan_time_required",
-                        f"include_in_plan=TRUE requires quarter and month for {code}",
+                        f"include_in_plan=TRUE requires plan month "
+                        f"(YYYY-MM) for {code}",
                         l3_node_id=l3_node_id,
-                        field="plan_quarter",
+                        field="plan_month",
                     )
             # include_in_plan=FALSE with 暂缓 is valid.
         else:
@@ -2311,6 +2302,7 @@ def submit_assessment(
 
         # Issue #82: Generate annual plan and learning tasks atomically on submit
         from ..planning.atomic_generation import generate_plan_and_tasks_from_assessment
+
         plan_result = generate_plan_and_tasks_from_assessment(connection, assessment_id)
 
         next_revision = int(revision) + 1
@@ -2323,6 +2315,283 @@ def submit_assessment(
             "auto_cleared": [],
             "plan_generation": plan_result,
         }
+
+
+def generate_plan_items_for_selection(
+    connection: psycopg.Connection,
+    assessment_id: int,
+    member_id: int,
+    l3_codes: list[str],
+    expected_revision: int,
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, object]:
+    """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）.
+
+    Generates plan items + learning tasks ONLY for the selected l3_codes.
+
+    - batch zero-write: any selected item that is not ready (not in plan /
+      pending or invalid plan_month / no positive gap / no snapshot) raises
+      422 with a per-L3 Chinese message before anything is written;
+    - idempotent via the (annual_growth_plan_id, l3_code) unique kernel:
+      already-generated items come back as ``existing`` and are never
+      duplicated (a savepoint re-check absorbs concurrent unique conflicts);
+    - Idempotency-Key (prefixed ``generate-plan-items:``) replays the stored
+      first response for the same key + payload fingerprint, 409 on key
+      reuse with a different payload — reuses assessment_idempotency_key;
+    - does NOT create an Assessment Review and does NOT move
+      assessment.status (the draft stays 草稿);
+    - plan_month is TEXT 'YYYY-MM' and is required on every selected item.
+    """
+    # Payload identity only — independent of current domain state.
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "assessment_id": assessment_id,
+                "l3_codes": sorted(set(l3_codes)),
+                "expected_revision": expected_revision,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    stored_key = f"generate-plan-items:{idempotency_key}" if idempotency_key else None
+
+    def _replay_or_conflict() -> dict[str, object] | None:
+        existing_key = connection.execute(
+            """
+            SELECT request_fingerprint, response
+            FROM assessment_idempotency_key
+            WHERE member_id = %s AND idempotency_key = %s
+            """,
+            (member_id, stored_key),
+        ).fetchone()
+        if existing_key is None:
+            return None
+        if str(existing_key[0]) != fingerprint:
+            raise AssessmentScopeError(
+                "idempotency_key_reused",
+                "idempotency key reused with a different request",
+                status_code=409,
+            )
+        stored = existing_key[1]
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        return stored
+
+    with connection.transaction():
+        # 0. idempotency check first, before any domain recomputation.
+        if stored_key is not None:
+            replay = _replay_or_conflict()
+            if replay is not None:
+                return replay
+        row = connection.execute(
+            """
+            SELECT status, member_id, revision, year,
+                   capability_standard_version_id,
+                   member_current_level_snapshot, member_target_level_snapshot
+            FROM assessment
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (assessment_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("assessment not found")
+        _status, owner_id, revision, year, version_id, cur_snap, tgt_snap = row
+        if owner_id != member_id:
+            raise ValueError("assessment does not belong to member")
+        if int(revision) != expected_revision:
+            raise ValueError("revision conflict")
+        # 2. Re-check idempotency after the FOR UPDATE lock to close the
+        #    concurrent window where two callers both pass the first check.
+        if stored_key is not None:
+            replay = _replay_or_conflict()
+            if replay is not None:
+                return replay
+
+        detail_rows = connection.execute(
+            """
+            SELECT ad.id, ad.l3_node_id, ad.l3_code, ad.l3_name,
+                   ad.l1_code, ad.l1_name, ad.l2_code, ad.l2_name,
+                   ad.scope_type, ad.current_level, ad.standard_target_level,
+                   ad.adjusted_target_level, ad.target_level, ad.gap_value,
+                   ad.member_priority, ad.include_in_plan, ad.plan_quarter,
+                   ad.plan_month, ad.standard_job_level_snapshot,
+                   ad.target_adjusted, ad.target_adjustment_reason,
+                   ad.target_compatibility_error
+            FROM assessment_detail ad
+            WHERE ad.assessment_id = %s
+            """,
+            (assessment_id,),
+        ).fetchall()
+        by_code = {str(d[2]): d for d in detail_rows}
+
+        # Pre-flight validation of every selected item — zero writes on any
+        # failure (the plan/item inserts happen only after this passes).
+        for raw in l3_codes:
+            code = str(raw)
+            detail = by_code.get(code)
+            if detail is None:
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 不在本次评估范围内",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="not_in_assessment",
+                )
+            if detail[15] is not True:  # include_in_plan
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 未加入提升计划（include_in_plan 未开启）",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="not_in_plan",
+                )
+            if detail[14] not in {"高", "中", "低"}:  # member_priority
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 优先级待补：请先在草稿中选择高、中或低优先级",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="pending_member_priority",
+                )
+            plan_month = detail[17]
+            if plan_month is None:
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 计划月份待补：请先在草稿中为 {code} "
+                    f"选择 YYYY-MM 计划月份",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="pending_plan_month",
+                )
+            if (
+                not isinstance(plan_month, str)
+                or len(plan_month) != 7
+                or plan_month[4] != "-"
+                or not plan_month[:4].isdigit()
+                or not plan_month[5:7].isdigit()
+                or not 1 <= int(plan_month[5:7]) <= 12
+            ):
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 计划月份格式错误（需 YYYY-MM）",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="invalid_plan_month",
+                )
+            if plan_month[:4] != str(year):
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 计划月份年份与评估年份不符（应为 {year}-MM）",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="plan_month_year_mismatch",
+                )
+            if detail[13] is None or int(detail[13]) <= 0:  # gap_value
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 无提升空间（当前等级已达目标，无法生成学习任务）",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="no_positive_gap",
+                )
+            if (
+                detail[1] is None
+                or _planning_snapshot_for(connection, int(version_id), int(detail[1]))
+                is None
+            ):
+                raise DetailValidationError(
+                    "plan_generation",
+                    f"项 {code} 缺少学习计划模板（planning snapshot）",
+                    l3_code=code,
+                    field="l3_codes",
+                    reason="missing_snapshot",
+                )
+
+        # Get or create the member's annual plan for this year (same lazy
+        # kernel as the #82 submit path).
+        plan_row = connection.execute(
+            """
+            SELECT id FROM annual_growth_plan
+            WHERE member_id = %s AND year = %s
+            """,
+            (member_id, int(year)),
+        ).fetchone()
+        if plan_row is None:
+            plan_row = connection.execute(
+                """
+                INSERT INTO annual_growth_plan (
+                    member_id, year, status,
+                    source_assessment_id, planning_source_type
+                )
+                VALUES (%s, %s, '执行中', %s, 'assessment_approval')
+                RETURNING id
+                """,
+                (member_id, int(year), assessment_id),
+            ).fetchone()
+        plan_id = int(plan_row[0])
+
+        assessment_dict = {
+            "id": assessment_id,
+            "capability_standard_version_id": int(version_id),
+            "revision": int(revision),
+            "member_current_level_snapshot": cur_snap,
+            "member_target_level_snapshot": tgt_snap,
+        }
+        created: list[str] = []
+        existing: list[str] = []
+        for raw in l3_codes:
+            code = str(raw)
+            detail = by_code[code]
+            already = connection.execute(
+                """
+                SELECT id FROM plan_item
+                WHERE annual_growth_plan_id = %s AND l3_code = %s
+                """,
+                (plan_id, code),
+            ).fetchone()
+            if already is not None:
+                existing.append(code)
+                continue
+            connection.execute("SAVEPOINT gen_sp")
+            try:
+                _insert_plan_item_and_task(
+                    connection,
+                    plan_id,
+                    assessment_dict,
+                    detail,
+                    _planning_snapshot_for(connection, int(version_id), int(detail[1])),
+                )
+                connection.execute("RELEASE SAVEPOINT gen_sp")
+                created.append(code)
+            except psycopg.errors.UniqueViolation:
+                connection.execute("ROLLBACK TO SAVEPOINT gen_sp")
+                existing.append(code)
+        response = {
+            "annual_plan_id": plan_id,
+            "created": created,
+            "existing": existing,
+        }
+        if stored_key is not None:
+            connection.execute(
+                """
+                INSERT INTO assessment_idempotency_key (
+                    member_id, idempotency_key, request_fingerprint,
+                    assessment_id, response
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    member_id,
+                    stored_key,
+                    fingerprint,
+                    assessment_id,
+                    json.dumps(response, ensure_ascii=False),
+                ),
+            )
+        return response
 
 
 def generate_gaps_for_assessment(
@@ -3523,8 +3792,8 @@ def submit_assessment_review(
                     connection, assessment, member_id, year
                 )
             elif plan_row[1] is not None and int(plan_row[1]) == assessment_id:
-                # Plan already created by this assessment (e.g., via atomic generation on self-submit)
-                # Return success without creating duplicate plan
+                # Plan already created by this assessment (e.g., via atomic
+                # generation on self-submit); return without duplicating.
                 plan_payload = {
                     "created": False,  # Plan was already created
                     "plan_id": int(plan_row[0]),
@@ -3671,10 +3940,11 @@ def _frozen_data_issues(details: list[dict[str, object]]) -> int:
             quarter is not None
             and month is not None
             and not (
-                (quarter == "Q1" and 1 <= int(month) <= 3)
-                or (quarter == "Q2" and 4 <= int(month) <= 6)
-                or (quarter == "Q3" and 7 <= int(month) <= 9)
-                or (quarter == "Q4" and 10 <= int(month) <= 12)
+                # plan_month is TEXT 'YYYY-MM' (Issue #194).
+                (quarter == "Q1" and month.endswith("-01"))
+                or (quarter == "Q2" and month.endswith(("-04", "-05", "-06")))
+                or (quarter == "Q3" and month.endswith(("-07", "-08", "-09")))
+                or (quarter == "Q4" and month.endswith(("-10", "-11", "-12")))
             )
         ):
             issues += 1
@@ -3711,10 +3981,11 @@ def _detail_data_issue(detail: dict[str, object]) -> bool:
         quarter is not None
         and month is not None
         and not (
-            (quarter == "Q1" and 1 <= int(month) <= 3)
-            or (quarter == "Q2" and 4 <= int(month) <= 6)
-            or (quarter == "Q3" and 7 <= int(month) <= 9)
-            or (quarter == "Q4" and 10 <= int(month) <= 12)
+            # plan_month is TEXT 'YYYY-MM' (Issue #194).
+            (quarter == "Q1" and month.endswith("-01"))
+            or (quarter == "Q2" and month.endswith(("-04", "-05", "-06")))
+            or (quarter == "Q3" and month.endswith(("-07", "-08", "-09")))
+            or (quarter == "Q4" and month.endswith(("-10", "-11", "-12")))
         )
     ):
         return True

@@ -92,7 +92,9 @@ async function openDraftCount(page: Page): Promise<number> {
 }
 
 test.describe('Issue #60 assessment scope snapshots', () => {
-  test('P4→P5 preview, confirm, header and scope filter', async ({ page }) => {
+  test('P4→P5 preview and confirm preserve scope creation', async ({
+    page,
+  }) => {
     const cookie = await adminCookie(page)
     const username = await createMember(page, cookie, 'P4', 'P5')
     await loginUser(page, username)
@@ -107,20 +109,9 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await expect(preview).toContainText('进阶 95')
 
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    const header = page.getByTestId('scope-header')
-    await expect(header).toContainText('当前 P4 → 年度目标 P5')
-    await expect(header).toContainText('Legacy Baseline v1')
-    await expect(header).toContainText('适用 238')
-    await expect(header).toContainText('必备 143')
-    await expect(header).toContainText('进阶 95')
-
-    // scope filter narrows the visible details deterministically
-    const scopeFilter = page.getByTestId('scope-filter')
-    await scopeFilter.selectOption('target_progressive')
-    await expect(page.locator('tbody tr').first()).toBeVisible()
-    await scopeFilter.selectOption('current_required')
-    await expect(page.locator('tbody tr').first()).toBeVisible()
-    await scopeFilter.selectOption('全部')
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
+    await expect(page.getByTestId('scope-header')).toHaveCount(0)
+    await expect(page.getByTestId('scope-filter')).toHaveCount(0)
   })
 
   test('P4→P4 same level produces zero progressive items', async ({ page }) => {
@@ -167,9 +158,7 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     const fresh = page.getByTestId('scope-preview')
     await expect(fresh).toContainText('当前 P4 → 年度目标 P6')
     await page.getByRole('button', { name: '按最新范围重新确认创建' }).click()
-    await expect(page.getByTestId('scope-header')).toContainText(
-      '当前 P4 → 年度目标 P6',
-    )
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
   })
 
   test('missing member level blocks preview with a structured error', async ({
@@ -248,12 +237,12 @@ test.describe('Issue #60 assessment scope snapshots', () => {
       name: '确认创建年度自评草稿',
     })
     await button.dblclick()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
     expect(await openDraftCount(page)).toBe(1)
     // navigating back shows the existing draft, not another create button
     await page.goto('/dashboard/member')
     await page.goto('/capability/assessment')
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
     await expect(
       page.getByRole('button', { name: '预览评估范围' }),
     ).toHaveCount(0)
@@ -268,7 +257,7 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await page.goto('/capability/assessment')
     await page.getByRole('button', { name: '预览评估范围' }).click()
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
 
     await page.goto('/dashboard/member')
     const levels = page.getByTestId('dashboard-levels')
@@ -294,7 +283,7 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await page.goto('/capability/assessment')
     await page.getByRole('button', { name: '预览评估范围' }).click()
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(page.getByLabel('评估摘要')).toBeVisible()
 
     await page.goto('/capability/assessment/history')
     const snapshot = page.locator('[data-testid^="history-snapshot-"]').first()
@@ -407,13 +396,7 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     // not-applicable legacy detail stays out of the progress denominator
     await expect(page.getByText(/0\/1(?!\d)/).first()).toBeVisible()
 
-    // scope filter shows the unclassified hint instead of fabricated groups
-    await page.getByTestId('scope-filter').selectOption('current_required')
-    await expect(page.getByTestId('legacy-scope-hint')).toContainText(
-      '历史评估未按范围分类，必备/进阶筛选不可用',
-    )
-    await expect(page.getByText('历史路径')).toHaveCount(0)
-    await page.getByTestId('scope-filter').selectOption('全部')
+    // 旧评估不再依赖已退役的范围筛选，仍保留可读的历史路径。
     await expect(page.getByText('历史路径').first()).toBeVisible()
 
     // history renders the missing-snapshot label without fabricating values

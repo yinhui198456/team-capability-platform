@@ -12,8 +12,10 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import submit_review
 from tests.standard_target_support import (
     ensure_capability_nodes,
+    publish_test_standard,
     standard_target_payload,
 )
 
@@ -173,6 +175,11 @@ def evidence_review_schema(connection: psycopg.Connection) -> psycopg.Connection
     _reset_assessment_schema(connection)
     _reset_planning_schema(connection)
     _reset_catalog_schema(connection)
+    # Issue #194: current-state schema (plan_month TEXT) needs the migration chain.
+    from app.migrations import run_migrations
+
+    run_migrations(connection)
+    connection.commit()
     return connection
 
 
@@ -284,11 +291,12 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
+    publish_test_standard(connection, ["P01-L2A-L3A"])
+    connection.commit()
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -317,32 +325,25 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
+    # Issue #194: the API submit is retired; the review/approval machinery
+    # is seeded through the retained repository-level path.
+    from app.assessment.repository import submit_assessment
+
+    member_id = int(
+        connection.execute(
+            "SELECT member_id FROM assessment WHERE id = %s", (assessment_id,)
+        ).fetchone()[0]
     )
-    assert status == 200
+    submit_assessment(connection, assessment_id, member_id, 2)
+    connection.commit()
     return assessment_id
 
 
 def _approve_assessment(
     connection: psycopg.Connection, assessment_id: int, buddy_username: str
 ) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]  # evidence id (v0010 queue)
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
+    # Issue #194 P1-3: the review POST API is retired (410) — repository path.
+    submit_review(connection, assessment_id, buddy_username)
 
 
 def _seed_submitted_evidence(
@@ -741,7 +742,7 @@ def test_dual_role_buddy_cannot_view_unassigned_member_task_review_history(
 
 def _summary(
     connection: psycopg.Connection, username: str, year: int
-) -> tuple[int, dict[str, int] | None]:
+) -> tuple[int, dict[str, object] | None]:
     cookies = _login(connection, username)
     status, body, _ = _request(
         "GET",
@@ -751,7 +752,7 @@ def _summary(
     return status, body
 
 
-def test_evidence_review_summary_counts_pending_and_completed(
+def test_evidence_review_summary_counts_pending_and_current_month_reviews(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
     _, buddy_cookies, task_id, _ = _seed_submitted_evidence(
@@ -760,7 +761,12 @@ def test_evidence_review_summary_counts_pending_and_completed(
 
     status, body = _summary(evidence_review_schema, "buddy_ev_summary", 2026)
     assert status == 200
-    assert body == {"pending_count": 1, "completed_count": 0}
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": None,
+    }
 
     status, pending, _ = _request(
         "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
@@ -776,21 +782,216 @@ def test_evidence_review_summary_counts_pending_and_completed(
 
     status, body = _summary(evidence_review_schema, "buddy_ev_summary", 2026)
     assert status == 200
-    assert body == {"pending_count": 0, "completed_count": 1}
+    assert body is not None
+    assert body["pending_count"] == 0
+    assert body["needs_supplement_count"] == 0
+    assert body["monthly_approved_count"] == 1
+    assert isinstance(body["average_response_seconds"], float)
+    assert body["average_response_seconds"] >= 0
 
 
-def test_evidence_review_summary_filters_by_year(
+def test_evidence_review_v2_summary_and_resubmission_queue_contract(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    """B01 V2 keeps only actionable pending Evidence in the Buddy queue."""
+    member_cookies, buddy_cookies, task_id, v1_id = _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_v2", "buddy_ev_v2"
+    )
+
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{v1_id}/review",
+        {"conclusion": "需补充", "feedback": "请补充口径说明"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence
+        SET submitted_at = date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '10 days'
+        WHERE id = %s
+        """,
+        (v1_id,),
+    )
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence_review
+        SET reviewed_at = date_trunc('month', CURRENT_TIMESTAMP)
+                          + INTERVAL '10 days 2 hours'
+        WHERE evidence_id = %s
+        """,
+        (v1_id,),
+    )
+    evidence_review_schema.commit()
+
+    status, pending, _ = _request(
+        "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert pending == []
+    status, body = _summary(evidence_review_schema, "buddy_ev_v2", 2026)
+    assert status == 200
+    assert body == {
+        "pending_count": 0,
+        "needs_supplement_count": 1,
+        "monthly_approved_count": 0,
+        "average_response_seconds": 7200,
+    }
+
+    status, v2, _ = _request(
+        "POST",
+        f"/api/planning/learning-tasks/{task_id}/evidences",
+        {
+            "content": "补充后的第二版成果",
+            "supersedes_evidence_id": v1_id,
+        },
+        cookies=member_cookies,
+    )
+    assert status == 200
+    v2_id = int(v2["id"])
+    status, _, _ = _request(
+        "POST", f"/api/planning/evidences/{v2_id}/submit", {}, cookies=member_cookies
+    )
+    assert status == 200
+
+    status, pending, _ = _request(
+        "GET", "/api/planning/evidence-reviews/pending", cookies=buddy_cookies
+    )
+    assert status == 200
+    assert [(item["id"], item["queue_status"]) for item in pending] == [
+        (v2_id, "补充后重提")
+    ]
+    status, body = _summary(evidence_review_schema, "buddy_ev_v2", 2026)
+    assert status == 200
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": 7200,
+    }
+
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{v2_id}/review",
+        {"conclusion": "通过", "feedback": "第二版符合预期"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence
+        SET submitted_at = date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '11 days'
+        WHERE id = %s
+        """,
+        (v2_id,),
+    )
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence_review
+        SET reviewed_at = date_trunc('month', CURRENT_TIMESTAMP)
+                          + INTERVAL '11 days 4 hours'
+        WHERE evidence_id = %s
+        """,
+        (v2_id,),
+    )
+    evidence_review_schema.commit()
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_v2", 2026)
+    assert status == 200
+    assert body == {
+        "pending_count": 0,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 1,
+        "average_response_seconds": 10800,
+    }
+
+
+def test_evidence_review_summary_keeps_monthly_actor_history_after_relationship_ends(
+    evidence_review_schema: psycopg.Connection,
+) -> None:
+    """Current queues exclude ended relationships; review history does not."""
+    _, buddy_cookies, _, evidence_id = _seed_submitted_evidence(
+        evidence_review_schema, "member_ev_summary_ended", "buddy_ev_summary_ended"
+    )
+    status, _, _ = _request(
+        "POST",
+        f"/api/planning/evidences/{evidence_id}/review",
+        {"conclusion": "通过", "feedback": "符合预期"},
+        cookies=buddy_cookies,
+    )
+    assert status == 200
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence
+        SET submitted_at = date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '12 days'
+        WHERE id = %s
+        """,
+        (evidence_id,),
+    )
+    evidence_review_schema.execute(
+        """
+        UPDATE evidence_review
+        SET reviewed_at = date_trunc('month', CURRENT_TIMESTAMP)
+                          + INTERVAL '12 days 3 hours'
+        WHERE evidence_id = %s
+        """,
+        (evidence_id,),
+    )
+    member_row = evidence_review_schema.execute(
+        """
+        SELECT agp.member_id
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        WHERE e.id = %s
+        """,
+        (evidence_id,),
+    ).fetchone()
+    assert member_row is not None
+    evidence_review_schema.execute(
+        """
+        UPDATE buddy_relationship
+        SET effective_to = CURRENT_DATE - 1, expiry_date = CURRENT_DATE - 1
+        WHERE member_id = %s
+          AND buddy_id = (SELECT id FROM tcp_user WHERE username = %s)
+        """,
+        (member_row[0], "buddy_ev_summary_ended"),
+    )
+    evidence_review_schema.commit()
+
+    status, body = _summary(evidence_review_schema, "buddy_ev_summary_ended", 2026)
+    assert status == 200
+    assert body == {
+        "pending_count": 0,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 1,
+        "average_response_seconds": 10800,
+    }
+
+
+def test_evidence_review_summary_uses_current_metrics_not_requested_year(
     evidence_review_schema: psycopg.Connection,
 ) -> None:
     _seed_submitted_evidence(evidence_review_schema, "member_ev_year", "buddy_ev_year")
 
     status, body = _summary(evidence_review_schema, "buddy_ev_year", 2025)
     assert status == 200
-    assert body == {"pending_count": 0, "completed_count": 0}
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": None,
+    }
 
     status, body = _summary(evidence_review_schema, "buddy_ev_year", 2026)
     assert status == 200
-    assert body == {"pending_count": 1, "completed_count": 0}
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": None,
+    }
 
 
 def test_evidence_review_summary_requires_buddy_role(
@@ -811,8 +1012,18 @@ def test_evidence_review_summary_only_includes_assigned_members(
 
     status, body = _summary(evidence_review_schema, "buddy_ev_a", 2026)
     assert status == 200
-    assert body == {"pending_count": 1, "completed_count": 0}
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": None,
+    }
 
     status, body = _summary(evidence_review_schema, "buddy_ev_b", 2026)
     assert status == 200
-    assert body == {"pending_count": 1, "completed_count": 0}
+    assert body == {
+        "pending_count": 1,
+        "needs_supplement_count": 0,
+        "monthly_approved_count": 0,
+        "average_response_seconds": None,
+    }

@@ -270,6 +270,7 @@ def _login(
 
 
 def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+    # Issue #194: plan_month is TEXT 'YYYY-MM', no plan_quarter input.
     desired_details = [
         {
             "l3_code": "P01-L2A-L3A",
@@ -278,8 +279,7 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
         {
             "l3_code": "P01-L2A-L3B",
@@ -288,8 +288,7 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
@@ -325,32 +324,19 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         cookies=cookies,
     )
     assert status == 200
+    # Issue #194: explicit generation replaces the retired /submit endpoint.
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {
+            "l3_codes": ["P01-L2A-L3A", "P01-L2A-L3B"],
+            "expected_revision": 2,
+        },
         cookies=cookies,
     )
     assert status == 200
+    assert len(body["created"]) == 2
     return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
 
 def _seed_plan_items(
@@ -363,8 +349,9 @@ def _seed_plan_items(
     _ensure_l3_node(connection, "P01-L2A-L3B")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, "member_task")
-    _approve_assessment(connection, assessment_id, "buddy_task")
+    # Issue #194: generation forms plan items/tasks directly (no assessment
+    # review in the member flow — the plan is 执行中 on creation).
+    _create_and_submit_assessment(connection, "member_task")
 
     member_cookies = _login(connection, "member_task")
 

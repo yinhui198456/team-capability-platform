@@ -163,6 +163,9 @@ def plan_items_in_month(
     Single shared query for both the Dashboard ``current_month`` block and
     the Monthly Review detail rows.
     """
+    # plan_month is TEXT 'YYYY-MM' (Issue #194) — derive the canonical
+    # string from the int args instead of comparing an INT to TEXT.
+    month_text = f"{year:04d}-{month:02d}"
     rows = connection.execute(
         """
         SELECT pi.id, pi.status, pi.l3_code, pi.estimated_hours, lt.id
@@ -172,7 +175,7 @@ def plan_items_in_month(
         WHERE agp.member_id = %s AND agp.year = %s AND pi.plan_month = %s
         ORDER BY pi.l3_code
         """,
-        (member_id, year, month),
+        (member_id, year, month_text),
     ).fetchall()
     return [
         {

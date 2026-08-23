@@ -586,7 +586,8 @@ export function TeamAnnualPlanPage() {
                           {item.priority}
                         </span>
                       </td>
-                      <td>{item.plan_month ? `${item.plan_month}月` : '-'}</td>
+                      {/* plan_month is 'YYYY-MM' (Issue #194) — display as-is. */}
+                      <td>{item.plan_month ?? '-'}</td>
                       <td>{item.plan_quarter ?? '-'}</td>
                       <td>
                         <span className={statusClass(item.status)}>

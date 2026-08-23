@@ -41,7 +41,7 @@ test('Issue #52 growth-goals route redirects to the annual plan page', async ({
   await loginAs(page, 'member')
   await page.goto('/growth/goals')
   await expect(
-    page.getByRole('heading', { name: '年度成长计划', exact: true }),
+    page.getByRole('heading', { name: '月度计划时间轴', exact: true }),
   ).toBeVisible()
 })
 

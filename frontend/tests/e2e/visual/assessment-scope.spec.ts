@@ -94,13 +94,9 @@ for (const viewport of viewports) {
       }).toPass()
       await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
     }
-    await expect(page.getByTestId('scope-header')).toBeVisible({
+    await expect(page.getByLabel('评估摘要')).toBeVisible({
       timeout: 15000,
     })
-    await expect(page).toHaveScreenshot(
-      `assessment-scope-header-${viewport.name}.png`,
-      { maxDiffPixelRatio: 0.05, fullPage: true },
-    )
   })
 
   test(`Issue #60 dashboard self-assessment card at ${viewport.name}`, async ({

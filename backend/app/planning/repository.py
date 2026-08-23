@@ -222,6 +222,16 @@ class EvidenceValidationError(PlanningDomainError):
     entity_type = "evidence"
 
 
+class RequirementDecisionConflict(PlanningDomainError):
+    code = "requirement_decision_conflict"
+    entity_type = "annual_plan_change_proposal_detail"
+
+
+class RequirementDecisionPending(PlanningDomainError):
+    code = "requirement_decision_pending"
+    entity_type = "learning_task"
+
+
 class EvidenceRevisionConflict(PlanningDomainError):
     code = "evidence_revision_conflict"
     entity_type = "evidence"
@@ -643,7 +653,9 @@ def _validate_plan_item_dates(
     plan_quarter = row[2]
     plan_month = row[3]
     target_month = row[4]
-    month = plan_month if plan_month is not None else target_month
+    # plan_month is TEXT 'YYYY-MM' (Issue #194); its YYYY always equals the
+    # owner year by construction, so only the month part is needed here.
+    month = int(plan_month[5:7]) if plan_month is not None else target_month
     year = int(row[5])
 
     if start is not None and due is not None and start > due:
@@ -2666,13 +2678,13 @@ def submit_evidence(
     with connection.transaction():
         row = connection.execute(
             f"""
-            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status
+            SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")}, lt.status, pi.id, agp.id
             FROM evidence e
             JOIN learning_task lt ON lt.id = e.learning_task_id
             JOIN plan_item pi ON pi.id = lt.plan_item_id
             JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
             WHERE e.id = %s AND agp.member_id = %s
-            FOR UPDATE OF e
+            FOR UPDATE OF agp, e
             """,
             (evidence_id, member_id),
         ).fetchone()
@@ -2693,6 +2705,25 @@ def submit_evidence(
                 entity_type="learning_task",
                 entity_id=int(evidence["learning_task_id"]),
                 field="status",
+            )
+        pending = connection.execute(
+            """
+            SELECT 1
+            FROM annual_plan_change_proposal_detail d
+            JOIN annual_plan_change_proposal p ON p.id = d.proposal_id
+            JOIN plan_item pi
+              ON pi.annual_growth_plan_id = p.target_annual_growth_plan_id
+            WHERE pi.id = %s AND pi.l3_code = d.l3_code
+              AND d.requirement_decision IS NULL
+            FOR KEY SHARE OF d
+            """,
+            (int(row[20]),),
+        ).fetchone()
+        if pending is not None:
+            raise RequirementDecisionPending(
+                "请先确认该任务的要求变化后再提交成果证明",
+                entity_id=int(evidence["learning_task_id"]),
+                field="requirement_decision",
             )
         submitted = connection.execute(
             f"""
@@ -2764,12 +2795,19 @@ def list_pending_evidence_reviews_for_buddy(
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
-               agp.member_id, u.username
+               agp.member_id, u.username,
+               CASE
+                   WHEN previous_review.conclusion = '需补充' THEN '补充后重提'
+                   ELSE '待验收'
+               END AS queue_status
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         JOIN tcp_user u ON u.id = agp.member_id
+        LEFT JOIN evidence previous ON previous.id = e.supersedes_evidence_id
+        LEFT JOIN evidence_review previous_review
+          ON previous_review.evidence_id = previous.id
         JOIN buddy_relationship br
           ON br.member_id = agp.member_id
          AND br.buddy_id = %s
@@ -2785,6 +2823,7 @@ def list_pending_evidence_reviews_for_buddy(
         evidence = _evidence_row(row[:19])
         evidence["member_id"] = row[19]
         evidence["username"] = row[20]
+        evidence["queue_status"] = row[21]
         items.append(evidence)
     return _attach_l3_contexts(connection, items)
 
@@ -2981,13 +3020,8 @@ def submit_evidence_review(
 def get_evidence_review_summary_for_buddy(
     connection: psycopg.Connection,
     buddy_id: int,
-    year: int,
-) -> dict[str, int]:
-    """Return pending and completed evidence review counts for a Buddy in a year.
-
-    Pending counts come from evidence awaiting review for assigned members;
-    completed counts come from the immutable review history.
-    """
+) -> dict[str, int | float | None]:
+    """Return B01's current actionable queue and current-month metrics."""
     pending = connection.execute(
         """
         SELECT COUNT(*)
@@ -3000,26 +3034,53 @@ def get_evidence_review_summary_for_buddy(
          AND br.buddy_id = %s
          AND br.is_primary = TRUE
          AND br.effective_to IS NULL
-        WHERE e.status = '待 Review' AND agp.year = %s
+        WHERE e.status = '待 Review'
         """,
-        (buddy_id, year),
+        (buddy_id,),
     ).fetchone()
-    completed = connection.execute(
+    needs_supplement = connection.execute(
         """
         SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT ON (e.learning_task_id) e.status
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            JOIN buddy_relationship br
+              ON br.member_id = agp.member_id
+             AND br.buddy_id = %s
+             AND br.is_primary = TRUE
+             AND br.effective_to IS NULL
+            ORDER BY e.learning_task_id, e.version_number DESC
+        ) latest
+        WHERE latest.status = '需补充'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    monthly = connection.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE er.conclusion = '通过'),
+               AVG(EXTRACT(EPOCH FROM (er.reviewed_at - e.submitted_at)))
         FROM evidence_review er
         JOIN evidence e ON e.id = er.evidence_id
-        JOIN learning_task lt ON lt.id = e.learning_task_id
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
         WHERE er.buddy_id = %s
-          AND EXTRACT(YEAR FROM er.reviewed_at)::INT = %s
+          AND er.reviewed_at >= date_trunc('month', CURRENT_TIMESTAMP)
+          AND er.reviewed_at < date_trunc('month', CURRENT_TIMESTAMP)
+                               + INTERVAL '1 month'
         """,
-        (buddy_id, year),
+        (buddy_id,),
     ).fetchone()
+    assert monthly is not None
     return {
         "pending_count": int(pending[0] or 0) if pending else 0,
-        "completed_count": int(completed[0] or 0) if completed else 0,
+        "needs_supplement_count": (
+            int(needs_supplement[0] or 0) if needs_supplement else 0
+        ),
+        "monthly_approved_count": int(monthly[0] or 0),
+        "average_response_seconds": (
+            float(monthly[1]) if monthly[1] is not None else None
+        ),
     }
 
 
@@ -4582,7 +4643,8 @@ def _team_analytics_monthly_trends(
     planned_values_by_month: dict[int, list[str | None]] = {}
     for month, estimated_hours in planned_rows:
         if month is not None:
-            planned_values_by_month.setdefault(int(month), []).append(
+            # plan_month is TEXT 'YYYY-MM' (Issue #194); trend keys are 1-12.
+            planned_values_by_month.setdefault(int(month[5:7]), []).append(
                 estimated_hours if isinstance(estimated_hours, str) else None
             )
     planned_by_month = {
@@ -4928,8 +4990,9 @@ def list_change_proposals(
                    member_priority, include_in_plan, plan_quarter, plan_month,
                    standard_job_level_snapshot, member_current_level_snapshot,
                    member_target_level_snapshot, capability_standard_version_id,
-                   planning_snapshot_id, assessment_revision,
-                   planning_source_type
+                   planning_snapshot_id, previous_planning_snapshot_id,
+                   assessment_revision,
+                   planning_source_type, requirement_decision, decided_at, decided_by
             FROM annual_plan_change_proposal_detail
             WHERE proposal_id = %s
             ORDER BY l3_code
@@ -4977,11 +5040,119 @@ def list_change_proposals(
                         "member_target_level_snapshot": d[22],
                         "capability_standard_version_id": d[23],
                         "planning_snapshot_id": d[24],
-                        "assessment_revision": d[25],
-                        "planning_source_type": d[26],
+                        "previous_planning_snapshot_id": d[25],
+                        "assessment_revision": d[26],
+                        "planning_source_type": d[27],
+                        "requirement_decision": d[28],
+                        "decided_at": _serialize_datetime(d[29]),
+                        "decided_by": d[30],
                     }
                     for d in details
                 ],
             }
         )
     return result
+
+
+def decide_requirement_change(
+    connection: psycopg.Connection,
+    member_id: int,
+    proposal_id: int,
+    detail_id: int,
+    decision: str,
+) -> dict[str, object]:
+    if decision not in {"adopt_new", "keep_original"}:
+        raise PlanningDomainError(
+            "invalid requirement decision",
+            code="invalid_requirement_decision",
+            entity_type="annual_plan_change_proposal_detail",
+            entity_id=detail_id,
+            field="decision",
+        )
+    with connection.transaction():
+        row = connection.execute(
+            """
+            SELECT d.id, d.requirement_decision, d.planning_snapshot_id,
+                   p.target_annual_growth_plan_id, d.l3_code
+            FROM annual_plan_change_proposal_detail d
+            JOIN annual_plan_change_proposal p ON p.id = d.proposal_id
+            JOIN annual_growth_plan agp ON agp.id = p.target_annual_growth_plan_id
+            WHERE d.id = %s AND p.id = %s AND p.member_id = %s
+            FOR UPDATE OF agp, p, d
+            """,
+            (detail_id, proposal_id, member_id),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("requirement decision does not belong to member")
+        existing = row[1]
+        if existing is not None:
+            if existing == decision:
+                return {"id": int(row[0]), "decision": decision, "idempotent": True}
+            raise RequirementDecisionConflict(
+                "requirement decision already recorded",
+                entity_id=detail_id,
+                field="decision",
+            )
+        item = connection.execute(
+            """
+            SELECT id, planning_snapshot_id FROM plan_item
+            WHERE annual_growth_plan_id=%s AND l3_code=%s
+            FOR UPDATE
+            """,
+            (int(row[3]), str(row[4])),
+        ).fetchone()
+        if item is None:
+            raise PlanningDomainError(
+                "proposal plan item not found",
+                code="proposal_plan_item_missing",
+                entity_type="annual_plan_change_proposal_detail",
+                entity_id=detail_id,
+            )
+        if decision == "adopt_new":
+            snapshot = connection.execute(
+                """
+                SELECT materials_text, expected_output, estimated_hours, l3_name,
+                       capability_standard_version_id, l3_node_id
+                FROM capability_standard_planning_snapshot WHERE id=%s
+                """,
+                (row[2],),
+            ).fetchone()
+            if snapshot is None:
+                raise PlanningDomainError(
+                    "proposal planning snapshot missing",
+                    code="planning_snapshot_missing",
+                    entity_type="annual_plan_change_proposal_detail",
+                    entity_id=detail_id,
+                )
+            connection.execute(
+                """UPDATE plan_item SET planning_snapshot_id=%s,
+                   capability_standard_version_id=%s, l3_node_id=%s, l3_name=%s,
+                   learning_material=%s, learning_task_content=%s,
+                   expected_output=%s, estimated_hours=%s,
+                   revision=revision+1 WHERE id=%s""",
+                (
+                    row[2],
+                    snapshot[4],
+                    snapshot[5],
+                    snapshot[3],
+                    snapshot[0],
+                    snapshot[3],
+                    snapshot[1],
+                    snapshot[2],
+                    int(item[0]),
+                ),
+            )
+        connection.execute(
+            """UPDATE annual_plan_change_proposal_detail SET requirement_decision=%s,
+               previous_planning_snapshot_id=%s,
+               decided_at=NOW(), decided_by=%s WHERE id=%s""",
+            (decision, item[1], member_id, detail_id),
+        )
+        connection.execute(
+            """UPDATE annual_plan_change_proposal SET status=CASE WHEN NOT EXISTS (
+                 SELECT 1 FROM annual_plan_change_proposal_detail
+                 WHERE proposal_id=%s AND requirement_decision IS NULL
+               ) THEN '已处理' ELSE '待处理' END WHERE id=%s""",
+            (proposal_id, proposal_id),
+        )
+    return {"id": detail_id, "decision": decision, "idempotent": False}

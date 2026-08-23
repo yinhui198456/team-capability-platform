@@ -103,15 +103,21 @@ test.describe('成长档案', () => {
     ).toBeVisible()
   })
 
-  test('导航包含成长管理分组及成长档案', async ({ page }) => {
+  test('Member 导航仅包含批准的四个入口', async ({ page }) => {
     await mockGrowthProfileData(page)
     await loginAs(page, 'member')
     await page.goto('/growth/profile?year=2026')
 
     const nav = page.locator('.app-sidebar')
-    await expect(nav.getByText('成长管理')).toBeVisible()
-    await expect(nav.getByRole('link', { name: '成长档案' })).toBeVisible()
-    await expect(nav.getByRole('link', { name: '月度复盘' })).toBeVisible()
+    await expect(nav.getByRole('link', { name: '我的工作台' })).toBeVisible()
+    await expect(
+      nav.getByRole('link', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
+    await expect(nav.getByRole('link', { name: '年度成长计划' })).toBeVisible()
+    await expect(nav.getByRole('link', { name: '学习任务' })).toBeVisible()
+    await expect(nav.getByText('成长管理')).toHaveCount(0)
+    await expect(nav.getByRole('link', { name: '成长档案' })).toHaveCount(0)
+    await expect(nav.getByRole('link', { name: '月度复盘' })).toHaveCount(0)
   })
 
   test('空态展示', async ({ page }) => {

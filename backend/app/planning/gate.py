@@ -74,8 +74,9 @@ def check_annual_plan_gate(
     connection: psycopg.Connection, member_id: int
 ) -> dict[str, Any]:
     """
-    Issue #82: Weak management flow - plans are generated atomically on assessment submit.
-    This gate is kept for backward compatibility but always returns eligible if any assessment exists.
+    Issue #82: Weak management flow — plans are generated atomically on
+    assessment submit. This gate is kept for backward compatibility but always
+    returns eligible if any assessment exists.
     """
     latest = get_latest_submitted_assessment(connection, member_id)
     if latest is None:

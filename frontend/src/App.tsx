@@ -10,9 +10,10 @@ import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
 import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
+import { TaskListPage } from './TaskListPage'
+import { TaskDetailPage } from './TaskDetailPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
-import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
@@ -68,12 +69,8 @@ export function App() {
 
         {/* Legacy redirects */}
         <Route
-          path="/growth/tasks"
-          element={<Navigate to="/growth/annual-plan" replace />}
-        />
-        <Route
           path="/mentoring/assessment-review"
-          element={<Navigate to="/mentoring/dashboard" replace />}
+          element={<Navigate to="/mentoring/evidence-review" replace />}
         />
         <Route
           path="/capability/gap"
@@ -101,12 +98,18 @@ export function App() {
             element={<Navigate to="/growth/annual-plan" replace />}
           />
           <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
+          <Route path="/growth/tasks" element={<TaskListPage />} />
+          <Route path="/growth/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/growth/profile" element={<ProfilePage />} />
           <Route
             path="/growth/review/monthly"
             element={<MonthlyReviewPage />}
           />
-          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          {/* Issue #194 P1-3: Buddy 自评复核退役 — 默认与旧路由均导向 Evidence Review */}
+          <Route
+            path="/mentoring/dashboard"
+            element={<Navigate to="/mentoring/evidence-review" replace />}
+          />
           <Route
             path="/mentoring/evidence-review"
             element={

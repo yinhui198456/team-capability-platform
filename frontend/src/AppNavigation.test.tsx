@@ -182,6 +182,37 @@ describe('r1.1 topbar — sidebar is sole navigation', () => {
     expect(screen.getByRole('combobox', { name: '选择年度' })).toBeTruthy()
     expect(screen.getByText('数据范围：本人')).toBeTruthy()
   })
+
+  it('shows M01–M04 in the Member sidebar; M05 stays contextual', async () => {
+    stubYear()
+    stubApi()
+    stubDashboard()
+    render(
+      <MemoryRouter initialEntries={['/dashboard/member']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: '学习任务' })).toBeTruthy()
+    })
+    const memberLinks = Array.from(
+      document.querySelectorAll('.app-sidebar-item'),
+    )
+      .map((link) => link.textContent)
+      .filter(Boolean)
+    expect(memberLinks).toEqual([
+      '我的工作台',
+      '能力评级与提升计划',
+      '年度成长计划',
+      '学习任务',
+    ])
+    // M05 是年度计划中的上下文详情，不是新的 sidebar 入口；其唯一
+    // 「进入任务」入口由 AnnualPlanTaskPage 的 M03 回归覆盖。
+    expect(memberLinks).not.toContain('学习任务详情')
+    expect(screen.queryByRole('link', { name: '评估历史' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '月度复盘' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '成长档案' })).toBeNull()
+  })
 })
 
 describe('role-based default routing', () => {
@@ -208,7 +239,7 @@ describe('role-based default routing', () => {
   it.each([
     ['Admin', '/system/users'],
     ['Leader', '/operations/analytics'],
-    ['Buddy', '/mentoring/dashboard'],
+    ['Buddy', '/mentoring/evidence-review'],
     ['Member', '/dashboard/member'],
   ])('redirects %s from / to %s', async (role, expectedPath) => {
     vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
@@ -248,7 +279,7 @@ describe('role-based default routing', () => {
   it.each([
     ['Admin', '/system/users'],
     ['Leader', '/operations/analytics'],
-    ['Buddy', '/mentoring/dashboard'],
+    ['Buddy', '/mentoring/evidence-review'],
     ['Member', '/dashboard/member'],
   ])(
     'redirects %s from unknown URL to default route',
@@ -316,6 +347,32 @@ describe('role-based default routing', () => {
     await waitFor(() => {
       expect(screen.getByTestId('location').textContent).toBe('/system/users')
     })
+  })
+})
+
+describe('Issue #194 B1 task routes', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the requested year on the independent learning-task route', async () => {
+    stubYear()
+    stubApi()
+    vi.spyOn(planningApi, 'getAnnualPlan').mockResolvedValue(null)
+    vi.spyOn(planningApi, 'listLearningTasks').mockResolvedValue([])
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks?year=2025']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/growth/tasks?year=2025',
+      )
+    })
+    expect(screen.getByRole('heading', { name: '学习任务' })).toBeTruthy()
   })
 })
 
@@ -476,6 +533,12 @@ describe('evidence review route boundary', () => {
       active_year: 2026,
     })
     vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+    vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+      pending_count: 0,
+      needs_supplement_count: 0,
+      monthly_approved_count: 0,
+      average_response_seconds: null,
+    })
     render(
       <MemoryRouter initialEntries={['/mentoring/evidence-review']}>
         <App />
@@ -483,7 +546,7 @@ describe('evidence review route boundary', () => {
       </MemoryRouter>,
     )
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: '待验收成果' })).toBeTruthy(),
+      expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy(),
     )
     // Inside the auth shell: brand, identity, sign-out and Buddy nav all render.
     expect(
@@ -491,12 +554,49 @@ describe('evidence review route boundary', () => {
     ).toBeTruthy()
     expect(screen.getByText('Buddy')).toBeTruthy()
     expect(screen.getByRole('button', { name: '退出' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Buddy 复核中心' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '待验收成果' })).toBeTruthy()
+    // Issue #194: Buddy 自评复核导航已退役 — 仅保留成果验收。
+    expect(screen.queryByRole('link', { name: 'Buddy 复核中心' })).toBeNull()
+    expect(screen.getByRole('link', { name: '成果验收' })).toBeTruthy()
     expect(screen.getByTestId('location').textContent).toBe(
       '/mentoring/evidence-review',
     )
   })
+
+  it.each([['/mentoring/dashboard'], ['/mentoring/assessment-review']])(
+    'Issue #194: legacy Buddy route %s redirects to evidence review',
+    async (path) => {
+      stubFetch()
+      vi.spyOn(accessApi, 'me').mockResolvedValue({
+        id: 2,
+        username: 'buddy',
+        full_name: 'Buddy',
+        roles: ['Buddy'],
+      })
+      vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+        available_years: [2026],
+        active_year: 2026,
+      })
+      vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue([])
+      vi.spyOn(planningApi, 'getEvidenceReviewSummary').mockResolvedValue({
+        pending_count: 0,
+        needs_supplement_count: 0,
+        monthly_approved_count: 0,
+        average_response_seconds: null,
+      })
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <App />
+          <LocationDisplay />
+        </MemoryRouter>,
+      )
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy(),
+      )
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/mentoring/evidence-review',
+      )
+    },
+  )
 
   it.each([
     [['Member'], '/dashboard/member'],
@@ -531,7 +631,7 @@ describe('evidence review route boundary', () => {
         expect(screen.getByTestId('location').textContent).toBe(expected)
       })
       // No operable 任务成果证明 page for non-Buddy roles.
-      expect(screen.queryByRole('heading', { name: '待验收成果' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: '成果验收' })).toBeNull()
     },
   )
 })

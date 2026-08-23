@@ -758,6 +758,202 @@ select {
   margin-top: 8px;
 }
 
+/* Issue #194 M04: match the selected task-list hierarchy. */
+.task-summary {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.task-summary .metric {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  display: flex;
+  min-height: 82px;
+  padding: 14px 18px;
+}
+.task-summary .metric > .anticon {
+  align-items: center;
+  background: #eff8ff;
+  border-radius: 50%;
+  box-sizing: border-box;
+  color: #175cd3;
+  display: inline-flex;
+  font-size: 18px;
+  height: 36px;
+  justify-content: center;
+  margin-right: 10px;
+  padding: 9px;
+  width: 36px;
+}
+.task-summary .metric.pending > .anticon {
+  background: #fffaeb;
+  color: #eaaa08;
+}
+.task-summary .metric.overdue > .anticon {
+  background: #fef3f2;
+  color: #d92d20;
+}
+
+.task-summary .metric dd {
+  font-size: 24px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.task-summary .pending {
+  border-left: 3px solid #eaaa08;
+}
+
+.task-summary .overdue {
+  border-left: 3px solid #d92d20;
+}
+
+.task-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.seg-group {
+  display: flex;
+  gap: 5px;
+}
+
+.seg {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #52637c;
+  min-height: 36px;
+  padding: 0 13px;
+}
+
+.seg.active {
+  background: #175cd3;
+  border-color: #175cd3;
+  color: #fff;
+}
+
+.task-search {
+  flex: 1;
+}
+
+.task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-card {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-left: 3px solid #175cd3;
+  border-radius: 8px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr auto;
+  min-height: 116px;
+  padding: 16px 18px;
+}
+
+.task-card.changed {
+  background: #fffdf8;
+  border-left-color: #eaaa08;
+}
+
+.task-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.task-card-main h2 {
+  font-size: 15px;
+  margin: 3px 0 0;
+}
+
+.task-card-main p,
+.task-card-main > span {
+  margin: 0;
+}
+
+.task-card-status {
+  color: #344054;
+  font-size: 14px;
+}
+
+.task-progress {
+  align-items: center;
+  color: #175cd3;
+  display: inline-flex;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.task-progress progress {
+  accent-color: #175cd3;
+  height: 6px;
+  width: 112px;
+}
+
+.task-card-actions {
+  border-left: 1px solid #e4e7ec;
+  padding-left: 18px;
+}
+
+.task-card-enter {
+  align-items: center;
+  border: 1px solid #175cd3;
+  border-radius: 6px;
+  color: #175cd3;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.task-card-enter:hover,
+.task-card-enter:focus-visible {
+  background: #eff8ff;
+}
+
+@media (max-width: 1100px) {
+  .task-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .seg-group {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 768px) {
+  .task-summary {
+    grid-template-columns: 1fr;
+  }
+  .task-toolbar,
+  .task-search {
+    width: 100%;
+  }
+  .task-toolbar > label:not(.task-search) select {
+    max-width: 100%;
+  }
+  .task-card {
+    grid-template-columns: 1fr;
+  }
+  .task-card-actions {
+    border-left: 0;
+    border-top: 1px solid #e4e7ec;
+    padding: 12px 0 0;
+  }
+}
+
 .buddy-summary button {
   background: #fff;
   border: 1px solid #e4e7ec;
@@ -924,6 +1120,287 @@ select {
   }
 }
 
+/* Issue #194 B01 V2: one actionable Evidence queue and its workspace. */
+.evidence-review-page {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.evidence-review-page .page-heading {
+  border-left: 4px solid #175cd3;
+  margin-bottom: 16px;
+  padding-left: 16px;
+}
+
+.evidence-review-page .page-heading h1 {
+  margin-bottom: 6px;
+}
+
+.evidence-review-page .page-heading .muted {
+  margin-bottom: 0;
+}
+
+.evidence-review-page .page-heading > button {
+  align-self: start;
+  background: #fff;
+  border: 1px solid #175cd3;
+  border-radius: 6px;
+  color: #175cd3;
+  cursor: pointer;
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.evidence-review-page .page-heading > button:disabled {
+  border-color: #d0d5dd;
+  color: #98a2b3;
+  cursor: not-allowed;
+}
+
+.evidence-review-page .page-heading > button:focus-visible,
+.evidence-review-page .buddy-member-list button:focus-visible,
+.evidence-review-page .review-history:focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: 2px;
+}
+
+.evidence-review-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.evidence-review-summary .metric {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  column-gap: 10px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-height: 76px;
+  padding: 12px 14px;
+}
+
+.evidence-review-summary dt,
+.evidence-review-summary dd {
+  margin: 0;
+}
+
+.evidence-review-summary dt {
+  color: #667085;
+  font-size: 13px;
+  grid-column: 2;
+}
+
+.evidence-review-summary dd {
+  color: #101828;
+  font-size: 22px;
+  font-weight: 700;
+  grid-column: 2;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.evidence-review-summary .metric-icon {
+  align-items: center;
+  background: #eff8ff;
+  border-radius: 50%;
+  color: #175cd3;
+  display: inline-flex;
+  font-size: 17px;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.evidence-review-summary .amber dd,
+.review-queue-status.amber {
+  color: #b54708;
+}
+
+.evidence-review-summary .red dd,
+.review-queue-status.red {
+  color: #b42318;
+}
+
+.evidence-review-summary .red .metric-icon {
+  background: #fef3f2;
+  color: #d92d20;
+}
+
+.evidence-review-summary .green dd {
+  color: #067647;
+}
+
+.evidence-review-summary .green .metric-icon {
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.evidence-review-summary .amber .metric-icon {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.evidence-review-page .buddy-review-layout {
+  grid-template-columns: minmax(220px, 240px) minmax(0, 1fr);
+  margin-top: 20px;
+}
+
+.evidence-review-page .buddy-workspace {
+  grid-column: auto;
+}
+
+.evidence-review-page .buddy-member-list {
+  max-height: min(560px, 60vh);
+  overflow-y: auto;
+}
+
+.evidence-review-page .buddy-member-list button {
+  align-content: center;
+  align-items: stretch;
+  display: grid;
+  gap: 5px;
+  justify-content: stretch;
+  min-height: 70px;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.evidence-review-page .buddy-member-list button small {
+  color: #667085;
+}
+
+.review-queue-status {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  width: fit-content;
+}
+
+.evidence-review-page .buddy-member-list button .review-queue-heading {
+  align-items: center;
+  color: #344054;
+  display: flex;
+  gap: 8px;
+  margin-top: 0;
+  min-width: 0;
+}
+
+.evidence-review-page .buddy-member-list button .review-queue-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-queue-status.amber {
+  background: #fffaeb;
+}
+
+.review-queue-status.red {
+  background: #fef3f2;
+}
+
+.review-workspace-title {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.review-workspace-title > span {
+  align-items: center;
+  background: #eaf2ff;
+  border: 1px solid #b2ccff;
+  border-radius: 50%;
+  color: #175cd3;
+  display: flex;
+  flex: 0 0 60px;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 2px;
+  height: 60px;
+  justify-content: center;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  width: 60px;
+}
+
+.review-workspace-title > span small {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.evidence-review-page .evidence-content {
+  background: #eff8ff;
+  border: 1px solid #b2ddff;
+  border-radius: 8px;
+  margin-top: 16px;
+  padding: 14px 16px;
+}
+
+.evidence-review-page .evidence-content h3 {
+  align-items: center;
+  color: #175cd3;
+  display: flex;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.evidence-review-page .review-history {
+  border-top: 1px solid #eaecf0;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.evidence-review-page .buddy-workspace fieldset {
+  border: 0;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.evidence-review-page .buddy-workspace textarea,
+.evidence-review-page .buddy-workspace .actions button {
+  min-height: 44px;
+}
+
+@media (max-width: 1024px) {
+  .evidence-review-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .evidence-review-page .page-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .evidence-review-summary,
+  .evidence-review-page .buddy-review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence-review-page .buddy-member-list {
+    max-height: 280px;
+  }
+
+  .evidence-review-summary {
+    gap: 10px;
+    margin: 16px 0 20px;
+  }
+
+  .evidence-review-summary .metric {
+    min-height: 72px;
+  }
+}
+
 .analytics-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1056,32 +1533,6 @@ select {
     align-items: flex-start;
     flex-direction: column;
   }
-}
-
-.task-summary {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: 20px 0;
-}
-
-.task-summary > div {
-  background: #f8fafc;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  padding: 14px;
-}
-
-.task-summary span {
-  color: #667085;
-  display: block;
-  font-size: 13px;
-}
-
-.task-summary strong {
-  display: block;
-  font-size: 20px;
-  margin-top: 6px;
 }
 
 .trend-chart {
@@ -1271,8 +1722,28 @@ select {
 }
 
 @media (max-width: 720px) {
-  .task-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .task-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .seg-group {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .task-search {
+    flex-basis: 100%;
+  }
+
+  .task-card {
+    grid-template-columns: 1fr;
+  }
+
+  .task-card-actions {
+    border-left: 0;
+    border-top: 1px solid #e4e7ec;
+    padding: 10px 0 0;
   }
 }
 

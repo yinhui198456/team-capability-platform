@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
 import {
   type Assessment,
   type AssessmentDetail,
   type AssessmentL2Group,
+  type DraftDetailInput,
   type DraftTargetRepairPreview,
   type ScopePreview,
   createAssessment,
@@ -16,15 +17,24 @@ import {
   newIdempotencyKey,
   repairDraftTargetSnapshots,
   saveDraft,
+  generatePlanItems,
   selectL2Requirement,
-  submitAssessment,
 } from './assessment'
 import { type ApiError } from './shared/api'
+import { getAnnualPlan } from './planning'
 import {
   mockAssessment,
   mockAssessmentSubmitted,
   isMockEnabled,
 } from './__fixtures__/assessmentMock'
+
+// Issue #194 P1: 计划草稿字段（随行内变更自动保存），其余字段归评级动作。
+const PLAN_FIELDS = new Set([
+  'member_priority',
+  'include_in_plan',
+  'plan_quarter',
+  'plan_month',
+])
 
 const LEVELS = [0, 1, 2, 3, 4, 5]
 const LEVEL_LABELS: Record<number, string> = {
@@ -77,6 +87,16 @@ function defaultDomain(details: AssessmentDetail[]) {
 
 function domainLabel(code: string) {
   return DOMAINS[code] ? `${code} · ${DOMAINS[code]}` : code
+}
+
+function openMonthPicker(input: HTMLInputElement | null) {
+  if (!input || input.disabled) return
+  input?.focus()
+  try {
+    input?.showPicker?.()
+  } catch {
+    // Unsupported or blocked native picker: keep focus.
+  }
 }
 
 function effectiveTarget(detail: AssessmentDetail): number | null {
@@ -208,25 +228,45 @@ function computeGap(detail: AssessmentDetail): number | null {
   return null
 }
 
-type Filter =
-  | '全部'
-  | '未评估'
-  | '有Gap'
-  | '当前职级必备'
-  | '目标职级进阶'
-  | '已纳入计划'
-  | '暂缓'
+function scopeLabel(detail: AssessmentDetail): string {
+  if (detail.scope_type === 'current_required') {
+    return `${detail.l3_code} · 当前职级必备`
+  }
+  if (detail.scope_type === 'target_progressive') {
+    return `${detail.l3_code} · 目标职级进阶`
+  }
+  return detail.l3_code
+}
 
 export function AssessmentGapPage() {
   const year = useYear()
   const [assessment, setAssessment] = useState<Assessment | null>(null)
   const [details, setDetails] = useState<AssessmentDetail[]>([])
   const [activeDomain, setActiveDomain] = useState('')
-  const [filter, setFilter] = useState<Filter>('全部')
+  // Issue #194: 定版原型工具条只有域切换 + 搜索——范围/状态两个额外筛选层
+  // 不在原型中，已移除；搜索承担跨能力域定位。
   const [search, setSearch] = useState('')
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set())
+  // Issue #194 P1: 保存评级与维护计划草稿是两个独立动作。评级/调整/依据
+  // 走 ratingDirtyIds；计划字段（优先级/纳入/月份）随行内变更自动保存。
+  // M02 V1: 计划草稿无全局保存按钮——变更入队后由泵串行提交（任务载荷为
+  // 变更时刻的行快照），revision 用 ref 跨请求推进，避免并发 PATCH 冲突。
+  const ratingDirtyIdsRef = useRef<Set<number>>(new Set())
+  const ratingChangeVersionsRef = useRef<Map<number, number>>(new Map())
+  const [ratingSaveState, setRatingSaveState] = useState<
+    '评级已保存' | '评级未保存' | '评级保存中' | '评级保存失败'
+  >('评级已保存')
+  const [generationSummary, setGenerationSummary] = useState<{
+    created: number
+    existing: number
+    planTotal: number | null
+  } | null>(null)
+  const planQueueRef = useRef<DraftDetailInput[]>([])
+  const planPumpingRef = useRef(false)
+  const planFlushPromiseRef = useRef<Promise<void> | null>(null)
+  const mutationTailRef = useRef<Promise<void>>(Promise.resolve())
+  const revisionRef = useRef<number>(1)
+  const detailsRef = useRef<AssessmentDetail[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [adjustmentId, setAdjustmentId] = useState<number | null>(null)
@@ -241,6 +281,9 @@ export function AssessmentGapPage() {
     Record<string, 'P4' | 'P5' | 'P6' | 'P7' | 'P8'>
   >({})
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
+  // 指纹变化（选中项/版本变更）或 409 后换新 key（镜像 BuddyReviewCenter 模式）。
+  const genIdemRef = useRef<{ key: string; fingerprint: string } | null>(null)
   const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
   const [repairPreview, setRepairPreview] =
     useState<DraftTargetRepairPreview | null>(null)
@@ -260,13 +303,19 @@ export function AssessmentGapPage() {
     empty_scope: boolean
     scope_token: string
   } | null>(null)
-  const [scopeFilter, setScopeFilter] = useState<
-    '全部' | 'current_required' | 'target_progressive'
-  >('全部')
 
   function loadAssessment(value: Assessment) {
     setAssessment(value)
     setDetails(value.details ?? [])
+    // M02 V1: 重新加载即视为新的草稿会话——同步镜像、自动保存队列与
+    // revision 全部重置，避免旧会话任务泄漏进新草稿。
+    detailsRef.current = value.details ?? []
+    planQueueRef.current = []
+    revisionRef.current = value.revision ?? 1
+    ratingDirtyIdsRef.current = new Set()
+    ratingChangeVersionsRef.current = new Map()
+    setRatingSaveState('评级已保存')
+    setGenerationSummary(null)
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     setActiveDomain((current) => current || firstDomain)
@@ -276,8 +325,19 @@ export function AssessmentGapPage() {
     if (firstL2) setExpandedL2(new Set([firstL2]))
   }
 
+  // detailsRef 的同步镜像：updateDetail 在变更时刻立即写入（保证行快照
+  // 包含同批次内的先前变更），本 effect 兜底捕获其余 setDetails 站点。
+  useEffect(() => {
+    detailsRef.current = details
+  }, [details])
+
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
+    setAssessment(null)
+    setDetails([])
+    setActiveDomain('')
+    setExpandedL2(new Set())
     async function init() {
       try {
         if (isMockEnabled()) {
@@ -285,7 +345,9 @@ export function AssessmentGapPage() {
         } else {
           const list = await listAssessments()
           const draft = list.find(
-            (item) => item.status === '草稿' || item.status === '建议调整',
+            (item) =>
+              item.year === year &&
+              (item.status === '草稿' || item.status === '建议调整'),
           )
           if (draft) {
             const full = await getAssessment(draft.id)
@@ -303,7 +365,7 @@ export function AssessmentGapPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [year])
 
   async function handlePreview() {
     setError('')
@@ -375,36 +437,232 @@ export function AssessmentGapPage() {
   }
 
   function updateDetail(index: number, patch: Partial<AssessmentDetail>) {
-    setDetails((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
+    const next = detailsRef.current.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, ...patch } : item,
     )
-    const detail = details[index]
+    detailsRef.current = next
+    setDetails(next)
+    const detail = next[index]
     if (detail?.id != null) {
-      setDirtyIds((current) => new Set(current).add(detail.id!))
+      // Issue #194 M02 V1: 评级字段归脏集合（保存能力评级显式提交），
+      // 计划字段入队自动保存——两动作互不夹带，串行泵逐条提交。
+      const hasPlanField = Object.keys(patch).some((key) =>
+        PLAN_FIELDS.has(key),
+      )
+      const hasRatingField = Object.keys(patch).some(
+        (key) => !PLAN_FIELDS.has(key),
+      )
+      if (hasRatingField) {
+        const dirty = new Set(ratingDirtyIdsRef.current).add(detail.id)
+        ratingDirtyIdsRef.current = dirty
+        ratingChangeVersionsRef.current.set(
+          detail.id,
+          (ratingChangeVersionsRef.current.get(detail.id) ?? 0) + 1,
+        )
+        setRatingSaveState('评级未保存')
+      }
+      if (hasPlanField) {
+        const task = buildDraftRows([next[index]], 'plan')[0]
+        // 同行旧任务被更新快照替换：在途旧载荷不会覆盖新输入，失败重试
+        // 直接提交最新状态（含先前变更）。
+        planQueueRef.current = planQueueRef.current.filter(
+          (queued) => queued.l3_code !== task.l3_code,
+        )
+        planQueueRef.current.push(task)
+        void pumpPlanSaves()
+      }
+    }
+  }
+
+  /** Issue #194 P1: 只取某动作的字段构造稀疏 PATCH 行——评级/调整/依据
+    或 计划（优先级/纳入/月份），绝不夹带另一动作的字段。 */
+  function buildDraftRows(
+    rows: AssessmentDetail[],
+    kind: 'rating' | 'plan',
+  ): DraftDetailInput[] {
+    return rows.map((detail) => {
+      const base = {
+        l3_node_id: detail.l3_node_id,
+        l3_code: detail.l3_code,
+      }
+      if (kind === 'rating') {
+        return {
+          ...base,
+          current_level: detail.current_level,
+          target_adjusted: detail.target_adjusted ?? false,
+          adjusted_target_level: detail.adjusted_target_level ?? null,
+          target_adjustment_reason: detail.target_adjustment_reason ?? null,
+          evidence_note: detail.evidence_note ?? null,
+        }
+      }
+      return {
+        ...base,
+        member_priority: detail.member_priority ?? null,
+        include_in_plan: detail.include_in_plan,
+        plan_month: detail.plan_month ?? null,
+      }
+    })
+  }
+
+  function enqueueMutation<T>(mutation: () => Promise<T>) {
+    const run = mutationTailRef.current.then(mutation, mutation)
+    mutationTailRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
+  /** Issue #194 M02 V1: 计划草稿自动保存泵 — 串行提交队列中的计划行快照。
+    失败时队列保留（本地输入不丢）并给出中文可操作提示；下次计划变更或
+    生成前自动重试。revision 用 ref 跨请求推进，避免并发 PATCH 冲突。 */
+  async function pumpPlanSaves(): Promise<void> {
+    if (isMockEnabled()) return
+    if (planPumpingRef.current) {
+      await planFlushPromiseRef.current
+      return
+    }
+    if (!assessment) return
+    planPumpingRef.current = true
+    const flush = enqueueMutation(async () => {
+      try {
+        // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
+        // 去重替换队首，首个请求总是携带最新快照。
+        await Promise.resolve()
+        while (planQueueRef.current.length > 0) {
+          const task = planQueueRef.current[0]
+          try {
+            const result = await saveDraft(
+              assessment.id,
+              [task],
+              revisionRef.current,
+            )
+            revisionRef.current = result.revision ?? revisionRef.current + 1
+            // 仅当队首仍是本次保存的任务时才出队：保存在途期间若该行被
+            // 再次变更（队首被替换为更新的快照），保留它让下一轮提交最新。
+            if (planQueueRef.current[0] === task) {
+              planQueueRef.current.shift()
+            }
+            applyAutoCleared(result.auto_cleared ?? [])
+            setAssessment((current) =>
+              current
+                ? {
+                    ...current,
+                    revision: result.revision ?? current.revision,
+                    gap_summary: result.gap_summary ?? current.gap_summary,
+                  }
+                : current,
+            )
+          } catch (err: unknown) {
+            const status = (err as { status?: number }).status
+            const detail = (err as { detail?: unknown }).detail
+            setError(
+              status === 409
+                ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+                : isStructuredAssessmentError(detail)
+                  ? (() => {
+                      const target = detailsRef.current.find(
+                        (item) => item.l3_code === detail.l3_code,
+                      )
+                      if (target) locateDetail(target)
+                      return detail.message
+                    })()
+                  : err instanceof Error
+                    ? err.message
+                    : '计划草稿自动保存失败，本地输入已保留；请重试。',
+            )
+            break // 队列保留，下次计划变更或生成前重试
+          }
+        }
+      } finally {
+        planPumpingRef.current = false
+      }
+    })
+    planFlushPromiseRef.current = flush
+    await flush
+  }
+
+  /** Issue #194 M02 V1: 单动作加入/移出提升项；加入保留已有月份，
+    移出清空计划月份与季度。变更随行内自动保存落库。 */
+  function toggleIncludePlan(index: number, include: boolean) {
+    const detail = detailsRef.current[index]
+    updateDetail(index, {
+      include_in_plan: include,
+      plan_quarter: include ? (detail?.plan_quarter ?? null) : null,
+      plan_month: include ? (detail?.plan_month ?? null) : null,
+    })
+  }
+
+  /** 应用服务端 auto_cleared 裁决：清空相应行的计划字段，并把该行从
+    自动保存队列移除（本地未保存计划变更已被服务端否决）。 */
+  function applyAutoCleared(
+    cleared: Array<{ l3_node_id: number; fields: string[] }>,
+  ) {
+    if (!cleared.length) return
+    const clearedCodes = new Set<string>()
+    for (const item of cleared) {
+      const row = detailsRef.current.find(
+        (d) => d.l3_node_id === item.l3_node_id,
+      )
+      if (row) clearedCodes.add(row.l3_code)
+    }
+    for (const item of cleared) {
+      setDetails((current) =>
+        current.map((detail) => {
+          if (detail.l3_node_id === item.l3_node_id) {
+            const patch: Partial<AssessmentDetail> = {}
+            for (const f of item.fields) {
+              if (f === 'member_priority') patch.member_priority = null
+              if (f === 'include_in_plan') patch.include_in_plan = null
+              if (f === 'plan_quarter') patch.plan_quarter = null
+              if (f === 'plan_month') patch.plan_month = null
+            }
+            return { ...detail, ...patch }
+          }
+          return detail
+        }),
+      )
+    }
+    if (clearedCodes.size) {
+      planQueueRef.current = planQueueRef.current.filter(
+        (task) => !clearedCodes.has(task.l3_code),
+      )
     }
   }
 
   async function handleSave() {
     if (!assessment) return
     const changed = details.filter(
-      (detail) => detail.id != null && dirtyIds.has(detail.id),
+      (detail) => detail.id != null && ratingDirtyIdsRef.current.has(detail.id),
     )
     if (!changed.length) return
+    const savedVersions = new Map(
+      changed.map((detail) => [
+        detail.id!,
+        ratingChangeVersionsRef.current.get(detail.id!) ?? 0,
+      ]),
+    )
+    // 评级与计划泵共用 mutation tail；先清空已排队计划，再把评级接在同一
+    // revision 链尾端。评级只提交评级/调整/依据字段（稀疏 PATCH）。
+    await pumpPlanSaves()
     setError('')
     setMessage('')
+    setRatingSaveState('评级保存中')
     try {
       if (isMockEnabled()) {
-        setMessage('草稿已保存')
-        setDirtyIds(new Set())
+        setMessage('能力评级已保存')
+        ratingDirtyIdsRef.current = new Set()
+        setRatingSaveState('评级已保存')
         return
       }
-      const result = await saveDraft(
-        assessment.id,
-        changed,
-        assessment.revision ?? 1,
+      const result = await enqueueMutation(() =>
+        saveDraft(
+          assessment.id,
+          buildDraftRows(changed, 'rating'),
+          revisionRef.current,
+        ),
       )
+      revisionRef.current = result.revision ?? revisionRef.current + 1
       setAssessment((current) =>
         current
           ? {
@@ -414,51 +672,50 @@ export function AssessmentGapPage() {
             }
           : current,
       )
-      setDirtyIds(new Set())
-      const autoCleared = result.auto_cleared ?? []
-      for (const cleared of autoCleared) {
-        setDetails((current) =>
-          current.map((detail) => {
-            if (detail.l3_node_id === cleared.l3_node_id) {
-              const patch: Partial<AssessmentDetail> = {}
-              for (const f of cleared.fields) {
-                if (f === 'member_priority') patch.member_priority = null
-                if (f === 'include_in_plan') patch.include_in_plan = null
-                if (f === 'plan_quarter') patch.plan_quarter = null
-                if (f === 'plan_month') patch.plan_month = null
-              }
-              return { ...detail, ...patch }
-            }
-            return detail
-          }),
-        )
+      const remaining = new Set(ratingDirtyIdsRef.current)
+      for (const [id, version] of savedVersions) {
+        if (ratingChangeVersionsRef.current.get(id) === version) {
+          remaining.delete(id)
+        }
       }
-      const updated = await getAssessment(assessment.id)
-      loadAssessment(updated)
-      setMessage('草稿已保存')
+      ratingDirtyIdsRef.current = remaining
+      applyAutoCleared(result.auto_cleared ?? [])
+      setMessage('能力评级已保存')
+      setRatingSaveState(remaining.size ? '评级未保存' : '评级已保存')
     } catch (err: unknown) {
+      setRatingSaveState('评级保存失败')
       const status = (err as { status?: number }).status
+      const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
           ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : err instanceof Error
-            ? err.message
-            : '保存失败',
+          : isStructuredAssessmentError(detail)
+            ? (() => {
+                const target = details.find(
+                  (item) => item.l3_code === detail.l3_code,
+                )
+                if (target) locateDetail(target)
+                return detail.message
+              })()
+            : err instanceof Error
+              ? err.message
+              : '保存失败',
       )
     }
   }
 
   async function handleBatchFill(l2Code: string, currentLevel: 0 | 1 | 2) {
     if (!assessment) return
+    // 批量填与评级/计划草稿保存走同一 mutation tail；先等待在途计划自动保存，
+    // 再接入同一 revision 序列，保证后续计划 PATCH 使用新 revision。
+    await pumpPlanSaves()
     setError('')
     setMessage('')
     try {
-      const result = await batchFillL2(
-        assessment.id,
-        l2Code,
-        currentLevel,
-        assessment.revision ?? 1,
+      const result = await enqueueMutation(() =>
+        batchFillL2(assessment.id, l2Code, currentLevel, revisionRef.current),
       )
+      revisionRef.current = result.revision ?? revisionRef.current + 1
       setDetails((current) =>
         current.map((detail) =>
           result.updated_l3_codes.includes(detail.l3_code)
@@ -501,74 +758,74 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleSubmit() {
+  async function handleGeneratePlan() {
     if (!assessment) return
     setError('')
     setMessage('')
+    setGenerationSummary(null)
     try {
       if (isMockEnabled()) {
         setAssessment({ ...mockAssessmentSubmitted, details })
-        setMessage('已提交，Gap 即时生成。等待 Buddy 复核。')
+        setMessage('已生成所选学习任务（演示）。')
         return
       }
-      let revision = assessment.revision ?? 1
-      const changed = details.filter(
-        (detail) => detail.id != null && dirtyIds.has(detail.id),
+      const selected = details.filter((d) => d.include_in_plan === true)
+      if (selected.length === 0) {
+        setError('请先加入提升项到计划草稿，再生成所选学习任务。')
+        return
+      }
+      // Issue #187 合同第 6 条：缺计划月份 → 整批不提交，保留输入，逐项中文提示。
+      const missingMonth = selected.filter((d) => !d.plan_month)
+      if (missingMonth.length > 0) {
+        setError(
+          `以下项计划月份待补（请选择 YYYY-MM）：${missingMonth
+            .map((d) => d.l3_code)
+            .join('、')}`,
+        )
+        const target = missingMonth[0]
+        const index = details.findIndex((d) => d.l3_code === target.l3_code)
+        if (index >= 0) locateDetail(target)
+        return
+      }
+      // M02 V1: 生成前先等待在途计划自动保存完成（同一 revision 序列）——
+      // 失败（队列非空）则中止本次生成并保留队列，由用户重试；避免
+      // 部分写入、revision 冲突与生成读旧值。未保存评级仍保留在本地。
+      await pumpPlanSaves()
+      if (planQueueRef.current.length > 0) return
+      const revision = revisionRef.current
+      const fingerprint = `${[...selected.map((d) => d.l3_code)].sort().join('|')}|${revision}`
+      if (
+        !genIdemRef.current ||
+        genIdemRef.current.fingerprint !== fingerprint
+      ) {
+        genIdemRef.current = { key: newIdempotencyKey(), fingerprint }
+      }
+      const result = await generatePlanItems(
+        assessment.id,
+        selected.map((d) => d.l3_code),
+        revision,
+        genIdemRef.current.key,
       )
-      if (changed.length) {
-        const saved = await saveDraft(assessment.id, changed, revision)
-        revision = saved.revision ?? revision + 1
-        const autoCleared = saved.auto_cleared ?? []
-        for (const cleared of autoCleared) {
-          setDetails((current) =>
-            current.map((detail) => {
-              if (detail.l3_node_id === cleared.l3_node_id) {
-                const patch: Partial<AssessmentDetail> = {}
-                for (const f of cleared.fields) {
-                  if (f === 'member_priority') patch.member_priority = null
-                  if (f === 'include_in_plan') patch.include_in_plan = null
-                  if (f === 'plan_quarter') patch.plan_quarter = null
-                  if (f === 'plan_month') patch.plan_month = null
-                }
-                return { ...detail, ...patch }
-              }
-              return detail
-            }),
-          )
-        }
-        setAssessment((current) =>
-          current
-            ? {
-                ...current,
-                revision,
-                gap_summary: saved.gap_summary ?? current.gap_summary,
-              }
-            : current,
-        )
-        setDirtyIds(new Set())
-      }
-      const result = await submitAssessment(assessment.id, revision)
-      loadAssessment(await getAssessment(assessment.id))
-
-      // Issue #82: Show plan generation result
-      const planGen = (result as any).plan_generation
-      if (planGen && planGen.created_tasks > 0) {
-        setMessage(
-          `✅ 自评已提交\n📋 已生成 ${planGen.created_tasks} 个学习任务${planGen.skipped_items > 0 ? `（${planGen.skipped_items} 个已存在）` : ''}\n💡 前往「成长计划与任务」查看`,
-        )
-      } else {
-        setMessage(
-          (result.auto_cancelled_plan_candidates ?? []).length
-            ? `已提交，已自动取消 ${(result.auto_cancelled_plan_candidates ?? []).join('、')} 的计划。`
-            : '已提交，Gap 即时生成。',
-        )
-      }
+      // Issue #194 P1-1: 生成成功不重载 Assessment 草稿（生成不改草稿
+      // 字段/revision；M03/M04 导航自行读取正式结果）——重载会用服务端
+      // 旧值覆盖本地未保存评级，违背输入保留。本地计划选择与月份保留。
+      const created = result.created ?? []
+      const existing = result.existing ?? []
+      const annualPlan = await getAnnualPlan(year).catch(() => null)
+      setGenerationSummary({
+        created: created.length,
+        existing: existing.length,
+        planTotal: annualPlan?.items.length ?? null,
+      })
     } catch (err: unknown) {
       const status = (err as { status?: number }).status
       const detail = (err as { detail?: unknown }).detail
       setError(
         status === 409
-          ? '提交冲突：数据已被其他操作更新，请重新加载后再提交。'
+          ? (() => {
+              genIdemRef.current = null // 409 → 下次换新 key（P1-4）
+              return '生成冲突：数据已被其他操作更新，本地输入已保留；请重新加载后再生成。'
+            })()
           : isStructuredAssessmentError(detail)
             ? (() => {
                 const target = details.find(
@@ -579,7 +836,7 @@ export function AssessmentGapPage() {
               })()
             : err instanceof Error
               ? err.message
-              : '提交失败',
+              : '生成失败',
       )
     }
   }
@@ -612,7 +869,7 @@ export function AssessmentGapPage() {
       )
       loadAssessment(await getAssessment(assessment.id))
       setRepairPreview(null)
-      setDirtyIds(new Set())
+      // loadAssessment 已重置自动保存队列与 revision。
       setMessage(
         result.result === 'noop'
           ? '草稿目标快照已是最新状态。'
@@ -645,14 +902,9 @@ export function AssessmentGapPage() {
       const row = document.getElementById(
         `row-${detail.id}`,
       ) as HTMLElement | null
-      row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
       row?.focus()
     }, 50)
-  }
-
-  function locateNextUnfilled() {
-    const detail = progressDetails(details).find((item) => !isFilled(item))
-    if (detail) locateDetail(detail)
   }
 
   function setEvidence(index: number, value: string) {
@@ -671,40 +923,15 @@ export function AssessmentGapPage() {
     () => assessedDetails.filter(isFilled).length,
     [assessedDetails],
   )
-  const unfilled = assessedDetails.length - filled
-  const summary = assessment?.gap_summary
-
-  // --- stats ---
+  // --- stats（原型摘要仅用存在差距/已加入计划；真实计数） ---
   const stats = useMemo(() => {
     const applicable = assessedDetails
-    const unassessed = applicable.filter((d) => d.current_level == null).length
     const totalGap = applicable.filter((d) => {
       const g = computeGap(d)
       return g != null && g > 0
     }).length
-    const required = applicable.filter(
-      (d) => d.scope_type === 'current_required',
-    ).length
-    const progressive = applicable.filter(
-      (d) => d.scope_type === 'target_progressive',
-    ).length
     const inPlan = applicable.filter((d) => d.include_in_plan === true).length
-    const onHold = applicable.filter((d) => d.member_priority === '暂缓').length
-    const byQ = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }
-    for (const d of applicable) {
-      if (d.plan_quarter && d.plan_quarter in byQ) {
-        byQ[d.plan_quarter as keyof typeof byQ] += 1
-      }
-    }
-    return {
-      unassessed,
-      totalGap,
-      required,
-      progressive,
-      inPlan,
-      onHold,
-      byQ,
-    }
+    return { totalGap, inPlan }
   }, [assessedDetails])
 
   const domains = useMemo(
@@ -718,41 +945,11 @@ export function AssessmentGapPage() {
     [assessment, details],
   )
 
-  const filtered = useMemo(() => {
-    let list = details.filter((detail) => l1Of(detail) === activeDomain)
-    if (scopeFilter !== '全部') {
-      if (assessment?.assessment_scope_version) {
-        list = list.filter((detail) => detail.scope_type === scopeFilter)
-      } else {
-        list = []
-      }
-    }
-    // New filters
-    if (filter === '未评估') {
-      list = list.filter(
-        (d) => isApplicableDetail(d) && d.current_level == null,
-      )
-    }
-    if (filter === '有Gap') {
-      list = list.filter((d) => {
-        const g = computeGap(d)
-        return g != null && g > 0
-      })
-    }
-    if (filter === '当前职级必备') {
-      list = list.filter((d) => d.scope_type === 'current_required')
-    }
-    if (filter === '目标职级进阶') {
-      list = list.filter((d) => d.scope_type === 'target_progressive')
-    }
-    if (filter === '已纳入计划') {
-      list = list.filter((d) => d.include_in_plan === true)
-    }
-    if (filter === '暂缓') {
-      list = list.filter((d) => d.member_priority === '暂缓')
-    }
-    return list
-  }, [details, activeDomain, filter, scopeFilter, assessment])
+  // Issue #194: 额外筛选层（范围/状态）已按定版原型移除——域内明细全量展示。
+  const filtered = useMemo(
+    () => details.filter((detail) => l1Of(detail) === activeDomain),
+    [details, activeDomain],
+  )
 
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -807,37 +1004,25 @@ export function AssessmentGapPage() {
   }, [activeDomain, assessment, expandedL2, filtered])
 
   // --- sticky bar counts ---
+  // Issue #194: 原型底部仅一条计划草稿状态（已选 N 项 + 月份是否完整）。
   const stickyStats = useMemo(() => {
-    const hasGap = assessedDetails.filter((d) => {
-      const g = computeGap(d)
-      return g != null && g > 0
-    })
-    const inPlanNoPriority = hasGap.filter(
-      (d) =>
-        d.include_in_plan === true &&
-        d.member_priority !== '暂缓' &&
-        !d.member_priority,
+    const inPlan = assessedDetails.filter(
+      (d) => d.include_in_plan === true,
     ).length
-    const undecided = hasGap.filter((d) => d.include_in_plan == null).length
-    return { inPlanNoPriority, undecided }
+    // Issue #194: 待补计划月份 — 已加入计划但未填 YYYY-MM（生成前必须补齐）。
+    const inPlanNoMonth = assessedDetails.filter(
+      (d) => d.include_in_plan === true && !d.plan_month,
+    ).length
+    return { inPlan, inPlanNoMonth }
   }, [assessedDetails])
 
-  const filters: Filter[] = [
-    '全部',
-    '未评估',
-    '有Gap',
-    '当前职级必备',
-    '目标职级进阶',
-    '已纳入计划',
-    '暂缓',
-  ]
-
-  if (loading) return <p className="muted">加载中…</p>
+  if (loading || (assessment !== null && assessment.year !== year))
+    return <p className="muted">加载中…</p>
   if (!assessment) {
     const preview = scopeChanged ?? scopePreview
     return (
       <section className="page">
-        <h1>能力自评与 Gap 分析</h1>
+        <h1>能力评级与提升计划</h1>
         <p>当前年度暂无草稿。</p>
         {!preview && (
           <button
@@ -894,57 +1079,54 @@ export function AssessmentGapPage() {
           className={`page-heading assessment-header ${s['assessment-header']}`}
         >
           <div>
-            <p className="eyebrow">能力成长 / 能力自评与 Gap</p>
-            <h1>能力自评与 Gap 分析</h1>
-            <p className="muted" data-testid="scope-header">
-              {assessment.year} 年度 · 版本 {assessment.version} ·{' '}
-              {assessment.status}
-              {assessment.assessment_scope_version
-                ? ` · 当前 ${assessment.member_current_level_snapshot} → 年度目标 ${assessment.member_target_level_snapshot}`
-                : ''}
-              {assessment.standard_version_label
-                ? ` · ${assessment.standard_version_label}`
-                : ''}
-              {assessment.scope_summary
-                ? ` · 适用 ${assessment.scope_summary.total} · 必备 ${assessment.scope_summary.current_required} · 进阶 ${assessment.scope_summary.target_progressive}`
-                : ''}
+            <span className={s.eyebrow}>能力成长</span>
+            <h1>能力评级与提升计划</h1>
+            {/* 定版原型 M02 V1 页头说明 */}
+            <p className="muted">
+              逐项保存评级；选择存在差距的提升项，补充计划月份后再显式生成任务。
             </p>
           </div>
           <div className="assessment-actions">
-            <button type="button" onClick={() => setDrawerOpen(true)}>
-              查看 Gap 摘要
-            </button>
-            <a href="/capability/assessment/history">查看评估历史</a>
+            <div className={s.ratingSaveControl}>
+              <span
+                className={s.ratingSaveStatus}
+                role="status"
+                aria-label="评级保存状态"
+              >
+                {ratingSaveState}
+              </span>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={ratingSaveState === '评级保存中'}
+              >
+                保存能力评级
+              </button>
+            </div>
+            <span className={s.autoSaveBadge}>计划草稿自动保存</span>
           </div>
         </header>
 
-        {/* Top stats bar */}
+        {/* Top stats bar — Issue #194: 只保留定版原型语义的五项指标
+            （能力域/三级能力项/已评级/存在差距/已加入计划），真实计数。 */}
         <section
           className={`assessment-summary compact-summary ${s['compact-summary']}`}
           aria-label="评估摘要"
         >
           <span>
-            进度{' '}
-            <strong>
-              {filled}/{assessedDetails.length}
-            </strong>
+            能力域 <strong>{domains.length}</strong>
           </span>
           <span>
-            未评估 <strong>{stats.unassessed}</strong>
+            三级能力项 <strong>{assessedDetails.length}</strong>
           </span>
           <span>
-            Gap <strong>{stats.totalGap}</strong>
+            已评级 <strong>{filled}</strong>
           </span>
           <span>
-            已纳入计划 <strong>{stats.inPlan}</strong>
+            存在差距 <strong>{stats.totalGap}</strong>
           </span>
           <span>
-            暂缓 <strong>{stats.onHold}</strong>
-          </span>
-          <span>
-            Q1:<strong>{stats.byQ.Q1}</strong> Q2:
-            <strong>{stats.byQ.Q2}</strong> Q3:<strong>{stats.byQ.Q3}</strong>{' '}
-            Q4:<strong>{stats.byQ.Q4}</strong>
+            已加入计划 <strong>{stats.inPlan}</strong>
           </span>
         </section>
 
@@ -1002,8 +1184,24 @@ export function AssessmentGapPage() {
         )}
         {error && <p className="error global-assessment-error">{error}</p>}
         {message && <p className="success">{message}</p>}
+        {generationSummary && (
+          <section className={s.generationSummary} aria-label="生成结果摘要">
+            <span>当前草稿已选 {stickyStats.inPlan} 项</span>
+            <span>本次新建 {generationSummary.created} 项</span>
+            <span>已有任务 {generationSummary.existing} 项</span>
+            <span>
+              计划总计{' '}
+              {generationSummary.planTotal === null
+                ? '读取失败'
+                : `${generationSummary.planTotal} 项`}
+            </span>
+          </section>
+        )}
 
-        <div className={s.navigationRow}>
+        <div
+          className={s.navigationRow}
+          data-testid="assessment-navigation-toolbar"
+        >
           <nav className={s.l1Nav} aria-label="一级能力域导航">
             {domains.map((domain) => {
               const domainItems = details.filter(
@@ -1035,33 +1233,7 @@ export function AssessmentGapPage() {
             })}
           </nav>
           <div className={s.toolbar}>
-            <select
-              aria-label="范围筛选"
-              data-testid="scope-filter"
-              value={scopeFilter}
-              onChange={(e) =>
-                setScopeFilter(
-                  e.target.value as
-                    '全部' | 'current_required' | 'target_progressive',
-                )
-              }
-            >
-              <option value="全部">全部适用</option>
-              <option value="current_required">当前职级必备</option>
-              <option value="target_progressive">目标职级进阶</option>
-            </select>
-            <select
-              aria-label="状态筛选"
-              data-testid="status-filter"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value as Filter)}
-            >
-              {filters.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
+            {/* Issue #194: 定版原型工具条仅域切换 + 搜索（范围/状态筛选层已移除） */}
             <input
               ref={searchInputRef}
               className={s.searchBox}
@@ -1103,13 +1275,6 @@ export function AssessmentGapPage() {
                 }
               }}
             />
-            <button
-              type="button"
-              className={s.locateBtn}
-              onClick={locateNextUnfilled}
-            >
-              定位未完成
-            </button>
             {searchResults.length > 0 && (
               <div
                 className={s.searchResults}
@@ -1139,11 +1304,6 @@ export function AssessmentGapPage() {
         </div>
 
         <div className={s.mainArea} data-testid="assessment-main-area">
-          {scopeFilter !== '全部' && !assessment.assessment_scope_version && (
-            <p className="muted" data-testid="legacy-scope-hint">
-              历史评估未按范围分类，必备/进阶筛选不可用。
-            </p>
-          )}
           <div className={s.tableArea}>
             {l2Groups.map((group) => {
               const l2Code = group.l2_code
@@ -1228,442 +1388,419 @@ export function AssessmentGapPage() {
                   </div>
                   {open && (
                     <>
-                      <section aria-label={l2Code + ' 职级要求'}>
-                        <strong>职级要求 P4–P8</strong>
-                        {group.requirements ? (
-                          <>
-                            <div className={s.groupActions}>
-                              {(['P4', 'P5', 'P6', 'P7', 'P8'] as const).map(
-                                (level) => (
-                                  <button
-                                    aria-pressed={requirementLevel === level}
-                                    key={level}
-                                    onClick={() =>
-                                      setSelectedRequirement((current) => ({
-                                        ...current,
-                                        [l2Code]: level,
-                                      }))
-                                    }
-                                    type="button"
-                                  >
-                                    {level}
-                                  </button>
-                                ),
-                              )}
-                            </div>
-                            <p className="muted">
-                              {requirementText?.trim()
-                                ? (suggestedRequirement?.label ?? '职级') +
-                                  ' ' +
-                                  requirementLevel +
-                                  '：' +
-                                  requirementText
-                                : '职级要求暂不可用'}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="muted">职级要求暂不可用</p>
-                        )}
-                      </section>
+                      <details>
+                        <summary>职级要求</summary>
+                        <section aria-label={l2Code + ' 职级要求'}>
+                          {group.requirements ? (
+                            <>
+                              <div className={s.groupActions}>
+                                {(['P4', 'P5', 'P6', 'P7', 'P8'] as const).map(
+                                  (level) => (
+                                    <button
+                                      aria-pressed={requirementLevel === level}
+                                      key={level}
+                                      onClick={() =>
+                                        setSelectedRequirement((current) => ({
+                                          ...current,
+                                          [l2Code]: level,
+                                        }))
+                                      }
+                                      type="button"
+                                    >
+                                      {level}
+                                    </button>
+                                  ),
+                                )}
+                              </div>
+                              <p className="muted">
+                                {requirementText?.trim()
+                                  ? (suggestedRequirement?.label ?? '职级') +
+                                    ' ' +
+                                    requirementLevel +
+                                    '：' +
+                                    requirementText
+                                  : '职级要求暂不可用'}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="muted">职级要求暂不可用</p>
+                          )}
+                        </section>
+                      </details>
                       <h3>三级达成路径 / 学习实践项</h3>
                       {group.is_empty ? (
                         <p className="muted">
                           暂无三级达成路径，当前无可评估项
                         </p>
                       ) : (
-                        <table
-                          className={s.table}
-                          data-testid="assessment-table"
-                        >
-                          <thead>
-                            <tr>
-                              <th>能力项</th>
-                              <th>当前掌握度</th>
-                              <th>目标掌握度</th>
-                              <th>Gap</th>
-                              <th>优先级</th>
-                              <th>纳入计划</th>
-                              <th>计划时间</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {items.map((detail) => {
-                              const index = details.indexOf(detail)
-                              const target = effectiveTarget(detail)
-                              const gap = computeGap(detail)
-                              const reason = unfilledReason(detail)
-                              const applicable = isApplicableDetail(detail)
-                              const adjustable =
-                                applicable &&
-                                detail.standard_target_level != null &&
-                                !detail.target_compatibility_error
-                              const inherited =
-                                detail.inherited_from_assessment_id != null
-                              const updated =
-                                inherited && isInheritedUpdate(detail)
-                              const hasGap = gap != null && gap > 0
-                              // Conditional enable for priority + plan checkboxes
-                              const canPlan =
-                                hasGap && detail.member_priority !== '暂缓'
-                              const showPlanTime =
-                                detail.include_in_plan === true
-                              return (
-                                <Fragment key={detail.id}>
-                                  <tr
-                                    id={`row-${detail.id}`}
-                                    tabIndex={-1}
-                                    className={
-                                      gap && gap > 0 ? s.rowGap : undefined
+                        <div className={s.table} data-testid="assessment-table">
+                          {/* Issue #194 P1: 权威原型 M02 V1 四区能力项行
+                            （能力项 / 当前评级 / 目标与差距 / 提升计划），
+                            窄宽单列重排，不用横向滚动表格替代。 */}
+                          <div className={s.abilityHead}>
+                            <span>能力项</span>
+                            <span>当前评级</span>
+                            <span>目标与差距</span>
+                            <span>提升计划</span>
+                          </div>
+                          {items.map((detail) => {
+                            const index = details.indexOf(detail)
+                            const target = effectiveTarget(detail)
+                            const gap = computeGap(detail)
+                            const reason = unfilledReason(detail)
+                            const applicable = isApplicableDetail(detail)
+                            const adjustable =
+                              applicable &&
+                              detail.standard_target_level != null &&
+                              !detail.target_compatibility_error
+                            const inherited =
+                              detail.inherited_from_assessment_id != null
+                            const updated =
+                              inherited && isInheritedUpdate(detail)
+                            const hasGap = gap != null && gap > 0
+                            // Conditional enable for priority + plan checkboxes
+                            const canPlan =
+                              hasGap && detail.member_priority !== '暂缓'
+                            const showPlanTime = detail.include_in_plan === true
+                            return (
+                              <div
+                                key={detail.id}
+                                id={`row-${detail.id}`}
+                                tabIndex={-1}
+                                className={`${s.abilityRow} ${
+                                  gap && gap > 0 ? s.rowGap : ''
+                                }`}
+                              >
+                                {/* Zone 1: 能力项 */}
+                                <div>
+                                  <strong>
+                                    {detail.l3_name ?? detail.l3_code}
+                                  </strong>
+                                  <small
+                                    className={s.l3name}
+                                    title={
+                                      inherited
+                                        ? updated
+                                          ? '本次已更新'
+                                          : '沿用上次评估'
+                                        : undefined
                                     }
                                   >
-                                    {/* Column 1: 能力项 */}
-                                    <td>
-                                      <strong>
-                                        {detail.l3_name ?? detail.l3_code}
-                                      </strong>
-                                      <small className={s.l3name}>
-                                        {detail.l3_code}
-                                      </small>
-                                      {detail.scope_type && (
-                                        <small className={s.scopeTag}>
-                                          {detail.scope_type ===
-                                          'current_required'
-                                            ? '当前职级必备'
-                                            : '目标职级进阶'}
-                                        </small>
-                                      )}
-                                      {detail.standard_job_level_snapshot && (
-                                        <small className={s.levelSnapshot}>
-                                          {detail.standard_job_level_snapshot}{' '}
-                                          标准
-                                        </small>
-                                      )}
-                                      {!isFilled(detail) && reason && (
-                                        <span className={s.reasonTag}>
-                                          {reason}
+                                    {scopeLabel(detail)}
+                                  </small>
+                                  {!isFilled(detail) && reason && (
+                                    <span className={s.reasonTag}>
+                                      {reason}
+                                    </span>
+                                  )}
+                                </div>
+                                {/* Zone 2: 当前评级 — 原型逐档评级按钮；
+                                    点击已激活档位清空（回到未评估）。 */}
+                                <div
+                                  className={s.rating}
+                                  aria-label={`当前等级 ${detail.l3_code}`}
+                                >
+                                  {LEVELS.map((level) => {
+                                    const active =
+                                      detail.current_level === level
+                                    return (
+                                      <button
+                                        key={level}
+                                        type="button"
+                                        className={
+                                          active ? s.ratingActive : undefined
+                                        }
+                                        aria-pressed={active}
+                                        disabled={!editable || !applicable}
+                                        onClick={() =>
+                                          updateDetail(index, {
+                                            current_level: active
+                                              ? null
+                                              : level,
+                                          })
+                                        }
+                                      >
+                                        {level}
+                                        <small> · {LEVEL_LABELS[level]}</small>
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                                {/* Zone 3: 目标与差距（含原 Gap 列） */}
+                                <div className={s.targetCell}>
+                                  {applicable ? (
+                                    <>
+                                      <span className={s.targetLine}>
+                                        目标：{target ?? '—'} ·{' '}
+                                        {detail.standard_job_level_snapshot ??
+                                          assessment.member_current_level ??
+                                          '—'}{' '}
+                                        标准
+                                      </span>
+                                      {detail.target_adjusted && (
+                                        <span className={s.adjustedBadge}>
+                                          [已调整]
                                         </span>
                                       )}
-                                      {inherited && (
-                                        <span className={s.inheritanceTag}>
-                                          {updated
-                                            ? '本次已更新'
-                                            : '沿用上次评估'}
-                                        </span>
+                                      {adjustable && editable && (
+                                        <details className={s.adjustTarget}>
+                                          <summary
+                                            className={s.adjustTargetSummary}
+                                          >
+                                            调整目标
+                                          </summary>
+                                          <button
+                                            type="button"
+                                            className={s.adjustBtn}
+                                            onClick={() =>
+                                              setAdjustmentId(
+                                                adjustmentId === detail.id
+                                                  ? null
+                                                  : (detail.id ?? null),
+                                              )
+                                            }
+                                          >
+                                            调整▸
+                                          </button>
+                                        </details>
                                       )}
-                                    </td>
-                                    {/* Column 2: 当前掌握度 */}
-                                    <td>
-                                      <select
-                                        value={detail.current_level ?? ''}
+                                      {detail.target_snapshot_source ===
+                                        'legacy_preserved' && (
+                                        <small className={s.snapshotTag}>
+                                          历史保留
+                                        </small>
+                                      )}
+                                      {/* Inline adjustment editor */}
+                                      {adjustmentId === detail.id &&
+                                        editable && (
+                                          <div className={s.adjustmentEditor}>
+                                            <label className="checkbox">
+                                              <input
+                                                type="checkbox"
+                                                aria-label={`启用个人调整 ${detail.l3_code}`}
+                                                checked={
+                                                  detail.target_adjusted ??
+                                                  false
+                                                }
+                                                onChange={(event) =>
+                                                  updateDetail(index, {
+                                                    target_adjusted:
+                                                      event.target.checked,
+                                                    adjusted_target_level: event
+                                                      .target.checked
+                                                      ? (detail.adjusted_target_level ??
+                                                        detail.standard_target_level ??
+                                                        null)
+                                                      : null,
+                                                    target_adjustment_reason:
+                                                      event.target.checked
+                                                        ? (detail.target_adjustment_reason ??
+                                                          '')
+                                                        : null,
+                                                  })
+                                                }
+                                              />
+                                              启用调整
+                                            </label>
+                                            {detail.target_adjusted && (
+                                              <>
+                                                <select
+                                                  value={
+                                                    detail.adjusted_target_level ??
+                                                    ''
+                                                  }
+                                                  onChange={(event) =>
+                                                    updateDetail(index, {
+                                                      adjusted_target_level:
+                                                        event.target.value
+                                                          ? Number(
+                                                              event.target
+                                                                .value,
+                                                            )
+                                                          : null,
+                                                    })
+                                                  }
+                                                  aria-label={`调整目标 ${detail.l3_code}`}
+                                                >
+                                                  <option value="">选择</option>
+                                                  {LEVELS.filter(
+                                                    (l) => l >= 1,
+                                                  ).map((level) => (
+                                                    <option
+                                                      key={level}
+                                                      value={level}
+                                                    >
+                                                      {level}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                                <input
+                                                  aria-label={`调整原因 ${detail.l3_code}`}
+                                                  value={
+                                                    detail.target_adjustment_reason ??
+                                                    ''
+                                                  }
+                                                  placeholder="填写调整原因"
+                                                  onChange={(event) =>
+                                                    updateDetail(index, {
+                                                      target_adjustment_reason:
+                                                        event.target.value,
+                                                    })
+                                                  }
+                                                />
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
+                                      <div className={s.gapCell}>
+                                        Gap：{gap ?? '—'}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    '不适用'
+                                  )}
+                                </div>
+                                {/* Zone 4: 提升计划（加入/移出）；优先级与月份仅在
+                                    已加入后的计划草稿中出现，避免挤占默认能力行。 */}
+                                <div className={s.planZone}>
+                                  {/* M02 V1 单动作加入/移出 */}
+                                  {gap === 0 ? (
+                                    <span className="muted">无需提升</span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className={
+                                        detail.include_in_plan === true
+                                          ? s.planToggleJoined
+                                          : undefined
+                                      }
+                                      onClick={() =>
+                                        toggleIncludePlan(
+                                          index,
+                                          detail.include_in_plan !== true,
+                                        )
+                                      }
+                                      disabled={!editable || !canPlan}
+                                      aria-label={`${detail.include_in_plan === true ? '移出提升计划' : '加入提升计划'} ${detail.l3_code}`}
+                                    >
+                                      {detail.include_in_plan === true
+                                        ? '已加入'
+                                        : '加入提升计划'}
+                                    </button>
+                                  )}
+                                </div>
+                                {/* 计划草稿条：单一 YYYY-MM（Issue #194/187
+                                      合同第 4 条）；原型 plan-editor 全宽行 */}
+                                {showPlanTime && (
+                                  <div className={s.planEditor}>
+                                    <label htmlFor={`priority-${detail.id}`}>
+                                      优先级
+                                    </label>
+                                    <select
+                                      id={`priority-${detail.id}`}
+                                      value={detail.member_priority ?? ''}
+                                      onChange={(e) => {
+                                        const val =
+                                          (e.target.value as
+                                            '高' | '中' | '低' | '暂缓') || null
+                                        if (val === '暂缓') {
+                                          updateDetail(index, {
+                                            member_priority: '暂缓',
+                                            include_in_plan: false,
+                                            plan_quarter: null,
+                                            plan_month: null,
+                                          })
+                                        } else {
+                                          updateDetail(index, {
+                                            member_priority: val,
+                                          })
+                                        }
+                                      }}
+                                      disabled={!editable || !hasGap}
+                                      aria-label={`优先级 ${detail.l3_code}`}
+                                    >
+                                      <option value="">—</option>
+                                      <option value="高">高</option>
+                                      <option value="中">中</option>
+                                      <option value="低">低</option>
+                                      <option value="暂缓">暂缓</option>
+                                    </select>
+                                    <label htmlFor={`plan-month-${detail.id}`}>
+                                      计划月份 *
+                                    </label>
+                                    <div
+                                      className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''}`}
+                                      data-testid={`plan-month-control-${detail.l3_code}`}
+                                      aria-disabled={!editable}
+                                      onClick={() =>
+                                        openMonthPicker(
+                                          document.getElementById(
+                                            `plan-month-${detail.id}`,
+                                          ) as HTMLInputElement | null,
+                                        )
+                                      }
+                                    >
+                                      <span>
+                                        {detail.plan_month ?? '选择 YYYY-MM'}
+                                      </span>
+                                      <input
+                                        id={`plan-month-${detail.id}`}
+                                        type="month"
+                                        value={detail.plan_month ?? ''}
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          openMonthPicker(event.currentTarget)
+                                        }}
                                         onChange={(event) =>
                                           updateDetail(index, {
-                                            current_level: event.target.value
-                                              ? Number(event.target.value)
-                                              : null,
-                                          })
-                                        }
-                                        disabled={!editable || !applicable}
-                                        aria-label={`当前等级 ${detail.l3_code}`}
-                                        title={
-                                          LEVEL_LABELS[
-                                            detail.current_level ?? -1
-                                          ] ?? ''
-                                        }
-                                      >
-                                        <option value="">请选择</option>
-                                        {LEVELS.map((level) => (
-                                          <option key={level} value={level}>
-                                            {level} · {LEVEL_LABELS[level]}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                    {/* Column 3: 目标掌握度 */}
-                                    <td>
-                                      {applicable ? (
-                                        <div>
-                                          <span>
-                                            {target ?? '—'}
-                                            {detail.standard_job_level_snapshot
-                                              ? ` · ${detail.standard_job_level_snapshot} 标准`
-                                              : ''}
-                                          </span>
-                                          {detail.target_adjusted && (
-                                            <span className={s.adjustedBadge}>
-                                              [已调整]
-                                            </span>
-                                          )}
-                                          {adjustable && editable && (
-                                            <button
-                                              type="button"
-                                              className={s.adjustBtn}
-                                              onClick={() =>
-                                                setAdjustmentId(
-                                                  adjustmentId === detail.id
-                                                    ? null
-                                                    : (detail.id ?? null),
-                                                )
-                                              }
-                                            >
-                                              调整▸
-                                            </button>
-                                          )}
-                                          {detail.target_snapshot_source ===
-                                            'legacy_preserved' && (
-                                            <small className={s.snapshotTag}>
-                                              历史保留
-                                            </small>
-                                          )}
-                                          {/* Inline adjustment editor */}
-                                          {adjustmentId === detail.id &&
-                                            editable && (
-                                              <div
-                                                className={s.adjustmentEditor}
-                                              >
-                                                <label className="checkbox">
-                                                  <input
-                                                    type="checkbox"
-                                                    aria-label={`启用个人调整 ${detail.l3_code}`}
-                                                    checked={
-                                                      detail.target_adjusted ??
-                                                      false
-                                                    }
-                                                    onChange={(event) =>
-                                                      updateDetail(index, {
-                                                        target_adjusted:
-                                                          event.target.checked,
-                                                        adjusted_target_level:
-                                                          event.target.checked
-                                                            ? (detail.adjusted_target_level ??
-                                                              detail.standard_target_level ??
-                                                              null)
-                                                            : null,
-                                                        target_adjustment_reason:
-                                                          event.target.checked
-                                                            ? (detail.target_adjustment_reason ??
-                                                              '')
-                                                            : null,
-                                                      })
-                                                    }
-                                                  />
-                                                  启用调整
-                                                </label>
-                                                {detail.target_adjusted && (
-                                                  <>
-                                                    <select
-                                                      value={
-                                                        detail.adjusted_target_level ??
-                                                        ''
-                                                      }
-                                                      onChange={(event) =>
-                                                        updateDetail(index, {
-                                                          adjusted_target_level:
-                                                            event.target.value
-                                                              ? Number(
-                                                                  event.target
-                                                                    .value,
-                                                                )
-                                                              : null,
-                                                        })
-                                                      }
-                                                      aria-label={`调整目标 ${detail.l3_code}`}
-                                                    >
-                                                      <option value="">
-                                                        选择
-                                                      </option>
-                                                      {LEVELS.filter(
-                                                        (l) => l >= 1,
-                                                      ).map((level) => (
-                                                        <option
-                                                          key={level}
-                                                          value={level}
-                                                        >
-                                                          {level}
-                                                        </option>
-                                                      ))}
-                                                    </select>
-                                                    <input
-                                                      aria-label={`调整原因 ${detail.l3_code}`}
-                                                      value={
-                                                        detail.target_adjustment_reason ??
-                                                        ''
-                                                      }
-                                                      placeholder="填写调整原因"
-                                                      onChange={(event) =>
-                                                        updateDetail(index, {
-                                                          target_adjustment_reason:
-                                                            event.target.value,
-                                                        })
-                                                      }
-                                                    />
-                                                  </>
-                                                )}
-                                              </div>
-                                            )}
-                                        </div>
-                                      ) : (
-                                        '不适用'
-                                      )}
-                                    </td>
-                                    {/* Column 4: Gap */}
-                                    <td className={s.gapCell}>{gap ?? '—'}</td>
-                                    {/* Column 5: 优先级 */}
-                                    <td>
-                                      <select
-                                        value={detail.member_priority ?? ''}
-                                        onChange={(e) => {
-                                          const val =
-                                            (e.target.value as
-                                              '高' | '中' | '低' | '暂缓') ||
-                                            null
-                                          if (val === '暂缓') {
-                                            updateDetail(index, {
-                                              member_priority: '暂缓',
-                                              include_in_plan: false,
-                                              plan_quarter: null,
-                                              plan_month: null,
-                                            })
-                                          } else {
-                                            updateDetail(index, {
-                                              member_priority: val,
-                                            })
-                                          }
-                                        }}
-                                        disabled={!editable || !hasGap}
-                                        aria-label={`优先级 ${detail.l3_code}`}
-                                      >
-                                        <option value="">—</option>
-                                        <option value="高">高</option>
-                                        <option value="中">中</option>
-                                        <option value="低">低</option>
-                                        <option value="暂缓">暂缓</option>
-                                      </select>
-                                    </td>
-                                    {/* Column 6: 纳入年度计划 */}
-                                    <td>
-                                      <select
-                                        value={
-                                          detail.include_in_plan === true
-                                            ? 'yes'
-                                            : detail.include_in_plan === false
-                                              ? 'no'
-                                              : ''
-                                        }
-                                        onChange={(e) => {
-                                          const val = e.target.value
-                                          updateDetail(index, {
-                                            include_in_plan:
-                                              val === 'yes'
-                                                ? true
-                                                : val === 'no'
-                                                  ? false
-                                                  : null,
-                                            plan_quarter:
-                                              val === 'yes'
-                                                ? (detail.plan_quarter ?? null)
-                                                : null,
                                             plan_month:
-                                              val === 'yes'
-                                                ? (detail.plan_month ?? null)
-                                                : null,
+                                              event.target.value || null,
                                           })
-                                        }}
-                                        disabled={!editable || !canPlan}
-                                        aria-label={`纳入计划 ${detail.l3_code}`}
+                                        }
+                                        disabled={!editable}
+                                        aria-label={`计划月份 ${detail.l3_code}`}
+                                      />
+                                    </div>
+                                    {!detail.plan_month && editable && (
+                                      <small
+                                        className={s.pendingMonth}
+                                        data-testid={`pending-month-${detail.l3_code}`}
                                       >
-                                        <option value="">未选择</option>
-                                        <option value="yes">是</option>
-                                        <option value="no">否</option>
-                                      </select>
-                                    </td>
-                                    {/* Column 7: 计划时间 */}
-                                    <td>
-                                      {showPlanTime ? (
-                                        <div className={s.planTime}>
-                                          <select
-                                            value={detail.plan_quarter ?? ''}
-                                            onChange={(event) =>
-                                              updateDetail(index, {
-                                                plan_quarter:
-                                                  (event.target.value as
-                                                    | 'Q1'
-                                                    | 'Q2'
-                                                    | 'Q3'
-                                                    | 'Q4') || null,
-                                              })
-                                            }
-                                            disabled={!editable}
-                                            aria-label={`计划季度 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            <option value="Q1">Q1</option>
-                                            <option value="Q2">Q2</option>
-                                            <option value="Q3">Q3</option>
-                                            <option value="Q4">Q4</option>
-                                          </select>
-                                          <select
-                                            value={detail.plan_month ?? ''}
-                                            onChange={(event) =>
-                                              updateDetail(index, {
-                                                plan_month: event.target.value
-                                                  ? Number(event.target.value)
-                                                  : null,
-                                              })
-                                            }
-                                            disabled={!editable}
-                                            aria-label={`计划月份 ${detail.l3_code}`}
-                                          >
-                                            <option value="">—</option>
-                                            {Array.from(
-                                              { length: 12 },
-                                              (_, i) => i + 1,
-                                            ).map((m) => (
-                                              <option key={m} value={m}>
-                                                {m}月
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
-                                      ) : detail.include_in_plan === false ? (
-                                        <span className="muted">否</span>
-                                      ) : (
-                                        '—'
-                                      )}
-                                    </td>
-                                  </tr>
-                                  {editingId === detail.id && editable && (
-                                    <tr className={s.evidenceRow}>
-                                      <td colSpan={7}>
-                                        <textarea
-                                          autoFocus
-                                          value={editingText}
-                                          onChange={(event) =>
-                                            setEditingText(event.target.value)
-                                          }
-                                          placeholder="自评依据…"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setEvidence(index, editingText)
-                                          }
-                                        >
-                                          确认依据
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingId(null)}
-                                        >
-                                          取消
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  )}
-                                </Fragment>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                                        待补计划月份
+                                      </small>
+                                    )}
+                                  </div>
+                                )}
+                                {editingId === detail.id && editable && (
+                                  <div className={s.evidenceRow}>
+                                    <textarea
+                                      autoFocus
+                                      value={editingText}
+                                      onChange={(event) =>
+                                        setEditingText(event.target.value)
+                                      }
+                                      placeholder="自评依据…"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setEvidence(index, editingText)
+                                      }
+                                    >
+                                      确认依据
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingId(null)}
+                                    >
+                                      取消
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
                       )}
                     </>
                   )}
@@ -1673,54 +1810,27 @@ export function AssessmentGapPage() {
           </div>
         </div>
 
-        {/* Gap summary drawer */}
-        {drawerOpen && summary && (
-          <aside
-            className={s.gapDrawer}
-            data-testid="gap-drawer"
-            aria-label="Gap 摘要"
-          >
-            <button type="button" onClick={() => setDrawerOpen(false)}>
-              关闭
-            </button>
-            <h2>本次评估整体 Gap</h2>
-            <p>Gap 总数：{summary.total_gaps}</p>
-            <p>平均 Gap：{summary.avg_gap}</p>
-            <p>
-              高 / 中 / 低 / 暂缓：{summary.high_priority} /{' '}
-              {summary.medium_priority} / {summary.low_priority} /{' '}
-              {summary.on_hold ?? 0}
-            </p>
-            {summary.by_quarter && (
-              <p>
-                纳入计划 · Q1:{summary.by_quarter.Q1} Q2:{summary.by_quarter.Q2}{' '}
-                Q3:{summary.by_quarter.Q3} Q4:{summary.by_quarter.Q4}
-              </p>
-            )}
-            <p>纳入计划：{summary.in_plan ?? 0}</p>
-          </aside>
-        )}
-
-        {/* Sticky action bar */}
+        {/* Sticky action bar — A1：仅计划草稿状态 + 显式生成。 */}
         {editable && (
-          <footer className={s.stickyActions}>
-            {unfilled > 0 && <span>还有 {unfilled} 项未完成</span>}
-            {stickyStats.inPlanNoPriority > 0 && (
-              <span>{stickyStats.inPlanNoPriority} 项纳入计划但未填优先级</span>
-            )}
-            {stickyStats.undecided > 0 && (
-              <span>{stickyStats.undecided} 项未决定计划</span>
-            )}
-            <button type="button" onClick={handleSave}>
-              保存草稿
-            </button>
+          <footer className={s.stickyActions} aria-label="计划草稿操作">
+            <span
+              className={
+                stickyStats.inPlanNoMonth > 0
+                  ? s.draftIncomplete
+                  : s.draftComplete
+              }
+            >
+              计划草稿：已选 {stickyStats.inPlan} 项 ·{' '}
+              {stickyStats.inPlanNoMonth > 0
+                ? '仍有月份待补'
+                : '计划月份已完整'}
+            </span>
             <button
               type="button"
               className="primary"
-              onClick={handleSubmit}
-              disabled={unfilled > 0}
+              onClick={handleGeneratePlan}
             >
-              提交自评
+              生成所选学习任务
             </button>
           </footer>
         )}

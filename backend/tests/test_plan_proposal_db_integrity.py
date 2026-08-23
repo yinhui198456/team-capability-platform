@@ -69,8 +69,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -335,8 +334,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -356,8 +354,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -413,7 +410,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', 'L3', 'n',
                         %s, NULL, 3, 'assessment_approval', 'current_required',
-                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', '2026-05', 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -458,7 +455,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
                         %s, %s, 3, 'assessment_approval', 'current_required',
-                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', '2026-05', 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -507,7 +504,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
                         %s, %s, 3, 'assessment_approval', 'current_required',
-                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', '2026-05', 'P4', 'P4', 'P5')
                 """,
                 (
                     f["detail_proposal_id"],
@@ -643,8 +640,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -687,7 +683,9 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
         assert excinfo.value.code == "planning_snapshot_missing"
         assert excinfo.value.status_code == 422
         review_schema.rollback()
-        # zero partial writes: no new proposal, no new plan, review still open
+        # zero partial writes: no new proposal, no closed review; the plan for
+        # `third` (year 2027) exists from submit-time generation (#82+#194) —
+        # the failed approve creates nothing new.
         assert (
             review_schema.execute(
                 "SELECT COUNT(*) FROM annual_plan_change_proposal"
@@ -698,7 +696,7 @@ class TestPlanProposalDbIntegrity(ReviewTestBase):
             review_schema.execute("SELECT COUNT(*) FROM annual_growth_plan").fetchone()[
                 0
             ]
-            == 1
+            == 2
         )
         status = review_schema.execute(
             "SELECT status FROM assessment WHERE id=%s", (third,)
@@ -1015,8 +1013,7 @@ class TestThirdReviewIntegrity(TestSecondReviewIntegrity):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
@@ -1053,7 +1050,7 @@ class TestThirdReviewIntegrity(TestSecondReviewIntegrity):
                 )
                 VALUES (%s, %s, %s, %s, 'L1', 'n', 'L2', 'n', %s, 'n',
                         %s, %s, 3, 'assessment_approval', 'current_required',
-                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', 5, 'P4', 'P4', 'P5')
+                        3, 4, NULL, 4, 1, '高', TRUE, 'Q2', '2026-05', 'P4', 'P4', 'P5')
                 """,
                 (
                     int(other_proposal[0]),
@@ -1194,8 +1191,7 @@ class TestFourthReviewIntegrity(TestThirdReviewIntegrity):
                     "target_level": 4,
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
         )
