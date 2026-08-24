@@ -338,7 +338,11 @@ describe('S2 approved M03–M05 routes', () => {
       const navigate = useNavigate()
       return (
         <>
-          <button onClick={() => navigate('/growth/tasks/8?year=2099')}>
+          <button
+            onClick={() =>
+              navigate('/growth/tasks/8?year=2099&search=沟通&status=未开始')
+            }
+          >
             切换任务
           </button>
           <Routes>
@@ -359,9 +363,38 @@ describe('S2 approved M03–M05 routes', () => {
     pending.get(8)!.resolve({ ...tasks[1], plan_item_plan_month: '2025-10' })
     expect(await screen.findByText('沟通准备')).toBeTruthy()
     expect(screen.getByText(/计划月份：2025年10月/)).toBeTruthy()
+    const returned = new URL(
+      screen.getByRole('link', { name: '学习任务' }).getAttribute('href') ?? '',
+      'http://tcp.test',
+    ).searchParams
+    expect(Object.fromEntries(returned)).toMatchObject({
+      year: '2025',
+      month: '10',
+      l3_code: 'P02.01.01',
+      plan_item_id: '2',
+      task_id: '8',
+      search: '沟通',
+      status: '未开始',
+    })
     pending.get(7)!.resolve(tasks[0])
     await waitFor(() => expect(screen.queryByText('文件规范')).toBeNull())
     expect(screen.getByText('沟通准备')).toBeTruthy()
+  })
+  it('rejects an invalid task id before calling task APIs', () => {
+    const getTask = vi.spyOn(planning, 'getLearningTask')
+    const getLogs = vi.spyOn(planning, 'listProgressLogs')
+    const getEvidence = vi.spyOn(planning, 'listEvidences')
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks/not-a-number']}>
+        <Routes>
+          <Route path="/growth/tasks/:taskId" element={<TaskDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('alert').textContent).toContain('任务标识无效')
+    expect(getTask).not.toHaveBeenCalled()
+    expect(getLogs).not.toHaveBeenCalled()
+    expect(getEvidence).not.toHaveBeenCalled()
   })
   it('shows M04 empty state after loading', async () => {
     stub()

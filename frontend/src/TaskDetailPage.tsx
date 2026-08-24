@@ -23,6 +23,7 @@ export function TaskDetailPage() {
   const { taskId } = useParams()
   const [params] = useSearchParams()
   const id = Number(taskId)
+  const validTaskId = Number.isFinite(id) && Number.isInteger(id)
   const [task, setTask] = useState<LearningTask | null>(null)
   const [loadedTaskId, setLoadedTaskId] = useState<number | null>(null)
   const [logs, setLogs] = useState<ProgressLog[]>([])
@@ -70,7 +71,7 @@ export function TaskDetailPage() {
     setLogs([])
     setEvidences([])
     setError('')
-    if (Number.isInteger(id))
+    if (validTaskId)
       void load().catch(() => {
         setLoadedTaskId(id)
         setError('任务加载失败，请重试。')
@@ -78,7 +79,13 @@ export function TaskDetailPage() {
     return () => {
       loadSequence.current += 1
     }
-  }, [id])
+  }, [id, validTaskId])
+  if (!validTaskId)
+    return (
+      <p className="error" role="alert">
+        任务标识无效，请返回学习任务列表后重试。
+      </p>
+    )
   const currentTask = loadedTaskId === id ? task : null
   if (error && !currentTask)
     return (
@@ -94,8 +101,16 @@ export function TaskDetailPage() {
   const planYear = canonicalPlan?.[1] ?? params.get('year') ?? ''
   const planMonth = learningTaskMonth(currentTask)
   const change = loadedTask.requirement_change
-  const context = new URLSearchParams(Object.fromEntries(params))
-  context.set('year', params.get('year') ?? '')
+  const context = new URLSearchParams()
+  ;['search', 'status'].forEach((key) => {
+    const value = params.get(key)
+    if (value) context.set(key, value)
+  })
+  context.set('year', planYear)
+  if (planMonth != null) context.set('month', String(planMonth))
+  context.set('l3_code', loadedTask.l3_code)
+  context.set('plan_item_id', String(loadedTask.plan_item_id))
+  context.set('task_id', String(loadedTask.id))
   async function choose(choice: 'adopt_new' | 'continue_current') {
     if (!change) return
     try {
