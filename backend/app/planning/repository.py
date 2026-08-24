@@ -948,7 +948,7 @@ def decide_task_requirement(
                     "requirement decision conflict", entity_id=task_id, field="revision"
                 )
             if str(existing[1]) != choice:
-                raise TaskValidationError(
+                raise TaskRequirementDecisionConflict(
                     "requirement decision is immutable",
                     entity_id=task_id,
                     field="choice",

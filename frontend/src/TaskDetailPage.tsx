@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   createEvidence,
@@ -9,10 +9,12 @@ import {
   listProgressLogs,
   parseApiErrorDetail,
   submitEvidence,
+  updateEvidence,
   type Evidence,
   type LearningTask,
   type ProgressLog,
 } from './planning'
+import { newIdempotencyKey } from './assessment'
 
 type Tab = '学习记录' | '阶段产出' | '提交成果'
 function progress(task: LearningTask) {
@@ -38,7 +40,9 @@ export function TaskDetailPage() {
   const [date, setDate] = useState('')
   const [output, setOutput] = useState('')
   const [link, setLink] = useState('')
-  async function load() {
+  const logKey = useRef<string | null>(null)
+  const [savingLog, setSavingLog] = useState(false)
+  async function load(preserveInput = false) {
     const [next, nextLogs, nextEvidence] = await Promise.all([
       getLearningTask(id),
       listProgressLogs(id),
@@ -47,6 +51,11 @@ export function TaskDetailPage() {
     setTask(next)
     setLogs(nextLogs)
     setEvidences(nextEvidence)
+    const draft = nextEvidence.find((evidence) => evidence.status === '草稿')
+    if (draft && !preserveInput) {
+      setOutput(draft.content ?? '')
+      setLink(draft.evidence_link ?? '')
+    }
   }
   useEffect(() => {
     if (Number.isInteger(id))
@@ -72,24 +81,31 @@ export function TaskDetailPage() {
         choice,
         change.decision?.revision ?? 0,
       )
-      await load()
+      await load(true)
       setNotice('要求版本选择已保存。')
       setError('')
     } catch (err) {
+      const mapped = parseApiErrorDetail(err)
+      if (mapped.isConflict) await load(true).catch(() => undefined)
       setError(
-        parseApiErrorDetail(err).isConflict
-          ? '要求选择已被其他会话更新，请刷新后确认。'
-          : parseApiErrorDetail(err).message,
+        mapped.isConflict
+          ? '要求选择已被其他会话更新，请确认当前状态。'
+          : mapped.message,
       )
     }
   }
   async function saveLog() {
+    if (savingLog) return
+    logKey.current ??= newIdempotencyKey()
+    setSavingLog(true)
     try {
       await createProgressLog(loadedTask.id, {
         record_date: date,
         actual_hours: Number(hours),
         note: content || undefined,
+        idempotency_key: logKey.current,
       })
+      logKey.current = null
       setContent('')
       setHours('')
       setDate('')
@@ -98,38 +114,64 @@ export function TaskDetailPage() {
       setError('')
     } catch (err) {
       setError(parseApiErrorDetail(err).message)
+    } finally {
+      setSavingLog(false)
     }
   }
-  async function saveOutput() {
+  function latestEvidence() {
+    return evidences.reduce<Evidence | null>(
+      (latest, evidence) =>
+        !latest || evidence.version_number > latest.version_number
+          ? evidence
+          : latest,
+      null,
+    )
+  }
+  async function saveOutput(): Promise<Evidence | null> {
+    const latest = latestEvidence()
+    if (latest?.status === '待 Review' || latest?.status === '通过') {
+      setError(
+        latest.status === '待 Review'
+          ? '成果已提交评审，等待处理后再创建新版本。'
+          : '成果已通过，无需再次提交。',
+      )
+      return null
+    }
     try {
-      await createEvidence(loadedTask.id, {
-        content: output || null,
-        evidence_link: link || null,
-      })
-      setOutput('')
-      setLink('')
-      await load()
+      const evidence =
+        latest?.status === '草稿'
+          ? await updateEvidence(
+              latest.id,
+              { content: output || null, evidence_link: link || null },
+              latest.revision,
+            )
+          : await createEvidence(loadedTask.id, {
+              content: output || null,
+              evidence_link: link || null,
+              supersedes_evidence_id:
+                latest?.status === '需补充' ? latest.id : undefined,
+            })
+      await load(true)
       setNotice('阶段产出草稿已保存。')
       setError('')
+      return evidence
     } catch (err) {
-      setError(parseApiErrorDetail(err).message)
+      const mapped = parseApiErrorDetail(err)
+      if (mapped.isConflict) await load(true).catch(() => undefined)
+      setError(mapped.message)
+      return null
     }
   }
   async function submit() {
-    const draft = evidences.find((evidence) => evidence.status === '草稿')
     if (change) {
       setError('请先确认任务要求版本；已填写成果说明不会清空。')
       return
     }
     try {
-      const evidence =
-        draft ??
-        (await createEvidence(loadedTask.id, {
-          content: output || null,
-          evidence_link: link || null,
-        }))
+      const evidence = await saveOutput()
+      if (!evidence) return
       await submitEvidence(evidence.id)
-      await load()
+      await load(true)
       setNotice('成果已提交评审。')
       setError('')
     } catch (err) {
@@ -224,7 +266,11 @@ export function TaskDetailPage() {
                 onChange={(event) => setDate(event.target.value)}
               />
             </label>
-            <button type="button" onClick={() => void saveLog()}>
+            <button
+              type="button"
+              disabled={savingLog}
+              onClick={() => void saveLog()}
+            >
               保存学习记录
             </button>
             <ul>

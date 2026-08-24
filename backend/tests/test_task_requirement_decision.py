@@ -161,7 +161,7 @@ class TestTaskRequirementDecision(ReviewTestBase):
         submitted = submit_evidence(connection, member_id, int(evidence["id"]))
         assert submitted["status"] == "待 Review"
 
-        with pytest.raises(TaskValidationError, match="immutable"):
+        with pytest.raises(TaskRequirementDecisionConflict, match="immutable"):
             decide_task_requirement(
                 connection,
                 member_id,

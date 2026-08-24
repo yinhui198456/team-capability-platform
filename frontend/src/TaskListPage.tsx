@@ -78,7 +78,15 @@ export function TaskListPage() {
         </div>
         <div>
           <dt>待确认</dt>
-          <dd>{tasks.filter((task) => task.requirement_change).length}</dd>
+          <dd>
+            {
+              tasks.filter(
+                (task) =>
+                  (!month || String(task.plan_item_target_month) === month) &&
+                  task.requirement_change,
+              ).length
+            }
+          </dd>
         </div>
         <div>
           <dt>逾期</dt>

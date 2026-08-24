@@ -55,6 +55,9 @@ export function AnnualPlanTimelinePage() {
           {error}
         </p>
       )}
+      {!error && groups.size === 0 && (
+        <p className="muted">本年度暂无学习任务。</p>
+      )}
       {[...groups.entries()]
         .sort(([a], [b]) => a - b)
         .map(([month, monthTasks]) => {
