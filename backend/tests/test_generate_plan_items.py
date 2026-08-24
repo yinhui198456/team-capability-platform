@@ -509,3 +509,55 @@ def test_generate_plan_items_later_assessment_extends_same_plan(plan_schema) -> 
     status, body = _generate(plan_schema, later, [later_code], username="m_gen2")
     assert status == 200, f"replay failed: {status}: {body}"
     assert body["created"] == [] and body["existing"] == [later_code]
+
+
+def test_generate_plan_items_rejects_duplicate_l3_codes_before_idempotency(
+    plan_schema, gen_assessment
+) -> None:
+    """重复 L3 是结构化 422，且不能污染幂等响应或创建计划项。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    key = "gen-key-duplicate"
+
+    status, body = _generate(plan_schema, gen_assessment, [code, code], key=key)
+
+    assert status == 422, f"duplicate L3 must be rejected: {status}: {body}"
+    assert body["detail"]["code"] == "duplicate_l3_codes"
+    assert body["detail"]["l3_code"] == code
+    assert plan_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 0
+
+    # 拒绝发生在幂等键写入前：同一 key 的合法请求仍可首次创建。
+    status, body = _generate(plan_schema, gen_assessment, [code], key=key)
+    assert status == 200, f"duplicate rejection must not consume key: {status}: {body}"
+    assert body["created"] == [code]
+
+
+def test_generate_plan_items_rejects_non_editable_assessment_zero_write(
+    plan_schema, gen_assessment
+) -> None:
+    """仅草稿/建议调整状态可生成，其他状态整批零写入。"""
+    code = _ready_detail(plan_schema, gen_assessment, "m_gen")
+    plan_schema.execute(
+        "UPDATE assessment SET status = '已复核' WHERE id = %s", (gen_assessment,)
+    )
+    plan_schema.commit()
+
+    status, body = _generate(plan_schema, gen_assessment, [code])
+
+    assert status == 422, f"non-editable assessment must be rejected: {status}: {body}"
+    assert plan_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 0
+
+
+def test_generate_plan_items_requires_member_role(plan_schema) -> None:
+    """即使拥有自己的 assessment，非 Member 也不得生成学习任务。"""
+    member_id = _create_test_user(plan_schema, "m_gen_buddy", ["Buddy"])
+    assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
+
+    status, body = _generate(
+        plan_schema,
+        assessment_id,
+        [_L3_CODE],
+        username="m_gen_buddy",
+    )
+
+    assert status == 403, f"non-Member must be forbidden: {status}: {body}"
+    assert plan_schema.execute("SELECT COUNT(*) FROM plan_item").fetchone()[0] == 0

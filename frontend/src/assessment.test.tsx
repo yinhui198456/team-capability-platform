@@ -1663,6 +1663,139 @@ describe('AssessmentGapPage', () => {
     ).toBe('2026-05')
   })
 
+  it('uses a new idempotency key for each explicit successful generation (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-05',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValueOnce({ ok: true, created: ['P01.01.01'], existing: [] })
+      .mockResolvedValueOnce({ ok: true, created: [], existing: ['P01.01.01'] })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+
+    expect(generate.mock.calls[1][3]).not.toBe(generate.mock.calls[0][3])
+    expect(screen.getByText('本次新建 0 项')).toBeTruthy()
+    expect(screen.getByText('已有任务 1 项')).toBeTruthy()
+  })
+
+  it('reuses a key after a network failure and replaces it after a 409 (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-05',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockRejectedValueOnce(new Error('网络不可用'))
+      .mockResolvedValueOnce({ ok: true, created: [], existing: ['P01.01.01'] })
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce({ ok: true, created: [], existing: ['P01.01.01'] })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    const trigger = () =>
+      fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    trigger()
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    trigger()
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(generate.mock.calls[1][3]).toBe(generate.mock.calls[0][3])
+
+    trigger()
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3))
+    trigger()
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(4))
+    expect(generate.mock.calls[3][3]).not.toBe(generate.mock.calls[2][3])
+  })
+
+  it('keeps a failed plan auto-save warning through a rating save until retry succeeds (#194)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockRejectedValueOnce({ status: 409 })
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '高' } },
+    )
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    expect(
+      screen.getByText(
+        '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
+      ),
+    ).toBeTruthy()
+
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
+      { target: { value: '中' } },
+    )
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(4))
+    expect(
+      screen.queryByText(
+        '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
+      ),
+    ).toBeNull()
+  })
+
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {

@@ -2343,6 +2343,18 @@ def generate_plan_items_for_selection(
       assessment.status (the draft stays 草稿);
     - plan_month is TEXT 'YYYY-MM' and is required on every selected item.
     """
+    seen_codes: set[str] = set()
+    for raw in l3_codes:
+        code = str(raw)
+        if code in seen_codes:
+            raise DetailValidationError(
+                "duplicate_l3_codes",
+                f"项 {code} 在本次生成请求中重复出现",
+                l3_code=code,
+                field="l3_codes",
+            )
+        seen_codes.add(code)
+
     # Payload identity only — independent of current domain state.
     fingerprint = hashlib.sha256(
         json.dumps(
@@ -2401,6 +2413,12 @@ def generate_plan_items_for_selection(
         _status, owner_id, revision, year, version_id, cur_snap, tgt_snap = row
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
+        if _status not in {"草稿", "建议调整"}:
+            raise DetailValidationError(
+                "plan_generation",
+                f"评估当前状态 {_status} 不可编辑，不能生成学习任务",
+                field="assessment_status",
+            )
         if int(revision) != expected_revision:
             raise ValueError("revision conflict")
         # 2. Re-check idempotency after the FOR UPDATE lock to close the

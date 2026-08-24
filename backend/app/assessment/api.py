@@ -669,7 +669,10 @@ def batch_level(
         raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
-@assessment_router.post("/{assessment_id}/generate-plan-items")
+@assessment_router.post(
+    "/{assessment_id}/generate-plan-items",
+    dependencies=[require_any_role("Member")],
+)
 def generate_plan_items(
     assessment_id: int,
     request: GeneratePlanItemsRequest,

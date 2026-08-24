@@ -234,6 +234,7 @@ export function AssessmentGapPage() {
   const [editingText, setEditingText] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [planSaveError, setPlanSaveError] = useState('')
   const [loading, setLoading] = useState(true)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
@@ -494,6 +495,7 @@ export function AssessmentGapPage() {
             if (planQueueRef.current[0] === task) {
               planQueueRef.current.shift()
             }
+            if (planQueueRef.current.length === 0) setPlanSaveError('')
             applyAutoCleared(result.auto_cleared ?? [])
             setAssessment((current) =>
               current
@@ -507,7 +509,7 @@ export function AssessmentGapPage() {
           } catch (err: unknown) {
             const status = (err as { status?: number }).status
             const detail = (err as { detail?: unknown }).detail
-            setError(
+            setPlanSaveError(
               status === 409
                 ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
                 : isStructuredAssessmentError(detail)
@@ -703,6 +705,7 @@ export function AssessmentGapPage() {
         revision,
         genIdemRef.current.key,
       )
+      genIdemRef.current = null
       // Issue #194 P1-1: 生成成功不重载 Assessment 草稿（生成不改草稿
       // 字段/revision；M03/M04 导航自行读取正式结果）——重载会用服务端
       // 旧值覆盖本地未保存评级，违背输入保留。本地计划选择与月份保留。
@@ -1082,7 +1085,11 @@ export function AssessmentGapPage() {
             )}
           </section>
         )}
-        {error && <p className="error global-assessment-error">{error}</p>}
+        {(error || planSaveError) && (
+          <p className="error global-assessment-error">
+            {error || planSaveError}
+          </p>
+        )}
         {message && <p className="success">{message}</p>}
         {generationSummary && (
           <section className={s.generationSummary} aria-label="生成结果摘要">
