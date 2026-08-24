@@ -13,7 +13,11 @@ import { App } from './App'
 import * as accessApi from './access'
 import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
-import type { EvidenceReviewRecord, PendingEvidenceReview } from './planning'
+import type {
+  EvidenceReviewRecord,
+  EvidenceReviewWorkspace,
+  PendingEvidenceReview,
+} from './planning'
 
 function makePending(
   overrides: Partial<PendingEvidenceReview> = {},
@@ -56,29 +60,40 @@ function mockBuddy() {
   })
 }
 
-async function renderEvidencePage(queue: PendingEvidenceReview[] = []) {
+async function renderEvidencePage(
+  queue: PendingEvidenceReview[] = [],
+  members: EvidenceReviewWorkspace['members'] = [
+    ...new Map(
+      queue.map((item) => [
+        item.member_id,
+        {
+          id: item.member_id,
+          username: item.username,
+          pending_count: queue.filter(
+            (candidate) => candidate.member_id === item.member_id,
+          ).length,
+        },
+      ]),
+    ).values(),
+  ],
+) {
   mockBuddy()
   vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
     available_years: [2026],
     active_year: 2026,
   })
-  vi.spyOn(planningApi, 'getEvidenceReviewWorkspace').mockResolvedValue({
-    summary: {
-      pending_count: queue.length,
-      needs_supplement_count: 0,
-      approved_this_month_count: 0,
-      average_response_days: null,
-    },
-    members: [
-      ...new Map(
-        queue.map((item) => [
-          item.member_id,
-          { id: item.member_id, username: item.username },
-        ]),
-      ).values(),
-    ],
-    queue,
-  })
+  if (!vi.isMockFunction(planningApi.getEvidenceReviewWorkspace)) {
+    vi.spyOn(planningApi, 'getEvidenceReviewWorkspace').mockResolvedValue({
+      summary: {
+        pending_count: queue.length,
+        needs_supplement_count: 0,
+        approved_this_month_count: 0,
+        average_response_days: null,
+      },
+      members,
+      queue,
+    })
+  }
   if (!vi.isMockFunction(planningApi.listEvidenceReviewsForTask)) {
     vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([])
   }
@@ -146,6 +161,18 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     ).toBeTruthy()
   })
 
+  it('keeps member, queue and workspace panels available for an empty filter', async () => {
+    await renderEvidencePage(
+      [],
+      [{ id: 7, username: 'member-without-pending', pending_count: 0 }],
+    )
+    expect(screen.getByRole('heading', { name: '辅导成员' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '待办队列' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '验收工作区' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /全部成员/ })).toBeTruthy()
+    expect(screen.getByText('当前筛选暂无待验收成果。')).toBeTruthy()
+  })
+
   it('keeps history on the selected task and moves keyboard focus there', async () => {
     await renderEvidencePage([makePending({ learning_task_id: 321 })])
     fireEvent.click(screen.getByRole('button', { name: '查看历史反馈' }))
@@ -210,6 +237,62 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(key).toBeTruthy()
     // Reviewed item leaves the queue; the immutable result is shown.
     expect(screen.queryByText('完成 P01 实践项目')).toBeNull()
+  })
+
+  it('refreshes the workspace after success without selecting the next item', async () => {
+    const first = makePending({ id: 10 })
+    const next = makePending({
+      id: 11,
+      learning_task_id: 200,
+      member_id: 2,
+      username: 'member2',
+    })
+    const workspace = vi.spyOn(planningApi, 'getEvidenceReviewWorkspace')
+    workspace
+      .mockResolvedValueOnce({
+        summary: {
+          pending_count: 2,
+          needs_supplement_count: 0,
+          approved_this_month_count: 0,
+          average_response_days: null,
+        },
+        members: [
+          { id: first.member_id, username: first.username, pending_count: 1 },
+          { id: next.member_id, username: next.username, pending_count: 1 },
+        ],
+        queue: [first, next],
+      } satisfies EvidenceReviewWorkspace)
+      .mockResolvedValueOnce({
+        summary: {
+          pending_count: 1,
+          needs_supplement_count: 0,
+          approved_this_month_count: 1,
+          average_response_days: 1,
+        },
+        members: [
+          { id: next.member_id, username: next.username, pending_count: 1 },
+        ],
+        queue: [next],
+      } satisfies EvidenceReviewWorkspace)
+    vi.spyOn(planningApi, 'submitEvidenceReview').mockResolvedValue({
+      id: 1,
+      evidence_id: first.id,
+      version_number: 1,
+      status: '已闭环',
+      conclusion: '通过',
+      feedback: '',
+      reviewed_at: '2026-08-24T00:00:00Z',
+      created_at: '2026-08-24T00:00:00Z',
+    })
+    await renderEvidencePage()
+    await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('通过'))
+    fireEvent.click(screen.getByRole('button', { name: '提交评审结论' }))
+    await waitFor(() => expect(workspace).toHaveBeenCalledTimes(2))
+    expect(
+      screen.getByText('选择一项待验收成果后查看依据和历史反馈。'),
+    ).toBeTruthy()
+    expect(screen.queryByText(next.content!)).toBeNull()
   })
 
   it('a 403 keeps the item and explains the relationship is invalid', async () => {
@@ -305,7 +388,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
         approved_this_month_count: 0,
         average_response_days: null,
       },
-      members: [{ id: b.member_id, username: b.username }],
+      members: [{ id: b.member_id, username: b.username, pending_count: 1 }],
       queue: [b],
     })
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
@@ -328,7 +411,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(screen.queryByRole('button', { name: '提交评审结论' })).toBeNull()
     expect(submit).toHaveBeenCalledTimes(1)
     // Explicitly choosing B starts with a clean form.
-    fireEvent.click(screen.getByRole('button', { name: /member2/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
     await waitFor(() => expect(screen.getByText('第二版实现')).toBeTruthy())
     expect((screen.getByLabelText('通过') as HTMLInputElement).checked).toBe(
       false,
@@ -441,7 +524,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       .mockImplementationOnce(() => bDeferred)
     await renderEvidencePage([a, b])
     await waitFor(() => expect(screen.getByText(/请补充口径说明/)).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /member2/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
     // Stale A history must not show under B while B's history loads.
     expect(screen.queryByText(/请补充口径说明/)).toBeNull()
     expect(screen.getByText('暂无历史评审记录。')).toBeTruthy()
@@ -475,7 +558,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       .mockRejectedValueOnce(new Error('history load failed'))
     await renderEvidencePage([a, b])
     await waitFor(() => expect(screen.getByText(/请补充口径说明/)).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /member2/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
     await waitFor(() => {
       expect(
         screen.getByRole('alert').textContent?.includes('history load failed'),
@@ -533,9 +616,11 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     await renderEvidencePage([a, b])
     // A auto-selected; its history is still in flight. Switch to B.
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /member2/ })).toBeTruthy(),
+      expect(
+        screen.getAllByRole('button', { name: /member2/ })[1],
+      ).toBeTruthy(),
     )
-    fireEvent.click(screen.getByRole('button', { name: /member2/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
     resolveB!(historyB)
     await waitFor(() => expect(screen.getByText(/第二版通过/)).toBeTruthy())
     // A's late response arrives: it must be discarded, not shown under B.

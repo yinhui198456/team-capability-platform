@@ -2962,12 +2962,18 @@ def list_pending_evidence_reviews_for_buddy(
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        JOIN tcp_user u ON u.id = agp.member_id
+        JOIN tcp_user u ON u.id = agp.member_id AND u.is_active = TRUE
         JOIN buddy_relationship br
           ON br.member_id = agp.member_id
          AND br.buddy_id = %s
          AND br.is_primary = TRUE
-         AND br.effective_to IS NULL
+         AND br.effective_date <= CURRENT_DATE
+         AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
         WHERE e.status = '待 Review'
           AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
         ORDER BY e.submitted_at ASC NULLS LAST
@@ -2993,9 +2999,16 @@ def get_evidence_review_workspace_for_buddy(
         SELECT u.id, u.username
         FROM buddy_relationship br
         JOIN tcp_user u ON u.id = br.member_id
+                      AND u.is_active = TRUE
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
         WHERE br.buddy_id = %s
           AND br.is_primary = TRUE
-          AND br.effective_to IS NULL
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
         ORDER BY u.username, u.id
         """,
         (buddy_id,),
@@ -3003,12 +3016,22 @@ def get_evidence_review_workspace_for_buddy(
     if member_id is not None and not any(int(row[0]) == member_id for row in members):
         raise PermissionError("member does not belong to assigned buddy")
 
+    all_queue = list_pending_evidence_reviews_for_buddy(connection, buddy_id)
+
     relationship_join = """
         JOIN buddy_relationship br
           ON br.member_id = agp.member_id
          AND br.buddy_id = %s
          AND br.is_primary = TRUE
-         AND br.effective_to IS NULL
+         AND br.effective_date <= CURRENT_DATE
+         AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+        JOIN tcp_user current_member
+          ON current_member.id = br.member_id AND current_member.is_active = TRUE
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
     """
     pending = connection.execute(
         f"""
@@ -3065,9 +3088,18 @@ def get_evidence_review_workspace_for_buddy(
                 float(month_metrics[1]) if month_metrics[1] is not None else None
             ),
         },
-        "members": [{"id": row[0], "username": row[1]} for row in members],
-        "queue": list_pending_evidence_reviews_for_buddy(
-            connection, buddy_id, member_id
+        "members": [
+            {
+                "id": row[0],
+                "username": row[1],
+                "pending_count": sum(item["member_id"] == row[0] for item in all_queue),
+            }
+            for row in members
+        ],
+        "queue": (
+            all_queue
+            if member_id is None
+            else [item for item in all_queue if item["member_id"] == member_id]
         ),
     }
 

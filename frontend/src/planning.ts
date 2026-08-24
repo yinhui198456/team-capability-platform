@@ -801,7 +801,7 @@ export type EvidenceReviewWorkspace = {
     approved_this_month_count: number
     average_response_days: number | null
   }
-  members: Array<{ id: number; username: string }>
+  members: Array<{ id: number; username: string; pending_count: number }>
   queue: PendingEvidenceReview[]
 }
 
