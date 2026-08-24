@@ -549,14 +549,23 @@ def test_upgrade_to_v0008_and_lifespan(pre_v0007_db: psycopg.Connection) -> None
                 "WHERE id = %s",
                 (detail_id,),
             )
-    # include_in_plan=TRUE without quarter/month rejected (v0007).
-    with pytest.raises(psycopg.errors.CheckViolation):
-        with connection.transaction():
-            connection.execute(
-                "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
-                (detail_id,),
-            )
-    # include_in_plan=NULL with plan_quarter set rejected (v0008).
+    # v0015: a selected draft may wait for its YYYY-MM plan month.
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = TRUE " "WHERE id = %s",
+            (detail_id,),
+        )
+    assert connection.execute(
+        "SELECT include_in_plan, plan_month, plan_quarter "
+        "FROM assessment_detail WHERE id = %s",
+        (detail_id,),
+    ).fetchone() == (True, None, None)
+    with connection.transaction():
+        connection.execute(
+            "UPDATE assessment_detail SET include_in_plan = NULL WHERE id = %s",
+            (detail_id,),
+        )
+    # include_in_plan=NULL with plan_quarter set remains rejected (v0008).
     with pytest.raises(psycopg.errors.CheckViolation):
         with connection.transaction():
             connection.execute(
