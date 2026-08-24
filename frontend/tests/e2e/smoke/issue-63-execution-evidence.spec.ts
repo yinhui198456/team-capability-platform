@@ -833,7 +833,9 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
     await expect(page.getByText(seed.l3Code).first()).toBeVisible()
     await expectNoHorizontalOverflow()
     await page.getByRole('link', { name: '进入任务' }).click()
-    await expect(page.getByRole('button', { name: '学习记录' })).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: '学习记录', exact: true }),
+    ).toBeVisible()
     await expect(page.getByRole('button', { name: '提交成果' })).toBeVisible()
     await expectNoHorizontalOverflow()
   }
