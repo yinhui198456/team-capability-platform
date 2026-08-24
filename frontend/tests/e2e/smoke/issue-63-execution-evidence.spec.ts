@@ -5,7 +5,7 @@
     task six-state transitions, append-only logs + actual_hours aggregation,
     void/correction, Evidence draft → version submit, completion gate.
   - Buddy: independent Evidence Review queue, 需补充/通过, immutable history,
-    superseded versions excluded, strict isolation from Assessment Review.
+    superseded versions excluded, strict isolation from the retired assessment workflow.
   - Failure paths: 401/403, structured 422, terminal freeze, 409 conflict
     recovery in the UI (input preserved, refresh revision, retry),
     idempotency of logs/transitions/reviews.
@@ -101,9 +101,8 @@ interface ScopeSnapshot {
   target_level?: number | null
 }
 
-/** Fill the draft with one plan-bound detail, submit, buddy-approve. */
-async function fillSubmitApprove(
-  page: Page,
+/** Fill one plan-bound draft detail, then explicitly generate its task. */
+async function fillDraftAndGenerate(
   request: APIRequestContext,
   draft: DraftState,
 ): Promise<{ l3Code: string }> {
@@ -132,8 +131,7 @@ async function fillSubmitApprove(
         ? {
             member_priority: '高',
             include_in_plan: true,
-            plan_quarter: 'Q2',
-            plan_month: 5,
+            plan_month: `${assessment.year}-05`,
           }
         : {}),
     }
@@ -148,41 +146,21 @@ async function fillSubmitApprove(
     )
   }
   const saved = await saveResp.json()
-  const submitResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/submit`,
-    { data: { expected_revision: saved.revision } },
-  )
-  if (!submitResp.ok()) {
-    throw new Error(
-      `submit failed: ${submitResp.status()} ${await submitResp.text()}`,
-    )
-  }
-  const submitted = await submitResp.json()
-
-  await loginAs(page, 'buddy')
-  const pendingResp = await request.get(
-    `${BACKEND}/api/assessments/reviews/pending`,
-  )
-  const pending = await pendingResp.json()
-  const review = pending.find(
-    (r: { assessment_id: number }) => r.assessment_id === draft.id,
-  )
-  if (!review) {
-    throw new Error(`no pending review for assessment ${draft.id}`)
-  }
-  const reviewResp = await request.post(
-    `${BACKEND}/api/assessments/${draft.id}/reviews/${review.id}`,
+  const generateResp = await request.post(
+    `${BACKEND}/api/assessments/${draft.id}/generate-plan-items`,
     {
       data: {
-        conclusion: '认可',
-        feedback: 'E2E-63 认可',
-        expected_revision: submitted.revision,
+        l3_codes: [picked.l3_code],
+        expected_revision: saved.revision,
+      },
+      headers: {
+        'Idempotency-Key': `e2e-63-generate-${draft.id}-${picked.l3_code}`,
       },
     },
   )
-  if (!reviewResp.ok()) {
+  if (!generateResp.ok()) {
     throw new Error(
-      `approve failed: ${reviewResp.status()} ${await reviewResp.text()}`,
+      `generate failed: ${generateResp.status()} ${await generateResp.text()}`,
     )
   }
   return { l3Code: picked.l3_code }
@@ -196,13 +174,12 @@ interface SeedResult {
   taskRevision: number
 }
 
-/** member-login → draft → approve → plan/item/task ids for `year`. */
+/** member-login → draft → explicit generation → plan/item/task ids for `year`. */
 async function seedExecution(page: Page, year: number): Promise<SeedResult> {
   const request = page.request
   await loginAs(page, 'member')
   const draft = await ensureDraft(request, year)
-  const { l3Code } = await fillSubmitApprove(page, request, draft)
-  await loginAs(page, 'member')
+  const { l3Code } = await fillDraftAndGenerate(request, draft)
   const planResp = await request.get(
     `${BACKEND}/api/planning/annual-plan?year=${year}`,
   )
@@ -542,14 +519,14 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // ── buddy queue shows the pending version; 需补充 requires feedback ──
   await loginAs(page, 'buddy')
   await page.goto('/mentoring/evidence-review')
-  await expect(page.getByRole('heading', { name: '待验收成果' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
   await selectQueueItemByMarker(page, seed.l3Code, v1Marker)
-  await page.getByLabel('需补充').click()
+  await page.getByRole('button', { name: '需补充' }).click()
   // client gate: empty feedback blocked before any request
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByRole('alert')).toContainText('需补充必须填写反馈')
-  await page.getByLabel('反馈').fill('E2E-63-02 请补充口径说明')
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByLabel('反馈建议').fill('E2E-63-02 请补充口径说明')
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByText('已要求补充，等待成员提交新版本。')).toBeVisible()
 
   // ── member submits v2 superseding v1; queue shows only the current version ──
@@ -577,9 +554,9 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // dual-role buddy accounts load the review history through the buddy path:
   // v1's 需补充 feedback is visible (regression: member-path 403 hid it)
   await expect(page.getByText(/请补充口径说明/).first()).toBeVisible()
-  await page.getByLabel('通过').click()
-  await page.getByLabel('反馈').fill('E2E-63-02 第二版通过')
-  await page.getByRole('button', { name: '提交评审结论' }).click()
+  await page.getByRole('button', { name: '通过' }).click()
+  await page.getByLabel('反馈建议').fill('E2E-63-02 第二版通过')
+  await page.getByRole('button', { name: '提交验收结果' }).click()
   await expect(page.getByText(/已通过/).first()).toBeVisible()
 
   // immutable history: both reviews recorded, second review attempt → 409
@@ -887,9 +864,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   for (const viewport of viewports) {
     await page.setViewportSize(viewport)
     await page.goto('/mentoring/evidence-review')
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
     await expectNoHorizontalOverflow()
   }
 
@@ -900,15 +875,14 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   await page.getByLabel('用户名').fill(STRANGER_BUDDY.username)
   await page.getByLabel('密码').fill(STRANGER_BUDDY.password)
   await page.getByRole('button', { name: '登录' }).click()
-  await page.waitForURL((url) => url.pathname === '/mentoring/dashboard')
+  await page.waitForURL((url) => url.pathname === '/mentoring/evidence-review')
   await page.setViewportSize(viewports[0])
-  await page.goto('/mentoring/evidence-review')
-  await expect(page.getByText('暂无待验收成果。')).toBeVisible()
+  await expect(page.locator('.evidence-review-queue button')).toHaveCount(0)
   await expectNoHorizontalOverflow()
 
   // error state: a failed queue load surfaces an alert, not a silent blank
   await loginAs(page, 'buddy')
-  await page.route('**/api/planning/evidence-reviews/pending', (route) =>
+  await page.route('**/api/planning/evidence-reviews/workspace', (route) =>
     route.fulfill({ status: 500, body: 'boom' }),
   )
   await page.goto('/mentoring/evidence-review')
@@ -917,7 +891,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
 
   // loading state is visible while the queue request is in flight
   await page.route(
-    '**/api/planning/evidence-reviews/pending',
+    '**/api/planning/evidence-reviews/workspace',
     async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 800))
       await route.continue()
@@ -925,5 +899,5 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   )
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByText('加载中…')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '待验收成果' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
 })

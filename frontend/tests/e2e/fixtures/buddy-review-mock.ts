@@ -584,3 +584,124 @@ export async function mockBuddyReviewWorkspaceRoutes(
     })
   })
 }
+
+const evidenceReviewWorkspace = {
+  summary: {
+    pending_count: 2,
+    needs_supplement_count: 1,
+    approved_this_month_count: 3,
+    average_response_days: 1.5,
+  },
+  members: [{ id: 3, username: 'member', pending_count: 2 }],
+  queue: [
+    {
+      id: 401,
+      learning_task_id: 501,
+      version_number: 1,
+      status: '待 Review',
+      revision: 1,
+      member_id: 3,
+      username: 'member',
+      l3_code: 'P01.01.01',
+      l3_name: '数据管道基础',
+      description: '普通成果说明',
+      content: '完成数据管道基础文档与示例代码。',
+      evidence_link: 'https://example.invalid/tcp-evidence-401',
+      is_resubmission: false,
+    },
+    {
+      id: 402,
+      learning_task_id: 502,
+      version_number: 2,
+      status: '待 Review',
+      revision: 2,
+      member_id: 3,
+      username: 'member',
+      l3_code: 'P01.01.02',
+      l3_name: '数据质量校验',
+      description: '补充后的成果说明',
+      content: '补充数据质量校验记录。',
+      evidence_link: 'https://example.invalid/tcp-evidence-402',
+      is_resubmission: true,
+    },
+  ],
+}
+
+export async function mockEvidenceReviewWorkspace(
+  page: Page,
+  options: { empty?: boolean } = {},
+): Promise<void> {
+  const workspace = options.empty
+    ? {
+        ...evidenceReviewWorkspace,
+        summary: { ...evidenceReviewWorkspace.summary, pending_count: 0 },
+        queue: [],
+      }
+    : evidenceReviewWorkspace
+  await page.route(
+    '/api/planning/evidence-reviews/workspace*',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(workspace),
+      })
+    },
+  )
+  await page.route(
+    '/api/planning/learning-tasks/501/evidence-reviews',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 701,
+            evidence_id: 399,
+            version_number: 1,
+            status: '需补充',
+            conclusion: '需补充',
+            feedback: '请补充运行记录。',
+            reviewed_at: '2026-08-01T09:00:00+08:00',
+            created_at: '2026-08-01T09:00:00+08:00',
+          },
+        ]),
+      })
+    },
+  )
+  await page.route(
+    '/api/planning/learning-tasks/502/evidence-reviews',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: '[]',
+      })
+    },
+  )
+  for (const evidenceId of [401, 402]) {
+    await page.route(
+      `/api/planning/evidences/${evidenceId}/review`,
+      async (route) => {
+        const body = route.request().postDataJSON() as {
+          conclusion: string
+          feedback: string
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 800 + evidenceId,
+            evidence_id: evidenceId,
+            version_number: evidenceId === 401 ? 1 : 2,
+            status: body.conclusion === '通过' ? '通过' : '需补充',
+            conclusion: body.conclusion,
+            feedback: body.feedback,
+            reviewed_at: '2026-08-02T09:00:00+08:00',
+            created_at: '2026-08-02T09:00:00+08:00',
+          }),
+        })
+      },
+    )
+  }
+}
