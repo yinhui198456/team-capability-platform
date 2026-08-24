@@ -5,6 +5,7 @@ import {
   createProgressLog,
   decideTaskRequirement,
   getLearningTask,
+  learningTaskProgress,
   listEvidences,
   listProgressLogs,
   parseApiErrorDetail,
@@ -17,14 +18,6 @@ import {
 import { newIdempotencyKey } from './assessment'
 
 type Tab = '学习记录' | '阶段产出' | '提交成果'
-function progress(task: LearningTask) {
-  if (task.status === '已完成') return 100
-  const hours = Number(task.plan_item_estimated_hours)
-  return hours > 0
-    ? Math.min(100, Math.round((task.actual_hours / hours) * 100))
-    : 0
-}
-
 export function TaskDetailPage() {
   const { taskId } = useParams()
   const [params] = useSearchParams()
@@ -190,7 +183,11 @@ export function TaskDetailPage() {
           <p className="muted">
             计划月份：{params.get('year')}年
             {String(task.plan_item_target_month ?? '').padStart(2, '0')}月 ·
-            当前进度 {progress(task)}% · {task.status}
+            当前进度{' '}
+            {learningTaskProgress(task) == null
+              ? '待计算'
+              : `${learningTaskProgress(task)}%`}{' '}
+            · {task.status}
           </p>
         </div>
       </header>
@@ -222,8 +219,14 @@ export function TaskDetailPage() {
           {evidences.map((evidence) => evidence.status).join('、') ||
             '尚未提交'}
         </p>
-        <progress aria-label="任务真实进度" value={progress(task)} max="100" />{' '}
-        {progress(task)}%
+        <progress
+          aria-label="任务真实进度"
+          value={learningTaskProgress(task) ?? 0}
+          max="100"
+        />{' '}
+        {learningTaskProgress(task) == null
+          ? '进度待计算'
+          : `${learningTaskProgress(task)}%`}
       </section>
       <section className="plan-overview">
         <div>

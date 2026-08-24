@@ -171,9 +171,24 @@ export type LearningTask = CapabilityContext & {
   plan_item_expected_output: string | null
   plan_item_estimated_hours: string | null
   plan_item_estimated_hours_parsed?: EstimatedHours
+  plan_item_plan_month?: string | null
   plan_item_target_month?: number | null
   effective_requirement?: RequirementSnapshot | null
   requirement_change?: RequirementChange | null
+}
+
+export function learningTaskMonth(task: LearningTask): number | null {
+  if (task.plan_item_target_month != null) return task.plan_item_target_month
+  const match = task.plan_item_plan_month?.match(/^\d{4}-(\d{2})$/)
+  return match ? Number(match[1]) : null
+}
+
+export function learningTaskProgress(task: LearningTask): number | null {
+  if (task.status === '已完成') return 100
+  const hours = task.plan_item_estimated_hours_parsed
+  return hours?.is_valid && !hours.is_range && (hours.min_hours ?? 0) > 0
+    ? Math.min(100, Math.round((task.actual_hours / hours.min_hours!) * 100))
+    : null
 }
 
 export type RequirementSnapshot = {

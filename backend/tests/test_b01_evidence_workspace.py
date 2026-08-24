@@ -160,6 +160,32 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
             ).fetchone()[0]
             == 1
         )
+        status, body, _ = _request(
+            "POST",
+            f"/api/planning/evidences/{evidence_id}/review",
+            {
+                "conclusion": "需补充",
+                "feedback": "不同结论",
+                "idempotency_key": "same-key",
+            },
+            cookies=buddy_cookies,
+        )
+        assert status == 409
+        assert body["detail"]["code"] == "review_idempotency_conflict"
+
+        second = create_evidence_draft(
+            connection, member_id, int(task["id"]), "第二份成果", None
+        )
+        submit_evidence(connection, member_id, int(second["id"]))
+        connection.commit()
+        status, body, _ = _request(
+            "POST",
+            f"/api/planning/evidences/{second['id']}/review",
+            {"conclusion": "通过", "feedback": "达标", "idempotency_key": "same-key"},
+            cookies=buddy_cookies,
+        )
+        assert status == 409
+        assert body["detail"]["code"] == "review_idempotency_conflict"
 
     def test_workspace_marks_direct_resubmission_and_excludes_member_side_item(
         self, connection: psycopg.Connection

@@ -32,6 +32,28 @@ def _serialize_datetime(value: Any) -> str | None:
     return str(value)
 
 
+def _canonical_plan_month(
+    plan_month: object, target_month: object, year: int | None = None
+) -> int | None:
+    if isinstance(plan_month, str):
+        try:
+            parsed = date.fromisoformat(f"{plan_month}-01")
+        except ValueError:
+            if year is not None:
+                raise PlanItemDateError(
+                    "plan_month must be YYYY-MM",
+                    field="plan_month",
+                ) from None
+        else:
+            if year is not None and parsed.year != year:
+                raise PlanItemDateError(
+                    "plan_month must belong to the annual plan year",
+                    field="plan_month",
+                )
+            return parsed.month
+    return int(target_month) if target_month is not None else None
+
+
 def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     item = {
         "id": row[0],
@@ -648,8 +670,8 @@ def _validate_plan_item_dates(
     plan_quarter = row[2]
     plan_month = row[3]
     target_month = row[4]
-    month = plan_month if plan_month is not None else target_month
     year = int(row[5])
+    month = _canonical_plan_month(plan_month, target_month, year)
 
     if start is not None and due is not None and start > due:
         raise PlanItemDateError(
@@ -811,7 +833,7 @@ def list_learning_tasks(
         SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours, pi.target_month
+               pi.expected_output, pi.estimated_hours, pi.plan_month, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -832,7 +854,8 @@ def list_learning_tasks(
                 "plan_item_learning_task_content": row[21],
                 "plan_item_expected_output": row[22],
                 "plan_item_estimated_hours": row[23],
-                "plan_item_target_month": row[24],
+                "plan_item_plan_month": row[24],
+                "plan_item_target_month": _canonical_plan_month(row[24], row[25]),
             }
             for row in rows
         ],
@@ -999,7 +1022,7 @@ def get_learning_task(
         SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours, pi.target_month
+               pi.expected_output, pi.estimated_hours, pi.plan_month, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -1021,7 +1044,8 @@ def get_learning_task(
                 "plan_item_learning_task_content": row[21],
                 "plan_item_expected_output": row[22],
                 "plan_item_estimated_hours": row[23],
-                "plan_item_target_month": row[24],
+                "plan_item_plan_month": row[24],
+                "plan_item_target_month": _canonical_plan_month(row[24], row[25]),
             }
         ],
     )[0]
@@ -3236,14 +3260,25 @@ def submit_evidence_review(
         if idempotency_key is not None:
             existing = connection.execute(
                 """
-                SELECT er.id
+                SELECT er.id, er.evidence_id, er.buddy_id, er.conclusion, er.feedback
                 FROM evidence_review er
-                WHERE er.evidence_id = %s
-                  AND er.idempotency_key = %s
+                WHERE er.idempotency_key = %s
                 """,
-                (evidence_id, idempotency_key),
+                (idempotency_key,),
             ).fetchone()
             if existing is not None:
+                if (
+                    int(existing[1]) != evidence_id
+                    or int(existing[2]) != buddy_id
+                    or existing[3] != conclusion
+                    or existing[4] != feedback
+                ):
+                    raise EvidenceReviewConflict(
+                        "idempotency key was already used with a different "
+                        "review payload",
+                        entity_id=evidence_id,
+                        field="idempotency_key",
+                    )
                 row2 = connection.execute(
                     """
                     SELECT id, evidence_id, buddy_id, status, conclusion,

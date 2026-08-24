@@ -38,8 +38,16 @@ const tasks = [
     plan_item_learning_material: null,
     plan_item_learning_task_content: null,
     plan_item_expected_output: '旧要求',
-    plan_item_estimated_hours: '10',
-    plan_item_target_month: 9,
+    plan_item_estimated_hours: '8-10h',
+    plan_item_estimated_hours_parsed: {
+      raw: '8-10h',
+      min_hours: 8,
+      max_hours: 10,
+      is_valid: true,
+      is_range: true,
+    },
+    plan_item_target_month: null,
+    plan_item_plan_month: '2026-09',
   },
   {
     id: 8,
@@ -68,6 +76,7 @@ const tasks = [
     plan_item_expected_output: '沟通材料',
     plan_item_estimated_hours: '8',
     plan_item_target_month: 10,
+    plan_item_plan_month: '2026-10',
   },
 ]
 
@@ -189,12 +198,48 @@ describe('S2 approved M03–M05 routes', () => {
       screen
         .getByRole('progressbar', { name: 'P01.01.01 进度' })
         .getAttribute('value'),
-    ).toBe('20')
+    ).toBe('0')
+    expect(document.body.textContent).toContain('进度待计算')
     expect(
       screen
         .getAllByRole('link', { name: '查看本月任务' })[0]
         .getAttribute('href'),
     ).toContain('month=9')
+  })
+  it('keeps M03 loading, error and empty states distinct', async () => {
+    stub()
+    vi.mocked(planning.listLearningTasks).mockImplementationOnce(
+      () => new Promise(() => {}),
+    )
+    const view = render(
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('年度计划加载中…')).toBeTruthy()
+    expect(screen.queryByText('本年度暂无学习任务。')).toBeNull()
+    view.unmount()
+
+    vi.mocked(planning.listLearningTasks).mockRejectedValueOnce(new Error())
+    render(
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      '年度计划加载失败',
+    )
+  })
+  it('shows M04 empty state after loading', async () => {
+    stub()
+    vi.mocked(planning.listLearningTasks).mockResolvedValueOnce([])
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks?year=2026']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('当前条件下暂无学习任务。')).toBeTruthy()
+    expect(document.querySelector('.annual-plan-summary')).toBeTruthy()
   })
   it('filters M04 by month, search and status while retaining task context', async () => {
     stub()

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   listLearningTasks,
+  learningTaskMonth,
+  learningTaskProgress,
   type LearningTask,
   type LearningTaskStatus,
 } from './planning'
@@ -14,18 +16,11 @@ const segments: Array<LearningTaskStatus | ''> = [
   '已完成',
   '延期',
 ]
-function taskProgress(task: LearningTask) {
-  if (task.status === '已完成') return 100
-  const planned = Number(task.plan_item_estimated_hours)
-  return planned > 0
-    ? Math.min(100, Math.round((task.actual_hours / planned) * 100))
-    : 0
-}
-
 export function TaskListPage() {
   const year = useYear()
   const [params, setParams] = useSearchParams()
   const [tasks, setTasks] = useState<LearningTask[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const search = params.get('search') ?? ''
   const status = params.get('status') ?? ''
@@ -34,6 +29,7 @@ export function TaskListPage() {
     listLearningTasks(year)
       .then(setTasks)
       .catch(() => setError('学习任务加载失败，请重试。'))
+      .finally(() => setLoading(false))
   }, [year])
   function update(next: Record<string, string>) {
     const query = new URLSearchParams({
@@ -48,13 +44,13 @@ export function TaskListPage() {
   }
   const visible = tasks.filter(
     (task) =>
-      (!month || String(task.plan_item_target_month) === month) &&
+      (!month || String(learningTaskMonth(task)) === month) &&
       (!status || task.status === status) &&
       (!search || `${task.l3_code} ${task.l3_name ?? ''}`.includes(search)),
   )
   const metric = (value: string) =>
     tasks
-      .filter((task) => !month || String(task.plan_item_target_month) === month)
+      .filter((task) => !month || String(learningTaskMonth(task)) === month)
       .filter((task) => !value || task.status === value).length
   return (
     <section className="page">
@@ -67,32 +63,34 @@ export function TaskListPage() {
           </p>
         </div>
       </header>
-      <dl className="plan-summary">
-        <div>
-          <dt>全部任务</dt>
-          <dd>{metric('')}</dd>
-        </div>
-        <div>
-          <dt>进行中</dt>
-          <dd>{metric('进行中')}</dd>
-        </div>
-        <div>
-          <dt>待确认</dt>
-          <dd>
-            {
-              tasks.filter(
-                (task) =>
-                  (!month || String(task.plan_item_target_month) === month) &&
-                  task.requirement_change,
-              ).length
-            }
-          </dd>
-        </div>
-        <div>
-          <dt>逾期</dt>
-          <dd>{metric('延期')}</dd>
-        </div>
-      </dl>
+      {!loading && (
+        <dl className="annual-plan-summary">
+          <div>
+            <dt>全部任务</dt>
+            <dd>{metric('')}</dd>
+          </div>
+          <div>
+            <dt>进行中</dt>
+            <dd>{metric('进行中')}</dd>
+          </div>
+          <div>
+            <dt>待确认</dt>
+            <dd>
+              {
+                tasks.filter(
+                  (task) =>
+                    (!month || String(learningTaskMonth(task)) === month) &&
+                    task.requirement_change,
+                ).length
+              }
+            </dd>
+          </div>
+          <div>
+            <dt>逾期</dt>
+            <dd>{metric('延期')}</dd>
+          </div>
+        </dl>
+      )}
       <div>
         {segments.map((value) => (
           <button
@@ -127,7 +125,7 @@ export function TaskListPage() {
             {[
               ...new Set(
                 tasks
-                  .map((task) => task.plan_item_target_month)
+                  .map(learningTaskMonth)
                   .filter((value): value is number => value != null),
               ),
             ]
@@ -145,34 +143,40 @@ export function TaskListPage() {
           {error}
         </p>
       )}
-      {!error && !visible.length && (
+      {loading && <p className="muted">学习任务加载中…</p>}
+      {!loading && !error && !visible.length && (
         <p className="muted">当前条件下暂无学习任务。</p>
       )}
-      {visible.map((task) => (
-        <article className="plan-overview" key={task.id}>
-          <small>
-            {year}年{String(task.plan_item_target_month ?? '').padStart(2, '0')}
-            月 · {task.l3_code}
-          </small>
-          <h2>{task.l3_name ?? task.l3_code}</h2>
-          {task.requirement_change && <strong>能力要求已更新 · 待确认</strong>}
-          <p>
-            {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
-            {task.status}
-          </p>
-          <progress
-            aria-label={`${task.l3_code} 进度`}
-            value={taskProgress(task)}
-            max="100"
-          />{' '}
-          {taskProgress(task)}%
-          <Link
-            to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
-          >
-            进入任务
-          </Link>
-        </article>
-      ))}
+      {!loading &&
+        visible.map((task) => (
+          <article className="plan-overview" key={task.id}>
+            <small>
+              {year}年{String(learningTaskMonth(task) ?? '').padStart(2, '0')}月
+              · {task.l3_code}
+            </small>
+            <h2>{task.l3_name ?? task.l3_code}</h2>
+            {task.requirement_change && (
+              <strong>能力要求已更新 · 待确认</strong>
+            )}
+            <p>
+              {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
+              {task.status}
+            </p>
+            <progress
+              aria-label={`${task.l3_code} 进度`}
+              value={learningTaskProgress(task) ?? 0}
+              max="100"
+            />{' '}
+            {learningTaskProgress(task) == null
+              ? '进度待计算'
+              : `${learningTaskProgress(task)}%`}
+            <Link
+              to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+            >
+              进入任务
+            </Link>
+          </article>
+        ))}
     </section>
   )
 }

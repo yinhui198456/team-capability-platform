@@ -19,6 +19,7 @@ import psycopg
 import pytest
 
 from app.main import app
+from app.planning.repository import update_plan_item
 from tests.standard_target_support import create_scoped_draft
 from tests.test_assessment_plan_selection import (
     _create_test_user,
@@ -176,7 +177,7 @@ def test_generate_plan_items_created(plan_schema, gen_assessment) -> None:
     assert body["existing"] == []
 
     row = plan_schema.execute(
-        "SELECT pi.plan_month, pi.plan_quarter, lt.id "
+        "SELECT pi.id, pi.plan_month, pi.plan_quarter, pi.target_month, lt.id "
         "FROM plan_item pi "
         "JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id "
         "LEFT JOIN learning_task lt ON lt.plan_item_id = pi.id "
@@ -185,9 +186,38 @@ def test_generate_plan_items_created(plan_schema, gen_assessment) -> None:
         (code,),
     ).fetchone()
     assert row is not None, "plan_item must exist"
-    assert row[0] == "2026-07", f"plan_month must be TEXT YYYY-MM, got {row[0]!r}"
-    assert row[1] == "Q3", f"plan_quarter must be derived, got {row[1]!r}"
-    assert row[2] is not None, "learning_task must exist"
+    assert row[1] == "2026-07", f"plan_month must be TEXT YYYY-MM, got {row[1]!r}"
+    assert row[2] == "Q3", f"plan_quarter must be derived, got {row[2]!r}"
+    assert row[3] is None, "new items keep legacy target_month empty"
+    assert row[4] is not None, "learning_task must exist"
+
+    status, tasks = _api(
+        "GET",
+        "/api/planning/learning-tasks?year=2026",
+        cookies=_login(plan_schema, "m_gen"),
+    )
+    assert status == 200
+    task = next(item for item in tasks if item["id"] == row[4])
+    assert task["plan_item_target_month"] == 7
+    status, detail = _api(
+        "GET",
+        f"/api/planning/learning-tasks/{row[4]}",
+        cookies=_login(plan_schema, "m_gen"),
+    )
+    assert status == 200
+    assert detail["plan_item_target_month"] == 7
+
+    member_id = plan_schema.execute(
+        "SELECT id FROM tcp_user WHERE username='m_gen'"
+    ).fetchone()[0]
+    updated = update_plan_item(
+        plan_schema,
+        int(member_id),
+        int(row[0]),
+        {"plan_end_date": "2026-07-31"},
+        0,
+    )
+    assert str(updated["plan_end_date"]) == "2026-07-31"
 
 
 def test_generate_plan_items_idempotent(plan_schema, gen_assessment) -> None:
