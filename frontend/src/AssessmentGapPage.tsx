@@ -1409,89 +1409,91 @@ export function AssessmentGapPage() {
                                         : '加入提升计划'}
                                     </button>
                                   )}
-                                </div>
-                                {/* 计划草稿条：单一 YYYY-MM（Issue #194/187
-                                      合同第 4 条）；原型 plan-editor 全宽行 */}
-                                {showPlanTime && (
-                                  <div className={s.planEditor}>
-                                    <label htmlFor={`priority-${detail.id}`}>
-                                      优先级
-                                    </label>
-                                    <select
-                                      id={`priority-${detail.id}`}
-                                      value={detail.member_priority ?? ''}
-                                      onChange={(e) => {
-                                        const val =
-                                          (e.target.value as
-                                            '高' | '中' | '低' | '暂缓') || null
-                                        if (val === '暂缓') {
-                                          updateDetail(index, {
-                                            member_priority: '暂缓',
-                                            include_in_plan: false,
-                                            plan_quarter: null,
-                                            plan_month: null,
-                                          })
-                                        } else {
-                                          updateDetail(index, {
-                                            member_priority: val,
-                                          })
-                                        }
-                                      }}
-                                      disabled={!editable || !hasGap}
-                                      aria-label={`优先级 ${detail.l3_code}`}
-                                    >
-                                      <option value="">—</option>
-                                      <option value="高">高</option>
-                                      <option value="中">中</option>
-                                      <option value="低">低</option>
-                                      <option value="暂缓">暂缓</option>
-                                    </select>
-                                    <label htmlFor={`plan-month-${detail.id}`}>
-                                      计划月份 *
-                                    </label>
-                                    <div
-                                      className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''}`}
-                                      data-testid={`plan-month-control-${detail.l3_code}`}
-                                      aria-disabled={!editable}
-                                      onClick={() =>
-                                        openMonthPicker(
-                                          document.getElementById(
-                                            `plan-month-${detail.id}`,
-                                          ) as HTMLInputElement | null,
-                                        )
-                                      }
-                                    >
-                                      <span>
-                                        {detail.plan_month ?? '选择 YYYY-MM'}
-                                      </span>
-                                      <input
-                                        id={`plan-month-${detail.id}`}
-                                        type="month"
-                                        value={detail.plan_month ?? ''}
-                                        onClick={(event) => {
-                                          event.stopPropagation()
-                                          openMonthPicker(event.currentTarget)
+                                  {/* 已加入后在提升计划区原位补充优先级与月份。 */}
+                                  {showPlanTime && (
+                                    <div className={s.planEditor}>
+                                      <label htmlFor={`priority-${detail.id}`}>
+                                        优先级
+                                      </label>
+                                      <select
+                                        id={`priority-${detail.id}`}
+                                        value={detail.member_priority ?? ''}
+                                        onChange={(e) => {
+                                          const val =
+                                            (e.target.value as
+                                              '高' | '中' | '低' | '暂缓') ||
+                                            null
+                                          if (val === '暂缓') {
+                                            updateDetail(index, {
+                                              member_priority: '暂缓',
+                                              include_in_plan: false,
+                                              plan_quarter: null,
+                                              plan_month: null,
+                                            })
+                                          } else {
+                                            updateDetail(index, {
+                                              member_priority: val,
+                                            })
+                                          }
                                         }}
-                                        onChange={(event) =>
-                                          updateDetail(index, {
-                                            plan_month:
-                                              event.target.value || null,
-                                          })
-                                        }
-                                        disabled={!editable}
-                                        aria-label={`计划月份 ${detail.l3_code}`}
-                                      />
-                                    </div>
-                                    {!detail.plan_month && editable && (
-                                      <small
-                                        className={s.pendingMonth}
-                                        data-testid={`pending-month-${detail.l3_code}`}
+                                        disabled={!editable || !hasGap}
+                                        aria-label={`优先级 ${detail.l3_code}`}
                                       >
-                                        待补计划月份
-                                      </small>
-                                    )}
-                                  </div>
-                                )}
+                                        <option value="">—</option>
+                                        <option value="高">高</option>
+                                        <option value="中">中</option>
+                                        <option value="低">低</option>
+                                        <option value="暂缓">暂缓</option>
+                                      </select>
+                                      <label
+                                        htmlFor={`plan-month-${detail.id}`}
+                                      >
+                                        计划月份 *
+                                      </label>
+                                      <div
+                                        className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''}`}
+                                        data-testid={`plan-month-control-${detail.l3_code}`}
+                                        aria-disabled={!editable}
+                                        onClick={() =>
+                                          openMonthPicker(
+                                            document.getElementById(
+                                              `plan-month-${detail.id}`,
+                                            ) as HTMLInputElement | null,
+                                          )
+                                        }
+                                      >
+                                        <span>
+                                          {detail.plan_month ?? '选择 YYYY-MM'}
+                                        </span>
+                                        <input
+                                          id={`plan-month-${detail.id}`}
+                                          type="month"
+                                          value={detail.plan_month ?? ''}
+                                          onClick={(event) => {
+                                            event.stopPropagation()
+                                            openMonthPicker(event.currentTarget)
+                                          }}
+                                          onChange={(event) =>
+                                            updateDetail(index, {
+                                              plan_month:
+                                                event.target.value || null,
+                                            })
+                                          }
+                                          disabled={!editable}
+                                          aria-label={`计划月份 ${detail.l3_code}`}
+                                        />
+                                      </div>
+                                      {!detail.plan_month && editable && (
+                                        <small
+                                          className={s.pendingMonth}
+                                          data-testid={`pending-month-${detail.l3_code}`}
+                                        >
+                                          待补计划月份
+                                        </small>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                                 {editingId === detail.id && editable && (
                                   <div className={s.evidenceRow}>
                                     <textarea

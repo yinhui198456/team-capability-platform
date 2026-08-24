@@ -2304,10 +2304,41 @@ describe('M02 prototype element inventory (issue #194)', () => {
     // 优先级与月份同属已加入的计划草稿；未加入行不占用默认能力项密度。
     expect(screen.getByLabelText('优先级 P01.01.01')).toBeTruthy()
     expect(screen.queryByLabelText('优先级 P01.01.02')).toBeNull()
-    // 底部两个独立动作
+    // 批准结构顺序：页头/摘要/域与搜索/四区行/页底草稿生成。
+    const content = screen.getByTestId('assessment-content-area')
+    const headerIndex = [...content.children].indexOf(header!)
+    const summaryIndex = [...content.children].indexOf(summary)
+    const navigationIndex = [...content.children].indexOf(
+      screen.getByTestId('assessment-navigation-toolbar'),
+    )
+    const tableIndex = [...content.children].indexOf(
+      screen.getByTestId('assessment-main-area'),
+    )
+    const footer = screen.getByRole('contentinfo', { name: '计划草稿操作' })
+    const footerIndex = [...content.children].indexOf(footer)
+    expect(headerIndex).toBeLessThan(summaryIndex)
+    expect(summaryIndex).toBeLessThan(navigationIndex)
+    expect(navigationIndex).toBeLessThan(tableIndex)
+    expect(tableIndex).toBeLessThan(footerIndex)
+    // 已加入行仍保持四区；优先级和整框月份原位属于提升计划区。
+    const joinedRow = screen
+      .getByText('P01.01.01 · 当前职级必备')
+      .closest('[id^="row-"]')!
+    expect(joinedRow.children).toHaveLength(4)
+    const planZone = joinedRow.children[3] as HTMLElement
+    expect(within(planZone).getByLabelText('优先级 P01.01.01')).toBeTruthy()
+    expect(
+      within(planZone).getByTestId('plan-month-control-P01.01.01'),
+    ).toBeTruthy()
+    expect(screen.queryByText('三级达成路径')).toBeNull()
+    // 页底只承载草稿摘要与显式生成，评级保存仍是页头独立动作。
+    expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
+    expect(
+      within(footer).queryByRole('button', { name: '保存能力评级' }),
+    ).toBeNull()
     expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
     expect(
-      screen.getByRole('button', { name: '生成所选学习任务' }),
+      within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
   })
 })
