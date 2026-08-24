@@ -1156,7 +1156,7 @@ export function AssessmentGapPage() {
               ref={searchInputRef}
               className={s.searchBox}
               aria-label="搜索全部能力项"
-              placeholder="搜索全部 L3"
+              placeholder="搜索能力项"
               value={search}
               onChange={(event) => {
                 setSearch(event.target.value)

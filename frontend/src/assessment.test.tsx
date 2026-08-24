@@ -322,6 +322,9 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByTestId('scope-filter')).toBeNull()
     expect(screen.queryByTestId('status-filter')).toBeNull()
     expect(screen.getByLabelText('搜索全部能力项')).toBeTruthy()
+    expect(
+      screen.getByLabelText('搜索全部能力项').getAttribute('placeholder'),
+    ).toBe('搜索能力项')
     expect(screen.getByLabelText('一级能力域导航')).toBeTruthy()
     expect(
       screen
