@@ -142,6 +142,18 @@ class TestTaskRequirementDecision(ReviewTestBase):
             0,
         )
         assert result["decision"]["choice"] == choice
+        replay = decide_task_requirement(
+            connection,
+            member_id,
+            task_id,
+            int(change["proposal_detail_id"]),
+            choice,
+            0,
+        )
+        assert (
+            replay["decision"]["selected_snapshot_id"]
+            == result["decision"]["selected_snapshot_id"]
+        )
         readback = get_learning_task(connection, member_id, task_id)
         assert readback is not None
         assert readback["requirement_change"] is None

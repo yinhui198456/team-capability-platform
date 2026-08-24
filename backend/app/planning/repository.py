@@ -842,6 +842,9 @@ def list_learning_tasks(
         task["plan_item_estimated_hours_parsed"] = parse_estimated_hours(
             raw if isinstance(raw, str) else None
         ).as_dict()
+        task["requirement_change"] = get_task_requirement_change(
+            connection, member_id, int(task["id"])
+        )
     return tasks
 
 
@@ -852,7 +855,8 @@ def get_task_requirement_change(
     row = connection.execute(
         """
         SELECT pd.id, pd.planning_snapshot_id, old.id, old.expected_output,
-               old.output_type, new.expected_output, new.output_type,
+               old.output_type, old.notes, new.expected_output, new.output_type,
+               new.notes,
                d.choice, d.revision, d.selected_snapshot_id
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -877,7 +881,8 @@ def get_task_requirement_change(
         WHERE lt.id = %s AND agp.member_id = %s
           AND d.id IS NULL
           AND (old.expected_output IS DISTINCT FROM new.expected_output
-               OR old.output_type IS DISTINCT FROM new.output_type)
+               OR old.output_type IS DISTINCT FROM new.output_type
+               OR old.notes IS DISTINCT FROM new.notes)
         """,
         (task_id, member_id),
     ).fetchone()
@@ -887,12 +892,24 @@ def get_task_requirement_change(
         "proposal_detail_id": row[0],
         "new_snapshot_id": row[1],
         "current_snapshot_id": row[2],
-        "current": {"expected_output": row[3], "output_type": row[4]},
-        "proposed": {"expected_output": row[5], "output_type": row[6]},
+        "current": {
+            "expected_output": row[3],
+            "output_type": row[4],
+            "notes": row[5],
+        },
+        "proposed": {
+            "expected_output": row[6],
+            "output_type": row[7],
+            "notes": row[8],
+        },
         "decision": (
             None
-            if row[7] is None
-            else {"choice": row[7], "revision": row[8], "selected_snapshot_id": row[9]}
+            if row[9] is None
+            else {
+                "choice": row[9],
+                "revision": row[10],
+                "selected_snapshot_id": row[11],
+            }
         ),
     }
 
@@ -1013,7 +1030,7 @@ def get_learning_task(
         raw if isinstance(raw, str) else None
     ).as_dict()
     selected = connection.execute(
-        """SELECT s.id, s.expected_output, s.output_type FROM learning_task lt
+        """SELECT s.id, s.expected_output, s.output_type, s.notes FROM learning_task lt
            JOIN plan_item pi ON pi.id = lt.plan_item_id
            LEFT JOIN LATERAL (
                SELECT selected_snapshot_id FROM task_requirement_decision
@@ -1029,6 +1046,7 @@ def get_learning_task(
             "snapshot_id": selected[0],
             "expected_output": selected[1],
             "output_type": selected[2],
+            "notes": selected[3],
         }
         if selected
         else None

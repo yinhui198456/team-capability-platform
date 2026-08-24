@@ -1,34 +1,38 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import {
-  getAnnualPlan,
-  listLearningTasks,
-  type AnnualPlan,
-  type LearningTask,
-} from './planning'
+import { Link, useSearchParams } from 'react-router-dom'
+import { listLearningTasks, type LearningTask } from './planning'
 import { useYear } from './YearContext'
+
+function progress(task: LearningTask) {
+  if (task.status === '已完成') return 100
+  const hours = Number(task.plan_item_estimated_hours)
+  return Number.isFinite(hours) && hours > 0
+    ? Math.min(100, Math.round((task.actual_hours / hours) * 100))
+    : 0
+}
 
 export function AnnualPlanTimelinePage() {
   const year = useYear()
-  const [plan, setPlan] = useState<AnnualPlan | null>(null)
+  const [params, setParams] = useSearchParams()
   const [tasks, setTasks] = useState<LearningTask[]>([])
   const [error, setError] = useState('')
+  const selected = Number(params.get('month')) || null
   useEffect(() => {
-    Promise.all([getAnnualPlan(year), listLearningTasks(year)])
-      .then(([p, t]) => {
-        setPlan(p)
-        setTasks(t)
-      })
+    listLearningTasks(year)
+      .then(setTasks)
       .catch(() => setError('年度计划加载失败，请重试。'))
   }, [year])
-  if (error)
-    return (
-      <p className="error" role="alert">
-        {error}
-      </p>
-    )
-  if (!plan) return <p className="muted">正在加载年度计划…</p>
-  const done = plan.items.filter((item) => item.status === '已完成').length
+  const groups = new Map<number, LearningTask[]>()
+  tasks.forEach((task) => {
+    const month = task.plan_item_target_month
+    if (month) groups.set(month, [...(groups.get(month) ?? []), task])
+  })
+  const metrics = [
+    ['任务总数', tasks.length],
+    ['已完成', tasks.filter((task) => task.status === '已完成').length],
+    ['进行中', tasks.filter((task) => task.status === '进行中').length],
+    ['逾期', tasks.filter((task) => task.status === '延期').length],
+  ]
   return (
     <section className="page">
       <header className="page-heading">
@@ -39,61 +43,75 @@ export function AnnualPlanTimelinePage() {
         </div>
       </header>
       <dl className="plan-summary">
-        <div>
-          <dt>任务总数</dt>
-          <dd>{plan.items.length}</dd>
-        </div>
-        <div>
-          <dt>已完成</dt>
-          <dd>{done}</dd>
-        </div>
-        <div>
-          <dt>进行中</dt>
-          <dd>
-            {plan.items.filter((item) => item.status === '进行中').length}
-          </dd>
-        </div>
-        <div>
-          <dt>延期</dt>
-          <dd>{plan.items.filter((item) => item.status === '延期').length}</dd>
-        </div>
+        {metrics.map(([label, value]) => (
+          <div key={String(label)}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
       </dl>
-      <label>
-        年度完成进度
-        <progress
-          aria-label="年度完成进度"
-          value={done}
-          max={Math.max(plan.items.length, 1)}
-        />
-      </label>
-      {plan.items.map((item) => {
-        const task = tasks.find((value) => value.plan_item_id === item.id)
-        return (
-          <article className="plan-overview" key={item.id}>
-            <small>
-              {item.plan_month ??
-                `${year}-${String(item.target_month ?? 0).padStart(2, '0')}`}
-            </small>
-            <h2>
-              {item.l3_code} · {item.l3_name ?? '学习任务'}
-            </h2>
-            <p>
-              {item.expected_output ?? '暂未填写期望产出'} · {item.status}
-            </p>
-            {task ? (
-              <Link
-                to={`/growth/tasks/${task.id}?year=${year}&plan_item_id=${item.id}&l3_code=${item.l3_code}`}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {[...groups.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([month, monthTasks]) => {
+          const open = selected === month
+          const query = new URLSearchParams({
+            year: String(year),
+            month: String(month),
+          })
+          return (
+            <article className="plan-overview" key={month}>
+              <button
+                type="button"
+                onClick={() =>
+                  setParams(
+                    open
+                      ? { year: String(year) }
+                      : { year: String(year), month: String(month) },
+                  )
+                }
               >
-                进入任务
-              </Link>
-            ) : (
-              <Link to={`/growth/tasks?year=${year}&l3_code=${item.l3_code}`}>
-                查看任务
-              </Link>
-            )}
-          </article>
-        )
-      })}
+                {year}年{String(month).padStart(2, '0')}月 · {monthTasks.length}{' '}
+                个任务
+              </button>
+              <span className="muted">
+                {monthTasks.filter((task) => task.status === '进行中').length
+                  ? `进行中 ${monthTasks.filter((task) => task.status === '进行中').length} 个`
+                  : '未开始'}
+              </span>
+              <Link to={`/growth/tasks?${query}`}>查看本月任务</Link>
+              {open &&
+                monthTasks.map((task) => (
+                  <div key={task.id}>
+                    <h2>
+                      {task.l3_code} · {task.l3_name ?? task.l3_code}
+                    </h2>
+                    {task.requirement_change && (
+                      <strong>要求已更新 · 待确认</strong>
+                    )}
+                    <p>
+                      {task.status} ·{' '}
+                      <progress
+                        aria-label={`${task.l3_code} 进度`}
+                        value={progress(task)}
+                        max="100"
+                      />{' '}
+                      {progress(task)}%
+                    </p>
+                    <Link
+                      to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month: String(month), l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+                    >
+                      进入任务
+                    </Link>
+                  </div>
+                ))}
+            </article>
+          )
+        })}
     </section>
   )
 }

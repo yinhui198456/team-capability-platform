@@ -180,6 +180,7 @@ export type RequirementSnapshot = {
   snapshot_id: number
   expected_output: string | null
   output_type: string | null
+  notes: string | null
 }
 export type RequirementChange = {
   proposal_detail_id: number

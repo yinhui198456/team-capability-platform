@@ -1,10 +1,75 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { App } from './App'
 import * as access from './access'
 import * as planning from './planning'
+
+const tasks = [
+  {
+    id: 7,
+    plan_item_id: 1,
+    l3_code: 'P01.01.01',
+    l3_name: '文件规范',
+    status: '进行中' as const,
+    actual_start_date: null,
+    actual_end_date: null,
+    actual_hours: 2,
+    completion_quality: null,
+    review_conclusion: null,
+    next_action: null,
+    revision: 0,
+    actual_started_at: null,
+    actual_completed_at: null,
+    delay_reason: null,
+    pause_reason: null,
+    cancel_reason: null,
+    revised_due_date: null,
+    plan_item_current_level: 1,
+    plan_item_target_level: 2,
+    plan_item_priority: '中' as const,
+    plan_item_learning_material: null,
+    plan_item_learning_task_content: null,
+    plan_item_expected_output: '旧要求',
+    plan_item_estimated_hours: '10',
+    plan_item_target_month: 9,
+  },
+  {
+    id: 8,
+    plan_item_id: 2,
+    l3_code: 'P02.01.01',
+    l3_name: '沟通准备',
+    status: '未开始' as const,
+    actual_start_date: null,
+    actual_end_date: null,
+    actual_hours: 0,
+    completion_quality: null,
+    review_conclusion: null,
+    next_action: null,
+    revision: 0,
+    actual_started_at: null,
+    actual_completed_at: null,
+    delay_reason: null,
+    pause_reason: null,
+    cancel_reason: null,
+    revised_due_date: null,
+    plan_item_current_level: 1,
+    plan_item_target_level: 2,
+    plan_item_priority: '中' as const,
+    plan_item_learning_material: null,
+    plan_item_learning_task_content: null,
+    plan_item_expected_output: '沟通材料',
+    plan_item_estimated_hours: '8',
+    plan_item_target_month: 10,
+  },
+]
 
 function stub() {
   vi.spyOn(access, 'me').mockResolvedValue({
@@ -28,109 +93,166 @@ function stub() {
     created_at: '',
     items: [],
   })
-  vi.spyOn(planning, 'listLearningTasks').mockResolvedValue([])
+  vi.spyOn(planning, 'listLearningTasks').mockResolvedValue([
+    {
+      ...tasks[0],
+      requirement_change: {
+        proposal_detail_id: 8,
+        new_snapshot_id: 2,
+        current_snapshot_id: 1,
+        current: {
+          expected_output: '旧要求',
+          output_type: '说明',
+          notes: '旧验收要求',
+        },
+        proposed: {
+          expected_output: '新要求',
+          output_type: '清单',
+          notes: '新验收要求',
+        },
+        decision: null,
+      },
+    },
+    tasks[1],
+  ])
   vi.spyOn(planning, 'getLearningTask').mockResolvedValue({
-    id: 7,
-    plan_item_id: 1,
-    l3_code: 'P01.01.01',
-    l3_name: '文件规范',
-    status: '进行中',
-    actual_start_date: null,
-    actual_end_date: null,
-    actual_hours: 0,
-    completion_quality: null,
-    review_conclusion: null,
-    next_action: null,
-    revision: 0,
-    actual_started_at: null,
-    actual_completed_at: null,
-    delay_reason: null,
-    pause_reason: null,
-    cancel_reason: null,
-    revised_due_date: null,
-    plan_item_current_level: 1,
-    plan_item_target_level: 2,
-    plan_item_priority: '中',
-    plan_item_learning_material: null,
-    plan_item_learning_task_content: null,
-    plan_item_expected_output: '旧要求',
-    plan_item_estimated_hours: null,
-    plan_item_target_month: 9,
+    ...tasks[0],
     effective_requirement: {
       snapshot_id: 1,
       expected_output: '旧要求',
       output_type: '说明',
+      notes: '旧验收要求',
     },
     requirement_change: {
       proposal_detail_id: 8,
       new_snapshot_id: 2,
       current_snapshot_id: 1,
-      current: { expected_output: '旧要求', output_type: '说明' },
-      proposed: { expected_output: '新要求', output_type: '清单' },
+      current: {
+        expected_output: '旧要求',
+        output_type: '说明',
+        notes: '旧验收要求',
+      },
+      proposed: {
+        expected_output: '新要求',
+        output_type: '清单',
+        notes: '新验收要求',
+      },
       decision: null,
     },
   })
+  vi.spyOn(planning, 'listProgressLogs').mockResolvedValue([])
+  vi.spyOn(planning, 'listEvidences').mockResolvedValue([])
+  vi.spyOn(planning, 'createProgressLog').mockResolvedValue({} as never)
+  vi.spyOn(planning, 'createEvidence').mockResolvedValue({
+    id: 11,
+    learning_task_id: 7,
+    l3_code: 'P01.01.01',
+    version_number: 1,
+    content: '成果',
+    evidence_link: null,
+    status: '草稿',
+    submitted_at: null,
+    created_at: '',
+    submitted_by: null,
+    description: null,
+    evidence_type: null,
+    url: null,
+    file_reference: null,
+    file_name: null,
+    mime_type: null,
+    file_size: null,
+    supersedes_evidence_id: null,
+    revision: 0,
+  })
+  vi.spyOn(planning, 'submitEvidence').mockResolvedValue({} as never)
   vi.spyOn(planning, 'decideTaskRequirement').mockResolvedValue({
     proposal_detail_id: 8,
-    new_snapshot_id: 2,
-    current_snapshot_id: 1,
-    current: { expected_output: '旧要求', output_type: '说明' },
-    proposed: { expected_output: '新要求', output_type: '清单' },
     decision: { choice: 'adopt_new', revision: 0, selected_snapshot_id: 2 },
-  })
+  } as never)
 }
-describe('S2 independent M03–M05 routes', () => {
+
+describe('S2 approved M03–M05 routes', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
   })
-  it('does not merge M03 into the task detail', async () => {
+  it('groups M03 by month with real task progress and reaches M04 context', async () => {
     stub()
     render(
-      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026']}>
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026&month=9']}>
         <App />
       </MemoryRouter>,
     )
-    await waitFor(() =>
-      expect(
-        screen.getByRole('heading', { name: '月度计划时间轴' }),
-      ).toBeTruthy(),
-    )
+    await screen.findByRole('button', { name: /2026年09月/ })
+    expect(screen.getByText('要求已更新 · 待确认')).toBeTruthy()
     expect(
-      screen.getByRole('progressbar', { name: '年度完成进度' }),
-    ).toBeTruthy()
-  })
-  it('keeps M04 as a list route with a single filter entry', async () => {
-    stub()
-    render(
-      <MemoryRouter initialEntries={['/growth/tasks?year=2026&search=P01']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: '学习任务' })).toBeTruthy(),
-    )
+      screen
+        .getByRole('progressbar', { name: 'P01.01.01 进度' })
+        .getAttribute('value'),
+    ).toBe('20')
     expect(
-      screen.getByRole('searchbox', { name: '搜索任务或能力项' }),
-    ).toBeTruthy()
-    expect(screen.getByText('筛选')).toBeTruthy()
+      screen
+        .getAllByRole('link', { name: '查看本月任务' })[0]
+        .getAttribute('href'),
+    ).toContain('month=9')
   })
-  it('persists an explicit M05 requirement choice', async () => {
+  it('filters M04 by month, search and status while retaining task context', async () => {
     stub()
     render(
-      <MemoryRouter initialEntries={['/growth/tasks/7?year=2026']}>
+      <MemoryRouter
+        initialEntries={[
+          '/growth/tasks?year=2026&month=9&search=文件&status=进行中',
+        ]}
+      >
         <App />
       </MemoryRouter>,
     )
-    await screen.findByRole('button', { name: '采用新要求' })
-    screen.getByRole('button', { name: '采用新要求' }).click()
-    await waitFor(() =>
-      expect(planning.decideTaskRequirement).toHaveBeenCalledWith(
-        7,
-        8,
-        'adopt_new',
-        0,
-      ),
+    await screen.findByText('文件规范')
+    expect(screen.queryByText('沟通准备')).toBeNull()
+    expect(screen.getByText('进行中 1')).toBeTruthy()
+    const href =
+      screen.getByRole('link', { name: '进入任务' }).getAttribute('href') ?? ''
+    expect(href).toContain('month=9')
+    expect(href).toContain('search=%E6%96%87%E4%BB%B6')
+    expect(href).toContain('status=%E8%BF%9B%E8%A1%8C%E4%B8%AD')
+  })
+  it('uses M05 log/evidence actions and keeps inputs when confirmation blocks submit', async () => {
+    stub()
+    render(
+      <MemoryRouter
+        initialEntries={[
+          '/growth/tasks/7?year=2026&month=9&search=文件&status=进行中',
+        ]}
+      >
+        <App />
+      </MemoryRouter>,
     )
+    await screen.findByRole('button', { name: '学习记录' })
+    fireEvent.change(screen.getByLabelText('本次学习内容'), {
+      target: { value: '整理目录' },
+    })
+    fireEvent.change(screen.getByLabelText('投入时长'), {
+      target: { value: '2' },
+    })
+    fireEvent.change(screen.getByLabelText('记录日期'), {
+      target: { value: '2026-09-01' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存学习记录' }))
+    await waitFor(() => expect(planning.createProgressLog).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '阶段产出' }))
+    fireEvent.change(screen.getByLabelText('阶段产出说明'), {
+      target: { value: '检查清单' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存阶段产出' }))
+    await waitFor(() => expect(planning.createEvidence).toHaveBeenCalled())
+    fireEvent.click(screen.getAllByRole('button', { name: '提交成果' })[0])
+    fireEvent.change(screen.getByLabelText('成果说明'), {
+      target: { value: '已完成清单' },
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: '提交成果' })[1])
+    expect(
+      (screen.getByLabelText('成果说明') as HTMLTextAreaElement).value,
+    ).toBe('已完成清单')
+    expect(screen.getByText(/请先确认任务要求版本/)).toBeTruthy()
   })
 })
