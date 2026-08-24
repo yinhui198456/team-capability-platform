@@ -209,9 +209,12 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
 
   await page.goto('/growth/annual-plan?year=2026')
   await expect(
-    page.getByRole('heading', { name: '年度成长计划' }),
+    page.getByRole('heading', { name: '月度计划时间轴' }),
   ).toBeVisible()
-  await openM02(page)
+  await page.goBack()
+  await expect(
+    page.getByRole('heading', { name: '能力评级与提升计划' }),
+  ).toBeVisible()
   persistedRow = page
     .getByLabel(`当前等级 ${code}`)
     .locator('xpath=ancestor::div[starts-with(@id, "row-")]')
