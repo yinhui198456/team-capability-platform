@@ -271,7 +271,11 @@ export function EvidenceReviewPage() {
                 onClick={() => selectItem(ev.id)}
                 type="button"
               >
-                <span className={ev.is_resubmission ? 'error' : 'warning'}>
+                <span
+                  className={`status-pill ${
+                    ev.is_resubmission ? 'error' : 'warning'
+                  }`}
+                >
                   {ev.is_resubmission ? '补充后重提' : '待验收'}
                 </span>
                 <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>

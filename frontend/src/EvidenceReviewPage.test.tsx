@@ -136,16 +136,20 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(screen.getAllByText('需补充').length).toBeGreaterThan(0)
     expect(screen.getByText('本月通过')).toBeTruthy()
     expect(screen.getByText('平均响应')).toBeTruthy()
-    expect(
-      screen
-        .getAllByText('待验收')
-        .find((node) => node.className === 'warning'),
-    ).toBeTruthy()
-    expect(
-      screen
-        .getAllByText('补充后重提')
-        .find((node) => node.className === 'error'),
-    ).toBeTruthy()
+    const queue = screen
+      .getByRole('heading', { name: '待办队列' })
+      .closest('aside')
+    const [ordinary, resubmission] = Array.from(
+      queue?.querySelectorAll('button') ?? [],
+    )
+    const [ordinaryBadge, ordinaryMember, ordinaryTask] = Array.from(
+      ordinary.children,
+    )
+    const [resubmissionBadge] = Array.from(resubmission.children)
+    expect(ordinaryBadge.className).toBe('status-pill warning')
+    expect(ordinaryMember.tagName).toBe('STRONG')
+    expect(ordinaryTask.className).toBe('evidence-review-task')
+    expect(resubmissionBadge.className).toBe('status-pill error')
   })
 
   it('marks an ordinary actionable item as 待验收', async () => {
@@ -153,7 +157,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(
       screen
         .getAllByText('待验收')
-        .find((node) => node.className === 'warning'),
+        .find((node) => node.className === 'status-pill warning'),
     ).toBeTruthy()
   })
 

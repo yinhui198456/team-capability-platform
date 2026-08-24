@@ -794,21 +794,31 @@ select {
   grid-column: auto;
 }
 
-.evidence-review-queue button {
+.evidence-review-queue.buddy-member-list > button {
   display: grid;
   gap: 3px 8px;
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 78px;
 }
 
-.evidence-review-queue button .warning,
-.evidence-review-queue button .error {
+.evidence-review-queue.buddy-member-list > button > .status-pill {
   align-self: center;
   grid-row: 1 / span 2;
+  margin-top: 0;
 }
 
-.evidence-review-queue button strong,
-.evidence-review-queue button .evidence-review-task {
+.evidence-review-queue.buddy-member-list > button > .status-pill.warning {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.evidence-review-queue.buddy-member-list > button > .status-pill.error {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.evidence-review-queue.buddy-member-list > button > strong,
+.evidence-review-queue.buddy-member-list > button > .evidence-review-task {
   grid-column: 2;
 }
 
