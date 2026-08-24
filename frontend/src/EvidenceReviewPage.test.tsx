@@ -128,7 +128,11 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
 
   it('matches the approved B01 title, history entry and selected-task hierarchy', async () => {
     await renderEvidencePage([
-      makePending({ description: '目录重构说明与检查清单' }),
+      makePending({
+        l3_name: '数据管道基础任务',
+        description: '目录重构说明与检查清单',
+        content: '成员提交的成果正文',
+      }),
     ])
     expect(
       document.querySelector('.evidence-review-page .eyebrow')?.textContent,
@@ -152,15 +156,20 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       screen.getByText('member · P01.01.01', { selector: 'small' }),
     ).toBeTruthy()
     expect(
-      screen.getByRole('heading', { name: '目录重构说明与检查清单' }),
+      screen.getByRole('heading', { name: '数据管道基础任务' }),
     ).toBeTruthy()
     expect(screen.getByText('成果 v1')).toBeTruthy()
     expect(
-      screen.getByRole('heading', { name: '完成 P01 实践项目' }),
+      screen.getByRole('heading', { name: '目录重构说明与检查清单' }),
     ).toBeTruthy()
+    expect(screen.getByText('成员提交的成果正文')).toBeTruthy()
+    expect(historyButton.className).toBe('evidence-review-history-button')
     expect(
       screen.getByRole('button', { name: '通过' }).getAttribute('aria-pressed'),
     ).toBe('false')
+    expect(screen.getByRole('button', { name: '通过' }).className).toBe(
+      'evidence-review-decision',
+    )
     expect(
       screen
         .getByRole('button', { name: '需补充' })
@@ -169,7 +178,9 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(screen.getByLabelText('反馈建议').getAttribute('placeholder')).toBe(
       '通过时可填写建议；需补充时请具体说明缺少什么。',
     )
-    expect(screen.getByRole('button', { name: '提交验收结果' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '提交验收结果' }).className).toBe(
+      'evidence-review-submit-button',
+    )
   })
 
   it('requires a conclusion before submitting without making a request', async () => {

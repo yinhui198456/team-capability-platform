@@ -22,7 +22,7 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 function taskTitle(ev: PendingEvidenceReview): string {
-  return ev.description?.trim() || ev.l3_name || ev.l3_code
+  return ev.l3_name || ev.l3_code
 }
 
 export function EvidenceReviewPage() {
@@ -235,6 +235,7 @@ export function EvidenceReviewPage() {
           </p>
         </div>
         <button
+          className="evidence-review-history-button"
           disabled={!selected}
           onClick={focusHistory}
           title={selected ? undefined : '暂无待验收成果，无法查看历史反馈'}
@@ -328,9 +329,13 @@ export function EvidenceReviewPage() {
                 </span>
               </div>
               <div className="evidence-content evidence-review-preview">
-                <h3>{selected.content || '未提供成果内容。'}</h3>
-                {selected.description && (
-                  <p className="muted">{selected.description}</p>
+                <h3>
+                  {selected.description?.trim() ||
+                    selected.content?.trim() ||
+                    '未提供成果内容。'}
+                </h3>
+                {selected.description?.trim() && selected.content?.trim() && (
+                  <p className="muted">{selected.content}</p>
                 )}
                 {selected.evidence_link && (
                   <a
@@ -346,13 +351,8 @@ export function EvidenceReviewPage() {
                 {CONCLUSIONS.map((value) => (
                   <button
                     aria-pressed={conclusion === value}
-                    className={`btn ${
-                      conclusion === value
-                        ? value === '通过'
-                          ? 'success'
-                          : 'danger'
-                        : ''
-                    }`}
+                    className="evidence-review-decision"
+                    data-conclusion={value}
                     key={value}
                     onClick={() => setConclusion(value)}
                     type="button"
@@ -374,6 +374,7 @@ export function EvidenceReviewPage() {
               )}
               <div className="actions">
                 <button
+                  className="evidence-review-submit-button"
                   disabled={submitting}
                   onClick={() => void handleSubmit()}
                   type="button"

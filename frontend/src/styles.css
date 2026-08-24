@@ -871,6 +871,68 @@ select {
   padding: 14px;
 }
 
+.evidence-review-history-button,
+.evidence-review-decision,
+.evidence-review-submit-button {
+  align-items: center;
+  border: 1px solid #c6d3e2;
+  border-radius: 6px;
+  color: #30445f;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 7px;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+.evidence-review-history-button,
+.evidence-review-decision {
+  background: #fff;
+}
+
+.evidence-review-history-button:hover,
+.evidence-review-decision:hover {
+  background: #f7faff;
+  border-color: #8cabcf;
+}
+
+.evidence-review-decision[aria-pressed='true'][data-conclusion='通过'] {
+  background: #137a50;
+  border-color: #137a50;
+  color: #fff;
+}
+
+.evidence-review-decision[aria-pressed='true'][data-conclusion='需补充'] {
+  background: #b93838;
+  border-color: #b93838;
+  color: #fff;
+}
+
+.evidence-review-submit-button {
+  background: #0b63ce;
+  border-color: #0b63ce;
+  color: #fff;
+}
+
+.evidence-review-submit-button:hover {
+  background: #084eaa;
+}
+
+.evidence-review-history-button:focus-visible,
+.evidence-review-decision:focus-visible,
+.evidence-review-submit-button:focus-visible {
+  box-shadow: 0 0 0 3px #0b63ce38;
+}
+
+.evidence-review-history-button:disabled,
+.evidence-review-submit-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .buddy-member-list {
   display: grid;
   gap: 8px;
