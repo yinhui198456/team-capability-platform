@@ -9,7 +9,6 @@ import {
   type DraftTargetRepairPreview,
   type ScopePreview,
   createAssessment,
-  batchFillL2,
   fetchScopePreview,
   getAssessment,
   getDraftTargetRepairPreview,
@@ -18,7 +17,6 @@ import {
   repairDraftTargetSnapshots,
   saveDraft,
   generatePlanItems,
-  selectL2Requirement,
 } from './assessment'
 import { type ApiError } from './shared/api'
 import { getAnnualPlan } from './planning'
@@ -122,15 +120,6 @@ function normalizeEvidence(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function isValidLevel(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    value <= 5
-  )
-}
-
 function isEvidenceValid(detail: AssessmentDetail) {
   const current = detail.current_level
   if (current == null) return true
@@ -145,20 +134,6 @@ function isEvidenceValid(detail: AssessmentDetail) {
     )
   }
   return current < 3 || evidence.length > 0
-}
-
-function adjustmentReason(detail: AssessmentDetail) {
-  if (!detail.target_adjusted) {
-    return detail.adjusted_target_level != null ||
-      normalizeEvidence(detail.target_adjustment_reason)
-      ? '需取消个人调整'
-      : ''
-  }
-  if (!isValidLevel(detail.adjusted_target_level)) return '需填写调整目标'
-  if (!normalizeEvidence(detail.target_adjustment_reason)) {
-    return '需填写调整原因'
-  }
-  return ''
 }
 
 function isInheritedUpdate(detail: AssessmentDetail) {
@@ -176,20 +151,8 @@ function isInheritedUpdate(detail: AssessmentDetail) {
   )
 }
 
-function canBatchFill(detail: AssessmentDetail) {
-  return (
-    detail.current_level == null &&
-    detail.standard_target_applicable !== false &&
-    !detail.target_compatibility_error &&
-    detail.inherited_current_level == null &&
-    !detail.current_level_explicitly_cleared
-  )
-}
-
 function unfilledReason(detail: AssessmentDetail) {
   if (!isApplicableDetail(detail)) return ''
-  const adjustment = adjustmentReason(detail)
-  if (adjustment) return adjustment
   if (detail.current_level == null || effectiveTarget(detail) == null) {
     return '需评估等级'
   }
@@ -269,17 +232,9 @@ export function AssessmentGapPage() {
   const detailsRef = useRef<AssessmentDetail[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
-  const [adjustmentId, setAdjustmentId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [batchConfirm, setBatchConfirm] = useState<{
-    l2Code: string
-    level: 0 | 1 | 2
-  } | null>(null)
-  const [selectedRequirement, setSelectedRequirement] = useState<
-    Record<string, 'P4' | 'P5' | 'P6' | 'P7' | 'P8'>
-  >({})
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
   // 指纹变化（选中项/版本变更）或 409 后换新 key（镜像 BuddyReviewCenter 模式）。
@@ -318,7 +273,6 @@ export function AssessmentGapPage() {
     setGenerationSummary(null)
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
-    setActiveDomain((current) => current || firstDomain)
     const firstL2 =
       value.l2_groups?.find((group) => group.l1_code === firstDomain)
         ?.l2_code ?? defaultL2(value.details ?? [], firstDomain)
@@ -474,7 +428,7 @@ export function AssessmentGapPage() {
     }
   }
 
-  /** Issue #194 P1: 只取某动作的字段构造稀疏 PATCH 行——评级/调整/依据
+  /** Issue #194 P1: 只取某动作的字段构造稀疏 PATCH 行——评级/依据
     或 计划（优先级/纳入/月份），绝不夹带另一动作的字段。 */
   function buildDraftRows(
     rows: AssessmentDetail[],
@@ -489,9 +443,6 @@ export function AssessmentGapPage() {
         return {
           ...base,
           current_level: detail.current_level,
-          target_adjusted: detail.target_adjusted ?? false,
-          adjusted_target_level: detail.adjusted_target_level ?? null,
-          target_adjustment_reason: detail.target_adjustment_reason ?? null,
           evidence_note: detail.evidence_note ?? null,
         }
       }
@@ -704,60 +655,6 @@ export function AssessmentGapPage() {
     }
   }
 
-  async function handleBatchFill(l2Code: string, currentLevel: 0 | 1 | 2) {
-    if (!assessment) return
-    // 批量填与评级/计划草稿保存走同一 mutation tail；先等待在途计划自动保存，
-    // 再接入同一 revision 序列，保证后续计划 PATCH 使用新 revision。
-    await pumpPlanSaves()
-    setError('')
-    setMessage('')
-    try {
-      const result = await enqueueMutation(() =>
-        batchFillL2(assessment.id, l2Code, currentLevel, revisionRef.current),
-      )
-      revisionRef.current = result.revision ?? revisionRef.current + 1
-      setDetails((current) =>
-        current.map((detail) =>
-          result.updated_l3_codes.includes(detail.l3_code)
-            ? { ...detail, current_level: currentLevel }
-            : detail,
-        ),
-      )
-      setAssessment((current) =>
-        current
-          ? {
-              ...current,
-              revision: result.revision ?? current.revision,
-              gap_summary: result.gap_summary ?? current.gap_summary,
-            }
-          : current,
-      )
-      const autoCancelled = result.auto_cancelled_plan_candidates ?? []
-      if (autoCancelled.length) {
-        setDetails((current) =>
-          current.map((detail) =>
-            autoCancelled.includes(detail.l3_code)
-              ? { ...detail, include_in_plan: false }
-              : detail,
-          ),
-        )
-      }
-      setBatchConfirm(null)
-      setMessage(
-        `已将本 L2 真正空值批量设为 ${currentLevel}；已有值、沿用值和显式清空项保持不变。`,
-      )
-    } catch (err: unknown) {
-      const status = (err as { status?: number }).status
-      setError(
-        status === 409
-          ? '数据已被其他操作更新，请重新加载后再保存。'
-          : err instanceof Error
-            ? err.message
-            : '批量填写失败',
-      )
-    }
-  }
-
   async function handleGeneratePlan() {
     if (!assessment) return
     setError('')
@@ -947,7 +844,10 @@ export function AssessmentGapPage() {
 
   // Issue #194: 额外筛选层（范围/状态）已按定版原型移除——域内明细全量展示。
   const filtered = useMemo(
-    () => details.filter((detail) => l1Of(detail) === activeDomain),
+    () =>
+      activeDomain
+        ? details.filter((detail) => l1Of(detail) === activeDomain)
+        : details,
     [details, activeDomain],
   )
 
@@ -969,7 +869,7 @@ export function AssessmentGapPage() {
       AssessmentL2Group & { l1_code: string; l2_code: string }
     >()
     for (const group of assessment?.l2_groups ?? []) {
-      if (group.l1_code === activeDomain && group.l2_code) {
+      if ((!activeDomain || group.l1_code === activeDomain) && group.l2_code) {
         groups.set(group.l2_code, {
           ...group,
           l1_code: group.l1_code,
@@ -1203,6 +1103,17 @@ export function AssessmentGapPage() {
           data-testid="assessment-navigation-toolbar"
         >
           <nav className={s.l1Nav} aria-label="一级能力域导航">
+            <button
+              type="button"
+              className={!activeDomain ? s.activeNav : ''}
+              aria-pressed={!activeDomain}
+              onClick={() => {
+                setActiveDomain('')
+                setSearch('')
+              }}
+            >
+              全部能力域
+            </button>
             {domains.map((domain) => {
               const domainItems = details.filter(
                 (detail) => l1Of(detail) === domain,
@@ -1309,19 +1220,6 @@ export function AssessmentGapPage() {
               const l2Code = group.l2_code
               const items = group.details
               const open = expandedL2.has(l2Code)
-              const suggestedRequirement = group.requirements
-                ? selectL2Requirement(
-                    group.requirements,
-                    assessment.member_current_level,
-                    assessment.member_target_level,
-                  )
-                : null
-              const requirementLevel =
-                selectedRequirement[l2Code] ?? suggestedRequirement?.level
-              const requirementText =
-                requirementLevel && group.requirements
-                  ? group.requirements[requirementLevel]
-                  : null
               return (
                 <div className={s.domainGroup} key={l2Code}>
                   <div className={s.domainHeader}>
@@ -1342,7 +1240,7 @@ export function AssessmentGapPage() {
                       </span>
                     </button>
                     <span className={s.groupActions}>
-                      <small>二级能力标准 · {group.l3_count} 条达成路径</small>
+                      <small>{group.l3_count} 条达成路径</small>
                       <small>
                         {
                           items.filter(isApplicableDetail).filter(isFilled)
@@ -1350,88 +1248,12 @@ export function AssessmentGapPage() {
                         }
                         /{items.filter(isApplicableDetail).length}
                       </small>
-                      {editable &&
-                        items.some(canBatchFill) &&
-                        [0, 1, 2].map((level) => {
-                          const typedLevel = level as 0 | 1 | 2
-                          const confirming =
-                            batchConfirm?.l2Code === l2Code &&
-                            batchConfirm?.level === typedLevel
-                          return confirming ? (
-                            <button
-                              key={level}
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                void handleBatchFill(l2Code, typedLevel)
-                              }}
-                            >
-                              确认填 {level}
-                            </button>
-                          ) : (
-                            <button
-                              key={level}
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setBatchConfirm({
-                                  l2Code,
-                                  level: typedLevel,
-                                })
-                              }}
-                            >
-                              批量填 {level}
-                            </button>
-                          )
-                        })}
                     </span>
                   </div>
                   {open && (
                     <>
-                      <details>
-                        <summary>职级要求</summary>
-                        <section aria-label={l2Code + ' 职级要求'}>
-                          {group.requirements ? (
-                            <>
-                              <div className={s.groupActions}>
-                                {(['P4', 'P5', 'P6', 'P7', 'P8'] as const).map(
-                                  (level) => (
-                                    <button
-                                      aria-pressed={requirementLevel === level}
-                                      key={level}
-                                      onClick={() =>
-                                        setSelectedRequirement((current) => ({
-                                          ...current,
-                                          [l2Code]: level,
-                                        }))
-                                      }
-                                      type="button"
-                                    >
-                                      {level}
-                                    </button>
-                                  ),
-                                )}
-                              </div>
-                              <p className="muted">
-                                {requirementText?.trim()
-                                  ? (suggestedRequirement?.label ?? '职级') +
-                                    ' ' +
-                                    requirementLevel +
-                                    '：' +
-                                    requirementText
-                                  : '职级要求暂不可用'}
-                              </p>
-                            </>
-                          ) : (
-                            <p className="muted">职级要求暂不可用</p>
-                          )}
-                        </section>
-                      </details>
-                      <h3>三级达成路径 / 学习实践项</h3>
                       {group.is_empty ? (
-                        <p className="muted">
-                          暂无三级达成路径，当前无可评估项
-                        </p>
+                        <p className="muted">当前无可评估项</p>
                       ) : (
                         <div className={s.table} data-testid="assessment-table">
                           {/* Issue #194 P1: 权威原型 M02 V1 四区能力项行
@@ -1449,10 +1271,6 @@ export function AssessmentGapPage() {
                             const gap = computeGap(detail)
                             const reason = unfilledReason(detail)
                             const applicable = isApplicableDetail(detail)
-                            const adjustable =
-                              applicable &&
-                              detail.standard_target_level != null &&
-                              !detail.target_compatibility_error
                             const inherited =
                               detail.inherited_from_assessment_id != null
                             const updated =
@@ -1539,30 +1357,8 @@ export function AssessmentGapPage() {
                                       </span>
                                       {detail.target_adjusted && (
                                         <span className={s.adjustedBadge}>
-                                          [已调整]
+                                          [历史调整]
                                         </span>
-                                      )}
-                                      {adjustable && editable && (
-                                        <details className={s.adjustTarget}>
-                                          <summary
-                                            className={s.adjustTargetSummary}
-                                          >
-                                            调整目标
-                                          </summary>
-                                          <button
-                                            type="button"
-                                            className={s.adjustBtn}
-                                            onClick={() =>
-                                              setAdjustmentId(
-                                                adjustmentId === detail.id
-                                                  ? null
-                                                  : (detail.id ?? null),
-                                              )
-                                            }
-                                          >
-                                            调整▸
-                                          </button>
-                                        </details>
                                       )}
                                       {detail.target_snapshot_source ===
                                         'legacy_preserved' && (
@@ -1570,88 +1366,6 @@ export function AssessmentGapPage() {
                                           历史保留
                                         </small>
                                       )}
-                                      {/* Inline adjustment editor */}
-                                      {adjustmentId === detail.id &&
-                                        editable && (
-                                          <div className={s.adjustmentEditor}>
-                                            <label className="checkbox">
-                                              <input
-                                                type="checkbox"
-                                                aria-label={`启用个人调整 ${detail.l3_code}`}
-                                                checked={
-                                                  detail.target_adjusted ??
-                                                  false
-                                                }
-                                                onChange={(event) =>
-                                                  updateDetail(index, {
-                                                    target_adjusted:
-                                                      event.target.checked,
-                                                    adjusted_target_level: event
-                                                      .target.checked
-                                                      ? (detail.adjusted_target_level ??
-                                                        detail.standard_target_level ??
-                                                        null)
-                                                      : null,
-                                                    target_adjustment_reason:
-                                                      event.target.checked
-                                                        ? (detail.target_adjustment_reason ??
-                                                          '')
-                                                        : null,
-                                                  })
-                                                }
-                                              />
-                                              启用调整
-                                            </label>
-                                            {detail.target_adjusted && (
-                                              <>
-                                                <select
-                                                  value={
-                                                    detail.adjusted_target_level ??
-                                                    ''
-                                                  }
-                                                  onChange={(event) =>
-                                                    updateDetail(index, {
-                                                      adjusted_target_level:
-                                                        event.target.value
-                                                          ? Number(
-                                                              event.target
-                                                                .value,
-                                                            )
-                                                          : null,
-                                                    })
-                                                  }
-                                                  aria-label={`调整目标 ${detail.l3_code}`}
-                                                >
-                                                  <option value="">选择</option>
-                                                  {LEVELS.filter(
-                                                    (l) => l >= 1,
-                                                  ).map((level) => (
-                                                    <option
-                                                      key={level}
-                                                      value={level}
-                                                    >
-                                                      {level}
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                                <input
-                                                  aria-label={`调整原因 ${detail.l3_code}`}
-                                                  value={
-                                                    detail.target_adjustment_reason ??
-                                                    ''
-                                                  }
-                                                  placeholder="填写调整原因"
-                                                  onChange={(event) =>
-                                                    updateDetail(index, {
-                                                      target_adjustment_reason:
-                                                        event.target.value,
-                                                    })
-                                                  }
-                                                />
-                                              </>
-                                            )}
-                                          </div>
-                                        )}
                                       <div className={s.gapCell}>
                                         Gap：{gap ?? '—'}
                                       </div>

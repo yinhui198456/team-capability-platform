@@ -1,5 +1,11 @@
 import { request } from './shared/api'
 
+const READ_ONLY_TARGET_ADJUSTMENT_FIELDS = new Set([
+  'target_adjusted',
+  'adjusted_target_level',
+  'target_adjustment_reason',
+])
+
 export function newIdempotencyKey(): string {
   if (
     typeof crypto !== 'undefined' &&
@@ -82,34 +88,6 @@ export type AssessmentL2Group = {
   is_empty: boolean
   details: AssessmentDetail[]
   requirements?: L2Requirements
-}
-
-const jobLevels = ['P4', 'P5', 'P6', 'P7', 'P8'] as const
-
-export function selectL2Requirement(
-  requirements: L2Requirements,
-  currentLevel: string | null | undefined,
-  targetLevel: string | null | undefined,
-): {
-  level: (typeof jobLevels)[number]
-  label: '目标职级' | '当前职级'
-  text: string
-} | null {
-  for (const [level, label] of [
-    [targetLevel, '目标职级'],
-    [currentLevel, '当前职级'],
-  ] as const) {
-    if (!jobLevels.includes(level as (typeof jobLevels)[number])) continue
-    const text = requirements[level as (typeof jobLevels)[number]]
-    if (text?.trim()) {
-      return {
-        level: level as (typeof jobLevels)[number],
-        label,
-        text: text.trim(),
-      }
-    }
-  }
-  return null
 }
 
 export type AssessmentDetail = {
@@ -311,6 +289,7 @@ export async function saveDraft(
         for (const [key, value] of Object.entries(detail)) {
           if (key === 'l3_node_id' || key === 'l3_code') continue
           if (key === 'plan_quarter') continue // derived server-side
+          if (READ_ONLY_TARGET_ADJUSTMENT_FIELDS.has(key)) continue
           row[key] = value ?? null
         }
         return row

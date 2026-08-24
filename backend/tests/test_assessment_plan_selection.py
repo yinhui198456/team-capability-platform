@@ -452,9 +452,6 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "target for positive gap",
                     "member_priority": "暂缓",
                     "include_in_plan": True,
                     "plan_quarter": "Q2",
@@ -498,10 +495,7 @@ def test_include_in_plan_pending_month_persists(
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     # plan_month omitted → 待补计划月份 must be persistable
@@ -562,10 +556,7 @@ def test_plan_month_text_format_and_derivation(
                     {
                         "l3_node_id": node_id,
                         "l3_code": code,
-                        "current_level": 2,
-                        "target_adjusted": True,
-                        "adjusted_target_level": 5,
-                        "target_adjustment_reason": "test",
+                        "current_level": 0,
                         "member_priority": "高",
                         "include_in_plan": True,
                         "plan_month": plan_month,
@@ -667,10 +658,7 @@ def test_uncheck_plan_clears_quarter_month(plan_schema: psycopg.Connection) -> N
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-03",
@@ -872,7 +860,7 @@ def test_revision_conflict_409_zero_writes(plan_schema: psycopg.Connection) -> N
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 2}],
             "expected_revision": 1,
         },
         cookies=cookies,
@@ -916,9 +904,6 @@ def test_include_in_plan_tri_state_null(plan_schema: psycopg.Connection) -> None
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "中",
                 }
             ],
@@ -972,10 +957,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 1,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "中",
                     "include_in_plan": True,
                     "plan_month": "2026-06",
@@ -992,7 +974,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 3}],
+            "details": [{"l3_node_id": node_id, "l3_code": code, "current_level": 1}],
             "expected_revision": 2,
         },
         cookies=cookies,
@@ -1002,7 +984,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert body.get("auto_cleared") == []
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["current_level"] == 3
+    assert saved["current_level"] == 1
     assert saved["member_priority"] == "中"
     assert saved["include_in_plan"] is True
     # plan_quarter is derived server-side from plan_month (TEXT YYYY-MM).
@@ -1230,10 +1212,7 @@ def test_patch_false_semantic(plan_schema: psycopg.Connection) -> None:
                 {
                     "l3_node_id": node_id,
                     "l3_code": code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-07",
@@ -1301,9 +1280,6 @@ def test_submit_retired_legacy_422_zero_write(
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 4,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-11",
@@ -1370,8 +1346,10 @@ def test_parameter_tampering_rejected(plan_schema: psycopg.Connection) -> None:
     assert status == 422, f"gap_value tampering: {status}"
 
 
-def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
-    """Personal adjustment recalculates effective target and gap."""
+def test_member_target_adjustments_are_read_only(
+    plan_schema: psycopg.Connection,
+) -> None:
+    """Member writes cannot create or edit adjustments; history stays readable."""
     member_id = _create_test_user(plan_schema, "m_adj", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -1383,12 +1361,26 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
         (assessment_id,),
     ).fetchone()
     code = detail[0]
-    _std_target = int(detail[1])
     node_id = _detail_l3_node_id(plan_schema, assessment_id, code)
     assert node_id is not None, "scope-v1 detail must have l3_node_id"
 
-    # Set current_level far below target, with adjustment to make gap=0
-    status, _ = _request(
+    # Existing historical adjustment remains readable through GET.
+    plan_schema.execute(
+        "UPDATE assessment_detail SET current_level = 1, target_adjusted = TRUE, "
+        "adjusted_target_level = 1, target_adjustment_reason = '历史保留', "
+        "target_level = 1, gap_value = 0 WHERE assessment_id = %s AND l3_code = %s",
+        (assessment_id, code),
+    )
+    plan_schema.commit()
+    saved = next(
+        d
+        for d in get_assessment(plan_schema, assessment_id)["details"]
+        if d["l3_code"] == code
+    )
+    assert saved["target_adjusted"] is True
+    assert saved["adjusted_target_level"] == 1
+
+    status, body = _request(
         "PUT",
         f"/api/assessments/{assessment_id}/draft",
         {
@@ -1399,20 +1391,58 @@ def test_adjustment_recalculates_gap(plan_schema: psycopg.Connection) -> None:
                     "current_level": 1,
                     "target_adjusted": True,
                     "adjusted_target_level": 1,
-                    "target_adjustment_reason": "本年度不计划提升此能力",
+                    "target_adjustment_reason": "不允许的新调整",
                 }
             ],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 422, body
+    assert body["detail"]["code"] == "target_adjustment_read_only"
 
-    assessment = get_assessment(plan_schema, assessment_id)
-    saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["gap_value"] == 0
-    assert saved["member_priority"] is None
-    assert saved["include_in_plan"] is None
+    # PUT without adjustment fields reuses the sparse merge path: rating saves
+    # while the historical effective target remains intact.
+    status, body = _request(
+        "PUT",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "current_level": 0,
+                }
+            ],
+            "expected_revision": 1,
+        },
+        cookies=cookies,
+    )
+    assert status == 200, body
+
+    status, body = _request(
+        "PATCH",
+        f"/api/assessments/{assessment_id}/draft",
+        {
+            "details": [
+                {
+                    "l3_node_id": node_id,
+                    "l3_code": code,
+                    "target_adjusted": False,
+                }
+            ],
+            "expected_revision": 2,
+        },
+        cookies=cookies,
+    )
+    assert status == 422, body
+    saved = next(
+        d
+        for d in get_assessment(plan_schema, assessment_id)["details"]
+        if d["l3_code"] == code
+    )
+    assert (saved["target_adjusted"], saved["adjusted_target_level"]) == (True, 1)
+    assert saved["current_level"] == 0
 
 
 def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> None:
@@ -1443,9 +1473,6 @@ def test_hold_sparse_patch_auto_clears_plan(plan_schema: psycopg.Connection) -> 
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 0,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-05",

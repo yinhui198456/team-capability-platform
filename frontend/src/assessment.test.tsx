@@ -321,6 +321,11 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByTestId('status-filter')).toBeNull()
     expect(screen.getByLabelText('搜索全部能力项')).toBeTruthy()
     expect(screen.getByLabelText('一级能力域导航')).toBeTruthy()
+    expect(
+      screen
+        .getByRole('button', { name: '全部能力域' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
     expect(screen.getByText('数据管道')).toBeTruthy()
     expect(screen.getByText('任务2')).toBeTruthy()
   })
@@ -418,7 +423,7 @@ describe('AssessmentGapPage', () => {
     })
   })
 
-  it('shows L2 job requirements and keeps an empty L2 visible', async () => {
+  it('keeps an empty L2 visible without unapproved requirement or path UI', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -468,9 +473,10 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: /P02.07/ })
-    expect(screen.getByText('目标职级 P6：P6 要求')).toBeTruthy()
+    expect(screen.queryByText('职级要求')).toBeNull()
+    expect(screen.queryByText('三级达成路径 / 学习实践项')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /P02.07/ }))
-    expect(screen.getByText('暂无三级达成路径，当前无可评估项')).toBeTruthy()
+    expect(screen.getByText('当前无可评估项')).toBeTruthy()
   })
 
   it('creates draft with null current level', async () => {
@@ -750,85 +756,6 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
   })
 
-  it('surfaces an incomplete personal adjustment reason at rating save', async () => {
-    // Issue #194 P1（三独立动作）：生成所选学习任务不再夹带未保存评级，
-    // 调整不完整由「保存能力评级」承接服务端 422（逐项中文提示）。
-    const draft = mockDraft({
-      details: [
-        {
-          ...mockDraft().details![0],
-          current_level: 2,
-          evidence_note: '已有依据',
-          include_in_plan: true,
-          plan_month: '2026-07',
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    const save = vi.spyOn(assessmentApi, 'saveDraft').mockRejectedValue({
-      status: 422,
-      detail: {
-        code: 'target_adjustment',
-        l3_code: 'P01.01.01',
-        reason: 'missing_reason',
-        message: '请填写调整原因',
-      },
-    })
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力评级与提升计划')
-    const generate = screen.getByRole('button', { name: '生成所选学习任务' })
-    // Click the adjustment expand button, enable without a reason
-    fireEvent.click(screen.getByText('调整▸'))
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    expect(screen.getByText('需填写调整原因')).toBeTruthy()
-    expect((generate as HTMLButtonElement).disabled).toBe(false)
-    // 评级保存提交该调整（含缺原因），服务端 422 逐项提示、输入保留
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
-    await waitFor(() => expect(save).toHaveBeenCalled())
-    expect(save.mock.calls[0][1][0]).toMatchObject({ target_adjusted: true })
-    await waitFor(() => {
-      expect(screen.getByText('请填写调整原因')).toBeTruthy()
-    })
-    expect(screen.getByText('评级保存失败')).toBeTruthy()
-  })
-
-  it('supports a valid personal adjustment target and reason', async () => {
-    const draft = mockDraft({
-      details: [
-        {
-          ...mockDraft().details![0],
-          current_level: 2,
-          evidence_note: '已有依据',
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力评级与提升计划')
-    fireEvent.click(screen.getByText('调整▸'))
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
-      target: { value: '调整原因' },
-    })
-    expect(
-      (
-        screen.getByRole('button', {
-          name: '生成所选学习任务',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(false)
-  })
-
   it('allows an unchanged inherited value with valid inherited evidence', async () => {
     const draft = mockDraft({
       details: [
@@ -866,30 +793,6 @@ describe('AssessmentGapPage', () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false)
-  })
-
-  it('does not offer L2 batch fill when the visible item is not applicable', async () => {
-    const draft = mockDraft({
-      details: [
-        {
-          ...mockDraft().details![0],
-          current_level: null,
-          standard_target_applicable: false,
-          standard_target_level: null,
-          target_level: null,
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('不适用')
-    expect(screen.queryByRole('button', { name: '批量填 1' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '批量填 2' })).toBeNull()
   })
 
   it('saves dirty details with PATCH before explicit generation', async () => {
@@ -981,177 +884,7 @@ describe('AssessmentGapPage', () => {
     })
   })
 
-  it('replaces the Gap summary after L2 batch fill', async () => {
-    const draft = mockDraft({
-      gap_summary: {
-        total_gaps: 0,
-        avg_gap: 0,
-        high_priority: 0,
-        medium_priority: 0,
-        low_priority: 0,
-      },
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    vi.spyOn(assessmentApi, 'batchFillL2').mockResolvedValue({
-      revision: 2,
-      updated_l3_codes: ['P01.01.01'],
-      skipped_l3_codes: [],
-      gap_summary: {
-        total_gaps: 1,
-        avg_gap: 4,
-        high_priority: 1,
-        medium_priority: 0,
-        low_priority: 0,
-      },
-    })
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力评级与提升计划')
-    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
-    await waitFor(() => {
-      expect(screen.getByLabelText('评估摘要').textContent).toContain(
-        '存在差距 1',
-      )
-    })
-  })
-
-  it('batch fill advances the same revision chain as plan auto-save (#194 P1)', async () => {
-    const draft = mockDraft({
-      details: [
-        {
-          ...mockDraft().details![0],
-          current_level: 2,
-          include_in_plan: true,
-        },
-        {
-          ...mockDraft().details![0],
-          id: 2,
-          l3_code: 'P01.01.02',
-          current_level: null,
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    let resolveSave!: (value: { ok: boolean; revision: number }) => void
-    let saveCalls = 0
-    const save = vi.spyOn(assessmentApi, 'saveDraft').mockImplementation(() => {
-      saveCalls += 1
-      if (saveCalls === 1) {
-        return new Promise((resolve) => {
-          resolveSave = resolve
-        })
-      }
-      return Promise.resolve({ ok: true, revision: 4 })
-    })
-    const batch = vi.spyOn(assessmentApi, 'batchFillL2').mockResolvedValue({
-      revision: 3,
-      updated_l3_codes: ['P01.01.01'],
-      skipped_l3_codes: [],
-    })
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力评级与提升计划')
-
-    // 计划变更 → 在途自动保存挂起
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
-      { target: { value: '高' } },
-    )
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-
-    // 批量填必须与在途计划保存串行：保存完成前不发起请求
-    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(batch).not.toHaveBeenCalled()
-
-    // 在途保存成功（revision 1→2），批量填随后发起并沿用同一 revision 链
-    resolveSave({ ok: true, revision: 2 })
-    await waitFor(() => expect(batch).toHaveBeenCalledTimes(1))
-    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
-      batch.mock.invocationCallOrder[0],
-    )
-    expect(batch.mock.calls[0][3]).toBe(2)
-
-    // 批量填成功返回新 revision 3 → 下一次计划草稿 PATCH 必须使用 3
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
-      { target: { value: '中' } },
-    )
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
-    expect(save.mock.calls[1][2]).toBe(3)
-  })
-
-  it('queues a plan PATCH behind an in-flight batch fill (#194)', async () => {
-    const draft = mockDraft({
-      details: [
-        mockDraft().details![0],
-        {
-          ...mockDraft().details![0],
-          id: 2,
-          l3_code: 'P01.01.02',
-          current_level: 2,
-          gap_value: 2,
-        },
-      ],
-    })
-    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
-    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    let resolveBatch!: (value: {
-      revision: number
-      updated_l3_codes: string[]
-      skipped_l3_codes: string[]
-    }) => void
-    const batch = vi.spyOn(assessmentApi, 'batchFillL2').mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveBatch = resolve
-        }),
-    )
-    const save = vi
-      .spyOn(assessmentApi, 'saveDraft')
-      .mockResolvedValue({ ok: true, revision: 3 })
-    render(
-      <MemoryRouter initialEntries={['/capability/assessment']}>
-        <App />
-      </MemoryRouter>,
-    )
-    await screen.findByText('能力评级与提升计划')
-
-    fireEvent.click(screen.getByRole('button', { name: '批量填 1' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认填 1' }))
-    await waitFor(() => expect(batch).toHaveBeenCalledTimes(1))
-    expect(batch.mock.calls[0][3]).toBe(1)
-
-    fireEvent.click(
-      screen.getByRole('button', { name: '加入提升计划 P01.01.02' }),
-    )
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(save).not.toHaveBeenCalled()
-
-    resolveBatch({
-      revision: 2,
-      updated_l3_codes: ['P01.01.01'],
-      skipped_l3_codes: [],
-    })
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-    expect(save.mock.calls[0][2]).toBe(2)
-    expect(save.mock.calls[0][1][0]).toMatchObject({
-      l3_code: 'P01.01.02',
-      include_in_plan: true,
-    })
-  })
-
-  it('sends canonical fields instead of plan_candidate in saveDraft', async () => {
+  it('keeps historical target adjustments read-only while saving ratings', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       {
         id: 7,
@@ -1172,6 +905,9 @@ describe('AssessmentGapPage', () => {
             ...mockDraft().details![0],
             current_level: 2,
             evidence_note: '已有依据',
+            target_adjusted: true,
+            adjusted_target_level: 5,
+            target_adjustment_reason: '历史记录',
           },
         ],
       }),
@@ -1185,24 +921,18 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力评级与提升计划')
+    expect(screen.getByText('[历史调整]')).toBeTruthy()
 
-    fireEvent.click(screen.getByText('调整▸'))
-    fireEvent.click(screen.getByLabelText('启用个人调整 P01.01.01'))
-    fireEvent.change(screen.getByLabelText('调整目标 P01.01.01'), {
-      target: { value: '5' },
-    })
-    fireEvent.change(screen.getByLabelText('调整原因 P01.01.01'), {
-      target: { value: '晋升准备' },
-    })
+    expect(screen.queryByText('调整▸')).toBeNull()
+    expect(screen.queryByLabelText('调整目标 P01.01.01')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /3.*熟练/ }))
     fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
 
     await waitFor(() => expect(save).toHaveBeenCalled())
     const detail = save.mock.calls[0][1][0]
-    expect(detail).toMatchObject({
-      target_adjusted: true,
-      adjusted_target_level: 5,
-      target_adjustment_reason: '晋升准备',
-    })
+    expect(detail).not.toHaveProperty('target_adjusted')
+    expect(detail).not.toHaveProperty('adjusted_target_level')
+    expect(detail).not.toHaveProperty('target_adjustment_reason')
     // Issue #194 P1：保存能力评级与保存提升计划草稿是两个独立动作，
     // 评级保存（稀疏 PATCH）绝不夹带计划字段；计划草稿由
     // 「保存提升计划草稿」动作单独提交。
@@ -1693,9 +1423,9 @@ describe('AssessmentGapPage', () => {
     const ratingRow = save.mock.calls[1][1][0]
     expect(ratingRow).toMatchObject({
       current_level: 3,
-      target_adjusted: false,
       evidence_note: '已有依据',
     })
+    expect(ratingRow).not.toHaveProperty('target_adjusted')
     expect(ratingRow).not.toHaveProperty('member_priority')
     expect(ratingRow).not.toHaveProperty('include_in_plan')
     expect(ratingRow).not.toHaveProperty('plan_month')
@@ -2472,7 +2202,7 @@ describe('assessment api helpers', () => {
     expect(url).toContain('year=2026')
   })
 
-  it('saveDraft sends canonical fields and omits plan_candidate', async () => {
+  it('saveDraft omits read-only target adjustments', async () => {
     await assessmentApi.saveDraft(
       7,
       [
@@ -2496,17 +2226,13 @@ describe('assessment api helpers', () => {
     const body = JSON.parse(
       (vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string,
     )
-    // 稀疏 PATCH：调用方提供的键全部透传（含评级与计划字段），
-    // 未提供的键不发送；plan_candidate/plan_quarter 永不出现。
+    // 稀疏 PATCH 不发送历史只读调整字段，也不发送 plan_candidate/plan_quarter。
     expect(body.details[0]).toEqual({
       l3_code: 'P01.01.01',
       current_level: 2,
       target_level: 5,
       standard_target_applicable: true,
       standard_target_level: 4,
-      target_adjusted: true,
-      adjusted_target_level: 5,
-      target_adjustment_reason: '晋升准备',
       gap_value: 3,
       member_priority: '高',
       include_in_plan: true,
@@ -2514,6 +2240,9 @@ describe('assessment api helpers', () => {
     })
     expect(body.details[0]).not.toHaveProperty('plan_candidate')
     expect(body.details[0]).not.toHaveProperty('plan_quarter')
+    expect(body.details[0]).not.toHaveProperty('target_adjusted')
+    expect(body.details[0]).not.toHaveProperty('adjusted_target_level')
+    expect(body.details[0]).not.toHaveProperty('target_adjustment_reason')
     expect(body.expected_revision).toBe(1)
   })
 
@@ -2543,41 +2272,6 @@ describe('assessment api helpers', () => {
       plan_month: '2026-03',
     })
     expect(body.expected_revision).toBe(2)
-  })
-})
-
-describe('L2 职级要求选择', () => {
-  const requirements = {
-    P4: 'P4 要求',
-    P5: 'P5 要求',
-    P6: 'P6 要求',
-    P7: 'P7 要求',
-    P8: 'P8 要求',
-  }
-
-  it('prefers the target job level, then falls back to the current job level', () => {
-    expect(assessmentApi.selectL2Requirement(requirements, 'P5', 'P7')).toEqual(
-      { level: 'P7', label: '目标职级', text: 'P7 要求' },
-    )
-    expect(assessmentApi.selectL2Requirement(requirements, 'P5', null)).toEqual(
-      { level: 'P5', label: '当前职级', text: 'P5 要求' },
-    )
-  })
-
-  it('returns unavailable for missing, invalid, or blank job-level requirements', () => {
-    expect(
-      assessmentApi.selectL2Requirement(requirements, null, null),
-    ).toBeNull()
-    expect(
-      assessmentApi.selectL2Requirement(requirements, 'P9', null),
-    ).toBeNull()
-    expect(
-      assessmentApi.selectL2Requirement(
-        { ...requirements, P6: ' ' },
-        null,
-        'P6',
-      ),
-    ).toBeNull()
   })
 })
 

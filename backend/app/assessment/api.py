@@ -21,13 +21,15 @@ from .repository import (
     list_member_assessments,
     patch_assessment_draft,
     repair_draft_target_snapshots,
-    save_assessment_draft,
     update_gap,
 )
 from .scope import AssessmentScopeError, compute_assessment_scope
 
 _VALID_ASSESSMENT_TYPES = frozenset({"年度", "年中更新", "晋升复核"})
 _DEPRECATED_FIELDS = frozenset({"plan_candidate"})
+_READ_ONLY_TARGET_ADJUSTMENT_FIELDS = frozenset(
+    {"target_adjusted", "adjusted_target_level", "target_adjustment_reason"}
+)
 
 
 def _validate_assessment_type(assessment_type: str) -> None:
@@ -135,6 +137,20 @@ def _reject_plan_quarter(item: DetailItem) -> None:
                     "plan_quarter 由 plan_month 自动推导，不接受前端输入；"
                     "请仅提交 plan_month（YYYY-MM）"
                 ),
+            },
+        )
+
+
+def _reject_target_adjustment(item: DetailItem | PatchDetailItem) -> None:
+    fields = _READ_ONLY_TARGET_ADJUSTMENT_FIELDS & item.model_fields_set
+    if fields:
+        field = sorted(fields)[0]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "target_adjustment_read_only",
+                "field": field,
+                "message": "个人调整目标为历史只读信息，不能创建或编辑",
             },
         )
 
@@ -514,14 +530,12 @@ def save_draft(
                 },
             )
         _reject_plan_quarter(item)
+        _reject_target_adjustment(item)
     details: list[dict[str, object]] = [
         {
             "l3_node_id": item.l3_node_id,
             "l3_code": item.l3_code,
             "current_level": item.current_level,
-            "target_adjusted": item.target_adjusted,
-            "adjusted_target_level": item.adjusted_target_level,
-            "target_adjustment_reason": item.target_adjustment_reason,
             "evidence_note": item.evidence_note,
             "member_priority": item.member_priority,
             "include_in_plan": item.include_in_plan,
@@ -530,12 +544,12 @@ def save_draft(
         for item in request.details
     ]
     try:
-        result = save_assessment_draft(
+        result = patch_assessment_draft(
             connection,
             assessment_id,
             int(user["id"]),
+            request.expected_revision,
             details,
-            expected_revision=request.expected_revision,
         )
     except DetailValidationError as exc:
         raise _detail_validation_error(exc) from exc
@@ -583,6 +597,7 @@ def patch_draft(
                 },
             )
         _reject_plan_quarter(item)
+        _reject_target_adjustment(item)
     # Distinguish unset vs explicit-null via model_fields_set.
     details: list[dict[str, object]] = []
     for item in request.details:
@@ -592,9 +607,6 @@ def patch_draft(
         }
         for key in (
             "current_level",
-            "target_adjusted",
-            "adjusted_target_level",
-            "target_adjustment_reason",
             "evidence_note",
             "member_priority",
             "include_in_plan",
