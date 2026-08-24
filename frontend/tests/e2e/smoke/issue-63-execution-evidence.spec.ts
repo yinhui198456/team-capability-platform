@@ -293,10 +293,9 @@ async function submitEvidence(
 /** Select this scenario's queue entry by its unique evidence content marker. */
 async function selectQueueItemByMarker(
   page: Page,
-  l3Code: string,
   marker: string,
 ): Promise<void> {
-  const candidates = page.locator('aside button', { hasText: l3Code })
+  const candidates = page.locator('.evidence-review-queue button')
   // after goto/reload the queue fetch is still in flight — wait for the
   // list to render before counting, otherwise count() is 0 and the loop
   // exits immediately
@@ -315,12 +314,12 @@ async function selectQueueItemByMarker(
       // not this candidate — try the next one
     }
   }
-  throw new Error(`queue item for ${l3Code} with marker ${marker} not found`)
+  throw new Error(`queue item with marker ${marker} not found`)
 }
 
 // ── E2E-63-01: member execution chain ────────────────────────────────────────
 
-test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与作废更正、Evidence 提交与完成门禁', async ({
+test('E2E-63-01 Member 执行链：日期约束、六态迁移、日志聚合与作废更正、Evidence 提交与完成门禁', async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000)
@@ -328,51 +327,40 @@ test('E2E-63-01 Member 执行链：日期编辑、六态迁移、日志聚合与
   const year = yearFor('E2E-63-01', testInfo.retry)
   const seed = await seedExecution(page, year)
 
-  // ── plan page renders the generated item; restricted date edit succeeds ──
-  await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  // the page chains several API calls before items render — allow real
-  // backend latency on the constrained host
-  await expect(itemCard).toBeVisible({ timeout: 20_000 })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
-  await expect(panel.getByText('任务内容')).toBeVisible()
-
-  // client guard: end outside the source month is rejected before any request
-  await panel.getByLabel('计划开始日期').fill(`${year}-04-15`)
-  await panel.getByLabel('计划结束日期').fill(`${year}-06-15`)
-  await panel.getByRole('button', { name: '保存日期' }).click()
-  await expect(panel.getByRole('alert')).toContainText('来源计划月')
-  // client guard: start outside the source quarter
-  await panel.getByLabel('计划开始日期').fill(`${year}-03-31`)
-  await panel.getByLabel('计划结束日期').fill(`${year}-05-20`)
-  await panel.getByRole('button', { name: '保存日期' }).click()
-  await expect(panel.getByRole('alert')).toContainText('来源季度')
-  // legal Q2/month-5 window persists through the real API
-  await panel.getByLabel('计划开始日期').fill(`${year}-04-15`)
-  await panel.getByRole('button', { name: '保存日期' }).click()
-  await expect(panel.getByRole('alert')).toBeHidden()
-  // The banner clears before the PUT resolves (saveDates hides it
-  // synchronously), so poll the real API until the edit is durable — the
-  // assertions below must read the post-edit row, never the pre-edit one
-  // (generation leaves plan_start_date NULL).
-  await expect
-    .poll(
-      async () => {
-        const planAfterEdit = await (
-          await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
-        ).json()
-        return (
-          planAfterEdit.items.find(
-            (candidate: { id: number }) => candidate.id === seed.itemId,
-          )?.plan_start_date ?? null
-        )
+  // ── retired date UI is no longer part of M03; retain API constraints ──
+  const outsideMonth = await request.put(
+    `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
+    {
+      data: {
+        plan_start_date: `${year}-04-15`,
+        plan_end_date: `${year}-06-15`,
+        expected_revision: seed.itemRevision,
       },
-      { timeout: 10_000 },
-    )
-    .toBe(`${year}-04-15`)
+    },
+  )
+  expect(outsideMonth.status()).toBe(422)
+  const outsideQuarter = await request.put(
+    `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
+    {
+      data: {
+        plan_start_date: `${year}-03-31`,
+        plan_end_date: `${year}-05-20`,
+        expected_revision: seed.itemRevision,
+      },
+    },
+  )
+  expect(outsideQuarter.status()).toBe(422)
+  const legalEdit = await request.put(
+    `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
+    {
+      data: {
+        plan_start_date: `${year}-04-15`,
+        plan_end_date: `${year}-05-20`,
+        expected_revision: seed.itemRevision,
+      },
+    },
+  )
+  expect(legalEdit.status()).toBe(200)
   const planAfterEdit = await (
     await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
   ).json()
@@ -520,7 +508,7 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   await loginAs(page, 'buddy')
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
-  await selectQueueItemByMarker(page, seed.l3Code, v1Marker)
+  await selectQueueItemByMarker(page, v1Marker)
   await page.getByRole('button', { name: '需补充' }).click()
   // client gate: empty feedback blocked before any request
   await page.getByRole('button', { name: '提交验收结果' }).click()
@@ -550,7 +538,7 @@ test('E2E-63-02 Buddy Evidence Review 真实闭环：需补充 → 新版本 →
   // queue effect refetches and sees v2
   await page.goto('/mentoring/evidence-review')
   await page.reload()
-  await selectQueueItemByMarker(page, seed.l3Code, v2Marker)
+  await selectQueueItemByMarker(page, v2Marker)
   // dual-role buddy accounts load the review history through the buddy path:
   // v1's 需补充 feedback is visible (regression: member-path 403 hid it)
   await expect(page.getByText(/请补充口径说明/).first()).toBeVisible()
@@ -690,22 +678,13 @@ test('E2E-63-03 权限边界：401/403、非当前 Buddy 拒审、角色路由�
 
 // ── E2E-63-04: 409 conflict recovery + idempotency ───────────────────────────
 
-test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日志、迁移幂等', async ({
-  page,
-}, testInfo) => {
+test('E2E-63-04 409 CAS 恢复与日志、迁移幂等', async ({ page }, testInfo) => {
   test.setTimeout(120_000)
   const request = page.request
   const year = yearFor('E2E-63-04', testInfo.retry)
   const seed = await seedExecution(page, year)
 
-  // member has the plan page open with a stale revision in memory…
-  await page.goto(`/growth/annual-plan?year=${year}`)
-  const itemCard = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCard.locator('[data-testid="plan-header"]').click()
-  const panel = page.locator('[data-testid="task-detail-panel"]')
-  // …while a concurrent writer bumps the item revision via the real API
+  // M03/M04/M05 no longer offer plan-date editing; retain real API CAS.
   const bump = await request.put(
     `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
     {
@@ -717,36 +696,29 @@ test('E2E-63-04 409 冲突恢复（保留输入/刷新 revision/重试）与日�
     },
   )
   expect(bump.status()).toBe(200)
-
-  // the stale save is a conflict: page-level alert shown, typed input preserved
-  await panel.getByLabel('计划开始日期').fill(`${year}-04-10`)
-  await panel.getByLabel('计划结束日期').fill(`${year}-05-20`)
-  await panel.getByRole('button', { name: '保存日期' }).click()
-  await expect(page.getByRole('alert')).toContainText('请确认后重新保存')
-  await expect(panel.getByLabel('计划开始日期')).toHaveValue(`${year}-04-10`)
-
-  // refresh (fresh revision) then the exact retry succeeds — no partial write
-  await page.reload()
-  const itemCardAfter = page.locator('[data-testid="plan-item"]', {
-    hasText: seed.l3Code,
-  })
-  await itemCardAfter.locator('[data-testid="plan-header"]').click()
-  const panelAfter = page.locator('[data-testid="task-detail-panel"]')
-  await panelAfter.getByLabel('计划开始日期').fill(`${year}-04-10`)
-  await panelAfter.getByLabel('计划结束日期').fill(`${year}-05-20`)
-  // Wait for the real retry PUT to finish before reading back: the alert
-  // hides synchronously, so polling the API immediately can race the
-  // in-flight save and read the concurrent-writer value.
-  const savePromise = page.waitForResponse(
-    (resp) =>
-      resp.url().includes(`/api/planning/plan-items/${seed.itemId}`) &&
-      resp.request().method() === 'PUT' &&
-      resp.status() === 200,
+  const stale = await request.put(
+    `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
+    {
+      data: {
+        plan_start_date: `${year}-04-10`,
+        plan_end_date: `${year}-05-20`,
+        expected_revision: seed.itemRevision,
+      },
+    },
   )
-  await panelAfter.getByRole('button', { name: '保存日期' }).click()
-  const saveResp = await savePromise
-  expect(saveResp.ok()).toBeTruthy()
-  await expect(panelAfter.getByRole('alert')).toBeHidden()
+  expect(stale.status()).toBe(409)
+  const bumped = await bump.json()
+  const retry = await request.put(
+    `${BACKEND}/api/planning/plan-items/${seed.itemId}`,
+    {
+      data: {
+        plan_start_date: `${year}-04-10`,
+        plan_end_date: `${year}-05-20`,
+        expected_revision: bumped.revision,
+      },
+    },
+  )
+  expect(retry.status()).toBe(200)
   const planRow = await (
     await request.get(`${BACKEND}/api/planning/annual-plan?year=${year}`)
   ).json()
@@ -833,9 +805,9 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   const seed = await seedExecution(page, year)
 
   const viewports = [
-    { width: 1280, height: 800 },
     { width: 1440, height: 900 },
-    { width: 1920, height: 1080 },
+    { width: 1024, height: 768 },
+    { width: 768, height: 900 },
   ]
 
   const expectNoHorizontalOverflow = async () => {
@@ -850,13 +822,19 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   await loginAs(page, 'member')
   for (const viewport of viewports) {
     await page.setViewportSize(viewport)
-    await page.goto(`/growth/annual-plan?year=${year}`)
+    await page.goto(`/growth/annual-plan?year=${year}&month=5`)
     await expect(
-      page.locator('[data-testid="plan-item"]', {
-        hasText: seed.l3Code,
-      }),
-      // the page chains several API calls; allow real backend latency
-    ).toBeVisible({ timeout: 20_000 })
+      page.getByRole('heading', { name: '月度计划时间轴' }),
+    ).toBeVisible()
+    await expect(page.getByText(seed.l3Code).first()).toBeVisible()
+    await expectNoHorizontalOverflow()
+    await page.getByRole('link', { name: '查看本月任务' }).click()
+    await expect(page.getByRole('heading', { name: '学习任务' })).toBeVisible()
+    await expect(page.getByText(seed.l3Code).first()).toBeVisible()
+    await expectNoHorizontalOverflow()
+    await page.getByRole('link', { name: '进入任务' }).click()
+    await expect(page.getByRole('button', { name: '学习记录' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交成果' })).toBeVisible()
     await expectNoHorizontalOverflow()
   }
 
@@ -865,6 +843,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
     await page.setViewportSize(viewport)
     await page.goto('/mentoring/evidence-review')
     await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
+    await expect(page.getByLabel('验收工作区')).toBeVisible()
     await expectNoHorizontalOverflow()
   }
 
@@ -887,7 +866,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
   )
   await page.goto('/mentoring/evidence-review')
   await expect(page.getByRole('alert')).toBeVisible()
-  await page.unroute('**/api/planning/evidence-reviews/pending')
+  await page.unroute('**/api/planning/evidence-reviews/workspace')
 
   // loading state is visible while the queue request is in flight
   await page.route(
