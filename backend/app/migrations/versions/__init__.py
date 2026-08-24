@@ -36,6 +36,9 @@ from .v0015_plan_month_text import upgrade as upgrade_plan_month_text
 from .v0016_plan_item_later_assessment import (
     upgrade as upgrade_plan_item_later_assessment,
 )
+from .v0017_task_requirement_decision import (
+    upgrade as upgrade_task_requirement_decision,
+)
 
 MIGRATIONS = [
     ("0001_standard_targets", upgrade_standard_targets),
@@ -63,6 +66,7 @@ MIGRATIONS = [
     ),
     ("0015_plan_month_text", upgrade_plan_month_text),
     ("0016_plan_item_later_assessment", upgrade_plan_item_later_assessment),
+    ("0017_task_requirement_decision", upgrade_task_requirement_decision),
 ]
 
 __all__ = ["MIGRATIONS"]

@@ -16,6 +16,7 @@ from .repository import (
     create_evidence_draft,
     create_or_publish_team_annual_plan,
     create_progress_log,
+    decide_task_requirement,
     get_annual_plan_with_items,
     get_capability_profile,
     get_evidence,
@@ -60,6 +61,7 @@ _CONFLICT_CODES = {
     "review_idempotency_conflict",
     "review_already_submitted",
     "monthly_review_revision_conflict",
+    "task_requirement_decision_conflict",
 }
 
 
@@ -449,10 +451,10 @@ def post_learning_task(
 
 @planning_router.get("/learning-tasks")
 def get_learning_tasks(
-    user: CurrentUser, connection: Connection
+    user: CurrentUser, connection: Connection, year: int | None = None
 ) -> list[dict[str, object]]:
     _require_member(user)
-    return list_learning_tasks(connection, int(user["id"]))
+    return list_learning_tasks(connection, int(user["id"]), year)
 
 
 @planning_router.get("/learning-tasks/{task_id}")
@@ -467,6 +469,48 @@ def get_learning_task_by_id(
             detail="learning task not found",
         )
     return result
+
+
+@planning_router.put("/learning-tasks/{task_id}/requirement-decision")
+def put_task_requirement_decision(
+    user: CurrentUser,
+    connection: Connection,
+    task_id: int,
+    body: dict[str, object],
+) -> dict[str, object]:
+    _require_member(user)
+    expected = body.get("expected_revision")
+    if not isinstance(expected, int) or isinstance(expected, bool) or expected < 0:
+        raise _domain_error(
+            TaskValidationError(
+                "expected_revision is required",
+                entity_id=task_id,
+                field="expected_revision",
+            )
+        )
+    try:
+        return decide_task_requirement(
+            connection,
+            int(user["id"]),
+            task_id,
+            int(body["proposal_detail_id"]),
+            str(body["choice"]),
+            expected,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _domain_error(
+            TaskValidationError(
+                "invalid requirement decision",
+                entity_id=task_id,
+                field="proposal_detail_id",
+            )
+        ) from exc
+    except PlanningDomainError as exc:
+        raise _domain_error(exc) from exc
 
 
 @planning_router.put("/learning-tasks/{task_id}")

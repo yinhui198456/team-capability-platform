@@ -172,6 +172,26 @@ export type LearningTask = CapabilityContext & {
   plan_item_estimated_hours: string | null
   plan_item_estimated_hours_parsed?: EstimatedHours
   plan_item_target_month?: number | null
+  effective_requirement?: RequirementSnapshot | null
+  requirement_change?: RequirementChange | null
+}
+
+export type RequirementSnapshot = {
+  snapshot_id: number
+  expected_output: string | null
+  output_type: string | null
+}
+export type RequirementChange = {
+  proposal_detail_id: number
+  new_snapshot_id: number
+  current_snapshot_id: number
+  current: Omit<RequirementSnapshot, 'snapshot_id'>
+  proposed: Omit<RequirementSnapshot, 'snapshot_id'>
+  decision: {
+    choice: 'adopt_new' | 'continue_current'
+    revision: number
+    selected_snapshot_id: number
+  } | null
 }
 
 export type MemberDashboardAssessmentStatus =
@@ -472,8 +492,11 @@ export async function updatePlanItem(
   )
 }
 
-export async function listLearningTasks(): Promise<LearningTask[]> {
-  return request<LearningTask[]>('/api/planning/learning-tasks', {
+export async function listLearningTasks(
+  year?: number,
+): Promise<LearningTask[]> {
+  const query = year === undefined ? '' : `?year=${year}`
+  return request<LearningTask[]>(`/api/planning/learning-tasks${query}`, {
     method: 'GET',
   })
 }
@@ -482,6 +505,19 @@ export async function getLearningTask(task_id: number): Promise<LearningTask> {
   return request<LearningTask>(`/api/planning/learning-tasks/${task_id}`, {
     method: 'GET',
   })
+}
+
+export async function decideTaskRequirement(
+  task_id: number,
+  proposal_detail_id: number,
+  choice: 'adopt_new' | 'continue_current',
+  expected_revision: number,
+): Promise<RequirementChange> {
+  return request<RequirementChange>(
+    `/api/planning/learning-tasks/${task_id}/requirement-decision`,
+    { method: 'PUT' },
+    { proposal_detail_id, choice, expected_revision },
+  )
 }
 
 // Append-only progress log.  Rows are voided (invalidated_at) or corrected

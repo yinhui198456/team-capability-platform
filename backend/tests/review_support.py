@@ -23,6 +23,7 @@ from tests.standard_target_support import (
 )
 
 _ALL_TABLES = (
+    "task_requirement_decision",
     "annual_plan_change_proposal_detail",
     "annual_plan_change_proposal",
     "review_idempotency_key",
