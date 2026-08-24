@@ -298,35 +298,6 @@ export async function saveDraft(
   )
 }
 
-export async function batchFillL2(
-  id: number,
-  l2Code: string,
-  currentLevel: 0 | 1 | 2,
-  expectedRevision: number,
-): Promise<{
-  revision: number
-  updated_l3_codes: string[]
-  skipped_l3_codes: string[]
-  auto_cancelled_plan_candidates?: string[]
-  gap_summary?: GapSummary
-}> {
-  return request<{
-    revision: number
-    updated_l3_codes: string[]
-    skipped_l3_codes: string[]
-    auto_cancelled_plan_candidates?: string[]
-    gap_summary?: GapSummary
-  }>(
-    `/api/assessments/${id}/draft/batch-level`,
-    { method: 'POST' },
-    {
-      l2_code: l2Code,
-      current_level: currentLevel,
-      expected_revision: expectedRevision,
-    },
-  )
-}
-
 /** Issue #194: M02 第三个独立动作 — 显式生成所选学习任务。
 
 Retired contract: POST /submit (submit-and-auto-generate) → 422

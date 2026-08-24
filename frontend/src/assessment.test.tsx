@@ -295,10 +295,12 @@ describe('AssessmentGapPage', () => {
           {
             ...mockDraft().details![0],
             id: 2,
-            l3_code: 'P01.01.02',
-            l3_name: '任务2',
-            l1_code: 'P01',
-            l2_code: 'P01.01',
+            l3_code: 'C01.01.01',
+            l3_name: '办公协作',
+            l1_code: 'C01',
+            l1_name: '基本办公能力',
+            l2_code: 'C01.01',
+            l2_name: '办公工具',
             current_level: 2,
             standard_target_level: 4,
             target_level: 4,
@@ -327,7 +329,11 @@ describe('AssessmentGapPage', () => {
         .getAttribute('aria-pressed'),
     ).toBe('true')
     expect(screen.getByText('数据管道')).toBeTruthy()
-    expect(screen.getByText('任务2')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /C01\.01/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /P01 · 数据基础设施/ }))
+    expect(screen.queryByRole('button', { name: /C01\.01/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '全部能力域' }))
+    expect(screen.getByRole('button', { name: /C01\.01/ })).toBeTruthy()
   })
 
   it('sticky bar shows only the prototype draft span and the two actions', async () => {

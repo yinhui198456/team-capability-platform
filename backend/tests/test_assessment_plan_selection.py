@@ -1441,7 +1441,10 @@ def test_member_target_adjustments_are_read_only(
         for d in get_assessment(plan_schema, assessment_id)["details"]
         if d["l3_code"] == code
     )
-    assert (saved["target_adjusted"], saved["adjusted_target_level"]) == (True, 1)
+    assert saved["target_adjusted"] is True
+    assert saved["adjusted_target_level"] == 1
+    assert saved["target_adjustment_reason"] == "历史保留"
+    assert saved["target_level"] == 1
     assert saved["current_level"] == 0
 
 
