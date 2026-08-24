@@ -2944,14 +2944,20 @@ def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
 
 
 def list_pending_evidence_reviews_for_buddy(
-    connection: psycopg.Connection, buddy_id: int
+    connection: psycopg.Connection, buddy_id: int, member_id: int | None = None
 ) -> list[dict[str, object]]:
     """The buddy's pending evidence queue — evidence rows awaiting review for
     members the buddy is currently (and effectively) assigned to."""
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
-               agp.member_id, u.username
+               agp.member_id, u.username,
+               EXISTS (
+                   SELECT 1
+                   FROM evidence_review previous_review
+                   WHERE previous_review.evidence_id = e.supersedes_evidence_id
+                     AND previous_review.conclusion = '需补充'
+               ) AS is_resubmission
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
@@ -2963,17 +2969,107 @@ def list_pending_evidence_reviews_for_buddy(
          AND br.is_primary = TRUE
          AND br.effective_to IS NULL
         WHERE e.status = '待 Review'
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
         ORDER BY e.submitted_at ASC NULLS LAST
         """,
-        (buddy_id,),
+        (buddy_id, member_id, member_id),
     ).fetchall()
     items = []
     for row in rows:
         evidence = _evidence_row(row[:19])
         evidence["member_id"] = row[19]
         evidence["username"] = row[20]
+        evidence["is_resubmission"] = bool(row[21])
         items.append(evidence)
     return _attach_l3_contexts(connection, items)
+
+
+def get_evidence_review_workspace_for_buddy(
+    connection: psycopg.Connection, buddy_id: int, member_id: int | None = None
+) -> dict[str, object]:
+    """B01's current-relationship workspace; its metrics are never global."""
+    members = connection.execute(
+        """
+        SELECT u.id, u.username
+        FROM buddy_relationship br
+        JOIN tcp_user u ON u.id = br.member_id
+        WHERE br.buddy_id = %s
+          AND br.is_primary = TRUE
+          AND br.effective_to IS NULL
+        ORDER BY u.username, u.id
+        """,
+        (buddy_id,),
+    ).fetchall()
+    if member_id is not None and not any(int(row[0]) == member_id for row in members):
+        raise PermissionError("member does not belong to assigned buddy")
+
+    relationship_join = """
+        JOIN buddy_relationship br
+          ON br.member_id = agp.member_id
+         AND br.buddy_id = %s
+         AND br.is_primary = TRUE
+         AND br.effective_to IS NULL
+    """
+    pending = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        {relationship_join}
+        WHERE e.status = '待 Review'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    needs_supplement = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT ON (e.learning_task_id) e.status
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            {relationship_join}
+            ORDER BY e.learning_task_id, e.version_number DESC
+        ) latest
+        WHERE latest.status = '需补充'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    month_metrics = connection.execute(
+        f"""
+        SELECT
+            COUNT(*) FILTER (WHERE er.conclusion = '通过'),
+            AVG(EXTRACT(EPOCH FROM (er.reviewed_at - e.submitted_at)) / 86400.0)
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        {relationship_join}
+        WHERE er.buddy_id = %s
+          AND er.reviewed_at >= date_trunc('month', CURRENT_TIMESTAMP)
+          AND er.reviewed_at < date_trunc('month', CURRENT_TIMESTAMP)
+              + INTERVAL '1 month'
+        """,
+        (buddy_id, buddy_id),
+    ).fetchone()
+    return {
+        "summary": {
+            "pending_count": int(pending[0] or 0),
+            "needs_supplement_count": int(needs_supplement[0] or 0),
+            "approved_this_month_count": int(month_metrics[0] or 0),
+            "average_response_days": (
+                float(month_metrics[1]) if month_metrics[1] is not None else None
+            ),
+        },
+        "members": [{"id": row[0], "username": row[1]} for row in members],
+        "queue": list_pending_evidence_reviews_for_buddy(
+            connection, buddy_id, member_id
+        ),
+    }
 
 
 def get_evidence_review_for_buddy(

@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   listEvidenceReviewsForTask,
-  listPendingEvidenceReviews,
+  getEvidenceReviewWorkspace,
   parseApiErrorDetail,
   submitEvidenceReview,
   type EvidenceReviewConclusion,
   type EvidenceReviewRecord,
+  type EvidenceReviewWorkspace,
   type PendingEvidenceReview,
 } from './planning'
 import type { ApiError } from './shared/api'
@@ -30,6 +31,10 @@ function capabilityPath(ev: PendingEvidenceReview): string {
 
 export function EvidenceReviewPage() {
   const [queue, setQueue] = useState<PendingEvidenceReview[]>([])
+  const [workspace, setWorkspace] = useState<EvidenceReviewWorkspace | null>(
+    null,
+  )
+  const [memberId, setMemberId] = useState<number | undefined>()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [history, setHistory] = useState<EvidenceReviewRecord[]>([])
   const [conclusion, setConclusion] = useState<EvidenceReviewConclusion | ''>(
@@ -49,23 +54,26 @@ export function EvidenceReviewPage() {
   // silently retargeted to whatever happens to be first afterwards — a
   // conflict that removes the item must end the form, not re-target it.
   const selected = queue.find((ev) => ev.id === selectedId) ?? null
+  const selectedTaskId = selected?.learning_task_id
 
-  async function loadQueue() {
-    const list = await listPendingEvidenceReviews()
-    setQueue(list)
-    return list
+  async function loadWorkspace(nextMemberId = memberId) {
+    const next = await getEvidenceReviewWorkspace(nextMemberId)
+    setWorkspace(next)
+    setQueue(next.queue)
+    return next.queue
   }
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       try {
-        const list = await listPendingEvidenceReviews()
+        const next = await getEvidenceReviewWorkspace()
         if (!cancelled) {
-          setQueue(list)
+          setWorkspace(next)
+          setQueue(next.queue)
           // First load picks the first item; later refreshes (e.g. after a
           // conflict) never re-target a selection the user already made.
-          setSelectedId((prev) => prev ?? list[0]?.id ?? null)
+          setSelectedId((prev) => prev ?? next.queue[0]?.id ?? null)
         }
       } catch (err) {
         if (!cancelled) {
@@ -82,12 +90,12 @@ export function EvidenceReviewPage() {
   }, [])
 
   useEffect(() => {
-    if (!selected) {
+    if (selectedTaskId === undefined) {
       setHistory([])
       return
     }
     // Capture before the closure so the narrowed non-null value stays typed.
-    const taskId = selected.learning_task_id
+    const taskId = selectedTaskId
     let cancelled = false
     async function loadHistory() {
       try {
@@ -108,7 +116,7 @@ export function EvidenceReviewPage() {
     return () => {
       cancelled = true
     }
-  }, [selected?.id, selected?.learning_task_id])
+  }, [selectedId, selectedTaskId])
 
   function selectItem(id: number) {
     setSelectedId(id)
@@ -120,6 +128,19 @@ export function EvidenceReviewPage() {
     setMessage('')
     setError('')
     idemRef.current = null
+  }
+
+  async function selectMember(value: string) {
+    const nextMemberId = value ? Number(value) : undefined
+    setMemberId(nextMemberId)
+    setSelectedId(null)
+    setHistory([])
+    try {
+      const list = await loadWorkspace(nextMemberId)
+      setSelectedId(list[0]?.id ?? null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载待验收队列失败')
+    }
   }
 
   async function handleSubmit() {
@@ -177,7 +198,7 @@ export function EvidenceReviewPage() {
         idemRef.current = null
         const submittedId = selected.id
         try {
-          const refreshed = await loadQueue()
+          const refreshed = await loadWorkspace()
           if (!refreshed.some((ev) => ev.id === submittedId)) {
             setSelectedId(null)
             setConclusion('')
@@ -209,13 +230,35 @@ export function EvidenceReviewPage() {
     <section className="page evidence-review-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Buddy 工作台 / 验收</p>
-          <h1>待验收成果</h1>
+          <p className="eyebrow">Buddy 工作台 / 成果验收</p>
+          <h1>成果验收</h1>
           <p className="muted">
             仅展示当前有效辅导关系下的待评审任务成果证明，与自评复核相互独立。
           </p>
         </div>
       </header>
+      <div className="dashboard-grid" aria-label="验收指标">
+        <article className="dashboard-card">
+          <span>待验收</span>
+          <strong>{workspace?.summary.pending_count ?? 0}</strong>
+        </article>
+        <article className="dashboard-card">
+          <span>需补充</span>
+          <strong>{workspace?.summary.needs_supplement_count ?? 0}</strong>
+        </article>
+        <article className="dashboard-card">
+          <span>本月通过</span>
+          <strong>{workspace?.summary.approved_this_month_count ?? 0}</strong>
+        </article>
+        <article className="dashboard-card">
+          <span>平均响应</span>
+          <strong>
+            {workspace?.summary.average_response_days == null
+              ? '—'
+              : `${workspace.summary.average_response_days.toFixed(1)} 天`}
+          </strong>
+        </article>
+      </div>
       {message && (
         <p className="success" role="status">
           {message}
@@ -231,7 +274,22 @@ export function EvidenceReviewPage() {
       ) : (
         <div className="buddy-review-layout">
           <aside className="dashboard-card buddy-member-list">
-            <h2>待验收队列</h2>
+            <h2>辅导成员</h2>
+            <label>
+              筛选成员
+              <select
+                value={memberId ?? ''}
+                onChange={(event) => void selectMember(event.target.value)}
+              >
+                <option value="">全部成员</option>
+                {workspace?.members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <h2>待办队列</h2>
             {queue.map((ev) => (
               <button
                 className={selected?.id === ev.id ? 'active' : ''}
@@ -242,6 +300,9 @@ export function EvidenceReviewPage() {
                 <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
                 <span className="member-count">
                   版本 {ev.version_number} · {ev.l3_code}
+                </span>
+                <span className={ev.is_resubmission ? 'error' : 'warning'}>
+                  {ev.is_resubmission ? '补充后重提' : '待验收'}
                 </span>
               </button>
             ))}
@@ -313,7 +374,24 @@ export function EvidenceReviewPage() {
                   </button>
                 </div>
 
-                <h3>历史版本与评审（只读）</h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const historyTarget = document.getElementById(
+                      `evidence-history-${selected.learning_task_id}`,
+                    )
+                    historyTarget?.scrollIntoView?.({ block: 'nearest' })
+                    historyTarget?.focus()
+                  }}
+                >
+                  查看历史反馈
+                </button>
+                <h3
+                  id={`evidence-history-${selected.learning_task_id}`}
+                  tabIndex={-1}
+                >
+                  历史版本与评审（只读）
+                </h3>
                 {history.length === 0 ? (
                   <p className="muted">暂无历史评审记录。</p>
                 ) : (

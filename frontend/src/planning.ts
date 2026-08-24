@@ -791,6 +791,18 @@ export type EvidenceReviewConclusion = '通过' | '需补充'
 export type PendingEvidenceReview = Evidence & {
   member_id: number
   username: string
+  is_resubmission?: boolean
+}
+
+export type EvidenceReviewWorkspace = {
+  summary: {
+    pending_count: number
+    needs_supplement_count: number
+    approved_this_month_count: number
+    average_response_days: number | null
+  }
+  members: Array<{ id: number; username: string }>
+  queue: PendingEvidenceReview[]
 }
 
 // The immutable review history for a task: one closed row per evidence version.
@@ -940,6 +952,16 @@ export async function listPendingEvidenceReviews(): Promise<
     {
       method: 'GET',
     },
+  )
+}
+
+export async function getEvidenceReviewWorkspace(
+  member_id?: number,
+): Promise<EvidenceReviewWorkspace> {
+  const suffix = member_id === undefined ? '' : `?member_id=${member_id}`
+  return request<EvidenceReviewWorkspace>(
+    `/api/planning/evidence-reviews/workspace${suffix}`,
+    { method: 'GET' },
   )
 }
 

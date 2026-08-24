@@ -21,6 +21,7 @@ from .repository import (
     get_capability_profile,
     get_evidence,
     get_evidence_review_summary_for_buddy,
+    get_evidence_review_workspace_for_buddy,
     get_learning_task,
     get_member_dashboard,
     get_monthly_hours,
@@ -850,6 +851,21 @@ def get_pending_evidence_reviews(
 ) -> list[dict[str, object]]:
     _require_buddy(user)
     return list_pending_evidence_reviews_for_buddy(connection, int(user["id"]))
+
+
+@planning_router.get("/evidence-reviews/workspace")
+def get_evidence_review_workspace(
+    user: CurrentUser, connection: Connection, member_id: int | None = Query(None)
+) -> dict[str, object]:
+    _require_buddy(user)
+    try:
+        return get_evidence_review_workspace_for_buddy(
+            connection, int(user["id"]), member_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
 
 
 @planning_router.get("/evidence-reviews/summary")

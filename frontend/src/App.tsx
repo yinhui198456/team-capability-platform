@@ -14,7 +14,6 @@ import { TaskListPage } from './TaskListPage'
 import { TaskDetailPage } from './TaskDetailPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
-import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
@@ -109,7 +108,10 @@ export function App() {
             path="/growth/review/monthly"
             element={<MonthlyReviewPage />}
           />
-          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          <Route
+            path="/mentoring/dashboard"
+            element={<Navigate to="/mentoring/evidence-review" replace />}
+          />
           <Route
             path="/mentoring/evidence-review"
             element={

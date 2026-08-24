@@ -70,12 +70,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: '导师指导',
     items: [
       {
-        label: 'Buddy 复核中心',
-        href: '/mentoring/dashboard',
-        roles: ['Buddy'],
-      },
-      {
-        label: '待验收成果',
+        label: '成果验收',
         href: '/mentoring/evidence-review',
         roles: ['Buddy'],
       },

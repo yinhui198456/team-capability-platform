@@ -62,7 +62,23 @@ async function renderEvidencePage(queue: PendingEvidenceReview[] = []) {
     available_years: [2026],
     active_year: 2026,
   })
-  vi.spyOn(planningApi, 'listPendingEvidenceReviews').mockResolvedValue(queue)
+  vi.spyOn(planningApi, 'getEvidenceReviewWorkspace').mockResolvedValue({
+    summary: {
+      pending_count: queue.length,
+      needs_supplement_count: 0,
+      approved_this_month_count: 0,
+      average_response_days: null,
+    },
+    members: [
+      ...new Map(
+        queue.map((item) => [
+          item.member_id,
+          { id: item.member_id, username: item.username },
+        ]),
+      ).values(),
+    ],
+    queue,
+  })
   if (!vi.isMockFunction(planningApi.listEvidenceReviewsForTask)) {
     vi.spyOn(planningApi, 'listEvidenceReviewsForTask').mockResolvedValue([])
   }
@@ -72,7 +88,7 @@ async function renderEvidencePage(queue: PendingEvidenceReview[] = []) {
     </MemoryRouter>,
   )
   await waitFor(() => {
-    expect(screen.getByRole('heading', { name: '待验收成果' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy()
   })
 }
 
@@ -109,6 +125,31 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     )
     expect(screen.getByText('查看任务成果证明链接')).toBeTruthy()
     expect(listHistory).toHaveBeenCalledWith(100)
+  })
+
+  it('uses the approved B01 title, four metrics and resubmission queue label', async () => {
+    await renderEvidencePage([makePending({ is_resubmission: true })])
+    expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy()
+    expect(screen.getByText('待验收')).toBeTruthy()
+    expect(screen.getAllByText('需补充').length).toBeGreaterThan(0)
+    expect(screen.getByText('本月通过')).toBeTruthy()
+    expect(screen.getByText('平均响应')).toBeTruthy()
+    expect(screen.getByText('补充后重提')).toBeTruthy()
+  })
+
+  it('marks an ordinary actionable item as 待验收', async () => {
+    await renderEvidencePage([makePending()])
+    expect(
+      screen
+        .getAllByText('待验收')
+        .find((node) => node.className === 'warning'),
+    ).toBeTruthy()
+  })
+
+  it('keeps history on the selected task and moves keyboard focus there', async () => {
+    await renderEvidencePage([makePending({ learning_task_id: 321 })])
+    fireEvent.click(screen.getByRole('button', { name: '查看历史反馈' }))
+    expect(document.activeElement?.id).toBe('evidence-history-321')
   })
 
   it('requires feedback before a 需补充 review', async () => {
@@ -215,7 +256,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       alreadyReviewed,
     )
     await renderEvidencePage([makePending({})])
-    const list = vi.mocked(planningApi.listPendingEvidenceReviews)
+    const list = vi.mocked(planningApi.getEvidenceReviewWorkspace)
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('通过'))
     fireEvent.click(screen.getByRole('button', { name: '提交评审结论' }))
@@ -257,7 +298,16 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     // effect already consumed the base value, so the next call — the 409
     // queue reload — is the one that must return only B.
     await renderEvidencePage([a, b])
-    vi.mocked(planningApi.listPendingEvidenceReviews).mockResolvedValueOnce([b])
+    vi.mocked(planningApi.getEvidenceReviewWorkspace).mockResolvedValueOnce({
+      summary: {
+        pending_count: 1,
+        needs_supplement_count: 0,
+        approved_this_month_count: 0,
+        average_response_days: null,
+      },
+      members: [{ id: b.member_id, username: b.username }],
+      queue: [b],
+    })
     await waitFor(() => expect(screen.getByLabelText('通过')).toBeTruthy())
     fireEvent.click(screen.getByLabelText('通过'))
     fireEvent.change(screen.getByLabelText('反馈'), {
@@ -501,7 +551,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(screen.queryByText('自评复核')).toBeNull()
     expect(screen.queryByRole('tab', { name: '全部待处理' })).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Buddy 复核中心' })).toBeNull()
-    expect(screen.getByRole('heading', { name: '待验收成果' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy()
   })
 })
 
@@ -530,6 +580,14 @@ describe('evidenceReview api helpers', () => {
         method: 'GET',
         credentials: 'include',
       }),
+    )
+  })
+
+  it('getEvidenceReviewWorkspace scopes the queue to the selected member', async () => {
+    await planningApi.getEvidenceReviewWorkspace(7)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/planning/evidence-reviews/workspace?member_id=7',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
     )
   })
 
