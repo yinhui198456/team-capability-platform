@@ -191,16 +191,6 @@ function computeGap(detail: AssessmentDetail): number | null {
   return null
 }
 
-function scopeLabel(detail: AssessmentDetail): string {
-  if (detail.scope_type === 'current_required') {
-    return `${detail.l3_code} · 当前职级必备`
-  }
-  if (detail.scope_type === 'target_progressive') {
-    return `${detail.l3_code} · 目标职级进阶`
-  }
-  return detail.l3_code
-}
-
 export function AssessmentGapPage() {
   const year = useYear()
   const [assessment, setAssessment] = useState<Assessment | null>(null)
@@ -1311,7 +1301,7 @@ export function AssessmentGapPage() {
                                         : undefined
                                     }
                                   >
-                                    {scopeLabel(detail)}
+                                    {detail.l3_code}
                                   </small>
                                   {!isFilled(detail) && reason && (
                                     <span className={s.reasonTag}>

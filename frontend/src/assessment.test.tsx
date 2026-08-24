@@ -2297,8 +2297,10 @@ describe('M02 prototype element inventory (issue #194)', () => {
       screen.getByRole('button', { name: '加入提升计划 P01.01.02' }),
     ).toBeTruthy()
     expect(screen.getByLabelText('计划月份 P01.01.01')).toBeTruthy()
-    expect(screen.getByText('P01.01.01 · 当前职级必备')).toBeTruthy()
-    expect(screen.getByText('P01.01.02 · 目标职级进阶')).toBeTruthy()
+    expect(screen.queryByText(/当前职级必备/)).toBeNull()
+    expect(screen.queryByText(/目标职级进阶/)).toBeNull()
+    expect(screen.queryByText(/职级要求/)).toBeNull()
+    expect(screen.queryByText(/三级达成路径/)).toBeNull()
     expect(screen.getByText('目标：4 · P4 标准')).toBeTruthy()
     expect(screen.getByText('Gap：2')).toBeTruthy()
     // 优先级与月份同属已加入的计划草稿；未加入行不占用默认能力项密度。
@@ -2322,7 +2324,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(tableIndex).toBeLessThan(footerIndex)
     // 已加入行仍保持四区；优先级和整框月份原位属于提升计划区。
     const joinedRow = screen
-      .getByText('P01.01.01 · 当前职级必备')
+      .getByLabelText('当前等级 P01.01.01')
       .closest('[id^="row-"]')!
     expect(joinedRow.children).toHaveLength(4)
     const planZone = joinedRow.children[3] as HTMLElement
@@ -2330,7 +2332,6 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(
       within(planZone).getByTestId('plan-month-control-P01.01.01'),
     ).toBeTruthy()
-    expect(screen.queryByText('三级达成路径')).toBeNull()
     // 页底只承载草稿摘要与显式生成，评级保存仍是页头独立动作。
     expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
     expect(
