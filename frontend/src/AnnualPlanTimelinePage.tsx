@@ -12,25 +12,46 @@ export function AnnualPlanTimelinePage() {
   const year = useYear()
   const [params, setParams] = useSearchParams()
   const [tasks, setTasks] = useState<LearningTask[]>([])
+  const [loadedYear, setLoadedYear] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const selected = Number(params.get('month')) || null
   useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setTasks([])
+    setLoadedYear(null)
     listLearningTasks(year)
-      .then(setTasks)
-      .catch(() => setError('年度计划加载失败，请重试。'))
-      .finally(() => setLoading(false))
+      .then((next) => {
+        if (cancelled) return
+        setTasks(next)
+        setLoadedYear(year)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('年度计划加载失败，请重试。')
+          setLoadedYear(year)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [year])
+  const yearTasks = loadedYear === year ? tasks : []
   const groups = new Map<number, LearningTask[]>()
-  tasks.forEach((task) => {
+  yearTasks.forEach((task) => {
     const month = learningTaskMonth(task)
     if (month) groups.set(month, [...(groups.get(month) ?? []), task])
   })
   const metrics = [
-    ['任务总数', tasks.length],
-    ['已完成', tasks.filter((task) => task.status === '已完成').length],
-    ['进行中', tasks.filter((task) => task.status === '进行中').length],
-    ['逾期', tasks.filter((task) => task.status === '延期').length],
+    ['任务总数', yearTasks.length],
+    ['已完成', yearTasks.filter((task) => task.status === '已完成').length],
+    ['进行中', yearTasks.filter((task) => task.status === '进行中').length],
+    ['逾期', yearTasks.filter((task) => task.status === '延期').length],
   ]
   return (
     <section className="page">
@@ -91,32 +112,39 @@ export function AnnualPlanTimelinePage() {
                 </span>
                 <Link to={`/growth/tasks?${query}`}>查看本月任务</Link>
                 {open &&
-                  monthTasks.map((task) => (
-                    <div key={task.id}>
-                      <h2>
-                        {task.l3_code} · {task.l3_name ?? task.l3_code}
-                      </h2>
-                      {task.requirement_change && (
-                        <strong>要求已更新 · 待确认</strong>
-                      )}
-                      <p>
-                        {task.status} ·{' '}
-                        <progress
-                          aria-label={`${task.l3_code} 进度`}
-                          value={learningTaskProgress(task) ?? 0}
-                          max="100"
-                        />{' '}
-                        {learningTaskProgress(task) == null
-                          ? '进度待计算'
-                          : `${learningTaskProgress(task)}%`}
-                      </p>
-                      <Link
-                        to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month: String(month), l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
-                      >
-                        进入任务
-                      </Link>
-                    </div>
-                  ))}
+                  monthTasks.map((task) => {
+                    const progress = learningTaskProgress(task)
+                    return (
+                      <div key={task.id}>
+                        <h2>
+                          {task.l3_code} · {task.l3_name ?? task.l3_code}
+                        </h2>
+                        {task.requirement_change && (
+                          <strong>要求已更新 · 待确认</strong>
+                        )}
+                        <p>
+                          {task.status} ·{' '}
+                          {progress == null ? (
+                            '进度待计算'
+                          ) : (
+                            <>
+                              <progress
+                                aria-label={`${task.l3_code} 进度`}
+                                value={progress}
+                                max="100"
+                              />{' '}
+                              {progress}%
+                            </>
+                          )}
+                        </p>
+                        <Link
+                          to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month: String(month), l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+                        >
+                          进入任务
+                        </Link>
+                      </div>
+                    )
+                  })}
               </article>
             )
           })}

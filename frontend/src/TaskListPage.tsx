@@ -20,17 +20,38 @@ export function TaskListPage() {
   const year = useYear()
   const [params, setParams] = useSearchParams()
   const [tasks, setTasks] = useState<LearningTask[]>([])
+  const [loadedYear, setLoadedYear] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const search = params.get('search') ?? ''
   const status = params.get('status') ?? ''
   const month = params.get('month') ?? ''
   useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setTasks([])
+    setLoadedYear(null)
     listLearningTasks(year)
-      .then(setTasks)
-      .catch(() => setError('学习任务加载失败，请重试。'))
-      .finally(() => setLoading(false))
+      .then((next) => {
+        if (cancelled) return
+        setTasks(next)
+        setLoadedYear(year)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('学习任务加载失败，请重试。')
+          setLoadedYear(year)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [year])
+  const yearTasks = loadedYear === year ? tasks : []
   function update(next: Record<string, string>) {
     const query = new URLSearchParams({
       year: String(year),
@@ -42,14 +63,14 @@ export function TaskListPage() {
     })
     setParams(query, { replace: true })
   }
-  const visible = tasks.filter(
+  const visible = yearTasks.filter(
     (task) =>
       (!month || String(learningTaskMonth(task)) === month) &&
       (!status || task.status === status) &&
       (!search || `${task.l3_code} ${task.l3_name ?? ''}`.includes(search)),
   )
   const metric = (value: string) =>
-    tasks
+    yearTasks
       .filter((task) => !month || String(learningTaskMonth(task)) === month)
       .filter((task) => !value || task.status === value).length
   return (
@@ -77,7 +98,7 @@ export function TaskListPage() {
             <dt>待确认</dt>
             <dd>
               {
-                tasks.filter(
+                yearTasks.filter(
                   (task) =>
                     (!month || String(learningTaskMonth(task)) === month) &&
                     task.requirement_change,
@@ -124,7 +145,7 @@ export function TaskListPage() {
             <option value="">全部月份</option>
             {[
               ...new Set(
-                tasks
+                yearTasks
                   .map(learningTaskMonth)
                   .filter((value): value is number => value != null),
               ),
@@ -148,35 +169,42 @@ export function TaskListPage() {
         <p className="muted">当前条件下暂无学习任务。</p>
       )}
       {!loading &&
-        visible.map((task) => (
-          <article className="plan-overview" key={task.id}>
-            <small>
-              {year}年{String(learningTaskMonth(task) ?? '').padStart(2, '0')}月
-              · {task.l3_code}
-            </small>
-            <h2>{task.l3_name ?? task.l3_code}</h2>
-            {task.requirement_change && (
-              <strong>能力要求已更新 · 待确认</strong>
-            )}
-            <p>
-              {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
-              {task.status}
-            </p>
-            <progress
-              aria-label={`${task.l3_code} 进度`}
-              value={learningTaskProgress(task) ?? 0}
-              max="100"
-            />{' '}
-            {learningTaskProgress(task) == null
-              ? '进度待计算'
-              : `${learningTaskProgress(task)}%`}
-            <Link
-              to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
-            >
-              进入任务
-            </Link>
-          </article>
-        ))}
+        visible.map((task) => {
+          const progress = learningTaskProgress(task)
+          return (
+            <article className="plan-overview" key={task.id}>
+              <small>
+                {year}年{String(learningTaskMonth(task) ?? '').padStart(2, '0')}
+                月 · {task.l3_code}
+              </small>
+              <h2>{task.l3_name ?? task.l3_code}</h2>
+              {task.requirement_change && (
+                <strong>能力要求已更新 · 待确认</strong>
+              )}
+              <p>
+                {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
+                {task.status}
+              </p>
+              {progress == null ? (
+                '进度待计算'
+              ) : (
+                <>
+                  <progress
+                    aria-label={`${task.l3_code} 进度`}
+                    value={progress}
+                    max="100"
+                  />{' '}
+                  {progress}%
+                </>
+              )}
+              <Link
+                to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+              >
+                进入任务
+              </Link>
+            </article>
+          )
+        })}
     </section>
   )
 }

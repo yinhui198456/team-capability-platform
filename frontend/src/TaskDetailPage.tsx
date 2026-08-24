@@ -62,6 +62,7 @@ export function TaskDetailPage() {
     )
   if (!task) return <p className="muted">正在加载任务…</p>
   const loadedTask = task
+  const taskProgress = learningTaskProgress(task)
   const change = loadedTask.requirement_change
   const context = new URLSearchParams(Object.fromEntries(params))
   context.set('year', params.get('year') ?? '')
@@ -183,11 +184,8 @@ export function TaskDetailPage() {
           <p className="muted">
             计划月份：{params.get('year')}年
             {String(task.plan_item_target_month ?? '').padStart(2, '0')}月 ·
-            当前进度{' '}
-            {learningTaskProgress(task) == null
-              ? '待计算'
-              : `${learningTaskProgress(task)}%`}{' '}
-            · {task.status}
+            当前进度 {taskProgress == null ? '待计算' : `${taskProgress}%`} ·{' '}
+            {task.status}
           </p>
         </div>
       </header>
@@ -219,14 +217,18 @@ export function TaskDetailPage() {
           {evidences.map((evidence) => evidence.status).join('、') ||
             '尚未提交'}
         </p>
-        <progress
-          aria-label="任务真实进度"
-          value={learningTaskProgress(task) ?? 0}
-          max="100"
-        />{' '}
-        {learningTaskProgress(task) == null
-          ? '进度待计算'
-          : `${learningTaskProgress(task)}%`}
+        {taskProgress == null ? (
+          '进度待计算'
+        ) : (
+          <>
+            <progress
+              aria-label="任务真实进度"
+              value={taskProgress}
+              max="100"
+            />{' '}
+            {taskProgress}%
+          </>
+        )}
       </section>
       <section className="plan-overview">
         <div>

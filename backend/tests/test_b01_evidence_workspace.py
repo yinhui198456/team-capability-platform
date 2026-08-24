@@ -1,12 +1,18 @@
 """S3/B01 workspace contract: metrics and queue share one Buddy scope."""
 
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 
 import psycopg
 import pytest
 
-from app.access.repository import assign_role, create_user
+from app.access.repository import (
+    assign_role,
+    create_buddy_relationship,
+    create_user,
+)
 from app.planning.repository import (
+    EvidenceReviewConflict,
     create_evidence_draft,
     get_evidence_review_workspace_for_buddy,
     list_learning_tasks,
@@ -186,6 +192,114 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
         )
         assert status == 409
         assert body["detail"]["code"] == "review_idempotency_conflict"
+
+    def test_review_same_key_across_evidence_concurrently_conflicts(
+        self, connection: psycopg.Connection
+    ) -> None:
+        """Two database sessions never leak the global key UNIQUE violation."""
+        reset_full_schema(connection)
+        member_id, buddy_id = self.setup_users(connection)
+        other_member_id = create_user(
+            connection, "rv-second-member", "Second Member", "secret"
+        )
+        assign_role(connection, other_member_id, "Member")
+        connection.execute(
+            "UPDATE tcp_user SET current_level='P4', target_level='P5' WHERE id=%s",
+            (other_member_id,),
+        )
+        create_buddy_relationship(connection, other_member_id, buddy_id)
+        assessment_ids = [
+            self.submit(
+                connection,
+                member,
+                2026,
+                [
+                    {
+                        "l3_code": "P01-L2A-L3A",
+                        "current_level": 2,
+                        "target_level": 4,
+                        "member_priority": "高",
+                        "include_in_plan": True,
+                        "plan_month": "2026-08",
+                    }
+                ],
+            )
+            for member in (member_id, other_member_id)
+        ]
+        for assessment_id in assessment_ids:
+            self.approve(connection, assessment_id, buddy_id)
+        evidence_ids = []
+        for member in (member_id, other_member_id):
+            task = list_learning_tasks(connection, member, 2026)[0]
+            transition_learning_task(
+                connection,
+                member,
+                int(task["id"]),
+                "进行中",
+                None,
+                int(task["revision"]),
+            )
+            evidence = create_evidence_draft(
+                connection, member, int(task["id"]), "成果", None
+            )
+            submit_evidence(connection, member, int(evidence["id"]))
+            evidence_ids.append(int(evidence["id"]))
+        connection.commit()
+
+        from app.settings import settings
+
+        idempotency_query = (
+            "FROM evidence_review er\n                WHERE er.idempotency_key"
+        )
+        idempotency_lock_seen = Event()
+        select_barrier = Barrier(2)
+
+        class SynchronizedConnection:
+            def __init__(self, raw: psycopg.Connection) -> None:
+                self.raw = raw
+
+            def transaction(self):
+                return self.raw.transaction()
+
+            def execute(self, query, params=None):
+                text = str(query)
+                result = self.raw.execute(query, params)
+                if (
+                    "pg_advisory_xact_lock" in text
+                    and params
+                    and "tcp_evidence_review_idempotency:" in str(params[0])
+                ):
+                    idempotency_lock_seen.set()
+                if idempotency_query in text and not idempotency_lock_seen.is_set():
+                    select_barrier.wait(timeout=10)
+                return result
+
+        def review(evidence_id: int) -> str:
+            with psycopg.connect(settings.database_url) as raw:
+                try:
+                    submit_evidence_review(
+                        SynchronizedConnection(raw),
+                        evidence_id,
+                        buddy_id,
+                        "通过",
+                        "达标",
+                        "cross-evidence-key",
+                    )
+                    return "created"
+                except EvidenceReviewConflict:
+                    return "conflict"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(review, evidence_ids))
+
+        assert sorted(outcomes) == ["conflict", "created"]
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM evidence_review "
+                "WHERE idempotency_key='cross-evidence-key'"
+            ).fetchone()[0]
+            == 1
+        )
 
     def test_workspace_marks_direct_resubmission_and_excludes_member_side_item(
         self, connection: psycopg.Connection

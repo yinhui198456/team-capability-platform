@@ -3190,6 +3190,15 @@ def _acquire_buddy_relationship_lock(
     )
 
 
+def _acquire_evidence_review_idempotency_lock(
+    connection: psycopg.Connection, idempotency_key: str
+) -> None:
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"tcp_evidence_review_idempotency:{idempotency_key}",),
+    )
+
+
 def submit_evidence_review(
     connection: psycopg.Connection,
     evidence_id: int,
@@ -3258,6 +3267,7 @@ def submit_evidence_review(
 
         # Idempotent replay checked before any state validation.
         if idempotency_key is not None:
+            _acquire_evidence_review_idempotency_lock(connection, idempotency_key)
             existing = connection.execute(
                 """
                 SELECT er.id, er.evidence_id, er.buddy_id, er.conclusion, er.feedback
