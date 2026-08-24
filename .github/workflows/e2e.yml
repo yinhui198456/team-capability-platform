@@ -146,6 +146,12 @@ jobs:
             mcr.microsoft.com/playwright:v1.61.1-jammy \
             bash -c 'apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test "$@"' -- "${playwright_args[@]}"
 
+      - name: Dump backend logs on failure
+        if: failure()
+        run: |
+          docker compose ps -a || true
+          docker compose logs --no-color --tail=200 backend || true
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
