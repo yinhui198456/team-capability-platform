@@ -114,8 +114,16 @@ export function TaskListPage() {
         </dl>
       )}
       {!isLoading && (
-        <>
-          <div>
+        <form
+          aria-label="任务筛选"
+          className="growth-task-filters"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <div
+            aria-label="任务状态"
+            className="growth-task-status"
+            role="group"
+          >
             {segments.map((value) => (
               <button
                 key={value || 'all'}
@@ -127,7 +135,7 @@ export function TaskListPage() {
               </button>
             ))}
           </div>
-          <label>
+          <label className="growth-task-search">
             搜索任务或能力项
             <input
               role="searchbox"
@@ -136,7 +144,7 @@ export function TaskListPage() {
               onChange={(event) => update({ search: event.target.value })}
             />
           </label>
-          <details>
+          <details className="growth-task-filter-entry">
             <summary>筛选</summary>
             <label>
               计划月份
@@ -162,7 +170,7 @@ export function TaskListPage() {
               </select>
             </label>
           </details>
-        </>
+        </form>
       )}
       {!isLoading && error && (
         <p className="error" role="alert">
@@ -173,43 +181,54 @@ export function TaskListPage() {
       {!isLoading && !error && !visible.length && (
         <p className="muted">当前条件下暂无学习任务。</p>
       )}
-      {!isLoading &&
-        visible.map((task) => {
-          const progress = learningTaskProgress(task)
-          return (
-            <article className="plan-overview" key={task.id}>
-              <small>
-                {year}年{String(learningTaskMonth(task) ?? '').padStart(2, '0')}
-                月 · {task.l3_code}
-              </small>
-              <h2>{task.l3_name ?? task.l3_code}</h2>
-              {task.requirement_change && (
-                <strong>能力要求已更新 · 待确认</strong>
-              )}
-              <p>
-                {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
-                {task.status}
-              </p>
-              {progress == null ? (
-                '进度待计算'
-              ) : (
-                <>
-                  <progress
-                    aria-label={`${task.l3_code} 进度`}
-                    value={progress}
-                    max="100"
-                  />{' '}
-                  {progress}%
-                </>
-              )}
-              <Link
-                to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+      {!isLoading && !error && visible.length > 0 && (
+        <div className="growth-task-list">
+          {visible.map((task) => {
+            const progress = learningTaskProgress(task)
+            return (
+              <article
+                className={`growth-task-card${task.requirement_change ? ' has-requirement-change' : ''}`}
+                key={task.id}
               >
-                进入任务
-              </Link>
-            </article>
-          )
-        })}
+                <div className="growth-task-card-main">
+                  <small>
+                    {year}年
+                    {String(learningTaskMonth(task) ?? '').padStart(2, '0')}月 ·{' '}
+                    {task.l3_code}
+                  </small>
+                  <h2>{task.l3_name ?? task.l3_code}</h2>
+                  {task.requirement_change && (
+                    <strong>能力要求已更新 · 待确认</strong>
+                  )}
+                  <p>
+                    {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
+                    {task.status}
+                  </p>
+                  {progress == null ? (
+                    <span>进度待计算</span>
+                  ) : (
+                    <p>
+                      <progress
+                        aria-label={`${task.l3_code} 进度`}
+                        value={progress}
+                        max="100"
+                      />{' '}
+                      {progress}%
+                    </p>
+                  )}
+                </div>
+                <div className="growth-task-card-actions">
+                  <Link
+                    to={`/growth/tasks/${task.id}?${new URLSearchParams({ year: String(year), month, search, status, l3_code: task.l3_code, plan_item_id: String(task.plan_item_id), task_id: String(task.id) })}`}
+                  >
+                    进入任务
+                  </Link>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }

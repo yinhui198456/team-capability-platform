@@ -1219,6 +1219,291 @@ select {
   }
 }
 
+/* #194 S2: M03–M05 approved growth task flow */
+.growth-timeline {
+  display: grid;
+  gap: 0;
+  margin: 20px 0;
+}
+
+.growth-timeline-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  min-height: 68px;
+}
+
+.growth-month-marker {
+  background: transparent;
+  border: 0;
+  border-right: 2px solid #dfe7f0;
+  color: #175cd3;
+  cursor: pointer;
+  padding: 2px 20px 14px 0;
+  text-align: left;
+}
+
+.growth-month-marker small,
+.growth-month-marker strong {
+  display: block;
+}
+
+.growth-month-marker small,
+.growth-month-card-head,
+.growth-task-card small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.growth-month-marker strong {
+  font-size: 19px;
+}
+
+.growth-month-card,
+.growth-task-card,
+.growth-task-overview,
+.growth-task-work,
+.growth-requirement-change {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+
+.growth-month-card {
+  margin: 0 0 13px 20px;
+  overflow: hidden;
+}
+
+.growth-timeline-row.is-open .growth-month-card {
+  border-color: #96bce9;
+}
+
+.growth-month-card-head {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 15px;
+}
+
+.growth-month-task-list {
+  border-top: 1px solid #e4e7ec;
+}
+
+.growth-month-task-row {
+  align-items: center;
+  border-top: 1px solid #e4e7ec;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr) auto;
+  padding: 14px 15px;
+}
+
+.growth-month-task-row:first-child {
+  border-top: 0;
+}
+
+.growth-month-task-row h2,
+.growth-task-card h2,
+.growth-task-overview h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.growth-month-task-row p,
+.growth-task-card p,
+.growth-task-overview p {
+  margin: 0;
+}
+
+.growth-month-empty {
+  margin: 0;
+  padding: 14px 15px;
+}
+
+.growth-task-filters {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr) auto;
+  margin: 20px 0;
+}
+
+.growth-task-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.growth-task-status button,
+.growth-task-tabs button,
+.growth-requirement-change button {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 12px;
+}
+
+.growth-task-status button[aria-pressed='true'],
+.growth-task-tabs button[aria-pressed='true'] {
+  background: #175cd3;
+  border-color: #175cd3;
+  color: #fff;
+}
+
+.growth-task-search input {
+  display: block;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.growth-task-filter-entry {
+  min-width: 132px;
+}
+
+.growth-task-filter-entry label {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.growth-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.growth-task-card {
+  align-items: center;
+  border-left: 3px solid #175cd3;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 116px;
+  padding: 16px 18px;
+}
+
+.growth-task-card.has-requirement-change {
+  background: #fffdf8;
+  border-left-color: #dc6803;
+}
+
+.growth-task-card-main {
+  display: grid;
+  gap: 7px;
+}
+
+.growth-task-card-actions {
+  border-left: 1px solid #e4e7ec;
+  padding-left: 18px;
+}
+
+.growth-requirement-change {
+  border-left: 5px solid #dc6803;
+  margin: 20px 0;
+  padding: 16px;
+}
+
+.growth-requirement-change p {
+  margin: 8px 0;
+}
+
+.growth-requirement-change button + button {
+  margin-left: 8px;
+}
+
+.growth-task-detail-grid {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 290px minmax(0, 1fr);
+}
+
+.growth-task-overview,
+.growth-task-work {
+  padding: 16px;
+}
+
+.growth-task-overview progress {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.growth-task-tabs {
+  border-bottom: 1px solid #e4e7ec;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+}
+
+.growth-task-work label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.growth-task-work textarea,
+.growth-task-work input {
+  width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .growth-task-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .growth-task-status {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .growth-timeline-row,
+  .growth-task-detail-grid,
+  .growth-task-filters,
+  .growth-month-task-row,
+  .growth-task-card {
+    grid-template-columns: 1fr;
+  }
+
+  .growth-timeline-row {
+    gap: 8px;
+  }
+
+  .growth-month-marker {
+    border-bottom: 1px solid #dfe7f0;
+    border-right: 0;
+    padding: 8px 0;
+  }
+
+  .growth-month-marker small,
+  .growth-month-marker strong {
+    display: inline;
+    margin-right: 6px;
+  }
+
+  .growth-month-card {
+    margin-left: 0;
+  }
+
+  .growth-task-status {
+    grid-column: auto;
+  }
+
+  .growth-task-card-actions {
+    border-left: 0;
+    border-top: 1px solid #e4e7ec;
+    padding: 10px 0 0;
+  }
+
+  .growth-task-tabs {
+    flex-wrap: wrap;
+  }
+}
+
 .task-summary {
   display: grid;
   gap: 12px;

@@ -202,11 +202,63 @@ describe('S2 approved M03–M05 routes', () => {
       screen.queryByRole('progressbar', { name: 'P01.01.01 进度' }),
     ).toBeNull()
     expect(document.body.textContent).toContain('进度待计算')
+    const selectedMonth = document.getElementById('growth-month-9')
+    expect(selectedMonth?.querySelector('a')?.getAttribute('href')).toContain(
+      'month=9',
+    )
+  })
+  it('keeps the approved M03, M04 and M05 regions separate', async () => {
+    stub()
+    vi.mocked(planning.listLearningTasks).mockResolvedValueOnce([
+      {
+        ...tasks[1],
+        actual_hours: 2,
+        plan_item_estimated_hours_parsed: {
+          raw: '8',
+          min_hours: 8,
+          max_hours: 8,
+          is_valid: true,
+          is_range: false,
+        },
+      },
+    ])
+    const m03 = render(
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026&month=10']}>
+        <App />
+      </MemoryRouter>,
+    )
     expect(
-      screen
-        .getAllByRole('link', { name: '查看本月任务' })[0]
-        .getAttribute('href'),
-    ).toContain('month=9')
+      await screen.findByRole('region', { name: '年度任务时间轴' }),
+    ).toBeTruthy()
+    expect(document.querySelectorAll('.growth-timeline-row')).toHaveLength(12)
+    expect(
+      screen.getByRole('progressbar', { name: 'P02.01.01 进度' }),
+    ).toBeTruthy()
+    m03.unmount()
+
+    const m04 = render(
+      <MemoryRouter initialEntries={['/growth/tasks?year=2026&month=9']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('form', { name: '任务筛选' })).toBeTruthy()
+    expect(document.querySelector('.growth-task-list')).toBeTruthy()
+    m04.unmount()
+
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks/7?year=2026&month=9']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('region', { name: '任务概览' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '任务执行' })).toBeTruthy()
+    const detail = document.querySelector('.growth-task-detail-grid')
+    expect(detail?.children[0].classList.contains('growth-task-overview')).toBe(
+      true,
+    )
+    expect(detail?.children[1].classList.contains('growth-task-work')).toBe(
+      true,
+    )
   })
   it.each([
     ['M03', AnnualPlanTimelinePage, '年度计划加载中…', true],

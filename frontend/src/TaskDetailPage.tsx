@@ -235,7 +235,7 @@ export function TaskDetailPage() {
         </div>
       </header>
       {change && (
-        <section className="plan-overview" role="status">
+        <section className="growth-requirement-change" role="status">
           <strong>能力要求已更新，等待你确认</strong>
           <p>原任务仍可继续；系统不会自动替换要求或丢失已记录内容。</p>
           <p>
@@ -248,137 +248,142 @@ export function TaskDetailPage() {
           </button>
         </section>
       )}
-      <section className="plan-overview">
-        <h2>任务概览</h2>
-        <p>
-          当前生效要求：
-          {loadedTask.effective_requirement?.expected_output ??
-            loadedTask.plan_item_expected_output ??
-            '—'}
-        </p>
-        <p>验收要求：{loadedTask.effective_requirement?.notes ?? '—'}</p>
-        <p>
-          累计投入：{loadedTask.actual_hours} 小时 · 成果材料：
-          {evidences.map((evidence) => evidence.status).join('、') ||
-            '尚未提交'}
-        </p>
-        {taskProgress == null ? (
-          '进度待计算'
-        ) : (
-          <>
-            <progress
-              aria-label="任务真实进度"
-              value={taskProgress}
-              max="100"
-            />{' '}
-            {taskProgress}%
-          </>
-        )}
-      </section>
-      <section className="plan-overview">
-        <div>
-          {(['学习记录', '阶段产出', '提交成果'] as Tab[]).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={tab === value}
-              onClick={() => setTab(value)}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-        {tab === '学习记录' && (
-          <div>
-            <label>
-              本次学习内容
-              <textarea
-                aria-label="本次学习内容"
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-              />
-            </label>
-            <label>
-              投入时长
-              <input
-                aria-label="投入时长"
-                type="number"
-                value={hours}
-                onChange={(event) => setHours(event.target.value)}
-              />
-            </label>
-            <label>
-              记录日期
-              <input
-                aria-label="记录日期"
-                type="date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-              />
-            </label>
-            <button
-              type="button"
-              disabled={savingLog}
-              onClick={() => void saveLog()}
-            >
-              保存学习记录
-            </button>
-            <ul>
-              {logs.map((log) => (
-                <li key={log.id}>
-                  {log.record_date} · {log.actual_hours} 小时 · {log.note}
-                </li>
-              ))}
-            </ul>
+      <div className="growth-task-detail-grid">
+        <section
+          aria-labelledby="growth-task-overview-heading"
+          className="growth-task-overview"
+        >
+          <h2 id="growth-task-overview-heading">任务概览</h2>
+          <p>
+            当前生效要求：
+            {loadedTask.effective_requirement?.expected_output ??
+              loadedTask.plan_item_expected_output ??
+              '—'}
+          </p>
+          <p>验收要求：{loadedTask.effective_requirement?.notes ?? '—'}</p>
+          <p>
+            累计投入：{loadedTask.actual_hours} 小时 · 成果材料：
+            {evidences.map((evidence) => evidence.status).join('、') ||
+              '尚未提交'}
+          </p>
+          {taskProgress == null ? (
+            '进度待计算'
+          ) : (
+            <>
+              <progress
+                aria-label="任务真实进度"
+                value={taskProgress}
+                max="100"
+              />{' '}
+              {taskProgress}%
+            </>
+          )}
+        </section>
+        <section aria-label="任务执行" className="growth-task-work">
+          <div className="growth-task-tabs">
+            {(['学习记录', '阶段产出', '提交成果'] as Tab[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={tab === value}
+                onClick={() => setTab(value)}
+              >
+                {value}
+              </button>
+            ))}
           </div>
-        )}
-        {tab === '阶段产出' && (
-          <div>
-            <label>
-              阶段产出说明
-              <textarea
-                aria-label="阶段产出说明"
-                value={output}
-                onChange={(event) => setOutput(event.target.value)}
-              />
-            </label>
-            <label>
-              产出链接
-              <input
-                aria-label="产出链接"
-                value={link}
-                onChange={(event) => setLink(event.target.value)}
-              />
-            </label>
-            <button type="button" onClick={() => void saveOutput()}>
-              保存阶段产出
-            </button>
-          </div>
-        )}
-        {tab === '提交成果' && (
-          <div>
-            <label>
-              成果说明
-              <textarea
-                aria-label="成果说明"
-                value={output}
-                onChange={(event) => setOutput(event.target.value)}
-              />
-            </label>
-            <label>
-              成果链接
-              <input
-                aria-label="成果链接"
-                value={link}
-                onChange={(event) => setLink(event.target.value)}
-              />
-            </label>
-            <button type="button" onClick={() => void submit()}>
-              提交成果
-            </button>
-          </div>
-        )}
-      </section>
+          {tab === '学习记录' && (
+            <div>
+              <label>
+                本次学习内容
+                <textarea
+                  aria-label="本次学习内容"
+                  value={content}
+                  onChange={(event) => setContent(event.target.value)}
+                />
+              </label>
+              <label>
+                投入时长
+                <input
+                  aria-label="投入时长"
+                  type="number"
+                  value={hours}
+                  onChange={(event) => setHours(event.target.value)}
+                />
+              </label>
+              <label>
+                记录日期
+                <input
+                  aria-label="记录日期"
+                  type="date"
+                  value={date}
+                  onChange={(event) => setDate(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={savingLog}
+                onClick={() => void saveLog()}
+              >
+                保存学习记录
+              </button>
+              <ul>
+                {logs.map((log) => (
+                  <li key={log.id}>
+                    {log.record_date} · {log.actual_hours} 小时 · {log.note}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {tab === '阶段产出' && (
+            <div>
+              <label>
+                阶段产出说明
+                <textarea
+                  aria-label="阶段产出说明"
+                  value={output}
+                  onChange={(event) => setOutput(event.target.value)}
+                />
+              </label>
+              <label>
+                产出链接
+                <input
+                  aria-label="产出链接"
+                  value={link}
+                  onChange={(event) => setLink(event.target.value)}
+                />
+              </label>
+              <button type="button" onClick={() => void saveOutput()}>
+                保存阶段产出
+              </button>
+            </div>
+          )}
+          {tab === '提交成果' && (
+            <div>
+              <label>
+                成果说明
+                <textarea
+                  aria-label="成果说明"
+                  value={output}
+                  onChange={(event) => setOutput(event.target.value)}
+                />
+              </label>
+              <label>
+                成果链接
+                <input
+                  aria-label="成果链接"
+                  value={link}
+                  onChange={(event) => setLink(event.target.value)}
+                />
+              </label>
+              <button type="button" onClick={() => void submit()}>
+                提交成果
+              </button>
+            </div>
+          )}
+        </section>
+      </div>
       {notice && <p role="status">{notice}</p>}
       {error && (
         <p className="error" role="alert">
