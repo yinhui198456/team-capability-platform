@@ -7,11 +7,12 @@ import {
   waitFor,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { App } from './App'
 import * as access from './access'
 import * as planning from './planning'
 import { AnnualPlanTimelinePage } from './AnnualPlanTimelinePage'
+import { TaskDetailPage } from './TaskDetailPage'
 import { TaskListPage } from './TaskListPage'
 import { YearContext } from './YearContext'
 
@@ -283,6 +284,84 @@ describe('S2 approved M03–M05 routes', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(
       '年度计划加载失败',
     )
+  })
+  it.each([
+    ['M03', AnnualPlanTimelinePage, '年度计划加载中…', true],
+    ['M04', TaskListPage, '学习任务加载中…', false],
+  ])(
+    'shows loading on the first %s year-change render',
+    async (_, Page, loading, timeline) => {
+      let resolve: (value: typeof tasks) => void
+      vi.spyOn(planning, 'listLearningTasks').mockImplementation(
+        () =>
+          new Promise((next) => (resolve = next)) as ReturnType<
+            typeof planning.listLearningTasks
+          >,
+      )
+      const view = render(
+        <MemoryRouter>
+          <YearContext.Provider value={2026}>
+            <Page />
+          </YearContext.Provider>
+        </MemoryRouter>,
+      )
+      await screen.findByText(loading)
+      resolve!(tasks)
+      if (timeline) await screen.findByRole('button', { name: /2026年09月/ })
+      else await screen.findByText('文件规范')
+      view.rerender(
+        <MemoryRouter>
+          <YearContext.Provider value={2025}>
+            <Page />
+          </YearContext.Provider>
+        </MemoryRouter>,
+      )
+      expect(screen.getByText(loading)).toBeTruthy()
+      expect(screen.queryByText('本年度暂无学习任务。')).toBeNull()
+      expect(screen.queryByText('当前条件下暂无学习任务。')).toBeNull()
+    },
+  )
+  it('keeps task identity and ignores a late prior task response', async () => {
+    const pending = new Map<
+      number,
+      { resolve: (value: (typeof tasks)[number]) => void }
+    >()
+    vi.spyOn(planning, 'getLearningTask').mockImplementation(
+      (id) =>
+        new Promise((resolve) => pending.set(id, { resolve })) as ReturnType<
+          typeof planning.getLearningTask
+        >,
+    )
+    vi.spyOn(planning, 'listProgressLogs').mockResolvedValue([])
+    vi.spyOn(planning, 'listEvidences').mockResolvedValue([])
+    function DetailRoute() {
+      const navigate = useNavigate()
+      return (
+        <>
+          <button onClick={() => navigate('/growth/tasks/8?year=2099')}>
+            切换任务
+          </button>
+          <Routes>
+            <Route path="/growth/tasks/:taskId" element={<TaskDetailPage />} />
+          </Routes>
+        </>
+      )
+    }
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks/7']}>
+        <DetailRoute />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(pending.has(7)).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: '切换任务' }))
+    expect(screen.getByText('正在加载任务…')).toBeTruthy()
+    await waitFor(() => expect(pending.has(8)).toBe(true))
+    pending.get(8)!.resolve({ ...tasks[1], plan_item_plan_month: '2025-10' })
+    expect(await screen.findByText('沟通准备')).toBeTruthy()
+    expect(screen.getByText(/计划月份：2025年10月/)).toBeTruthy()
+    pending.get(7)!.resolve(tasks[0])
+    await waitFor(() => expect(screen.queryByText('文件规范')).toBeNull())
+    expect(screen.getByText('沟通准备')).toBeTruthy()
   })
   it('shows M04 empty state after loading', async () => {
     stub()

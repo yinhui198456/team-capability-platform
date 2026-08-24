@@ -5,6 +5,7 @@ import {
   createProgressLog,
   decideTaskRequirement,
   getLearningTask,
+  learningTaskMonth,
   learningTaskProgress,
   listEvidences,
   listProgressLogs,
@@ -23,6 +24,7 @@ export function TaskDetailPage() {
   const [params] = useSearchParams()
   const id = Number(taskId)
   const [task, setTask] = useState<LearningTask | null>(null)
+  const [loadedTaskId, setLoadedTaskId] = useState<number | null>(null)
   const [logs, setLogs] = useState<ProgressLog[]>([])
   const [evidences, setEvidences] = useState<Evidence[]>([])
   const [tab, setTab] = useState<Tab>('学习记录')
@@ -34,14 +36,26 @@ export function TaskDetailPage() {
   const [output, setOutput] = useState('')
   const [link, setLink] = useState('')
   const logKey = useRef<string | null>(null)
+  const loadSequence = useRef(0)
   const [savingLog, setSavingLog] = useState(false)
   async function load(preserveInput = false) {
-    const [next, nextLogs, nextEvidence] = await Promise.all([
-      getLearningTask(id),
-      listProgressLogs(id),
-      listEvidences(id),
-    ])
+    const sequence = ++loadSequence.current
+    let next: LearningTask
+    let nextLogs: ProgressLog[]
+    let nextEvidence: Evidence[]
+    try {
+      ;[next, nextLogs, nextEvidence] = await Promise.all([
+        getLearningTask(id),
+        listProgressLogs(id),
+        listEvidences(id),
+      ])
+    } catch (err) {
+      if (sequence !== loadSequence.current) return
+      throw err
+    }
+    if (sequence !== loadSequence.current) return
     setTask(next)
+    setLoadedTaskId(id)
     setLogs(nextLogs)
     setEvidences(nextEvidence)
     const draft = nextEvidence.find((evidence) => evidence.status === '草稿')
@@ -51,18 +65,34 @@ export function TaskDetailPage() {
     }
   }
   useEffect(() => {
+    setTask(null)
+    setLoadedTaskId(null)
+    setLogs([])
+    setEvidences([])
+    setError('')
     if (Number.isInteger(id))
-      void load().catch(() => setError('任务加载失败，请重试。'))
+      void load().catch(() => {
+        setLoadedTaskId(id)
+        setError('任务加载失败，请重试。')
+      })
+    return () => {
+      loadSequence.current += 1
+    }
   }, [id])
-  if (error && !task)
+  const currentTask = loadedTaskId === id ? task : null
+  if (error && !currentTask)
     return (
       <p className="error" role="alert">
         {error}
       </p>
     )
-  if (!task) return <p className="muted">正在加载任务…</p>
-  const loadedTask = task
-  const taskProgress = learningTaskProgress(task)
+  if (!currentTask) return <p className="muted">正在加载任务…</p>
+  const loadedTask = currentTask
+  const taskProgress = learningTaskProgress(currentTask)
+  const canonicalPlan =
+    currentTask.plan_item_plan_month?.match(/^(\d{4})-\d{2}$/)
+  const planYear = canonicalPlan?.[1] ?? params.get('year') ?? ''
+  const planMonth = learningTaskMonth(currentTask)
   const change = loadedTask.requirement_change
   const context = new URLSearchParams(Object.fromEntries(params))
   context.set('year', params.get('year') ?? '')
@@ -175,17 +205,17 @@ export function TaskDetailPage() {
   return (
     <section className="page">
       <p>
-        <Link to={`/growth/tasks?${context}`}>学习任务</Link> / {task.l3_code}
+        <Link to={`/growth/tasks?${context}`}>学习任务</Link> /{' '}
+        {loadedTask.l3_code}
       </p>
       <header className="page-heading">
         <div>
-          <p className="eyebrow">学习任务 / {task.l3_code}</p>
-          <h1>{task.l3_name ?? task.l3_code}</h1>
+          <p className="eyebrow">学习任务 / {loadedTask.l3_code}</p>
+          <h1>{loadedTask.l3_name ?? loadedTask.l3_code}</h1>
           <p className="muted">
-            计划月份：{params.get('year')}年
-            {String(task.plan_item_target_month ?? '').padStart(2, '0')}月 ·
+            计划月份：{planYear}年{String(planMonth ?? '').padStart(2, '0')}月 ·
             当前进度 {taskProgress == null ? '待计算' : `${taskProgress}%`} ·{' '}
-            {task.status}
+            {loadedTask.status}
           </p>
         </div>
       </header>
@@ -207,13 +237,13 @@ export function TaskDetailPage() {
         <h2>任务概览</h2>
         <p>
           当前生效要求：
-          {task.effective_requirement?.expected_output ??
-            task.plan_item_expected_output ??
+          {loadedTask.effective_requirement?.expected_output ??
+            loadedTask.plan_item_expected_output ??
             '—'}
         </p>
-        <p>验收要求：{task.effective_requirement?.notes ?? '—'}</p>
+        <p>验收要求：{loadedTask.effective_requirement?.notes ?? '—'}</p>
         <p>
-          累计投入：{task.actual_hours} 小时 · 成果材料：
+          累计投入：{loadedTask.actual_hours} 小时 · 成果材料：
           {evidences.map((evidence) => evidence.status).join('、') ||
             '尚未提交'}
         </p>

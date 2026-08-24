@@ -52,6 +52,7 @@ export function TaskListPage() {
     }
   }, [year])
   const yearTasks = loadedYear === year ? tasks : []
+  const isLoading = loading || loadedYear !== year
   function update(next: Record<string, string>) {
     const query = new URLSearchParams({
       year: String(year),
@@ -84,7 +85,7 @@ export function TaskListPage() {
           </p>
         </div>
       </header>
-      {!loading && (
+      {!isLoading && (
         <dl className="annual-plan-summary">
           <div>
             <dt>全部任务</dt>
@@ -112,63 +113,67 @@ export function TaskListPage() {
           </div>
         </dl>
       )}
-      <div>
-        {segments.map((value) => (
-          <button
-            key={value || 'all'}
-            type="button"
-            aria-pressed={status === value}
-            onClick={() => update({ status: value })}
-          >
-            {value || '全部'} {metric(value)}
-          </button>
-        ))}
-      </div>
-      <label>
-        搜索任务或能力项
-        <input
-          role="searchbox"
-          aria-label="搜索任务或能力项"
-          value={search}
-          onChange={(event) => update({ search: event.target.value })}
-        />
-      </label>
-      <details>
-        <summary>筛选</summary>
-        <label>
-          计划月份
-          <select
-            aria-label="计划月份筛选"
-            value={month}
-            onChange={(event) => update({ month: event.target.value })}
-          >
-            <option value="">全部月份</option>
-            {[
-              ...new Set(
-                yearTasks
-                  .map(learningTaskMonth)
-                  .filter((value): value is number => value != null),
-              ),
-            ]
-              .sort()
-              .map((value) => (
-                <option key={value} value={String(value)}>
-                  {year}年{String(value).padStart(2, '0')}月
-                </option>
-              ))}
-          </select>
-        </label>
-      </details>
-      {error && (
+      {!isLoading && (
+        <>
+          <div>
+            {segments.map((value) => (
+              <button
+                key={value || 'all'}
+                type="button"
+                aria-pressed={status === value}
+                onClick={() => update({ status: value })}
+              >
+                {value || '全部'} {metric(value)}
+              </button>
+            ))}
+          </div>
+          <label>
+            搜索任务或能力项
+            <input
+              role="searchbox"
+              aria-label="搜索任务或能力项"
+              value={search}
+              onChange={(event) => update({ search: event.target.value })}
+            />
+          </label>
+          <details>
+            <summary>筛选</summary>
+            <label>
+              计划月份
+              <select
+                aria-label="计划月份筛选"
+                value={month}
+                onChange={(event) => update({ month: event.target.value })}
+              >
+                <option value="">全部月份</option>
+                {[
+                  ...new Set(
+                    yearTasks
+                      .map(learningTaskMonth)
+                      .filter((value): value is number => value != null),
+                  ),
+                ]
+                  .sort()
+                  .map((value) => (
+                    <option key={value} value={String(value)}>
+                      {year}年{String(value).padStart(2, '0')}月
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </details>
+        </>
+      )}
+      {!isLoading && error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
-      {loading && <p className="muted">学习任务加载中…</p>}
-      {!loading && !error && !visible.length && (
+      {isLoading && <p className="muted">学习任务加载中…</p>}
+      {!isLoading && !error && !visible.length && (
         <p className="muted">当前条件下暂无学习任务。</p>
       )}
-      {!loading &&
+      {!isLoading &&
         visible.map((task) => {
           const progress = learningTaskProgress(task)
           return (

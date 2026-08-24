@@ -42,6 +42,7 @@ export function AnnualPlanTimelinePage() {
     }
   }, [year])
   const yearTasks = loadedYear === year ? tasks : []
+  const isLoading = loading || loadedYear !== year
   const groups = new Map<number, LearningTask[]>()
   yearTasks.forEach((task) => {
     const month = learningTaskMonth(task)
@@ -62,7 +63,7 @@ export function AnnualPlanTimelinePage() {
           <p className="muted">{year} 年 · 按月推进学习任务，持续提升能力。</p>
         </div>
       </header>
-      {!loading && (
+      {!isLoading && (
         <dl className="annual-plan-summary">
           {metrics.map(([label, value]) => (
             <div key={String(label)}>
@@ -72,16 +73,16 @@ export function AnnualPlanTimelinePage() {
           ))}
         </dl>
       )}
-      {error && (
+      {!isLoading && error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
-      {loading && <p className="muted">年度计划加载中…</p>}
-      {!loading && !error && groups.size === 0 && (
+      {isLoading && <p className="muted">年度计划加载中…</p>}
+      {!isLoading && !error && groups.size === 0 && (
         <p className="muted">本年度暂无学习任务。</p>
       )}
-      {!loading &&
+      {!isLoading &&
         [...groups.entries()]
           .sort(([a], [b]) => a - b)
           .map(([month, monthTasks]) => {
