@@ -57,6 +57,7 @@ _EXPECTED_VERSIONS = (
     "0014_evidence_archive_backfill",
     "0015_plan_month_text",
     "0016_plan_item_later_assessment",
+    "0017_task_requirement_decision",
 )
 
 
