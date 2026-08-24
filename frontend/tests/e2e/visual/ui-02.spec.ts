@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
@@ -7,6 +7,36 @@ const VIEWPORTS = [
   { name: '1024x768', width: 1024, height: 768 },
   { name: '768x900', width: 768, height: 900 },
 ] as const
+
+async function ensure2026Draft(page: Page): Promise<number> {
+  const preview = await page.request.get(
+    '/api/assessments/scope-preview?year=2026',
+  )
+  expect(preview.ok()).toBeTruthy()
+  const previewBody = (await preview.json()) as {
+    scope_token: string
+    open_draft_id: number | null
+  }
+  if (previewBody.open_draft_id) return previewBody.open_draft_id
+
+  const created = await page.request.post('/api/assessments', {
+    data: {
+      year: 2026,
+      assessment_type: '年度',
+      scope_token: previewBody.scope_token,
+    },
+  })
+  expect(created.ok()).toBeTruthy()
+  const createdBody = (await created.json()) as { id: number }
+  return createdBody.id
+}
+
+async function openM02(page: Page) {
+  await page.goto('/capability/assessment')
+  await expect(
+    page.getByRole('heading', { name: '能力评级与提升计划' }),
+  ).toBeVisible()
+}
 
 for (const viewport of VIEWPORTS) {
   test.describe(`M02 V1 @ ${viewport.name}`, () => {
@@ -17,28 +47,8 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
-      const preview = await page.request.get(
-        '/api/assessments/scope-preview?year=2026',
-      )
-      expect(preview.ok()).toBeTruthy()
-      const previewBody = (await preview.json()) as {
-        scope_token: string
-        open_draft_id: number | null
-      }
-      if (!previewBody.open_draft_id) {
-        const created = await page.request.post('/api/assessments', {
-          data: {
-            year: 2026,
-            assessment_type: '年度',
-            scope_token: previewBody.scope_token,
-          },
-        })
-        expect(created.ok()).toBeTruthy()
-      }
-      await page.goto('/capability/assessment')
-      await expect(
-        page.getByRole('heading', { name: '能力评级与提升计划' }),
-      ).toBeVisible()
+      await ensure2026Draft(page)
+      await openM02(page)
     })
 
     test('keeps the approved M02 actions, navigation, and no-clipping contract', async ({
@@ -82,26 +92,138 @@ for (const viewport of VIEWPORTS) {
         return nodes.some((node) => node.scrollWidth > node.clientWidth + 1)
       })
       expect(clipped).toBe(false)
-    })
 
-    test('keeps rating save and plan drafting independent', async ({
-      page,
-    }) => {
-      const table = page.getByTestId('assessment-table').first()
+      const table = page.getByTestId('assessment-table')
       await expect(table).toBeVisible()
-      const rating = table.getByRole('button', { name: /^0 · 未接触/ }).first()
+      const initialRow = table
+        .locator('[id^="row-"]')
+        .filter({ has: page.locator('button[aria-label^="加入提升计划 "]') })
+        .first()
+      const rowId = await initialRow.getAttribute('id')
+      expect(rowId).toBeTruthy()
+      const row = page.locator(`#${rowId}`)
+      const rating = row.locator('[aria-label^="当前等级"] button').first()
+      if ((await rating.getAttribute('aria-pressed')) === 'true') {
+        await rating.click()
+      }
       await rating.click()
-      await page.getByRole('button', { name: '保存能力评级' }).click()
+      await expect(rating).toHaveAttribute('aria-pressed', 'true')
 
-      const join = table.getByRole('button', { name: /^加入提升计划 / }).first()
+      const join = row.locator('button[aria-label^="加入提升计划 "]')
       await expect(join).toBeEnabled()
-      await join.click()
-      const row = join.locator('xpath=ancestor::div[starts-with(@id, "row-")]')
-      await expect(
-        row.getByRole('combobox', { name: /^优先级 / }),
-      ).toBeVisible()
-      await expect(row.getByTestId(/^plan-month-control-/)).toBeVisible()
-      await expect(page.getByLabel('计划草稿操作')).toContainText('计划草稿：')
+      await rating.click()
+      await expect(rating).toHaveAttribute('aria-pressed', 'false')
     })
   })
 }
+
+test('persists one isolated M02 rating and plan draft at 1440', async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.TCP_E2E_ISOLATED,
+    'M02 prepares a controlled draft only in the isolated E2E environment',
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await loginAs(page, 'member2')
+  const draftId = await ensure2026Draft(page)
+  await openM02(page)
+
+  const table = page.getByTestId('assessment-table')
+  const initialRow = table
+    .locator('[id^="row-"]')
+    .filter({ has: page.locator('button[aria-label^="加入提升计划 "]') })
+    .first()
+  const rowId = await initialRow.getAttribute('id')
+  expect(rowId).toBeTruthy()
+  const row = page.locator(`#${rowId}`)
+  const ratingLabel = await row
+    .locator('[aria-label^="当前等级"]')
+    .getAttribute('aria-label')
+  if (!ratingLabel) throw new Error('expected the stable row rating label')
+  const code = ratingLabel.replace('当前等级 ', '')
+  if (!code) throw new Error('expected the stable row capability code')
+  const rating = row.locator('[aria-label^="当前等级"] button').first()
+  if ((await rating.getAttribute('aria-pressed')) === 'true') {
+    await rating.click()
+  }
+  await rating.click()
+  await expect(rating).toHaveAttribute('aria-pressed', 'true')
+
+  const ratingSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+      response.ok(),
+  )
+  await page.getByRole('button', { name: '保存能力评级' }).click()
+  await ratingSave
+  await expect(
+    page.getByRole('status', { name: '评级保存状态' }),
+  ).toContainText('评级已保存')
+
+  let planSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+      response.ok(),
+  )
+  await row.locator('button[aria-label^="加入提升计划 "]').click()
+  await planSave
+
+  planSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+      response.ok(),
+  )
+  await row.getByLabel(`优先级 ${code}`).selectOption('高')
+  await planSave
+
+  planSave = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+      response.ok(),
+  )
+  await row.getByLabel(`计划月份 ${code}`).fill('2026-05')
+  await planSave
+
+  await page.reload()
+  await expect(
+    page.getByRole('heading', { name: '能力评级与提升计划' }),
+  ).toBeVisible()
+  let persistedRow = page
+    .getByLabel(`当前等级 ${code}`)
+    .locator('xpath=ancestor::div[starts-with(@id, "row-")]')
+  await expect(
+    persistedRow.locator('[aria-label^="当前等级"] button').first(),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    persistedRow.getByRole('button', { name: `移出提升计划 ${code}` }),
+  ).toBeVisible()
+  await expect(persistedRow.getByLabel(`优先级 ${code}`)).toHaveValue('高')
+  await expect(persistedRow.getByLabel(`计划月份 ${code}`)).toHaveValue(
+    '2026-05',
+  )
+
+  await page.goto('/growth/annual-plan?year=2026')
+  await expect(
+    page.getByRole('heading', { name: '年度成长计划' }),
+  ).toBeVisible()
+  await openM02(page)
+  persistedRow = page
+    .getByLabel(`当前等级 ${code}`)
+    .locator('xpath=ancestor::div[starts-with(@id, "row-")]')
+  await expect(
+    persistedRow.locator('[aria-label^="当前等级"] button').first(),
+  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    persistedRow.getByRole('button', { name: `移出提升计划 ${code}` }),
+  ).toBeVisible()
+  await expect(persistedRow.getByLabel(`优先级 ${code}`)).toHaveValue('高')
+  await expect(persistedRow.getByLabel(`计划月份 ${code}`)).toHaveValue(
+    '2026-05',
+  )
+  await expect(page.getByText(/Assessment Review/)).toHaveCount(0)
+})
