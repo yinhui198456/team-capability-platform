@@ -787,6 +787,7 @@ select {
 }
 
 .evidence-review-layout {
+  gap: 12px;
   grid-template-columns: 240px minmax(0, 1fr);
 }
 
@@ -794,11 +795,32 @@ select {
   grid-column: auto;
 }
 
+.evidence-review-layout .evidence-review-queue {
+  overflow: hidden;
+  padding: 0;
+}
+
+.evidence-review-layout .evidence-review-queue h2 {
+  align-items: center;
+  border-bottom: 1px solid #e4e7ec;
+  display: flex;
+  margin: 0;
+  min-height: 50px;
+  padding: 0 14px;
+}
+
 .evidence-review-queue.buddy-member-list > button {
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #edf1f5;
+  border-radius: 0;
+  color: #43556e;
   display: grid;
   gap: 3px 8px;
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 78px;
+  padding: 10px 13px;
+  text-align: left;
 }
 
 .evidence-review-queue.buddy-member-list > button > .status-pill {
@@ -825,6 +847,28 @@ select {
 .evidence-review-task {
   color: #667085;
   font-size: 12px;
+}
+
+.evidence-review-title {
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.evidence-review-title small {
+  color: #667085;
+}
+
+.evidence-review-title h2 {
+  margin: 4px 0 0;
+}
+
+.evidence-review-preview {
+  background: #f7faff;
+  border: 1px solid #cbd9e9;
+  border-radius: 7px;
+  margin: 16px 0;
+  padding: 14px;
 }
 
 .buddy-member-list {

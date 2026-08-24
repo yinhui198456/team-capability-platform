@@ -21,12 +21,8 @@ function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString('zh-CN')
 }
 
-function capabilityPath(ev: PendingEvidenceReview): string {
-  const l2 = ev.l2_name
-    ? `${ev.l2_code ?? '未映射'} · ${ev.l2_name}`
-    : (ev.l2_code ?? '未映射')
-  const l3 = ev.l3_name ? `${ev.l3_code} · ${ev.l3_name}` : ev.l3_code
-  return `${l2} → ${l3}`
+function taskTitle(ev: PendingEvidenceReview): string {
+  return ev.description?.trim() || ev.l3_name || ev.l3_code
 }
 
 export function EvidenceReviewPage() {
@@ -130,7 +126,11 @@ export function EvidenceReviewPage() {
   }
 
   async function handleSubmit() {
-    if (!selected || !conclusion) return
+    if (!selected) return
+    if (!conclusion) {
+      setError('请先选择“通过”或“需补充”，再提交验收结果。')
+      return
+    }
     if (conclusion === '需补充' && !feedback.trim()) {
       setError('需补充必须填写反馈。')
       return
@@ -215,16 +215,33 @@ export function EvidenceReviewPage() {
 
   if (loading) return <p className="muted">加载中…</p>
 
+  function focusHistory() {
+    if (!selected) return
+    const historyTarget = document.getElementById(
+      `evidence-history-${selected.learning_task_id}`,
+    )
+    historyTarget?.scrollIntoView?.({ block: 'nearest' })
+    historyTarget?.focus()
+  }
+
   return (
     <section className="page evidence-review-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Buddy 工作台 / 成果验收</p>
+          <p className="eyebrow">导师指导</p>
           <h1>成果验收</h1>
           <p className="muted">
-            仅展示当前有效辅导关系下的待评审任务成果证明，与自评复核相互独立。
+            筛选成员、处理成果验收队列并留下反馈；不审核评级或计划。
           </p>
         </div>
+        <button
+          disabled={!selected}
+          onClick={focusHistory}
+          title={selected ? undefined : '暂无待验收成果，无法查看历史反馈'}
+          type="button"
+        >
+          查看历史反馈
+        </button>
       </header>
       <div className="dashboard-grid" aria-label="验收指标">
         <article className="dashboard-card">
@@ -287,56 +304,68 @@ export function EvidenceReviewPage() {
           )}
         </aside>
 
-        <article className="dashboard-card buddy-workspace">
-          <h2>验收工作区</h2>
+        <article
+          aria-label="验收工作区"
+          className="dashboard-card buddy-workspace evidence-review-workspace"
+        >
           {!selected ? (
-            <p className="muted">选择一项待验收成果后查看依据和历史反馈。</p>
+            <>
+              <h2>验收工作区</h2>
+              <p className="muted">选择一项待验收成果后查看依据和历史反馈。</p>
+            </>
           ) : (
             <>
-              <p>
-                <strong>
-                  {selected.username ?? `成员 ${selected.member_id}`}
-                </strong>{' '}
-                · {capabilityPath(selected)} · 任务成果证明 版本{' '}
-                {selected.version_number} · 提交于{' '}
-                {formatDateTime(selected.submitted_at)}
-              </p>
-              <div className="evidence-content">
-                <h3>提交内容</h3>
+              <div className="evidence-review-title">
+                <div>
+                  <small>
+                    {selected.username ?? `成员 ${selected.member_id}`} ·{' '}
+                    {selected.l3_code}
+                  </small>
+                  <h2>{taskTitle(selected)}</h2>
+                </div>
+                <span className="status-pill status-待-Evidence-Review">
+                  成果 v{selected.version_number}
+                </span>
+              </div>
+              <div className="evidence-content evidence-review-preview">
+                <h3>{selected.content || '未提供成果内容。'}</h3>
                 {selected.description && (
                   <p className="muted">{selected.description}</p>
                 )}
-                <p>{selected.content || '未提供提交内容。'}</p>
                 {selected.evidence_link && (
                   <a
                     href={selected.evidence_link}
                     rel="noreferrer"
                     target="_blank"
                   >
-                    查看任务成果证明链接
+                    查看成果文件
                   </a>
                 )}
               </div>
-              <fieldset>
-                <legend>评审结论</legend>
+              <div aria-label="评审结论" className="decision-row">
                 {CONCLUSIONS.map((value) => (
-                  <label className="radio" key={value}>
-                    <input
-                      checked={conclusion === value}
-                      name="conclusion"
-                      onChange={() => setConclusion(value)}
-                      type="radio"
-                      value={value}
-                    />
+                  <button
+                    aria-pressed={conclusion === value}
+                    className={`btn ${
+                      conclusion === value
+                        ? value === '通过'
+                          ? 'success'
+                          : 'danger'
+                        : ''
+                    }`}
+                    key={value}
+                    onClick={() => setConclusion(value)}
+                    type="button"
+                  >
                     {value}
-                  </label>
+                  </button>
                 ))}
-              </fieldset>
+              </div>
               <label>
-                反馈
+                反馈建议
                 <textarea
                   onChange={(event) => setFeedback(event.target.value)}
-                  placeholder="请输入评审反馈"
+                  placeholder="通过时可填写建议；需补充时请具体说明缺少什么。"
                   value={feedback}
                 />
               </label>
@@ -345,32 +374,21 @@ export function EvidenceReviewPage() {
               )}
               <div className="actions">
                 <button
-                  disabled={!conclusion || submitting}
+                  disabled={submitting}
                   onClick={() => void handleSubmit()}
                   type="button"
                 >
-                  提交评审结论
+                  提交验收结果
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const historyTarget = document.getElementById(
-                    `evidence-history-${selected.learning_task_id}`,
-                  )
-                  historyTarget?.scrollIntoView?.({ block: 'nearest' })
-                  historyTarget?.focus()
-                }}
-              >
-                查看历史反馈
-              </button>
               <h3
                 id={`evidence-history-${selected.learning_task_id}`}
                 tabIndex={-1}
               >
-                历史版本与评审（只读）
+                历史反馈
               </h3>
+              <p className="muted">只读历史记录。</p>
               {history.length === 0 ? (
                 <p className="muted">暂无历史评审记录。</p>
               ) : (
