@@ -199,6 +199,13 @@ def test_generate_plan_items_created(plan_schema, gen_assessment) -> None:
     assert status == 200
     task = next(item for item in tasks if item["id"] == row[4])
     assert task["plan_item_target_month"] == 7
+    status, tasks_without_year = _api(
+        "GET",
+        "/api/planning/learning-tasks",
+        cookies=_login(plan_schema, "m_gen"),
+    )
+    assert status == 200
+    assert any(item["id"] == row[4] for item in tasks_without_year)
     status, detail = _api(
         "GET",
         f"/api/planning/learning-tasks/{row[4]}",

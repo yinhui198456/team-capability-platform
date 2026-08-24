@@ -837,7 +837,7 @@ def list_learning_tasks(
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE agp.member_id = %s AND (%s IS NULL OR agp.year = %s)
+        WHERE agp.member_id = %s AND (%s::INTEGER IS NULL OR agp.year = %s)
         ORDER BY lt.l3_code
         """,
         (member_id, year, year),
