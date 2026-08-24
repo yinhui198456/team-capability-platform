@@ -143,8 +143,9 @@ export type AssessmentDetail = {
   current_level_explicitly_cleared?: boolean
   member_priority?: '高' | '中' | '低' | '暂缓' | null
   include_in_plan?: boolean | null // tri-state: true/false/null
+  /** Derived server-side from plan_month (Issue #194) — read-only display. */
   plan_quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | null
-  plan_month?: number | null // 1–12
+  plan_month?: string | null // 'YYYY-MM' (Issue #194)
   /** Buddy Review workspace: advisory consistency flag (never overwrites canonical). */
   data_issue?: boolean
 }
@@ -273,9 +274,18 @@ export async function repairDraftTargetSnapshots(
   )
 }
 
+/** 稀疏 PATCH 行：只包含调用方提供的字段，未提供的键不发送。
+  Issue #194 P1：保存评级与计划草稿自动保存是两个独立动作，各自只提交
+  自己的字段（plan_quarter 由服务端派生，永不作为输入发送）。 */
+export type DraftDetailInput = {
+  l3_node_id?: number | null
+  l3_code: string
+  [field: string]: unknown
+}
+
 export async function saveDraft(
   id: number,
-  details: AssessmentDetail[],
+  details: DraftDetailInput[],
   expectedRevision: number,
 ): Promise<{
   ok: boolean
@@ -293,19 +303,18 @@ export async function saveDraft(
     { method: 'PATCH' },
     {
       expected_revision: expectedRevision,
-      details: details.map((detail) => ({
-        l3_node_id: detail.l3_node_id,
-        l3_code: detail.l3_code,
-        current_level: detail.current_level,
-        target_adjusted: detail.target_adjusted ?? false,
-        adjusted_target_level: detail.adjusted_target_level ?? null,
-        target_adjustment_reason: detail.target_adjustment_reason ?? null,
-        evidence_note: detail.evidence_note ?? null,
-        member_priority: detail.member_priority ?? null,
-        include_in_plan: detail.include_in_plan,
-        plan_quarter: detail.plan_quarter ?? null,
-        plan_month: detail.plan_month ?? null,
-      })),
+      details: details.map((detail) => {
+        const row: Record<string, unknown> = {
+          l3_node_id: detail.l3_node_id,
+          l3_code: detail.l3_code,
+        }
+        for (const [key, value] of Object.entries(detail)) {
+          if (key === 'l3_node_id' || key === 'l3_code') continue
+          if (key === 'plan_quarter') continue // derived server-side
+          row[key] = value ?? null
+        }
+        return row
+      }),
     },
   )
 }
@@ -339,22 +348,31 @@ export async function batchFillL2(
   )
 }
 
-export async function submitAssessment(
+/** Issue #194: M02 第三个独立动作 — 显式生成所选学习任务。
+
+Retired contract: POST /submit (submit-and-auto-generate) → 422
+legacy_assessment_submit_disabled; generation is now explicit and
+idempotent per (plan, l3_code) — replays return the same created/existing
+split. The Idempotency-Key header is accepted; the DB kernel provides
+the guarantee.
+*/
+export async function generatePlanItems(
   id: number,
+  l3Codes: string[],
   expectedRevision: number,
+  idempotencyKey?: string,
 ): Promise<{
   ok: boolean
-  revision?: number
-  auto_cancelled_plan_candidates?: string[]
+  annual_plan_id?: number
+  created: string[]
+  existing: string[]
 }> {
-  return request<{
-    ok: boolean
-    revision?: number
-    auto_cancelled_plan_candidates?: string[]
-  }>(
-    `/api/assessments/${id}/submit`,
-    { method: 'POST' },
-    { expected_revision: expectedRevision },
+  const headers: HeadersInit = {}
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+  return request(
+    `/api/assessments/${id}/generate-plan-items`,
+    { method: 'POST', headers },
+    { l3_codes: l3Codes, expected_revision: expectedRevision },
   )
 }
 
