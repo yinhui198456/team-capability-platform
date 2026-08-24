@@ -875,7 +875,7 @@ export function AssessmentGapPage() {
       if ((!activeDomain || group.l1_code === activeDomain) && group.l2_code) {
         groups.set(group.l2_code, {
           ...group,
-          l1_code: group.l1_code,
+          l1_code: group.l1_code ?? '未映射',
           l2_code: group.l2_code,
           details: [],
         })
