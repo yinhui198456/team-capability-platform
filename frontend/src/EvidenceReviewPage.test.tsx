@@ -60,23 +60,7 @@ function mockBuddy() {
   })
 }
 
-async function renderEvidencePage(
-  queue: PendingEvidenceReview[] = [],
-  members: EvidenceReviewWorkspace['members'] = [
-    ...new Map(
-      queue.map((item) => [
-        item.member_id,
-        {
-          id: item.member_id,
-          username: item.username,
-          pending_count: queue.filter(
-            (candidate) => candidate.member_id === item.member_id,
-          ).length,
-        },
-      ]),
-    ).values(),
-  ],
-) {
+async function renderEvidencePage(queue: PendingEvidenceReview[] = []) {
   mockBuddy()
   vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
     available_years: [2026],
@@ -90,7 +74,7 @@ async function renderEvidencePage(
         approved_this_month_count: 0,
         average_response_days: null,
       },
-      members,
+      members: [],
       queue,
     })
   }
@@ -142,14 +126,26 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(listHistory).toHaveBeenCalledWith(100)
   })
 
-  it('uses the approved B01 title, four metrics and resubmission queue label', async () => {
-    await renderEvidencePage([makePending({ is_resubmission: true })])
+  it('shows ordinary and resubmitted items with their approved queue labels', async () => {
+    await renderEvidencePage([
+      makePending(),
+      makePending({ id: 11, is_resubmission: true }),
+    ])
     expect(screen.getByRole('heading', { name: '成果验收' })).toBeTruthy()
-    expect(screen.getByText('待验收')).toBeTruthy()
+    expect(screen.getAllByText('待验收').length).toBeGreaterThan(0)
     expect(screen.getAllByText('需补充').length).toBeGreaterThan(0)
     expect(screen.getByText('本月通过')).toBeTruthy()
     expect(screen.getByText('平均响应')).toBeTruthy()
-    expect(screen.getByText('补充后重提')).toBeTruthy()
+    expect(
+      screen
+        .getAllByText('待验收')
+        .find((node) => node.className === 'warning'),
+    ).toBeTruthy()
+    expect(
+      screen
+        .getAllByText('补充后重提')
+        .find((node) => node.className === 'error'),
+    ).toBeTruthy()
   })
 
   it('marks an ordinary actionable item as 待验收', async () => {
@@ -161,16 +157,13 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     ).toBeTruthy()
   })
 
-  it('keeps member, queue and workspace panels available for an empty filter', async () => {
-    await renderEvidencePage(
-      [],
-      [{ id: 7, username: 'member-without-pending', pending_count: 0 }],
-    )
-    expect(screen.getByRole('heading', { name: '辅导成员' })).toBeTruthy()
+  it('keeps the approved two panels for an empty queue without member filtering', async () => {
+    await renderEvidencePage([])
+    expect(screen.queryByRole('heading', { name: '辅导成员' })).toBeNull()
     expect(screen.getByRole('heading', { name: '待办队列' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '验收工作区' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /全部成员/ })).toBeTruthy()
-    expect(screen.getByText('当前筛选暂无待验收成果。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /全部成员/ })).toBeNull()
+    expect(screen.getByText('暂无待验收成果。')).toBeTruthy()
   })
 
   it('keeps history on the selected task and moves keyboard focus there', async () => {
@@ -411,7 +404,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(screen.queryByRole('button', { name: '提交评审结论' })).toBeNull()
     expect(submit).toHaveBeenCalledTimes(1)
     // Explicitly choosing B starts with a clean form.
-    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[0])
     await waitFor(() => expect(screen.getByText('第二版实现')).toBeTruthy())
     expect((screen.getByLabelText('通过') as HTMLInputElement).checked).toBe(
       false,
@@ -524,7 +517,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       .mockImplementationOnce(() => bDeferred)
     await renderEvidencePage([a, b])
     await waitFor(() => expect(screen.getByText(/请补充口径说明/)).toBeTruthy())
-    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[0])
     // Stale A history must not show under B while B's history loads.
     expect(screen.queryByText(/请补充口径说明/)).toBeNull()
     expect(screen.getByText('暂无历史评审记录。')).toBeTruthy()
@@ -558,7 +551,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       .mockRejectedValueOnce(new Error('history load failed'))
     await renderEvidencePage([a, b])
     await waitFor(() => expect(screen.getByText(/请补充口径说明/)).toBeTruthy())
-    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[0])
     await waitFor(() => {
       expect(
         screen.getByRole('alert').textContent?.includes('history load failed'),
@@ -617,10 +610,10 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     // A auto-selected; its history is still in flight. Switch to B.
     await waitFor(() =>
       expect(
-        screen.getAllByRole('button', { name: /member2/ })[1],
+        screen.getAllByRole('button', { name: /member2/ })[0],
       ).toBeTruthy(),
     )
-    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[1])
+    fireEvent.click(screen.getAllByRole('button', { name: /member2/ })[0])
     resolveB!(historyB)
     await waitFor(() => expect(screen.getByText(/第二版通过/)).toBeTruthy())
     // A's late response arrives: it must be discarded, not shown under B.

@@ -786,6 +786,37 @@ select {
   min-width: 0;
 }
 
+.evidence-review-layout {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.evidence-review-layout .buddy-workspace {
+  grid-column: auto;
+}
+
+.evidence-review-queue button {
+  display: grid;
+  gap: 3px 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 78px;
+}
+
+.evidence-review-queue button .warning,
+.evidence-review-queue button .error {
+  align-self: center;
+  grid-row: 1 / span 2;
+}
+
+.evidence-review-queue button strong,
+.evidence-review-queue button .evidence-review-task {
+  grid-column: 2;
+}
+
+.evidence-review-task {
+  color: #667085;
+  font-size: 12px;
+}
+
 .buddy-member-list {
   display: grid;
   gap: 8px;
@@ -912,6 +943,14 @@ select {
   .buddy-workspace {
     grid-column: 1 / -1;
   }
+
+  .evidence-review-layout {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .evidence-review-layout .buddy-workspace {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 720px) {
@@ -921,6 +960,12 @@ select {
 
   .buddy-workspace {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .evidence-review-layout {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -201,20 +201,67 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
             supersedes_evidence_id=int(first["id"]),
         )
         submit_evidence(connection, member_id, int(resubmission["id"]))
+        normal_assessment_id = self.submit(
+            connection,
+            member_id,
+            2027,
+            [
+                {
+                    "l3_code": "P01-L2A-L3A",
+                    "current_level": 2,
+                    "target_level": 4,
+                    "member_priority": "高",
+                    "include_in_plan": True,
+                    "plan_month": "2027-08",
+                }
+            ],
+        )
+        self.approve(connection, normal_assessment_id, buddy_id)
+        normal_task = list_learning_tasks(connection, member_id, 2027)[0]
+        transition_learning_task(
+            connection,
+            member_id,
+            int(normal_task["id"]),
+            "进行中",
+            None,
+            int(normal_task["revision"]),
+        )
+        normal = create_evidence_draft(
+            connection, member_id, int(normal_task["id"]), "首次提交", None
+        )
+        submit_evidence(connection, member_id, int(normal["id"]))
 
         workspace = get_evidence_review_workspace_for_buddy(connection, buddy_id)
 
         assert workspace["summary"] == {
-            "pending_count": 1,
+            "pending_count": 2,
             "needs_supplement_count": 0,
             "approved_this_month_count": 0,
             "average_response_days": 0.0,
         }
         assert workspace["members"] == [
-            {"id": member_id, "username": "rv-member", "pending_count": 1}
+            {"id": member_id, "username": "rv-member", "pending_count": 2}
         ]
-        assert [item["id"] for item in workspace["queue"]] == [resubmission["id"]]
-        assert workspace["queue"][0]["is_resubmission"] is True
+        assert {
+            int(item["id"]): bool(item["is_resubmission"])
+            for item in workspace["queue"]
+        } == {int(normal["id"]): False, int(resubmission["id"]): True}
+
+        other_buddy_id = create_user(
+            connection, "rv-pending-outsider", "Pending Outsider", "secret"
+        )
+        assign_role(connection, other_buddy_id, "Buddy")
+        connection.commit()
+        assert get_evidence_review_workspace_for_buddy(connection, other_buddy_id) == {
+            "summary": {
+                "pending_count": 0,
+                "needs_supplement_count": 0,
+                "approved_this_month_count": 0,
+                "average_response_days": None,
+            },
+            "members": [],
+            "queue": [],
+        }
 
         connection.execute(
             "UPDATE evidence_review SET reviewed_at=date_trunc('month', "

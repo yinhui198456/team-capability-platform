@@ -34,7 +34,6 @@ export function EvidenceReviewPage() {
   const [workspace, setWorkspace] = useState<EvidenceReviewWorkspace | null>(
     null,
   )
-  const [memberId, setMemberId] = useState<number | undefined>()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [history, setHistory] = useState<EvidenceReviewRecord[]>([])
   const [conclusion, setConclusion] = useState<EvidenceReviewConclusion | ''>(
@@ -56,8 +55,8 @@ export function EvidenceReviewPage() {
   const selected = queue.find((ev) => ev.id === selectedId) ?? null
   const selectedTaskId = selected?.learning_task_id
 
-  async function loadWorkspace(nextMemberId = memberId) {
-    const next = await getEvidenceReviewWorkspace(nextMemberId)
+  async function loadWorkspace() {
+    const next = await getEvidenceReviewWorkspace()
     setWorkspace(next)
     setQueue(next.queue)
     return next.queue
@@ -128,19 +127,6 @@ export function EvidenceReviewPage() {
     setMessage('')
     setError('')
     idemRef.current = null
-  }
-
-  async function selectMember(value: string) {
-    const nextMemberId = value ? Number(value) : undefined
-    setMemberId(nextMemberId)
-    setSelectedId(null)
-    setHistory([])
-    try {
-      const list = await loadWorkspace(nextMemberId)
-      setSelectedId(list[0]?.id ?? null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载待验收队列失败')
-    }
   }
 
   async function handleSubmit() {
@@ -272,35 +258,11 @@ export function EvidenceReviewPage() {
           {error}
         </p>
       )}
-      <div className="buddy-review-layout">
-        <aside className="dashboard-card buddy-member-list">
-          <h2>辅导成员</h2>
-          <button
-            className={memberId === undefined ? 'active' : ''}
-            onClick={() => void selectMember('')}
-            type="button"
-          >
-            全部成员{' '}
-            <span className="member-count">
-              {workspace?.summary.pending_count ?? 0}
-            </span>
-          </button>
-          {workspace?.members.map((member) => (
-            <button
-              className={memberId === member.id ? 'active' : ''}
-              key={member.id}
-              onClick={() => void selectMember(String(member.id))}
-              type="button"
-            >
-              {member.username}{' '}
-              <span className="member-count">{member.pending_count}</span>
-            </button>
-          ))}
-        </aside>
-        <aside className="dashboard-card buddy-member-list">
+      <div className="buddy-review-layout evidence-review-layout">
+        <aside className="dashboard-card buddy-member-list evidence-review-queue">
           <h2>待办队列</h2>
           {queue.length === 0 ? (
-            <p className="muted">当前筛选暂无待验收成果。</p>
+            <p className="muted">暂无待验收成果。</p>
           ) : (
             queue.map((ev) => (
               <button
@@ -309,12 +271,12 @@ export function EvidenceReviewPage() {
                 onClick={() => selectItem(ev.id)}
                 type="button"
               >
-                <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
-                <span className="member-count">
-                  版本 {ev.version_number} · {ev.l3_code}
-                </span>
                 <span className={ev.is_resubmission ? 'error' : 'warning'}>
                   {ev.is_resubmission ? '补充后重提' : '待验收'}
+                </span>
+                <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
+                <span className="evidence-review-task">
+                  {ev.l3_name ?? ev.l3_code} · 版本 {ev.version_number}
                 </span>
               </button>
             ))
