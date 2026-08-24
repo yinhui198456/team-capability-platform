@@ -4,8 +4,18 @@ on:
   push:
     branches: [master, main]
   pull_request:
-    branches: [master, main, 'feat/**']
+    branches: [master, main, "feat/**"]
   workflow_dispatch:
+    inputs:
+      suite:
+        description: E2E suite to run
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - tcp-194-s1
+          - tcp-194-s3
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -107,7 +117,26 @@ jobs:
           echo "Smoke tests passed"
 
       - name: Run E2E tests in Playwright container
+        env:
+          E2E_SUITE: ${{ inputs.suite || 'full' }}
         run: |
+          playwright_args=()
+          case "$E2E_SUITE" in
+            full) ;;
+            tcp-194-s1)
+              playwright_args=(tests/e2e/visual/ui-02.spec.ts)
+              ;;
+            tcp-194-s3)
+              playwright_args=(
+                tests/e2e/visual/ui-04.spec.ts
+                tests/e2e/smoke/issue-63-execution-evidence.spec.ts
+              )
+              ;;
+            *)
+              echo "Unsupported E2E suite: $E2E_SUITE" >&2
+              exit 2
+              ;;
+          esac
           docker run --rm --network host \
             -v "$PWD/frontend:/app" \
             -w /app \
@@ -115,7 +144,7 @@ jobs:
             -e TCP_E2E_ISOLATED=1 \
             -e TCP_E2E_DEMO_PASSWORD="$DEMO_SEED_PASSWORD" \
             mcr.microsoft.com/playwright:v1.61.1-jammy \
-            bash -c "apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test"
+            bash -c 'apt-get update && apt-get install -y fonts-noto-cjk && (npm ci || npm ci) && npx playwright test "$@"' -- "${playwright_args[@]}"
 
       - name: Upload test results on failure
         if: failure()
