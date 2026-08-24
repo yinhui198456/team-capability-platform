@@ -183,6 +183,57 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     )
   })
 
+  it('keeps the approved B01 metric, queue and workspace order', async () => {
+    await renderEvidencePage([
+      makePending(),
+      makePending({
+        id: 11,
+        learning_task_id: 101,
+        is_resubmission: true,
+        username: 'member2',
+      }),
+    ])
+    const metrics = Array.from(
+      document.querySelectorAll(
+        '.evidence-review-page .dashboard-grid > article',
+      ),
+    )
+    expect(metrics).toHaveLength(4)
+    expect(
+      metrics.map((metric) => metric.firstElementChild?.textContent),
+    ).toEqual(['待验收', '需补充', '本月通过', '平均响应'])
+    expect(
+      metrics.every((metric) => metric.lastElementChild?.tagName === 'STRONG'),
+    ).toBe(true)
+
+    const queue = screen
+      .getByRole('heading', { name: '待办队列' })
+      .closest('aside')
+    expect(queue?.querySelector('.status-pill.warning')?.textContent).toBe(
+      '待验收',
+    )
+    expect(queue?.querySelector('.status-pill.error')?.textContent).toBe(
+      '补充后重提',
+    )
+
+    const workspace = screen.getByRole('article', { name: '验收工作区' })
+    expect(
+      Array.from(workspace.children).map((child) => child.className),
+    ).toEqual([
+      'evidence-review-title',
+      'evidence-content evidence-review-preview',
+      'evidence-review-history',
+      'decision-row evidence-review-decision-row',
+      'evidence-review-feedback',
+      'actions',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: '查看历史反馈' }))
+    expect(document.activeElement?.id).toBe('evidence-history-100')
+    expect(screen.queryByText('自评复核')).toBeNull()
+    expect(screen.queryByText('驳回')).toBeNull()
+    expect(screen.queryByRole('button', { name: /全部成员/ })).toBeNull()
+  })
+
   it('requires a conclusion before submitting without making a request', async () => {
     const submit = vi.spyOn(planningApi, 'submitEvidenceReview')
     await renderEvidencePage([makePending()])

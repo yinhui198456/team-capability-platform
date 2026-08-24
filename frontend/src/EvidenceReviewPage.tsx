@@ -347,7 +347,39 @@ export function EvidenceReviewPage() {
                   </a>
                 )}
               </div>
-              <div aria-label="评审结论" className="decision-row">
+              <section
+                aria-labelledby={`evidence-history-${selected.learning_task_id}`}
+                className="evidence-review-history"
+              >
+                <h3
+                  id={`evidence-history-${selected.learning_task_id}`}
+                  tabIndex={-1}
+                >
+                  历史反馈
+                </h3>
+                <p className="muted">只读历史记录。</p>
+                {history.length === 0 ? (
+                  <p className="muted">暂无历史评审记录。</p>
+                ) : (
+                  <ul className="compact-list">
+                    {history.map((item) => (
+                      <li key={item.id}>
+                        <strong>
+                          版本 {item.version_number} · {item.conclusion}
+                        </strong>
+                        <span>
+                          {item.feedback || '未填写反馈'} ·{' '}
+                          {formatDateTime(item.reviewed_at)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+              <div
+                aria-label="评审结论"
+                className="decision-row evidence-review-decision-row"
+              >
                 {CONCLUSIONS.map((value) => (
                   <button
                     aria-pressed={conclusion === value}
@@ -361,7 +393,7 @@ export function EvidenceReviewPage() {
                   </button>
                 ))}
               </div>
-              <label>
+              <label className="evidence-review-feedback">
                 反馈建议
                 <textarea
                   onChange={(event) => setFeedback(event.target.value)}
@@ -382,31 +414,6 @@ export function EvidenceReviewPage() {
                   提交验收结果
                 </button>
               </div>
-
-              <h3
-                id={`evidence-history-${selected.learning_task_id}`}
-                tabIndex={-1}
-              >
-                历史反馈
-              </h3>
-              <p className="muted">只读历史记录。</p>
-              {history.length === 0 ? (
-                <p className="muted">暂无历史评审记录。</p>
-              ) : (
-                <ul className="compact-list">
-                  {history.map((item) => (
-                    <li key={item.id}>
-                      <strong>
-                        版本 {item.version_number} · {item.conclusion}
-                      </strong>
-                      <span>
-                        {item.feedback || '未填写反馈'} ·{' '}
-                        {formatDateTime(item.reviewed_at)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </>
           )}
         </article>
