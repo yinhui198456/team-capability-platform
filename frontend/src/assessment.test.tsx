@@ -8,11 +8,18 @@ import {
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { App } from './App'
 import * as accessApi from './access'
 import * as assessmentApi from './assessment'
 import * as planningApi from './planning'
 import { MemoryRouter } from 'react-router-dom'
+
+const assessmentStyles = readFileSync(
+  'src/AssessmentGapPage.module.css',
+  'utf8',
+)
+const globalStyles = readFileSync('src/styles/global.css', 'utf8')
 
 function stubAuthAndYear() {
   vi.spyOn(accessApi, 'me').mockResolvedValue({
@@ -78,6 +85,24 @@ describe('AssessmentGapPage', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('keeps the M02 V1 shell, domain navigation, and all rating labels reachable on narrow screens', () => {
+    expect(globalStyles).toMatch(
+      /@media \(max-width: 768px\)[\s\S]*grid-template-areas:[\s\S]*'topbar'[\s\S]*'sidebar'[\s\S]*'content'/,
+    )
+    expect(assessmentStyles).toMatch(
+      /\.l1Nav \{[\s\S]*flex-wrap: wrap;[\s\S]*overflow: visible;/,
+    )
+    const narrowStyles = assessmentStyles.slice(
+      assessmentStyles.indexOf('@media (max-width: 820px)'),
+    )
+    expect(narrowStyles).toMatch(
+      /\.rating \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/,
+    )
+    expect(narrowStyles).toMatch(
+      /\.rating button \{[\s\S]*white-space: normal;/,
+    )
   })
 
   it('loads the editable draft for the current year instead of the first list item', async () => {

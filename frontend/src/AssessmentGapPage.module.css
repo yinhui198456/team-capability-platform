@@ -509,8 +509,8 @@
 .l1Nav {
   display: flex;
   gap: 4px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  overflow: visible;
   flex: 1;
 }
 .l1Nav button {
@@ -763,11 +763,24 @@
     gap: 12px;
   }
   .rating {
-    flex-wrap: nowrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
   }
   .rating button {
-    flex: 1;
+    min-height: 52px;
+    padding: 4px;
     min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-md);
+  }
+  .rating button + button {
+    margin-left: 0;
+  }
+  .rating button:first-child,
+  .rating button:last-child {
+    border-radius: var(--radius-md);
   }
   .rating button small {
     display: block;

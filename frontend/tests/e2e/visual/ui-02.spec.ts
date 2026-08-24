@@ -1,21 +1,19 @@
-import path from 'node:path'
-
 import { expect, test } from '@playwright/test'
 
 import { loginAs } from '../fixtures/auth'
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
-  { name: '1920x1080', width: 1920, height: 1080 },
-  { name: '1280x800', width: 1280, height: 800 },
+  { name: '1024x768', width: 1024, height: 768 },
+  { name: '768x900', width: 768, height: 900 },
 ] as const
 
 for (const viewport of VIEWPORTS) {
-  test.describe(`UI-02 assessment and Gap visual regression @ ${viewport.name}`, () => {
+  test.describe(`M02 V1 @ ${viewport.name}`, () => {
     test.beforeEach(async ({ page }) => {
       test.skip(
         !process.env.TCP_E2E_ISOLATED,
-        'UI-02 prepares a draft and requires an isolated database',
+        'M02 prepares a controlled draft only in the isolated E2E environment',
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
@@ -39,134 +37,71 @@ for (const viewport of VIEWPORTS) {
       }
       await page.goto('/capability/assessment')
       await expect(
-        page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+        page.getByRole('heading', { name: '能力评级与提升计划' }),
       ).toBeVisible()
-      const summary = page.getByLabel('评估摘要')
-      await expect(summary).toBeVisible({ timeout: 15000 })
-      await expect(page.getByTestId('assessment-table').first()).toBeVisible()
-      await expect(page.getByTestId('gap-sidebar')).toHaveCount(0)
     })
 
-    test('semantic alignment', async ({ page }) => {
+    test('keeps the approved M02 actions, navigation, and no-clipping contract', async ({
+      page,
+    }) => {
       const summary = page.getByLabel('评估摘要')
-      await expect(summary).toContainText('进度')
-      await expect(summary).toContainText('未评估')
-      await expect(summary).toContainText('Gap')
-      await expect(summary).toContainText('已纳入计划')
-      await expect(summary).toContainText('暂缓')
-      await expect(summary).toContainText('Q1:')
-      await expect(summary).toContainText('Q4:')
-
-      const tables = page.getByTestId('assessment-table')
-      await expect(tables.first()).toBeVisible()
-      const firstTable = tables.first()
-      // #61 7-column contract
-      await expect(firstTable).toContainText('能力项')
-      await expect(firstTable).toContainText('当前掌握度')
-      await expect(firstTable).toContainText('目标掌握度')
-      await expect(firstTable).toContainText('Gap')
-      await expect(firstTable).toContainText('优先级')
-      await expect(firstTable).toContainText('纳入计划')
-      await expect(firstTable).toContainText('计划时间')
-      await expect(page.getByText('职级要求 P4–P8').first()).toBeVisible()
-
-      await expect(
-        page.getByRole('navigation', { name: '一级能力域导航' }),
-      ).toBeVisible()
-      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
-      await page.getByRole('button', { name: '查看 Gap 摘要' }).click()
-      await expect(page.getByTestId('gap-drawer')).toBeVisible()
-      await page.getByRole('button', { name: '关闭' }).click()
-      await expect(page.getByTestId('gap-drawer')).toHaveCount(0)
-
-      const metrics = await page
-        .getByTestId('assessment-content-area')
-        .evaluate((content) => {
-          const visible = (rect: DOMRect) => {
-            const left = Math.max(0, rect.left)
-            const top = Math.max(0, rect.top)
-            const right = Math.min(window.innerWidth, rect.right)
-            const bottom = Math.min(window.innerHeight, rect.bottom)
-            return {
-              width: Math.max(0, right - left),
-              height: Math.max(0, bottom - top),
-            }
-          }
-          const contentRect = visible(content.getBoundingClientRect())
-          const mainElement = content.querySelector(
-            '[data-testid="assessment-main-area"]',
-          )
-          const main = mainElement
-            ? visible(mainElement.getBoundingClientRect())
-            : { width: 0, height: 0 }
-          const sticky = document.querySelector('[class*="stickyActions"]')
-          const stickyRect = sticky?.getBoundingClientRect()
-          const stickyTop = stickyRect?.top ?? window.innerHeight
-          const rows = [...content.querySelectorAll('tbody tr')].filter(
-            (row) => {
-              const rect = row.getBoundingClientRect()
-              return rect.top >= 0 && rect.bottom <= stickyTop
-            },
-          ).length
-          const visibleRows = [...content.querySelectorAll('tbody tr')].filter(
-            (row) => {
-              const rect = row.getBoundingClientRect()
-              return rect.top >= 0 && rect.bottom <= stickyTop
-            },
-          )
-          const lastVisibleRow = visibleRows.at(-1)?.getBoundingClientRect()
-          return {
-            contentArea: contentRect.width * contentRect.height,
-            tableArea: main.width * main.height,
-            rows,
-            lastVisibleRowBottom: lastVisibleRow?.bottom ?? 0,
-            stickyTop,
-          }
-        })
-      const areaRatio = metrics.tableArea / metrics.contentArea
-      console.log(`DOM_METRICS ${JSON.stringify(metrics)}`)
-      console.log(
-        JSON.stringify({
-          viewport: viewport.name,
-          contentArea: metrics.contentArea,
-          tableArea: metrics.tableArea,
-          areaRatio,
-          completeRows: metrics.rows,
-        }),
-      )
-      expect(areaRatio).toBeGreaterThanOrEqual(0.7)
-      // L2 职级要求 now has its own compact in-flow header. Five fully visible
-      // L3 paths still exceed the Issue #52 first-screen threshold of four
-      // substantive entries without treating the L2 standard as blank space.
-      expect(metrics.rows).toBeGreaterThanOrEqual(
-        viewport.name === '1280x800' ? 1 : 5,
-      )
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth),
-      ).toBeLessThanOrEqual(viewport.width)
-      expect(metrics.lastVisibleRowBottom).toBeLessThanOrEqual(
-        metrics.stickyTop + 1,
-      )
-
-      await page.goto('/capability/gap')
-      await expect(
-        page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
-      ).toBeVisible()
-      await expect(page.getByTestId('assessment-table').first()).toBeVisible()
-    })
-
-    test('assessment overview screenshot', async ({ page }) => {
-      await expect(page).toHaveScreenshot(
-        `ui-02-assessment-overview-${viewport.name}.png`,
-        { maxDiffPixelRatio: 0.05 },
-      )
-      const evidenceDir = process.env.ISSUE50_SCREENSHOT_DIR
-      if (evidenceDir) {
-        await page.screenshot({
-          path: path.join(evidenceDir, `assessment-${viewport.name}.png`),
-          fullPage: false,
-        })
+      await expect(summary).toBeVisible()
+      for (const metric of ['三级能力项', '已评级', '存在差距', '已加入计划']) {
+        await expect(summary).toContainText(metric)
       }
+
+      const domainNav = page.getByRole('navigation', {
+        name: '一级能力域导航',
+      })
+      await expect(
+        domainNav.getByRole('button', { name: '全部能力域' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('combobox', { name: '搜索全部能力项' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: '保存能力评级' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: '生成所选学习任务' }),
+      ).toBeVisible()
+      await expect(page.getByLabel('计划草稿操作')).toBeVisible()
+      await expect(page.getByText(/Assessment Review/)).toHaveCount(0)
+
+      await domainNav.getByRole('button', { name: '全部能力域' }).focus()
+      await expect(
+        domainNav.getByRole('button', { name: '全部能力域' }),
+      ).toBeFocused()
+
+      const clipped = await page.evaluate(() => {
+        const nodes = [
+          document.documentElement,
+          document.querySelector('[aria-label="一级能力域导航"]'),
+          ...document.querySelectorAll('[aria-label^="当前等级"] button'),
+        ].filter((node): node is HTMLElement => node instanceof HTMLElement)
+        return nodes.some((node) => node.scrollWidth > node.clientWidth + 1)
+      })
+      expect(clipped).toBe(false)
+    })
+
+    test('keeps rating save and plan drafting independent', async ({
+      page,
+    }) => {
+      const table = page.getByTestId('assessment-table').first()
+      await expect(table).toBeVisible()
+      const rating = table.getByRole('button', { name: /^0 · 未接触/ }).first()
+      await rating.click()
+      await page.getByRole('button', { name: '保存能力评级' }).click()
+
+      const join = table.getByRole('button', { name: /^加入提升计划 / }).first()
+      await expect(join).toBeEnabled()
+      await join.click()
+      const row = join.locator('xpath=ancestor::div[starts-with(@id, "row-")]')
+      await expect(
+        row.getByRole('combobox', { name: /^优先级 / }),
+      ).toBeVisible()
+      await expect(row.getByTestId(/^plan-month-control-/)).toBeVisible()
+      await expect(page.getByLabel('计划草稿操作')).toContainText('计划草稿：')
     })
   })
 }

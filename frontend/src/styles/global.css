@@ -230,6 +230,51 @@ button {
   overflow-y: auto;
 }
 
+@media (max-width: 768px) {
+  .app-shell {
+    grid-template-rows: var(--topbar-height) auto 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'topbar'
+      'sidebar'
+      'content';
+  }
+
+  .app-sidebar {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-gray-200);
+  }
+
+  .app-sidebar-section {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .app-sidebar-section-label {
+    padding: var(--space-1) 0;
+    white-space: nowrap;
+  }
+
+  .app-sidebar-item {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    white-space: nowrap;
+  }
+
+  .app-content {
+    padding: var(--space-4);
+  }
+}
+
 /* ── Shared Components ── */
 .page {
   max-width: 1200px;
