@@ -1237,7 +1237,6 @@ export function AssessmentGapPage() {
                       </span>
                     </button>
                     <span className={s.groupActions}>
-                      <small>{group.l3_count} 条达成路径</small>
                       <small>
                         {
                           items.filter(isApplicableDetail).filter(isFilled)

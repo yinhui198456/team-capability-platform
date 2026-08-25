@@ -207,6 +207,59 @@ describe('S2 approved M03–M05 routes', () => {
       'month=9',
     )
   })
+  it('uses approved M03–M05 copy while retaining the delayed query value', async () => {
+    stub()
+    vi.mocked(planning.listLearningTasks).mockResolvedValueOnce([
+      { ...tasks[0], status: '延期' },
+    ])
+    const m03 = render(
+      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026&month=9']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText('按月推进学习任务，持续提升能力。'),
+    ).toBeTruthy()
+    expect(
+      screen.queryByText('2026 年 · 按月推进学习任务，持续提升能力。'),
+    ).toBeNull()
+    expect(await screen.findByText('逾期')).toBeTruthy()
+    m03.unmount()
+
+    vi.mocked(planning.listLearningTasks).mockResolvedValueOnce([
+      { ...tasks[0], status: '延期' },
+    ])
+    const m04 = render(
+      <MemoryRouter initialEntries={['/growth/tasks?year=2026&status=延期']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText(
+        '按状态、月份和能力域定位任务；复杂执行都在任务详情中完成。',
+      ),
+    ).toBeTruthy()
+    expect(await screen.findByText('旧要求 · 逾期')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '逾期 1' })).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: '进入任务' }).getAttribute('href'),
+    ).toContain('status=%E5%BB%B6%E6%9C%9F')
+    m04.unmount()
+
+    vi.mocked(planning.getLearningTask).mockResolvedValueOnce({
+      ...tasks[0],
+      status: '延期',
+    })
+    render(
+      <MemoryRouter initialEntries={['/growth/tasks/7?year=2026&month=9']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText('计划月份：2026年09月 · 当前进度 待计算'),
+    ).toBeTruthy()
+    expect(screen.getByRole('status', { name: '任务状态：逾期' })).toBeTruthy()
+  })
   it('keeps the approved M03, M04 and M05 regions separate', async () => {
     stub()
     vi.mocked(planning.listLearningTasks).mockResolvedValueOnce([

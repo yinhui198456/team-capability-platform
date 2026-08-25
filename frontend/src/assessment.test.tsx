@@ -2300,7 +2300,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(screen.queryByText(/当前职级必备/)).toBeNull()
     expect(screen.queryByText(/目标职级进阶/)).toBeNull()
     expect(screen.queryByText(/职级要求/)).toBeNull()
-    expect(screen.queryByText(/三级达成路径/)).toBeNull()
+    expect(screen.queryByText(/达成路径/)).toBeNull()
     expect(screen.getByText('目标：4 · P4 标准')).toBeTruthy()
     expect(screen.getByText('Gap：2')).toBeTruthy()
     // 优先级与月份同属已加入的计划草稿；未加入行不占用默认能力项密度。

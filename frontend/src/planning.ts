@@ -74,6 +74,11 @@ export type PlanItemStatus =
 export type LearningTaskStatus =
   '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
 
+/** Keep the persisted status value while using the approved task-flow copy. */
+export function learningTaskStatusLabel(status: LearningTaskStatus): string {
+  return status === '延期' ? '逾期' : status
+}
+
 export const TASK_TRANSITIONS: Record<
   LearningTaskStatus,
   LearningTaskStatus[]

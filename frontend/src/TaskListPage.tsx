@@ -4,6 +4,7 @@ import {
   listLearningTasks,
   learningTaskMonth,
   learningTaskProgress,
+  learningTaskStatusLabel,
   type LearningTask,
   type LearningTaskStatus,
 } from './planning'
@@ -81,7 +82,7 @@ export function TaskListPage() {
           <p className="eyebrow">我的计划</p>
           <h1>学习任务</h1>
           <p className="muted">
-            按状态、月份和能力项定位任务；复杂执行在任务详情中完成。
+            按状态、月份和能力域定位任务；复杂执行都在任务详情中完成。
           </p>
         </div>
       </header>
@@ -131,7 +132,8 @@ export function TaskListPage() {
                 aria-pressed={status === value}
                 onClick={() => update({ status: value })}
               >
-                {value || '全部'} {metric(value)}
+                {value ? learningTaskStatusLabel(value) : '全部'}{' '}
+                {metric(value)}
               </button>
             ))}
           </div>
@@ -202,7 +204,7 @@ export function TaskListPage() {
                   )}
                   <p>
                     {task.plan_item_expected_output ?? '暂未填写期望产出'} ·{' '}
-                    {task.status}
+                    {learningTaskStatusLabel(task.status)}
                   </p>
                   {progress == null ? (
                     <span>进度待计算</span>

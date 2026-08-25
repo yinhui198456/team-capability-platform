@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import {
   learningTaskMonth,
   learningTaskProgress,
+  learningTaskStatusLabel,
   listLearningTasks,
   type LearningTask,
 } from './planning'
@@ -60,7 +61,7 @@ export function AnnualPlanTimelinePage() {
         <div>
           <p className="eyebrow">我的计划</p>
           <h1>月度计划时间轴</h1>
-          <p className="muted">{year} 年 · 按月推进学习任务，持续提升能力。</p>
+          <p className="muted">按月推进学习任务，持续提升能力。</p>
         </div>
       </header>
       {!isLoading && (
@@ -145,7 +146,7 @@ export function AnnualPlanTimelinePage() {
                                 )}
                               </div>
                               <p>
-                                {task.status} ·{' '}
+                                {learningTaskStatusLabel(task.status)} ·{' '}
                                 {progress == null ? (
                                   '进度待计算'
                                 ) : (

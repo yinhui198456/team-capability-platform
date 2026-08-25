@@ -7,6 +7,7 @@ import {
   getLearningTask,
   learningTaskMonth,
   learningTaskProgress,
+  learningTaskStatusLabel,
   listEvidences,
   listProgressLogs,
   parseApiErrorDetail,
@@ -229,10 +230,16 @@ export function TaskDetailPage() {
           <h1>{loadedTask.l3_name ?? loadedTask.l3_code}</h1>
           <p className="muted">
             计划月份：{planYear}年{String(planMonth ?? '').padStart(2, '0')}月 ·
-            当前进度 {taskProgress == null ? '待计算' : `${taskProgress}%`} ·{' '}
-            {loadedTask.status}
+            当前进度 {taskProgress == null ? '待计算' : `${taskProgress}%`}
           </p>
         </div>
+        <span
+          aria-label={`任务状态：${learningTaskStatusLabel(loadedTask.status)}`}
+          className={`status-pill status-${loadedTask.status}`}
+          role="status"
+        >
+          {learningTaskStatusLabel(loadedTask.status)}
+        </span>
       </header>
       {change && (
         <section className="growth-requirement-change" role="status">
