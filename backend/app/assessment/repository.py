@@ -2399,7 +2399,7 @@ def generate_plan_items_for_selection(
                 return replay
         row = connection.execute(
             """
-            SELECT status, member_id, revision, year,
+            SELECT status, member_id, revision, version, year,
                    capability_standard_version_id,
                    member_current_level_snapshot, member_target_level_snapshot
             FROM assessment
@@ -2410,7 +2410,16 @@ def generate_plan_items_for_selection(
         ).fetchone()
         if row is None:
             raise ValueError("assessment not found")
-        _status, owner_id, revision, year, version_id, cur_snap, tgt_snap = row
+        (
+            _status,
+            owner_id,
+            revision,
+            assessment_version,
+            year,
+            version_id,
+            cur_snap,
+            tgt_snap,
+        ) = row
         if owner_id != member_id:
             raise ValueError("assessment does not belong to member")
         if _status not in {"草稿", "建议调整"}:
@@ -2532,7 +2541,7 @@ def generate_plan_items_for_selection(
         # kernel as the #82 submit path).
         plan_row = connection.execute(
             """
-            SELECT id FROM annual_growth_plan
+            SELECT id, source_assessment_id FROM annual_growth_plan
             WHERE member_id = %s AND year = %s
             """,
             (member_id, int(year)),
@@ -2545,21 +2554,24 @@ def generate_plan_items_for_selection(
                     source_assessment_id, planning_source_type
                 )
                 VALUES (%s, %s, '执行中', %s, 'assessment_approval')
-                RETURNING id
+                RETURNING id, source_assessment_id
                 """,
                 (member_id, int(year), assessment_id),
             ).fetchone()
         plan_id = int(plan_row[0])
+        plan_source_assessment_id = plan_row[1]
 
         assessment_dict = {
             "id": assessment_id,
             "capability_standard_version_id": int(version_id),
             "revision": int(revision),
+            "version": int(assessment_version),
             "member_current_level_snapshot": cur_snap,
             "member_target_level_snapshot": tgt_snap,
         }
         created: list[str] = []
         existing: list[str] = []
+        existing_details: list[tuple[object, ...]] = []
         for raw in l3_codes:
             code = str(raw)
             detail = by_code[code]
@@ -2572,6 +2584,7 @@ def generate_plan_items_for_selection(
             ).fetchone()
             if already is not None:
                 existing.append(code)
+                existing_details.append(detail)
                 continue
             connection.execute("SAVEPOINT gen_sp")
             try:
@@ -2587,6 +2600,28 @@ def generate_plan_items_for_selection(
             except psycopg.errors.UniqueViolation:
                 connection.execute("ROLLBACK TO SAVEPOINT gen_sp")
                 existing.append(code)
+                existing_details.append(detail)
+        if (
+            existing_details
+            and plan_source_assessment_id is not None
+            and int(plan_source_assessment_id) != assessment_id
+            and connection.execute(
+                "SELECT id FROM annual_plan_change_proposal "
+                "WHERE source_assessment_id=%s",
+                (assessment_id,),
+            ).fetchone()
+            is None
+        ):
+            _approve_with_proposal(
+                connection,
+                assessment_dict,
+                member_id,
+                int(year),
+                member_id,
+                plan_id,
+                target_is_legacy=False,
+                details=existing_details,
+            )
         response = {
             "annual_plan_id": plan_id,
             "created": created,
@@ -3395,10 +3430,12 @@ def _approve_with_proposal(
     buddy_id: int,
     target_plan_id: int,
     target_is_legacy: bool,
+    *,
+    details: list[tuple[object, ...]] | None = None,
 ) -> dict[str, object]:
     """Subsequent approval: only an atomic Change Proposal with full frozen
     details; the formal plan, its items and tasks are never touched."""
-    items = _frozen_detail_rows(connection, int(assessment["id"]))
+    items = details or _frozen_detail_rows(connection, int(assessment["id"]))
     summary = {
         "source_assessment_id": int(assessment["id"]),
         "source_assessment_version": int(assessment["version"]),

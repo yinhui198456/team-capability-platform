@@ -20,7 +20,11 @@ from app.planning.repository import (
     submit_evidence_review,
     transition_learning_task,
 )
-from tests.review_support import ReviewTestBase, reset_full_schema
+from tests.review_support import (
+    ReviewTestBase,
+    create_generated_plan_items,
+    reset_full_schema,
+)
 from tests.test_evidence_review import _login, _request
 
 
@@ -99,22 +103,20 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
     ) -> None:
         reset_full_schema(connection)
         member_id, buddy_id = self.setup_users(connection)
-        assessment_id = self.submit(
+        create_generated_plan_items(
             connection,
             member_id,
             2026,
             [
                 {
                     "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-08",
                 }
             ],
         )
-        self.approve(connection, assessment_id, buddy_id)
         task = list_learning_tasks(connection, member_id, 2026)[0]
         transition_learning_task(
             connection,
@@ -208,26 +210,21 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
             (other_member_id,),
         )
         create_buddy_relationship(connection, other_member_id, buddy_id)
-        assessment_ids = [
-            self.submit(
+        for member in (member_id, other_member_id):
+            create_generated_plan_items(
                 connection,
                 member,
                 2026,
                 [
                     {
                         "l3_code": "P01-L2A-L3A",
-                        "current_level": 2,
-                        "target_level": 4,
+                        "current_level": 0,
                         "member_priority": "高",
                         "include_in_plan": True,
                         "plan_month": "2026-08",
                     }
                 ],
             )
-            for member in (member_id, other_member_id)
-        ]
-        for assessment_id in assessment_ids:
-            self.approve(connection, assessment_id, buddy_id)
         evidence_ids = []
         for member in (member_id, other_member_id):
             task = list_learning_tasks(connection, member, 2026)[0]
@@ -306,22 +303,20 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
     ) -> None:
         reset_full_schema(connection)
         member_id, buddy_id = self.setup_users(connection)
-        assessment_id = self.submit(
+        create_generated_plan_items(
             connection,
             member_id,
             2026,
             [
                 {
                     "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-08",
                 }
             ],
         )
-        self.approve(connection, assessment_id, buddy_id)
         task = list_learning_tasks(connection, member_id, 2026)[0]
         task_id = int(task["id"])
         transition_learning_task(
@@ -341,22 +336,20 @@ class TestB01EvidenceWorkspace(ReviewTestBase):
             supersedes_evidence_id=int(first["id"]),
         )
         submit_evidence(connection, member_id, int(resubmission["id"]))
-        normal_assessment_id = self.submit(
+        create_generated_plan_items(
             connection,
             member_id,
             2027,
             [
                 {
                     "l3_code": "P01-L2A-L3A",
-                    "current_level": 2,
-                    "target_level": 4,
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2027-08",
                 }
             ],
         )
-        self.approve(connection, normal_assessment_id, buddy_id)
         normal_task = list_learning_tasks(connection, member_id, 2027)[0]
         transition_learning_task(
             connection,

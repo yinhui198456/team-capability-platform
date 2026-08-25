@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.access.repository import assign_role, create_user
-from app.assessment.repository import save_assessment_draft, submit_assessment
+from app.assessment.repository import generate_plan_items_for_selection
 from app.catalog.standard_versions import (
     capture_planning_snapshot,
     create_draft,
@@ -20,40 +20,34 @@ from app.planning.repository import (
     submit_evidence,
     transition_learning_task,
 )
-from tests.review_support import ReviewTestBase, reset_full_schema
-from tests.standard_target_support import create_scoped_draft, standard_target_payload
+from tests.review_support import (
+    ReviewTestBase,
+    create_generated_plan_items,
+    reset_full_schema,
+)
 
 _L3 = "P01-L2A-L3A"
 
 
 class TestTaskRequirementDecision(ReviewTestBase):
-    def _submit_followup(self, connection, member_id: int) -> int:
-        assessment_id = create_scoped_draft(connection, member_id, 2026, "晋升复核")
-        connection.execute(
-            """UPDATE assessment SET member_current_level_snapshot='P4',
-               member_target_level_snapshot='P5' WHERE id=%s""",
-            (assessment_id,),
-        )
-        payload = standard_target_payload(
+    def _generate_followup(
+        self, connection, member_id: int, assessment_type: str
+    ) -> int:
+        return create_generated_plan_items(
             connection,
-            assessment_id,
+            member_id,
+            2026,
             [
                 {
                     "l3_code": _L3,
-                    "current_level": 2,
-                    "target_level": 4,
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-05",
                 }
             ],
+            assessment_type=assessment_type,
         )
-        save_assessment_draft(
-            connection, assessment_id, member_id, payload, expected_revision=1
-        )
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
-        connection.commit()
-        return assessment_id
 
     def _publish_requirement(
         self, connection, actor_id: int, expected_output: str
@@ -84,22 +78,20 @@ class TestTaskRequirementDecision(ReviewTestBase):
         reset_full_schema(connection)
         member_id, buddy_id = self.setup_users(connection)
         self.ensure_nodes(connection, [_L3])
-        assessment_id = self.submit(
+        create_generated_plan_items(
             connection,
             member_id,
             2026,
             [
                 {
                     "l3_code": _L3,
-                    "current_level": 2,
-                    "target_level": 4,
+                    "current_level": 0,
                     "member_priority": "高",
                     "include_in_plan": True,
                     "plan_month": "2026-05",
                 }
             ],
         )
-        self.approve(connection, assessment_id, buddy_id)
         task = list_learning_tasks(connection, member_id, 2026)[0]
         transition_learning_task(
             connection,
@@ -110,8 +102,21 @@ class TestTaskRequirementDecision(ReviewTestBase):
             int(task["revision"]),
         )
         self._publish_requirement(connection, buddy_id, "第二版预期输出")
-        followup = self._submit_followup(connection, member_id)
-        self.approve(connection, followup, buddy_id)
+        followup = self._generate_followup(connection, member_id, "晋升复核")
+        generate_plan_items_for_selection(
+            connection, followup, member_id, [_L3], expected_revision=2
+        )
+        proposal = connection.execute(
+            """
+            SELECT p.created_by, p.status, COUNT(pd.id)
+            FROM annual_plan_change_proposal p
+            JOIN annual_plan_change_proposal_detail pd ON pd.proposal_id = p.id
+            WHERE p.source_assessment_id = %s
+            GROUP BY p.created_by, p.status
+            """,
+            (followup,),
+        ).fetchone()
+        assert proposal == (member_id, "待处理", 1)
         detail = get_learning_task(connection, member_id, int(task["id"]))
         assert detail is not None and detail["requirement_change"] is not None
         return member_id, buddy_id, task, detail
@@ -181,8 +186,7 @@ class TestTaskRequirementDecision(ReviewTestBase):
             )
 
         self._publish_requirement(connection, buddy_id, "第三版预期输出")
-        followup = self._submit_followup(connection, member_id)
-        self.approve(connection, followup, buddy_id)
+        self._generate_followup(connection, member_id, "年中更新")
         later = get_learning_task(connection, member_id, task_id)
         assert later is not None
         assert (

@@ -12,10 +12,6 @@ from app.assessment.repository import list_gaps
 from app.assessment.schema import create_assessment_schema
 from app.main import app
 from tests.review_support import save_canonical_draft
-from tests.standard_target_support import (
-    ensure_capability_nodes,
-    standard_target_payload,
-)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -167,64 +163,6 @@ def _login(
     )
     assert status == 200, f"login failed: {body}"
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
-
-
-def _create_and_submit_assessment(
-    connection: psycopg.Connection,
-    username: str,
-    details: list[dict[str, object]] | None = None,
-) -> int:
-    desired_details = details or [
-        {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        }
-    ]
-    ensure_capability_nodes(
-        connection, [str(detail["l3_code"]) for detail in desired_details]
-    )
-    cookies = _login(connection, username)
-    status, preview, _ = _request(
-        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
-    )
-
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        "/api/assessments",
-        {"year": 2026, "scope_token": preview["scope_token"]},
-        cookies=cookies,
-    )
-    assert status == 200
-    assert body is not None
-    assessment_id = body["id"]
-    status, body, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": standard_target_payload(
-                connection, assessment_id, desired_details
-            ),
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
-    return assessment_id
 
 
 def _create_canonical_assessment(
