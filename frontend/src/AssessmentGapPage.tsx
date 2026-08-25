@@ -228,7 +228,7 @@ export function AssessmentGapPage() {
   const [loading, setLoading] = useState(true)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
-  // 指纹变化（选中项/版本变更）或 409 后换新 key（镜像 BuddyReviewCenter 模式）。
+  // 指纹变化（选中项/版本变更）或 409 后换新 key，避免重放不同请求。
   const genIdemRef = useRef<{ key: string; fingerprint: string } | null>(null)
   const [searchActiveIndex, setSearchActiveIndex] = useState(-1)
   const [repairPreview, setRepairPreview] =
