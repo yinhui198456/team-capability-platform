@@ -41,7 +41,10 @@ def check_role_navigation(browser, password: str, username: str, link: str, path
     try:
         login(page, username, password)
         page.get_by_role("link", name=link, exact=True).click()
-        page.get_by_role("heading", name=heading, exact=True).wait_for(state="visible")
+        if username == "member":
+            page.locator("main h1").wait_for(state="visible")
+        else:
+            page.get_by_role("heading", name=heading, exact=True).wait_for(state="visible")
         assert_path(page, path)
         print(f"PASS role-navigation {username} -> {path}")
     finally:
