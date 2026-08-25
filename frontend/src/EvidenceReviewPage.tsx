@@ -232,7 +232,7 @@ export function EvidenceReviewPage() {
 
   return (
     <section className="page evidence-review-page">
-      <header className="page-heading">
+      <header className="page-heading evidence-review-heading">
         <div>
           <p className="eyebrow">导师指导</p>
           <h1>成果验收</h1>

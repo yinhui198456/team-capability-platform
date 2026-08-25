@@ -153,6 +153,12 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
         ?.contains(historyButton),
     ).toBe(true)
     expect(
+      screen
+        .getByRole('heading', { name: '成果验收' })
+        .closest('header')
+        ?.classList.contains('evidence-review-heading'),
+    ).toBe(true)
+    expect(
       screen.getByText('member · P01.01.01', { selector: 'small' }),
     ).toBeTruthy()
     expect(

@@ -845,6 +845,11 @@ select {
   font-size: 12px;
 }
 
+.evidence-review-page .evidence-review-heading {
+  border-left: 4px solid #175cd3;
+  padding-left: 16px;
+}
+
 .evidence-review-page .dashboard-card > strong {
   display: block;
   font-size: 22px;
