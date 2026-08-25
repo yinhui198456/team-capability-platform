@@ -2603,8 +2603,10 @@ def generate_plan_items_for_selection(
                 existing_details.append(detail)
         if (
             existing_details
-            and plan_source_assessment_id is not None
-            and int(plan_source_assessment_id) != assessment_id
+            and (
+                plan_source_assessment_id is None
+                or int(plan_source_assessment_id) != assessment_id
+            )
             and connection.execute(
                 "SELECT id FROM annual_plan_change_proposal "
                 "WHERE source_assessment_id=%s",
@@ -2619,7 +2621,7 @@ def generate_plan_items_for_selection(
                 int(year),
                 member_id,
                 plan_id,
-                target_is_legacy=False,
+                target_is_legacy=plan_source_assessment_id is None,
                 details=existing_details,
             )
         response = {
@@ -3427,13 +3429,13 @@ def _approve_with_proposal(
     assessment: dict[str, object],
     member_id: int,
     year: int,
-    buddy_id: int,
+    actor_id: int,
     target_plan_id: int,
     target_is_legacy: bool,
     *,
     details: list[tuple[object, ...]] | None = None,
 ) -> dict[str, object]:
-    """Subsequent approval: only an atomic Change Proposal with full frozen
+    """Create a Change Proposal with full frozen
     details; the formal plan, its items and tasks are never touched."""
     items = details or _frozen_detail_rows(connection, int(assessment["id"]))
     summary = {
@@ -3460,7 +3462,7 @@ def _approve_with_proposal(
             year,
             int(assessment["id"]),
             target_plan_id,
-            buddy_id,
+            actor_id,
             json.dumps(summary, ensure_ascii=False),
         ),
     ).fetchone()

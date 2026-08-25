@@ -548,6 +548,61 @@ def test_generate_plan_items_later_assessment_extends_same_plan(plan_schema) -> 
     assert body["created"] == [] and body["existing"] == [later_code]
 
 
+def test_generate_plan_items_later_assessment_proposes_against_legacy_plan_source(
+    plan_schema,
+) -> None:
+    """A legacy plan without a first assessment still receives a M05 proposal."""
+    member_id = _create_test_user(plan_schema, "m_gen_legacy", ["Member"])
+    plan_schema.execute(
+        "INSERT INTO annual_growth_plan (member_id, year) VALUES (%s, 2026)",
+        (member_id,),
+    )
+    plan_schema.commit()
+    first = create_scoped_draft(plan_schema, member_id, 2026)
+    code = _ready_detail(plan_schema, first, "m_gen_legacy")
+    status, body = _generate(plan_schema, first, [code], username="m_gen_legacy")
+    assert status == 200 and body["created"] == [code]
+
+    plan_schema.execute(
+        "UPDATE assessment SET status = '已复核' WHERE id = %s", (first,)
+    )
+    plan_schema.commit()
+
+    later = create_scoped_draft(plan_schema, member_id, 2026)
+    _ready_detail(plan_schema, later, "m_gen_legacy", code=code)
+    status, body = _generate(plan_schema, later, [code], username="m_gen_legacy")
+    assert status == 200 and body["created"] == [] and body["existing"] == [code]
+
+    proposal = plan_schema.execute(
+        """
+        SELECT p.created_by, p.summary->>'target_is_legacy', COUNT(pd.id)
+        FROM annual_plan_change_proposal p
+        JOIN annual_plan_change_proposal_detail pd ON pd.proposal_id = p.id
+        WHERE p.source_assessment_id = %s
+        GROUP BY p.created_by, p.summary
+        """,
+        (later,),
+    ).fetchone()
+    assert proposal == (member_id, "true", 1)
+    assert (
+        plan_schema.execute(
+            "SELECT COUNT(*) FROM assessment_review WHERE assessment_id = %s", (later,)
+        ).fetchone()[0]
+        == 0
+    )
+
+    status, body = _generate(plan_schema, later, [code], username="m_gen_legacy")
+    assert status == 200 and body["created"] == [] and body["existing"] == [code]
+    assert (
+        plan_schema.execute(
+            "SELECT COUNT(*) FROM annual_plan_change_proposal "
+            "WHERE source_assessment_id = %s",
+            (later,),
+        ).fetchone()[0]
+        == 1
+    )
+
+
 def test_generate_plan_items_rejects_duplicate_l3_codes_before_idempotency(
     plan_schema, gen_assessment
 ) -> None:
