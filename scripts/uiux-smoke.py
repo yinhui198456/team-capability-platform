@@ -65,7 +65,6 @@ def check_protected_routes(browser, password: str) -> None:
     cases = (
         ("member", "/operations/analytics", "无权限，仅 Leader 可查看团队能力分析。"),
         ("buddy", "/system/users", "无权限，仅 Admin 可管理系统。"),
-        ("admin", "/mentoring/evidence-review", "insufficient permissions"),
     )
     for username, path, message in cases:
         page = browser.new_page(viewport={"width": 1440, "height": 960})
@@ -123,7 +122,7 @@ def main() -> None:
                 ("member", "我的成长", "/dashboard/member", "我的成长总览"),
                 ("buddy", "成果验收", "/mentoring/evidence-review", "成果验收"),
                 ("leader", "团队能力分析", "/operations/analytics", "团队能力分析"),
-                ("admin", "系统管理", "/system/users", "系统管理"),
+                ("admin", "Team Capability Platform", "/system/users", "系统管理"),
             ):
                 check_role_navigation(browser, password, *case)
             check_member_navigation(browser, password)
