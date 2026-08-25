@@ -242,10 +242,10 @@ button {
 
   .app-sidebar {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--color-gray-200);
   }
@@ -253,21 +253,26 @@ button {
   .app-sidebar-section {
     display: flex;
     align-items: center;
+    flex: 1 1 180px;
+    flex-wrap: wrap;
     gap: var(--space-1);
-    flex: 0 0 auto;
     margin: 0;
+    min-width: 0;
     padding: 0;
   }
 
   .app-sidebar-section-label {
+    flex-basis: 100%;
     padding: var(--space-1) 0;
     white-space: nowrap;
   }
 
   .app-sidebar-item {
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: var(--space-2) var(--space-3);
-    white-space: nowrap;
+    white-space: normal;
   }
 
   .app-content {

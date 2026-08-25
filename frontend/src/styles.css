@@ -830,13 +830,26 @@ select {
 }
 
 .evidence-review-queue.buddy-member-list > button > .status-pill.warning {
-  background: #fffaeb;
-  color: #b54708;
+  background: #fff2dc;
+  color: #9b5a00;
 }
 
 .evidence-review-queue.buddy-member-list > button > .status-pill.error {
-  background: #fef3f2;
-  color: #b42318;
+  background: #ffeded;
+  color: #b93838;
+}
+
+.evidence-review-page .dashboard-card > span {
+  color: #64748b;
+  display: block;
+  font-size: 12px;
+}
+
+.evidence-review-page .dashboard-card > strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1;
+  margin-top: 6px;
 }
 
 .evidence-review-queue.buddy-member-list > button > strong,
@@ -2165,6 +2178,18 @@ select {
   .annual-plan-layout,
   .annual-plan-page .plan-status-list {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .annual-plan-summary,
+  .evidence-review-page .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence-review-layout .evidence-review-queue {
+    max-height: 250px;
+    overflow-y: auto;
   }
 }
 
