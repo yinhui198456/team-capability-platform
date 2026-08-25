@@ -205,13 +205,12 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     expect(
       metrics.every(
         (metric) =>
-          metric
-            .querySelector('.metric-card-icon')
-            ?.getAttribute('aria-hidden') === 'true',
+          metric.querySelector('.metric-icon')?.getAttribute('aria-hidden') ===
+          'true',
       ),
     ).toBe(true)
     expect(
-      metrics.map((metric) => metric.querySelector('span')?.textContent),
+      metrics.map((metric) => metric.querySelector('div > span')?.textContent),
     ).toEqual(['待验收', '需补充', '本月通过', '平均响应'])
     expect(
       metrics.every(

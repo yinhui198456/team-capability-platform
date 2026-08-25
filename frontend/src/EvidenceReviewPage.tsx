@@ -252,28 +252,36 @@ export function EvidenceReviewPage() {
       </header>
       <div className="dashboard-grid" aria-label="验收指标">
         <article className="dashboard-card metric-card metric-card-warning">
-          <FiClock aria-hidden="true" className="metric-card-icon" />
+          <span aria-hidden="true" className="metric-icon">
+            <FiClock className="metric-card-icon" />
+          </span>
           <div>
             <span>待验收</span>
             <strong>{workspace?.summary.pending_count ?? 0}</strong>
           </div>
         </article>
         <article className="dashboard-card metric-card metric-card-danger">
-          <FiMessageSquare aria-hidden="true" className="metric-card-icon" />
+          <span aria-hidden="true" className="metric-icon">
+            <FiMessageSquare className="metric-card-icon" />
+          </span>
           <div>
             <span>需补充</span>
             <strong>{workspace?.summary.needs_supplement_count ?? 0}</strong>
           </div>
         </article>
         <article className="dashboard-card metric-card metric-card-success">
-          <FiCheckCircle aria-hidden="true" className="metric-card-icon" />
+          <span aria-hidden="true" className="metric-icon">
+            <FiCheckCircle className="metric-card-icon" />
+          </span>
           <div>
             <span>本月通过</span>
             <strong>{workspace?.summary.approved_this_month_count ?? 0}</strong>
           </div>
         </article>
         <article className="dashboard-card metric-card">
-          <FiActivity aria-hidden="true" className="metric-card-icon" />
+          <span aria-hidden="true" className="metric-icon">
+            <FiActivity className="metric-card-icon" />
+          </span>
           <div>
             <span>平均响应</span>
             <strong>

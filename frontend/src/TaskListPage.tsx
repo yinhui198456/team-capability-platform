@@ -88,7 +88,10 @@ export function TaskListPage() {
         </div>
       </header>
       {!isLoading && (
-        <dl className="annual-plan-summary metric-card-grid">
+        <section
+          aria-label="计划指标"
+          className="annual-plan-summary metric-card-grid"
+        >
           {[
             { label: '全部任务', value: metric(''), Icon: FiList },
             { label: '进行中', value: metric('进行中'), Icon: FiRefreshCw },
@@ -109,18 +112,20 @@ export function TaskListPage() {
               tone: 'danger',
             },
           ].map(({ label, value, Icon, tone }) => (
-            <div
+            <article
               className={`metric-card${tone ? ` metric-card-${tone}` : ''}`}
               key={label}
             >
-              <Icon aria-hidden="true" className="metric-card-icon" />
+              <span aria-hidden="true" className="metric-icon">
+                <Icon className="metric-card-icon" />
+              </span>
               <div>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
+                <span>{label}</span>
+                <strong>{value}</strong>
               </div>
-            </div>
+            </article>
           ))}
-        </dl>
+        </section>
       )}
       {!isLoading && (
         <form

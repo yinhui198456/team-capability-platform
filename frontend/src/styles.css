@@ -2021,7 +2021,7 @@ select {
   margin: 20px 0;
 }
 
-.annual-plan-summary > div,
+.annual-plan-summary > article,
 .plan-timeline,
 .plan-item-workspace {
   background: #f8fafc;
@@ -2036,22 +2036,35 @@ select {
   gap: 12px;
 }
 
-.metric-card-icon {
+.metric-icon {
+  align-items: center;
+  background: #eff8ff;
+  border-radius: 50%;
   color: #175cd3;
+  display: inline-flex;
   flex: 0 0 auto;
-  height: 28px;
-  width: 28px;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
 }
 
-.metric-card-success .metric-card-icon {
+.metric-card-icon {
+  height: 19px;
+  width: 19px;
+}
+
+.metric-card-success .metric-icon {
+  background: #ecfdf3;
   color: #12b76a;
 }
 
-.metric-card-warning .metric-card-icon {
+.metric-card-warning .metric-icon {
+  background: #fffaeb;
   color: #f79009;
 }
 
-.metric-card-danger .metric-card-icon {
+.metric-card-danger .metric-icon {
+  background: #fef3f2;
   color: #d92d20;
 }
 

@@ -197,12 +197,20 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: /2026年09月/ })
-    const m03Metrics = document.querySelector('.annual-plan-summary')
-    expect(m03Metrics?.classList.contains('metric-card-grid')).toBe(true)
-    expect(m03Metrics?.querySelectorAll('.metric-card-icon')).toHaveLength(4)
+    const m03Metrics = screen.getByRole('region', { name: '计划指标' })
+    expect(m03Metrics.tagName).toBe('SECTION')
+    const m03Cards = m03Metrics.querySelectorAll('article')
+    expect(m03Cards).toHaveLength(4)
     expect(
-      Array.from(m03Metrics?.querySelectorAll('.metric-card-icon') ?? []).every(
-        (icon) => icon.getAttribute('aria-hidden') === 'true',
+      Array.from(m03Cards).map(
+        (card) => card.querySelector('div > span')?.textContent,
+      ),
+    ).toEqual(['任务总数', '已完成', '进行中', '逾期'])
+    expect(
+      Array.from(m03Cards).every(
+        (card) =>
+          card.querySelector('.metric-icon')?.getAttribute('aria-hidden') ===
+          'true',
       ),
     ).toBe(true)
     expect(screen.getByText('要求已更新 · 待确认')).toBeTruthy()
@@ -248,9 +256,10 @@ describe('S2 approved M03–M05 routes', () => {
       ),
     ).toBeTruthy()
     await screen.findByText('全部任务')
-    const m04Metrics = document.querySelector('.annual-plan-summary')
-    expect(m04Metrics?.classList.contains('metric-card-grid')).toBe(true)
-    expect(m04Metrics?.querySelectorAll('.metric-card-icon')).toHaveLength(4)
+    const m04Metrics = screen.getByRole('region', { name: '计划指标' })
+    expect(m04Metrics.tagName).toBe('SECTION')
+    expect(m04Metrics.querySelectorAll('article')).toHaveLength(4)
+    expect(m04Metrics.querySelectorAll('.metric-icon')).toHaveLength(4)
     expect(await screen.findByText('旧要求 · 逾期')).toBeTruthy()
     expect(screen.getByRole('button', { name: '逾期 1' })).toBeTruthy()
     expect(
