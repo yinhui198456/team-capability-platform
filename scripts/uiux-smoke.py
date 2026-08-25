@@ -10,6 +10,12 @@ from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("TCP_UIUX_BASE_URL", "http://localhost:18081")
 PASSWORD = os.environ.get("TCP_UIUX_PASSWORD")
+CHROME_EXECUTABLE = os.environ.get("TCP_UIUX_CHROME_EXECUTABLE") or None
+HEADLESS = os.environ.get("TCP_UIUX_HEADLESS", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 
 def require_password() -> str:
@@ -116,7 +122,10 @@ def check_narrow_page(browser, password: str, username: str, path: str, heading:
 def main() -> None:
     password = require_password()
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(
+            executable_path=CHROME_EXECUTABLE,
+            headless=HEADLESS,
+        )
         try:
             for case in (
                 ("member", "我的成长", "/dashboard/member", "我的成长总览"),
