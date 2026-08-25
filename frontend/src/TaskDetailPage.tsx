@@ -309,7 +309,7 @@ export function TaskDetailPage() {
             ))}
           </div>
           {tab === '学习记录' && (
-            <div>
+            <div className="growth-task-record-form">
               <label>
                 本次学习内容
                 <textarea

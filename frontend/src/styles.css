@@ -1518,6 +1518,15 @@ select {
   margin: 12px 0;
 }
 
+.growth-task-record-form {
+  display: grid;
+  gap: 15px;
+}
+
+.growth-task-record-form > label {
+  margin: 0;
+}
+
 .growth-task-work textarea,
 .growth-task-work input {
   width: 100%;

@@ -578,6 +578,20 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: '学习记录' })
+    const recordForm = screen
+      .getByLabelText('本次学习内容')
+      .closest('.growth-task-record-form')
+    expect(recordForm).toBeTruthy()
+    expect(
+      Array.from(recordForm?.children ?? [])
+        .slice(0, 4)
+        .map((element) => element.textContent?.trim()),
+    ).toEqual(['本次学习内容', '投入时长', '记录日期', '保存学习记录'])
+    expect(
+      screen
+        .getByRole('button', { name: '保存学习记录' })
+        .closest('.growth-task-record-form'),
+    ).toBe(recordForm)
     expect(
       screen.queryByRole('progressbar', { name: '任务真实进度' }),
     ).toBeNull()
