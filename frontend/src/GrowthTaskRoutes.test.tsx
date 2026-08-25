@@ -304,6 +304,10 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByRole('region', { name: '任务概览' })).toBeTruthy()
+    expect(screen.queryByText('学习任务 / P01.01.01')).toBeNull()
+    expect(screen.getByRole('heading', { name: '文件规范' })).toBeTruthy()
+    expect(screen.getByText('当前生效要求').tagName).toBe('DT')
+    expect(screen.getByText('验收要求').tagName).toBe('DT')
     expect(screen.getByRole('region', { name: '任务执行' })).toBeTruthy()
     const detail = document.querySelector('.growth-task-detail-grid')
     expect(detail?.children[0].classList.contains('growth-task-overview')).toBe(

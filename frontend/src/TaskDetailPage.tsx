@@ -226,7 +226,6 @@ export function TaskDetailPage() {
       </p>
       <header className="page-heading">
         <div>
-          <p className="eyebrow">学习任务 / {loadedTask.l3_code}</p>
           <h1>{loadedTask.l3_name ?? loadedTask.l3_code}</h1>
           <p className="muted">
             计划月份：{planYear}年{String(planMonth ?? '').padStart(2, '0')}月 ·
@@ -261,18 +260,28 @@ export function TaskDetailPage() {
           className="growth-task-overview"
         >
           <h2 id="growth-task-overview-heading">任务概览</h2>
-          <p>
-            当前生效要求：
-            {loadedTask.effective_requirement?.expected_output ??
-              loadedTask.plan_item_expected_output ??
-              '—'}
-          </p>
-          <p>验收要求：{loadedTask.effective_requirement?.notes ?? '—'}</p>
-          <p>
-            累计投入：{loadedTask.actual_hours} 小时 · 成果材料：
-            {evidences.map((evidence) => evidence.status).join('、') ||
-              '尚未提交'}
-          </p>
+          <dl className="growth-task-overview-values">
+            <div>
+              <dt>当前生效要求</dt>
+              <dd>
+                {loadedTask.effective_requirement?.expected_output ??
+                  loadedTask.plan_item_expected_output ??
+                  '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>验收要求</dt>
+              <dd>{loadedTask.effective_requirement?.notes ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>累计投入</dt>
+              <dd>
+                {loadedTask.actual_hours} 小时 · 成果材料：
+                {evidences.map((evidence) => evidence.status).join('、') ||
+                  '尚未提交'}
+              </dd>
+            </div>
+          </dl>
           {taskProgress == null ? (
             '进度待计算'
           ) : (

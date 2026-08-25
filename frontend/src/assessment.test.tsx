@@ -950,7 +950,7 @@ describe('AssessmentGapPage', () => {
     expect(detail).not.toHaveProperty('plan_month')
   })
 
-  it('A1 footer keeps only the plan draft summary and generation action', async () => {
+  it('M02 prototype keeps save status in the header and places rating save before generation in the footer', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -971,11 +971,21 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
     const footer = screen.getByRole('contentinfo', { name: '计划草稿操作' })
     expect(
-      within(footer).queryByRole('button', { name: '保存能力评级' }),
-    ).toBeNull()
+      within(footer).getByRole('button', { name: '保存能力评级' }),
+    ).toBeTruthy()
     expect(
       within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
+    expect(
+      Array.from(footer.querySelectorAll('button')).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(['保存能力评级', '生成所选学习任务'])
+    expect(
+      screen
+        .getByLabelText('评级保存状态')
+        .parentElement?.querySelector('button'),
+    ).toBeNull()
     // M02 V1：无全局草稿保存按钮——计划草稿随行内变更自动保存。
     expect(
       screen.queryByRole('button', { name: '保存提升计划草稿' }),
@@ -2332,12 +2342,11 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(
       within(planZone).getByTestId('plan-month-control-P01.01.01'),
     ).toBeTruthy()
-    // 页底只承载草稿摘要与显式生成，评级保存仍是页头独立动作。
+    // 页底按 M02 原型顺序承载草稿摘要、评级保存与显式生成。
     expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
     expect(
-      within(footer).queryByRole('button', { name: '保存能力评级' }),
-    ).toBeNull()
-    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
+      within(footer).getByRole('button', { name: '保存能力评级' }),
+    ).toBeTruthy()
     expect(
       within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()

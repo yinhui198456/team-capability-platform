@@ -1339,6 +1339,29 @@ select {
   margin: 0;
 }
 
+.growth-task-overview-values {
+  margin: 0;
+}
+
+.growth-task-overview-values > div {
+  display: grid;
+  gap: 4px 12px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: 8px 0;
+}
+
+.growth-task-overview-values > div + div {
+  border-top: 1px solid #eaecf0;
+}
+
+.growth-task-overview-values dt {
+  color: #667085;
+}
+
+.growth-task-overview-values dd {
+  margin: 0;
+}
+
 .growth-month-empty {
   margin: 0;
   padding: 14px 15px;

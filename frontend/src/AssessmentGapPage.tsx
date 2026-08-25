@@ -988,13 +988,6 @@ export function AssessmentGapPage() {
               >
                 {ratingSaveState}
               </span>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={ratingSaveState === '评级保存中'}
-              >
-                保存能力评级
-              </button>
             </div>
             <span className={s.autoSaveBadge}>计划草稿自动保存</span>
           </div>
@@ -1537,6 +1530,13 @@ export function AssessmentGapPage() {
                 ? '仍有月份待补'
                 : '计划月份已完整'}
             </span>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={ratingSaveState === '评级保存中'}
+            >
+              保存能力评级
+            </button>
             <button
               type="button"
               className="primary"
