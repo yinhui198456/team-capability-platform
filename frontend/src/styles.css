@@ -2030,6 +2030,31 @@ select {
   padding: 16px;
 }
 
+.metric-card {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.metric-card-icon {
+  color: #175cd3;
+  flex: 0 0 auto;
+  height: 28px;
+  width: 28px;
+}
+
+.metric-card-success .metric-card-icon {
+  color: #12b76a;
+}
+
+.metric-card-warning .metric-card-icon {
+  color: #f79009;
+}
+
+.metric-card-danger .metric-card-icon {
+  color: #d92d20;
+}
+
 .annual-plan-summary span {
   color: #667085;
   display: block;
@@ -2181,8 +2206,14 @@ select {
   margin: 4px 0 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1199px) {
   .annual-plan-summary,
+  .evidence-review-page .dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 960px) {
   .annual-plan-layout {
     grid-template-columns: 1fr 1fr;
   }

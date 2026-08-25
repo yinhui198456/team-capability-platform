@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  FiActivity,
+  FiCheckCircle,
+  FiClock,
+  FiMessageSquare,
+} from 'react-icons/fi'
 
 import {
   listEvidenceReviewsForTask,
@@ -245,25 +251,37 @@ export function EvidenceReviewPage() {
         </button>
       </header>
       <div className="dashboard-grid" aria-label="验收指标">
-        <article className="dashboard-card">
-          <span>待验收</span>
-          <strong>{workspace?.summary.pending_count ?? 0}</strong>
+        <article className="dashboard-card metric-card metric-card-warning">
+          <FiClock aria-hidden="true" className="metric-card-icon" />
+          <div>
+            <span>待验收</span>
+            <strong>{workspace?.summary.pending_count ?? 0}</strong>
+          </div>
         </article>
-        <article className="dashboard-card">
-          <span>需补充</span>
-          <strong>{workspace?.summary.needs_supplement_count ?? 0}</strong>
+        <article className="dashboard-card metric-card metric-card-danger">
+          <FiMessageSquare aria-hidden="true" className="metric-card-icon" />
+          <div>
+            <span>需补充</span>
+            <strong>{workspace?.summary.needs_supplement_count ?? 0}</strong>
+          </div>
         </article>
-        <article className="dashboard-card">
-          <span>本月通过</span>
-          <strong>{workspace?.summary.approved_this_month_count ?? 0}</strong>
+        <article className="dashboard-card metric-card metric-card-success">
+          <FiCheckCircle aria-hidden="true" className="metric-card-icon" />
+          <div>
+            <span>本月通过</span>
+            <strong>{workspace?.summary.approved_this_month_count ?? 0}</strong>
+          </div>
         </article>
-        <article className="dashboard-card">
-          <span>平均响应</span>
-          <strong>
-            {workspace?.summary.average_response_days == null
-              ? '—'
-              : `${workspace.summary.average_response_days.toFixed(1)} 天`}
-          </strong>
+        <article className="dashboard-card metric-card">
+          <FiActivity aria-hidden="true" className="metric-card-icon" />
+          <div>
+            <span>平均响应</span>
+            <strong>
+              {workspace?.summary.average_response_days == null
+                ? '—'
+                : `${workspace.summary.average_response_days.toFixed(1)} 天`}
+            </strong>
+          </div>
         </article>
       </div>
       {message && (

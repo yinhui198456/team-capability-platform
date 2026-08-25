@@ -200,10 +200,23 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
     )
     expect(metrics).toHaveLength(4)
     expect(
-      metrics.map((metric) => metric.firstElementChild?.textContent),
+      metrics.every((metric) => metric.classList.contains('metric-card')),
+    ).toBe(true)
+    expect(
+      metrics.every(
+        (metric) =>
+          metric
+            .querySelector('.metric-card-icon')
+            ?.getAttribute('aria-hidden') === 'true',
+      ),
+    ).toBe(true)
+    expect(
+      metrics.map((metric) => metric.querySelector('span')?.textContent),
     ).toEqual(['待验收', '需补充', '本月通过', '平均响应'])
     expect(
-      metrics.every((metric) => metric.lastElementChild?.tagName === 'STRONG'),
+      metrics.every(
+        (metric) => metric.querySelector('strong')?.tagName === 'STRONG',
+      ),
     ).toBe(true)
 
     const queue = screen

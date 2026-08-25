@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { FiCheckCircle, FiClock, FiFileText, FiRefreshCw } from 'react-icons/fi'
 import {
   learningTaskMonth,
   learningTaskProgress,
@@ -50,10 +51,24 @@ export function AnnualPlanTimelinePage() {
     if (month) groups.set(month, [...(groups.get(month) ?? []), task])
   })
   const metrics = [
-    ['任务总数', yearTasks.length],
-    ['已完成', yearTasks.filter((task) => task.status === '已完成').length],
-    ['进行中', yearTasks.filter((task) => task.status === '进行中').length],
-    ['逾期', yearTasks.filter((task) => task.status === '延期').length],
+    { label: '任务总数', value: yearTasks.length, Icon: FiFileText },
+    {
+      label: '已完成',
+      value: yearTasks.filter((task) => task.status === '已完成').length,
+      Icon: FiCheckCircle,
+      tone: 'success',
+    },
+    {
+      label: '进行中',
+      value: yearTasks.filter((task) => task.status === '进行中').length,
+      Icon: FiRefreshCw,
+    },
+    {
+      label: '逾期',
+      value: yearTasks.filter((task) => task.status === '延期').length,
+      Icon: FiClock,
+      tone: 'danger',
+    },
   ]
   return (
     <section className="page">
@@ -65,11 +80,17 @@ export function AnnualPlanTimelinePage() {
         </div>
       </header>
       {!isLoading && (
-        <dl className="annual-plan-summary">
-          {metrics.map(([label, value]) => (
-            <div key={String(label)}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
+        <dl className="annual-plan-summary metric-card-grid">
+          {metrics.map(({ label, value, Icon, tone }) => (
+            <div
+              className={`metric-card${tone ? ` metric-card-${tone}` : ''}`}
+              key={label}
+            >
+              <Icon aria-hidden="true" className="metric-card-icon" />
+              <div>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
             </div>
           ))}
         </dl>

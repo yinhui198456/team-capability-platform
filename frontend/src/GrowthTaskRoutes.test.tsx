@@ -197,6 +197,14 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: /2026年09月/ })
+    const m03Metrics = document.querySelector('.annual-plan-summary')
+    expect(m03Metrics?.classList.contains('metric-card-grid')).toBe(true)
+    expect(m03Metrics?.querySelectorAll('.metric-card-icon')).toHaveLength(4)
+    expect(
+      Array.from(m03Metrics?.querySelectorAll('.metric-card-icon') ?? []).every(
+        (icon) => icon.getAttribute('aria-hidden') === 'true',
+      ),
+    ).toBe(true)
     expect(screen.getByText('要求已更新 · 待确认')).toBeTruthy()
     expect(
       screen.queryByRole('progressbar', { name: 'P01.01.01 进度' }),
@@ -239,6 +247,10 @@ describe('S2 approved M03–M05 routes', () => {
         '按状态、月份和能力域定位任务；复杂执行都在任务详情中完成。',
       ),
     ).toBeTruthy()
+    await screen.findByText('全部任务')
+    const m04Metrics = document.querySelector('.annual-plan-summary')
+    expect(m04Metrics?.classList.contains('metric-card-grid')).toBe(true)
+    expect(m04Metrics?.querySelectorAll('.metric-card-icon')).toHaveLength(4)
     expect(await screen.findByText('旧要求 · 逾期')).toBeTruthy()
     expect(screen.getByRole('button', { name: '逾期 1' })).toBeTruthy()
     expect(

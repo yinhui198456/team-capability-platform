@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { FiAlertCircle, FiClock, FiList, FiRefreshCw } from 'react-icons/fi'
 import {
   listLearningTasks,
   learningTaskMonth,
@@ -87,31 +88,38 @@ export function TaskListPage() {
         </div>
       </header>
       {!isLoading && (
-        <dl className="annual-plan-summary">
-          <div>
-            <dt>全部任务</dt>
-            <dd>{metric('')}</dd>
-          </div>
-          <div>
-            <dt>进行中</dt>
-            <dd>{metric('进行中')}</dd>
-          </div>
-          <div>
-            <dt>待确认</dt>
-            <dd>
-              {
-                yearTasks.filter(
-                  (task) =>
-                    (!month || String(learningTaskMonth(task)) === month) &&
-                    task.requirement_change,
-                ).length
-              }
-            </dd>
-          </div>
-          <div>
-            <dt>逾期</dt>
-            <dd>{metric('延期')}</dd>
-          </div>
+        <dl className="annual-plan-summary metric-card-grid">
+          {[
+            { label: '全部任务', value: metric(''), Icon: FiList },
+            { label: '进行中', value: metric('进行中'), Icon: FiRefreshCw },
+            {
+              label: '待确认',
+              value: yearTasks.filter(
+                (task) =>
+                  (!month || String(learningTaskMonth(task)) === month) &&
+                  task.requirement_change,
+              ).length,
+              Icon: FiAlertCircle,
+              tone: 'warning',
+            },
+            {
+              label: '逾期',
+              value: metric('延期'),
+              Icon: FiClock,
+              tone: 'danger',
+            },
+          ].map(({ label, value, Icon, tone }) => (
+            <div
+              className={`metric-card${tone ? ` metric-card-${tone}` : ''}`}
+              key={label}
+            >
+              <Icon aria-hidden="true" className="metric-card-icon" />
+              <div>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            </div>
+          ))}
         </dl>
       )}
       {!isLoading && (
