@@ -192,7 +192,11 @@ describe('S2 approved M03–M05 routes', () => {
   it('groups M03 by month with real task progress and reaches M04 context', async () => {
     stub()
     render(
-      <MemoryRouter initialEntries={['/growth/annual-plan?year=2026&month=9']}>
+      <MemoryRouter
+        initialEntries={[
+          '/growth/annual-plan?year=2026&month=9&status=进行中&task_id=7',
+        ]}
+      >
         <App />
       </MemoryRouter>,
     )
@@ -222,6 +226,16 @@ describe('S2 approved M03–M05 routes', () => {
     expect(selectedMonth?.querySelector('a')?.getAttribute('href')).toContain(
       'month=9',
     )
+    const taskList = new URL(
+      screen.getByRole('link', { name: '查看任务列表' }).getAttribute('href') ??
+        '',
+      'http://tcp.test',
+    )
+    expect(taskList.pathname).toBe('/growth/tasks')
+    expect(taskList.searchParams.get('year')).toBe('2026')
+    expect(taskList.searchParams.get('month')).toBe('9')
+    expect(taskList.searchParams.get('status')).toBe('进行中')
+    expect(taskList.searchParams.has('task_id')).toBe(false)
   })
   it('uses approved M03–M05 copy while retaining the delayed query value', async () => {
     stub()
@@ -549,6 +563,25 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     await screen.findByText('文件规范')
+    const results = document.getElementById('growth-task-results')
+    expect(results?.getAttribute('tabindex')).toBe('-1')
+    const resultsCta = screen.getByRole('button', { name: '查看筛选结果' })
+    const selectedTaskHref =
+      screen.getByRole('link', { name: '进入任务' }).getAttribute('href') ?? ''
+    expect(resultsCta.getAttribute('aria-controls')).toBe('growth-task-results')
+    fireEvent.click(resultsCta)
+    expect(document.activeElement).toBe(results)
+    expect(
+      screen.getByRole('link', { name: '进入任务' }).getAttribute('href'),
+    ).toBe(selectedTaskHref)
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe(
+      '文件',
+    )
+    expect(
+      screen
+        .getByRole('button', { name: '进行中 1' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
     const filterEntry = screen.getByText('筛选').closest('summary')
     expect(filterEntry?.classList.contains('growth-task-filter-button')).toBe(
       true,
@@ -560,8 +593,8 @@ describe('S2 approved M03–M05 routes', () => {
     ).toBeTruthy()
     expect(screen.queryByText('沟通准备')).toBeNull()
     expect(screen.getByText('进行中 1')).toBeTruthy()
-    const href =
-      screen.getByRole('link', { name: '进入任务' }).getAttribute('href') ?? ''
+    expect(screen.queryByText(/最近|第一个/)).toBeNull()
+    const href = selectedTaskHref
     expect(href).toContain('month=9')
     expect(href).toContain('search=%E6%96%87%E4%BB%B6')
     expect(href).toContain('status=%E8%BF%9B%E8%A1%8C%E4%B8%AD')

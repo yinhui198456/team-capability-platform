@@ -45,6 +45,10 @@ export function AnnualPlanTimelinePage() {
   }, [year])
   const yearTasks = loadedYear === year ? tasks : []
   const isLoading = loading || loadedYear !== year
+  const taskListQuery = new URLSearchParams({ year: String(year) })
+  if (selected) taskListQuery.set('month', String(selected))
+  const status = params.get('status')
+  if (status) taskListQuery.set('status', status)
   const groups = new Map<number, LearningTask[]>()
   yearTasks.forEach((task) => {
     const month = learningTaskMonth(task)
@@ -78,6 +82,9 @@ export function AnnualPlanTimelinePage() {
           <h1>月度计划时间轴</h1>
           <p className="muted">按月推进学习任务，持续提升能力。</p>
         </div>
+        <Link className="primary-link" to={`/growth/tasks?${taskListQuery}`}>
+          查看任务列表
+        </Link>
       </header>
       {!isLoading && (
         <section
