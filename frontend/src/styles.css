@@ -1415,6 +1415,28 @@ select {
   min-width: 132px;
 }
 
+.growth-task-filter-button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  list-style: none;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.growth-task-filter-button::-webkit-details-marker {
+  display: none;
+}
+
+.growth-task-filter-button:focus-visible {
+  box-shadow: 0 0 0 3px #0b63ce38;
+}
+
 .growth-task-filter-entry label {
   display: grid;
   gap: 6px;

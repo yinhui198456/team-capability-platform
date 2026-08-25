@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { FiAlertCircle, FiClock, FiList, FiRefreshCw } from 'react-icons/fi'
+import {
+  FiAlertCircle,
+  FiClock,
+  FiFilter,
+  FiList,
+  FiRefreshCw,
+} from 'react-icons/fi'
 import {
   listLearningTasks,
   learningTaskMonth,
@@ -160,7 +166,13 @@ export function TaskListPage() {
             />
           </label>
           <details className="growth-task-filter-entry">
-            <summary>筛选</summary>
+            <summary className="growth-task-filter-button">
+              <FiFilter
+                aria-hidden="true"
+                className="growth-task-filter-icon"
+              />
+              筛选
+            </summary>
             <label>
               计划月份
               <select

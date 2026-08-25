@@ -549,6 +549,15 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     await screen.findByText('文件规范')
+    const filterEntry = screen.getByText('筛选').closest('summary')
+    expect(filterEntry?.classList.contains('growth-task-filter-button')).toBe(
+      true,
+    )
+    expect(
+      filterEntry?.querySelector(
+        'svg.growth-task-filter-icon[aria-hidden="true"]',
+      ),
+    ).toBeTruthy()
     expect(screen.queryByText('沟通准备')).toBeNull()
     expect(screen.getByText('进行中 1')).toBeTruthy()
     const href =
