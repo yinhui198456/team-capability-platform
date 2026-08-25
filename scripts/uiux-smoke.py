@@ -128,7 +128,7 @@ def main() -> None:
         )
         try:
             for case in (
-                ("member", "我的成长", "/dashboard/member", "我的成长总览"),
+                ("member", "我的工作台", "/dashboard/member", "我的成长总览"),
                 ("buddy", "成果验收", "/mentoring/evidence-review", "成果验收"),
                 ("leader", "团队能力分析", "/operations/analytics", "团队能力分析"),
                 ("admin", "Team Capability Platform", "/system/users", "系统管理"),
