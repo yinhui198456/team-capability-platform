@@ -84,18 +84,13 @@ def test_member_dashboard_aggregates_only_current_member_data(
         "暂停": 0,
         "取消": 0,
     }
-    assert body["domain_radar"][0] == {"domain_code": "P01", "score": 2}
-    assert len(body["gaps"]) == 1
-    assert body["gaps"][0]["l3_code"] == "P01-L2A-L3A"
-    assert body["gaps"][0]["l2_code"] == "P01-L2A"
-    assert body["gaps"][0]["l3_name"] == "Leaf"
+    assert body["domain_radar"][0] == {"domain_code": "P01", "score": 0}
+    assert body["gaps"] == []
     assert len(body["current_tasks"]) == 1
     assert body["assessment"] is not None
-    assert body["assessment"]["status"] == "已归档"
-    assert body["assessment"]["submitted_at"] is not None
-    assert body["assessment"]["review_status"] == "已闭环"
-    assert body["assessment"]["review_conclusion"] == "认可"
-    assert body["annual_plan_status"] == "制定中"
+    assert body["assessment"]["status"] == "草稿"
+    assert body["assessment"]["submitted_at"] is None
+    assert body["annual_plan_status"] == "执行中"
 
 
 def test_member_dashboard_rejects_non_members(
@@ -265,7 +260,7 @@ def test_dashboard_applicable_completion_of_open_assessment(
     total = completion["total"]
     expected_ratio = completion["completed"] / total if total else 0
     assert abs(completion["ratio"] - expected_ratio) < 1e-9
-    assert total <= len(body["gaps"])
+    assert total == 1
 
 
 def test_dashboard_current_month_counts_reconcilable(
@@ -275,7 +270,7 @@ def test_dashboard_current_month_counts_reconcilable(
     # Move the sole plan item into the current month (2026-08, Q3), 进行中.
     profile_schema.execute(
         """
-        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3'
+        UPDATE plan_item SET plan_month = '2026-08', plan_quarter = 'Q3'
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )
@@ -307,7 +302,8 @@ def test_dashboard_current_month_delayed_and_pending_evidence(
     member_id, member_cookies = _build_full_profile(profile_schema)
     profile_schema.execute(
         """
-        UPDATE plan_item SET plan_month = 8, plan_quarter = 'Q3', status = '延期'
+        UPDATE plan_item
+        SET plan_month = '2026-08', plan_quarter = 'Q3', status = '延期'
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )
@@ -355,8 +351,18 @@ def test_dashboard_next_action_deterministic_no_auto_priority(
 ) -> None:
     member_id, member_cookies = _build_full_profile(profile_schema)
 
-    # Seed state (assessment archived, task 进行中, evidence approved): the
-    # next action falls out of a fixed decision chain, never from derived
+    # Historical read-only fixture leaves the current M02 draft flow untouched.
+    profile_schema.execute(
+        """
+        UPDATE assessment
+        SET status = '已归档', submitted_at = NOW(), archived_at = NOW()
+        WHERE member_id = %s AND year = 2026
+        """,
+        (member_id,),
+    )
+    profile_schema.commit()
+
+    # The next action falls out of a fixed decision chain, never from derived
     # priorities.
     body = _dashboard(profile_schema, member_cookies)
     assert set(body["next_action"]) == {"action_key", "message", "count"}
@@ -386,7 +392,14 @@ def test_dashboard_next_action_deterministic_no_auto_priority(
     assert body["next_action"]["count"] == 1
 
     # Priorities remain exactly the Member's own input.
-    assert body["gaps"][0]["priority"] == "高"
+    assert (
+        profile_schema.execute(
+            "SELECT priority FROM plan_item WHERE annual_growth_plan_id IN "
+            "(SELECT id FROM annual_growth_plan WHERE member_id = %s)",
+            (member_id,),
+        ).fetchone()[0]
+        == "高"
+    )
 
 
 def test_dashboard_no_310_denominator(
@@ -396,7 +409,7 @@ def test_dashboard_no_310_denominator(
     body = _dashboard(profile_schema, member_cookies)
 
     # 1 assessment detail / 1 plan item — never 310 standards.
-    assert len(body["gaps"]) == 1
+    assert body["gaps"] == []
     assert body["plan_progress"]["total"] == 1
     assert body["summary"]["annual_planned_hours"] == 10
 

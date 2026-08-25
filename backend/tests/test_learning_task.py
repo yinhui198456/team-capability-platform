@@ -270,19 +270,21 @@ def _login(
 
 
 def _create_assessment_and_generate_plan_items(
-    connection: psycopg.Connection, username: str
+    connection: psycopg.Connection, username: str, l3_codes: list[str] | None = None
 ) -> int:
+    l3_codes = l3_codes or ["P01-L2A-L3B"]
     desired_details = [
         {
-            "l3_code": "P01-L2A-L3B",
+            "l3_code": code,
             "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
             "plan_month": "2026-05",
-        },
+        }
+        for code in l3_codes
     ]
-    ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
+    ensure_capability_nodes(connection, l3_codes)
     from app.migrations import run_migrations
 
     run_migrations(connection)
@@ -331,6 +333,7 @@ def _create_assessment_and_generate_plan_items(
 
 def _seed_plan_items(
     connection: psycopg.Connection,
+    l3_codes: list[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, object]]:
     member_id = _create_test_user(connection, "member_task", ["Member"])
     buddy_id = _create_test_user(connection, "buddy_task", ["Buddy"])
@@ -339,7 +342,7 @@ def _seed_plan_items(
     _ensure_l3_node(connection, "P01-L2A-L3B")
     connection.commit()
 
-    _create_assessment_and_generate_plan_items(connection, "member_task")
+    _create_assessment_and_generate_plan_items(connection, "member_task", l3_codes)
 
     member_cookies = _login(connection, "member_task")
 
@@ -348,7 +351,7 @@ def _seed_plan_items(
     )
     assert status == 200
     assert plan is not None
-    assert len(plan["items"]) == 1
+    assert len(plan["items"]) == len(l3_codes or ["P01-L2A-L3B"])
     return member_cookies, plan
 
 

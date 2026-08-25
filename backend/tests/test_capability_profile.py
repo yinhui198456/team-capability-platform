@@ -16,6 +16,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import create_generated_plan_items
 from tests.standard_target_support import (
     ensure_capability_nodes,
     standard_target_payload,
@@ -366,8 +367,21 @@ def _build_full_profile(
     _ensure_l3_node(connection, "P01-L2A-L3A")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, member_username)
-    _approve_assessment(connection, assessment_id, buddy_username)
+    create_generated_plan_items(
+        connection,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 0,
+                "evidence_note": "测试中",
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_month": "2026-05",
+            }
+        ],
+    )
 
     member_cookies = _login(connection, member_username)
     status, plan, _ = _request(
@@ -450,10 +464,9 @@ def test_member_views_own_profile_with_aggregation(
 
     assert len(body["assessments"]) == 1
     assessment = body["assessments"][0]
-    assert assessment["status"] == "已归档"
-    assert assessment["submitted_at"] is not None
-    assert len(assessment["reviews"]) == 1
-    assert assessment["reviews"][0]["conclusion"] == "认可"
+    assert assessment["status"] == "草稿"
+    assert assessment["submitted_at"] is None
+    assert assessment["reviews"] == []
 
     assert body["annual_plan"] is not None
     assert body["annual_plan"]["year"] == 2026
@@ -1095,7 +1108,7 @@ def test_profile_query_count_bounded_with_multiple_items(
             l3_code,
             status="未开始",
             estimated_hours="10",
-            plan_month=5,
+            plan_month="2026-05",
         )
     profile_schema.commit()
 

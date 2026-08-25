@@ -10,7 +10,9 @@ from app.access.repository import (
 )
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
+    generate_plan_items_for_selection,
     get_assessment,
+    patch_assessment_draft,
     save_assessment_draft,
     submit_assessment,
     submit_assessment_review,
@@ -78,6 +80,54 @@ def reset_full_schema(connection: psycopg.Connection) -> None:
 
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
     connection.commit()
+
+
+def save_canonical_draft(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    details: list[dict[str, object]],
+) -> int:
+    """Seed a current M02 canonical draft without retired review writes."""
+    codes = [str(detail["l3_code"]) for detail in details]
+    ensure_capability_nodes(connection, codes)
+    assessment_id = create_scoped_draft(connection, member_id, year)
+    rows = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchall()
+    node_ids = {
+        str(code): int(node_id) for code, node_id in rows if node_id is not None
+    }
+    payload = []
+    for detail in details:
+        code = str(detail["l3_code"])
+        payload.append({**detail, "l3_node_id": node_ids[code]})
+    patch_assessment_draft(
+        connection, assessment_id, member_id, expected_revision=1, details=payload
+    )
+    connection.commit()
+    return assessment_id
+
+
+def create_generated_plan_items(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    details: list[dict[str, object]],
+) -> int:
+    """Seed current M02 flow: canonical draft, then explicit generation."""
+    assessment_id = save_canonical_draft(connection, member_id, year, details)
+    codes = [str(detail["l3_code"]) for detail in details]
+    generate_plan_items_for_selection(
+        connection,
+        assessment_id,
+        member_id,
+        codes,
+        expected_revision=2,
+    )
+    connection.commit()
+    return assessment_id
 
 
 @pytest.fixture

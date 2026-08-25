@@ -12,6 +12,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
+from tests.review_support import create_generated_plan_items
 from tests.standard_target_support import (
     ensure_capability_nodes,
     standard_target_payload,
@@ -363,8 +364,29 @@ def _seed_plan_with_tasks(
     _ensure_l3_node(connection, "P01-L2A-L3B")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, "member_progress")
-    _approve_assessment(connection, assessment_id, "buddy_progress")
+    create_generated_plan_items(
+        connection,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 0,
+                "evidence_note": "测试中",
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_month": "2026-05",
+            },
+            {
+                "l3_code": "P01-L2A-L3B",
+                "current_level": 0,
+                "evidence_note": "测试中",
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_month": "2026-05",
+            },
+        ],
+    )
 
     member_cookies = _login(connection, "member_progress")
 

@@ -6,15 +6,11 @@ from urllib.parse import urlsplit
 import psycopg
 import pytest
 
-from app.access.repository import assign_role, create_buddy_relationship, create_user
+from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.schema import create_assessment_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
-from tests.standard_target_support import (
-    ensure_capability_nodes,
-    standard_target_payload,
-)
 
 SESSION_COOKIE = "tcp_session"
 
@@ -174,86 +170,6 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
-    desired_details = [
-        {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        },
-        {
-            "l3_code": "P01-L2A-L3B",
-            "current_level": 1,
-            "target_level": 3,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        },
-    ]
-    ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
-    cookies = _login(connection, username)
-    status, preview, _ = _request(
-        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
-    )
-
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        "/api/assessments",
-        {"year": 2026, "scope_token": preview["scope_token"]},
-        cookies=cookies,
-    )
-    assert status == 200
-    assert body is not None
-    assessment_id = body["id"]
-    status, body, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": standard_target_payload(
-                connection, assessment_id, desired_details
-            ),
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
-    return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
-
-
 def test_legacy_goal_creation_blocked(
     planning_schema: psycopg.Connection,
 ) -> None:
@@ -267,53 +183,6 @@ def test_legacy_goal_creation_blocked(
     assert body["detail"]["code"] == "legacy_planning_write_disabled"
     status, body, _ = _request(
         "DELETE", "/api/planning/growth-goals/1", cookies=cookies
-    )
-    assert status == 422
-    assert body["detail"]["code"] == "legacy_planning_write_disabled"
-
-
-def test_goal_blocked_even_with_pending_review(
-    planning_schema: psycopg.Connection,
-) -> None:
-    member_id = _create_test_user(planning_schema, "member_pending", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_pending", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
-    planning_schema.commit()
-
-    _create_and_submit_assessment(planning_schema, "member_pending")
-    member_cookies = _login(planning_schema, "member_pending")
-
-    status, body, _ = _request(
-        "POST", "/api/planning/growth-goals", {"gap_id": 1}, cookies=member_cookies
-    )
-    assert status == 422
-    assert body["detail"]["code"] == "legacy_planning_write_disabled"
-
-
-def test_goal_blocked_after_approval_plan_comes_from_assessment(
-    planning_schema: psycopg.Connection,
-) -> None:
-    member_id = _create_test_user(planning_schema, "member_approve", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_approve", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
-    planning_schema.commit()
-
-    assessment_id = _create_and_submit_assessment(planning_schema, "member_approve")
-    # Approval atomically creates the plan; the manual goal lifecycle stays blocked.
-    _approve_assessment(planning_schema, assessment_id, "buddy_approve")
-    plan = planning_schema.execute(
-        "SELECT COUNT(*) FROM annual_growth_plan WHERE member_id=%s",
-        (member_id,),
-    ).fetchone()[0]
-    assert plan == 1
-    items = planning_schema.execute(
-        "SELECT COUNT(*) FROM plan_item WHERE source_assessment_id=%s",
-        (assessment_id,),
-    ).fetchone()[0]
-    assert items == 2
-    member_cookies = _login(planning_schema, "member_approve")
-    status, body, _ = _request(
-        "POST", "/api/planning/growth-goals", {"gap_id": 1}, cookies=member_cookies
     )
     assert status == 422
     assert body["detail"]["code"] == "legacy_planning_write_disabled"

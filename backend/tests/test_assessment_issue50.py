@@ -6,13 +6,11 @@ import pytest
 from app.access.repository import assign_role, create_user
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    AssessmentValidationError,
     _evidence_is_valid,
     batch_fill_l2,
     get_assessment,
     get_latest_approved_assessment_for_member,
     patch_assessment_draft,
-    submit_assessment,
 )
 from app.assessment.schema import create_assessment_schema
 from app.catalog.importer import import_catalog, resolve_workbook_dir
@@ -192,8 +190,7 @@ def test_new_assessment_inherits_values_but_not_targets_or_candidates(
                     "evidence_note": "旧依据",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q3",
-                    "plan_month": 7,
+                    "plan_month": "2024-07",
                 },
                 {"l3_code": codes[1], "current_level": 1, "evidence_note": "另一依据"},
             ],
@@ -448,8 +445,7 @@ def test_plan_fields_work_with_inherited_level_increase(
                     "target_adjustment_reason": "晋升目标",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 3,
+                    "plan_month": "2026-03",
                 },
                 {"l3_code": codes[1], "current_level": 1},
             ],
@@ -547,8 +543,7 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
                     "target_adjustment_reason": "test",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q1",
-                    "plan_month": 3,
+                    "plan_month": "2026-03",
                 }
             ],
         ),
@@ -568,7 +563,6 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert set(result["auto_cleared"][0]["fields"]) == {
         "member_priority",
         "include_in_plan",
-        "plan_quarter",
         "plan_month",
     }
     detail = next(
@@ -579,40 +573,3 @@ def test_plan_fields_auto_cleared_when_gap_becomes_zero(
     assert detail["member_priority"] is None
     assert detail["include_in_plan"] is None
     assert detail["gap_value"] == 0
-
-
-def test_submit_requires_priority_for_positive_gap(
-    issue50_schema: psycopg.Connection,
-) -> None:
-    connection = issue50_schema
-    member_id = _member(connection)
-    codes = _enable_two_nodes(connection)
-    assessment_id = create_scoped_draft(connection, member_id, 2026)
-    with pytest.raises(ValueError, match="requires current level"):
-        submit_assessment(connection, assessment_id, member_id, expected_revision=1)
-    patch_assessment_draft(
-        connection,
-        assessment_id,
-        member_id,
-        1,
-        _with_node_ids(
-            connection,
-            assessment_id,
-            [
-                {
-                    "l3_code": codes[0],
-                    "current_level": 3,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 5,
-                    "target_adjustment_reason": "test",
-                },
-                {"l3_code": codes[1], "current_level": 2},
-            ],
-        ),
-    )
-    with pytest.raises(AssessmentValidationError) as error:
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
-    assert error.value.code == "assessment_validation_failed"
-    assert error.value.l3_code == codes[0]
-    assert error.value.reason == "priority_required"
-    assert error.value.field == "member_priority"

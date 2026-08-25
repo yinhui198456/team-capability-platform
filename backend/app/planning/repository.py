@@ -4941,8 +4941,9 @@ def _team_analytics_monthly_trends(
     ).fetchall()
     planned_values_by_month: dict[int, list[str | None]] = {}
     for month, estimated_hours in planned_rows:
-        if month is not None:
-            planned_values_by_month.setdefault(int(month), []).append(
+        canonical_month = _canonical_plan_month(month, None, year)
+        if canonical_month is not None:
+            planned_values_by_month.setdefault(canonical_month, []).append(
                 estimated_hours if isinstance(estimated_hours, str) else None
             )
     planned_by_month = {
