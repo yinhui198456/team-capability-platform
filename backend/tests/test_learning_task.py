@@ -269,27 +269,17 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+def _create_assessment_and_generate_plan_items(
+    connection: psycopg.Connection, username: str
+) -> int:
     desired_details = [
         {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        },
-        {
             "l3_code": "P01-L2A-L3B",
-            "current_level": 1,
-            "target_level": 3,
+            "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
@@ -310,11 +300,11 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         {"year": 2026, "scope_token": preview["scope_token"]},
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, body
     assert body is not None
     assessment_id = body["id"]
     status, body, _ = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": standard_target_payload(
@@ -327,30 +317,16 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     assert status == 200
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {
+            "l3_codes": [detail["l3_code"] for detail in desired_details],
+            "expected_revision": 2,
+        },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, body
+    assert body["created"] == [detail["l3_code"] for detail in desired_details]
     return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
 
 def _seed_plan_items(
@@ -363,8 +339,7 @@ def _seed_plan_items(
     _ensure_l3_node(connection, "P01-L2A-L3B")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, "member_task")
-    _approve_assessment(connection, assessment_id, "buddy_task")
+    _create_assessment_and_generate_plan_items(connection, "member_task")
 
     member_cookies = _login(connection, "member_task")
 
@@ -373,7 +348,7 @@ def _seed_plan_items(
     )
     assert status == 200
     assert plan is not None
-    assert len(plan["items"]) == 2
+    assert len(plan["items"]) == 1
     return member_cookies, plan
 
 
@@ -433,18 +408,18 @@ def test_list_and_get_learning_tasks(
 
     status, tasks, _ = _request("GET", "/api/planning/learning-tasks", cookies=cookies)
     assert status == 200
-    assert len(tasks) == 2
+    assert len(tasks) == 1
     task = next(task for task in tasks if task["plan_item_id"] == item_id)
     task_id = int(task["id"])
     assert task["plan_item_target_level"] == item["target_level"]
-    assert task["plan_item_target_month"] is None
+    assert task["plan_item_target_month"] == 5
 
     status, fetched, _ = _request(
         "GET", f"/api/planning/learning-tasks/{task_id}", cookies=cookies
     )
     assert status == 200
     assert fetched["id"] == task_id
-    assert fetched["plan_item_target_month"] is None
+    assert fetched["plan_item_target_month"] == 5
 
 
 def test_update_learning_task_success(
