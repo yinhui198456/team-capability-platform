@@ -145,7 +145,7 @@ async function fillDetails(
   })
   const saveResp = await request.put(
     `${BACKEND}/api/assessments/${draft.id}/draft`,
-    { data: { details: payload, expected_revision: draft.revision } },
+    { data: { details: payload, expected_revision: assessment.revision } },
   )
   if (!saveResp.ok()) {
     throw new Error(
@@ -496,9 +496,7 @@ test.describe('Issue #62 兼容改造：显式生成学习任务（#194；原自
     // 旧复核工作区路由重定向到证据评审；复核中心不再渲染。
     await page.goto('/mentoring/dashboard')
     await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
     await expect(page.getByText('数据范围：负责成员')).toBeVisible()
     await expect(page.getByText('Buddy 复核中心')).toHaveCount(0)
     // 旧复核写端点稳定 410 且零写入（Buddy 且有负责关系）。

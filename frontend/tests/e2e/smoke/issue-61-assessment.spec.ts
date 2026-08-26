@@ -155,7 +155,7 @@ async function cleanupDraft(
 // ── tests ──────────────────────────────────────────────────────────────────
 
 test.describe('Issue #61 — assessment field refactor', () => {
-  test('E2E-01: Full self-assessment flow with 0-level and plan selection', async ({
+  test('E2E-01: Full self-assessment flow with plan selection', async ({
     page,
   }) => {
     const year = yearFor('E2E-01')
@@ -179,8 +179,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
       expect(dupBody.detail.code).toBe('open_draft_exists')
 
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
-      // fill: level=0, priority=低, include_in_plan=true, 5月 (YYYY-MM)
+      // fill: positive gap, priority=低, include_in_plan=true, 5月 (YYYY-MM)
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -190,10 +191,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 0,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-01 deterministic target',
+                current_level: currentLevel,
                 member_priority: '低',
                 include_in_plan: true,
                 plan_month: `${year}-05`,
@@ -213,7 +211,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const saved = (await verify.json()).details.find(
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
-      expect(saved.current_level).toBe(0)
+      expect(saved.current_level).toBe(currentLevel)
       expect(saved.member_priority).toBe('低')
       expect(saved.include_in_plan).toBe(true)
       expect(saved.plan_quarter).toBe('Q2')
@@ -230,6 +228,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
@@ -240,10 +239,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 0,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-02 deterministic target',
+                current_level: currentLevel,
                 member_priority: '暂缓',
                 include_in_plan: true,
                 plan_month: `${year}-01`,
@@ -315,6 +311,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
@@ -325,10 +322,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 0,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-04 deterministic target',
+                current_level: currentLevel,
                 member_priority: '中',
                 include_in_plan: true,
                 plan_month: `${year}-05`,
@@ -412,13 +406,11 @@ test.describe('Issue #61 — assessment field refactor', () => {
     try {
       const allDetails = await getAllDetails(page.request, state.id)
 
-      // fill ALL items with level >= 3, include_in_plan=false, priority=中
+      // Ratings-only saves normalize untouched plan fields to null.
       const patchDetails = allDetails.map((d) => ({
         l3_node_id: d.l3_node_id,
         l3_code: d.l3_code,
-        current_level: 4,
-        member_priority: '中',
-        include_in_plan: false,
+        current_level: d.target_level ?? 4,
       }))
       const patchResp = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
@@ -435,8 +427,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
       ).details.find(
         (d: { l3_code: string }) => d.l3_code === allDetails[0].l3_code,
       )
-      expect(saved.current_level).toBe(4)
-      expect(saved.include_in_plan).toBe(false)
+      expect(saved.current_level).toBe(allDetails[0].target_level ?? 4)
+      expect(saved.member_priority).toBeNull()
+      expect(saved.include_in_plan).toBeNull()
     } finally {
       await cleanupDraft(page.request, state)
     }
@@ -501,6 +494,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
       // save with gap>0 to generate a gap row
       await page.request.patch(`${BACKEND}/api/assessments/${state.id}/draft`, {
@@ -510,10 +504,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
             {
               l3_node_id: detail.l3_node_id,
               l3_code: detail.l3_code,
-              current_level: 0,
-              target_adjusted: true,
-              adjusted_target_level: 5,
-              target_adjustment_reason: 'E2E-09 deterministic target',
+              current_level: currentLevel,
               member_priority: '高',
               include_in_plan: true,
               plan_month: `${year}-05`,
@@ -551,8 +542,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
-      // Establish a deterministic positive-gap baseline first.
+      // Establish a positive-gap baseline from the frozen target first.
       await page.request.patch(`${BACKEND}/api/assessments/${state.id}/draft`, {
         data: {
           expected_revision: state.revision,
@@ -560,10 +552,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
             {
               l3_node_id: detail.l3_node_id,
               l3_code: detail.l3_code,
-              current_level: 0,
-              target_adjusted: true,
-              adjusted_target_level: 5,
-              target_adjustment_reason: 'E2E-10 deterministic target',
+              current_level: currentLevel,
               member_priority: '中',
               include_in_plan: false,
             },
@@ -640,14 +629,14 @@ test.describe('Issue #61 — assessment field refactor', () => {
     try {
       const allDetails = await getAllDetails(page.request, state.id)
 
-      // fill every item with valid plan (gap>0, include_in_plan=true)
-      const patchDetails = allDetails.map((d) => ({
+      const plannedDetails = allDetails.filter((d) => d.target_level !== null)
+      expect(plannedDetails.length).toBeGreaterThan(0)
+
+      // Fill every applicable item with a positive-gap plan selection.
+      const patchDetails = plannedDetails.map((d) => ({
         l3_node_id: d.l3_node_id,
         l3_code: d.l3_code,
-        current_level: 1,
-        target_adjusted: true,
-        adjusted_target_level: 5,
-        target_adjustment_reason: 'E2E-11 deterministic target',
+        current_level: Math.max(0, (d.target_level ?? 1) - 1),
         member_priority: '低',
         include_in_plan: true,
         plan_month: `${year}-05`,
@@ -667,14 +656,14 @@ test.describe('Issue #61 — assessment field refactor', () => {
           headers: { 'Idempotency-Key': `generate-plan-items:e2e-11-${year}` },
           data: {
             expected_revision: state.revision,
-            l3_codes: allDetails.map((d) => d.l3_code),
+            l3_codes: plannedDetails.map((d) => d.l3_code),
           },
         },
       )
       expect(genResp.status()).toBe(200)
       const generated = await genResp.json()
       expect(generated.created.length + generated.existing.length).toBe(
-        allDetails.length,
+        plannedDetails.length,
       )
     } finally {
       await cleanupDraft(page.request, state)
@@ -689,9 +678,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const allDetails = await getAllDetails(page.request, state.id)
-      const applicable = allDetails.filter(
-        (d) => d.current_level !== null || d.target_level !== null,
-      )
+      const applicable = allDetails.filter((d) => d.target_level !== null)
       expect(applicable.length).toBeGreaterThanOrEqual(2)
       const blocked = applicable[0]
 
@@ -706,10 +693,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
             details: others.map((d) => ({
               l3_node_id: d.l3_node_id,
               l3_code: d.l3_code,
-              current_level: 5,
-              target_adjusted: true,
-              adjusted_target_level: 5,
-              target_adjustment_reason: 'E2E-12 deterministic gap-0',
+              current_level: d.target_level,
             })),
           },
         },
@@ -726,10 +710,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: blocked.l3_node_id,
                 l3_code: blocked.l3_code,
-                current_level: 1,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-12 deterministic target',
+                current_level: Math.max(0, (blocked.target_level ?? 1) - 1),
                 member_priority: '暂缓',
                 include_in_plan: true,
               },
@@ -755,9 +736,11 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
+      const nextLevel = Math.max(0, currentLevel - 1)
 
-      // Establish a deterministic positive gap (adjusted target 5) with a
-      // full plan selection.
+      // Establish a positive gap from the frozen target with a full plan
+      // selection.
       const first = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -767,10 +750,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 1,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-13 deterministic target',
+                current_level: currentLevel,
                 member_priority: '中',
                 include_in_plan: true,
                 plan_month: `${year}-06`,
@@ -792,7 +772,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 3,
+                current_level: nextLevel,
               },
             ],
           },
@@ -800,7 +780,8 @@ test.describe('Issue #61 — assessment field refactor', () => {
       )
       expect(second.ok()).toBeTruthy()
       const secondBody = await second.json()
-      // gap stays positive (5-3=2) → no auto-clear may fire.
+      // The frozen target remains above the replacement rating, so no
+      // auto-clear may fire.
       expect(secondBody.auto_cleared).toEqual([])
       state.revision++
 
@@ -810,7 +791,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const saved = (await verify.json()).details.find(
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
-      expect(saved.current_level).toBe(3)
+      expect(saved.current_level).toBe(nextLevel)
       expect(saved.member_priority).toBe('中') // preserved from first PATCH
       expect(saved.include_in_plan).toBe(true)
       expect(saved.plan_quarter).toBe('Q2')
@@ -826,8 +807,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
-      // first set a value (deterministic positive gap, include=NO)
+      // First set a value with a positive frozen-target gap, include=NO.
       const first = await page.request.patch(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -837,10 +819,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 0,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-14 deterministic target',
+                current_level: currentLevel,
                 member_priority: '高',
                 include_in_plan: false,
               },
@@ -985,6 +964,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
     const state = await ensureFreshDraft(page.request, year)
     try {
       const detail = await getFirstDetail(page.request, state.id)
+      const currentLevel = Math.max(0, (detail.target_level ?? 1) - 1)
 
       // 1. Existing plan item: 高 priority, include_in_plan=true, 5月.
       const setup = await page.request.patch(
@@ -996,10 +976,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
               {
                 l3_node_id: detail.l3_node_id,
                 l3_code: detail.l3_code,
-                current_level: 0,
-                target_adjusted: true,
-                adjusted_target_level: 5,
-                target_adjustment_reason: 'E2E-16 deterministic target',
+                current_level: currentLevel,
                 member_priority: '高',
                 include_in_plan: true,
                 plan_month: `${year}-05`,
@@ -1098,8 +1075,9 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const allDetails = await getAllDetails(page.request, state.id)
       expect(allDetails.length).toBeGreaterThanOrEqual(2)
       const first = allDetails[0]
+      const untouched = allDetails[1]
 
-      // 1. PUT with a subset of details → 422 batch_coverage.
+      // 1. PUT supports a sparse ratings save.
       const subsetPut = await page.request.put(
         `${BACKEND}/api/assessments/${state.id}/draft`,
         {
@@ -1115,9 +1093,26 @@ test.describe('Issue #61 — assessment field refactor', () => {
           },
         },
       )
-      expect(subsetPut.status()).toBe(422)
+      expect(subsetPut.status()).toBe(200)
       const subsetBody = await subsetPut.json()
-      expect(subsetBody.detail.code).toBe('batch_coverage')
+      expect(subsetBody.revision).toBe(state.revision + 1)
+      state.revision = subsetBody.revision
+
+      const afterSubset = await page.request.get(
+        `${BACKEND}/api/assessments/${state.id}`,
+      )
+      const savedAfterSubset = await afterSubset.json()
+      expect(savedAfterSubset.revision).toBe(state.revision)
+      const savedFirstAfterSubset = savedAfterSubset.details.find(
+        (d: { l3_code: string }) => d.l3_code === first.l3_code,
+      )
+      const savedUntouchedAfterSubset = savedAfterSubset.details.find(
+        (d: { l3_code: string }) => d.l3_code === untouched.l3_code,
+      )
+      expect(savedFirstAfterSubset.current_level).toBe(1)
+      expect(savedUntouchedAfterSubset.current_level).toBe(
+        untouched.current_level,
+      )
 
       // 2. PUT missing l3_node_id → 422 l3_node_id_required.
       const noNodePut = await page.request.put(
@@ -1198,7 +1193,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const dupBody = await dupPatch.json()
       expect(dupBody.detail.code).toBe('duplicate_detail')
 
-      // 6. Zero writes across all failures: revision and state unchanged.
+      // 6. All rejected identity writes preserve the sparse-save state.
       const verify = await page.request.get(
         `${BACKEND}/api/assessments/${state.id}`,
       )
@@ -1207,7 +1202,7 @@ test.describe('Issue #61 — assessment field refactor', () => {
       const savedFirst = saved.details.find(
         (d: { l3_code: string }) => d.l3_code === first.l3_code,
       )
-      expect(savedFirst.current_level).toBe(first.current_level)
+      expect(savedFirst.current_level).toBe(1)
     } finally {
       await cleanupDraft(page.request, state)
     }
