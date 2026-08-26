@@ -96,6 +96,10 @@ interface ScopeSnapshot {
   l3_node_id: number | null
   standard_target_applicable: boolean
   target_level?: number | null
+  current_level: number | null
+  member_priority: string | null
+  include_in_plan: boolean | null
+  plan_month: string | null
 }
 
 async function pickApplicableDetails(
@@ -131,7 +135,10 @@ async function fillDetails(
       return {
         l3_code: snapshot.l3_code,
         l3_node_id: snapshot.l3_node_id,
-        current_level: snapshot.standard_target_applicable === true ? 3 : null,
+        current_level: snapshot.current_level,
+        member_priority: snapshot.member_priority,
+        include_in_plan: snapshot.include_in_plan,
+        plan_month: snapshot.plan_month,
       }
     }
     return {

@@ -856,8 +856,8 @@ test.describe('Issue #61 — assessment field refactor', () => {
         (d: { l3_code: string }) => d.l3_code === detail.l3_code,
       )
       expect(saved.member_priority).toBeNull()
-      // current_level should still be 0 (was not cleared)
-      expect(saved.current_level).toBe(0)
+      // current_level should remain unchanged when priority is cleared.
+      expect(saved.current_level).toBe(currentLevel)
     } finally {
       await cleanupDraft(page.request, state)
     }
