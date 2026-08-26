@@ -125,7 +125,9 @@ test.describe('B01 V2成果验收状态与错误合同', () => {
     await page.goto('/mentoring/evidence-review')
     await expect(page.getByText('加载中…')).toBeVisible()
     await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
-    await expect(page.getByRole('alert')).toContainText('读取失败')
+    await expect(page.getByRole('alert')).toContainText(
+      '服务暂时不可用，请稍后重试。',
+    )
   })
 
   test('requires a conclusion and feedback for supplement before writing', async ({

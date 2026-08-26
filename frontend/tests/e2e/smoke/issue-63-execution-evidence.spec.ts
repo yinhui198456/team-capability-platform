@@ -828,15 +828,20 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
     ).toBeVisible()
     await expect(page.getByText(seed.l3Code).first()).toBeVisible()
     await expectNoHorizontalOverflow()
-    await page.getByRole('link', { name: '查看本月任务' }).click()
+    // CTA-A-v1: bind the M04 filter entry to this exact M03 year/month card;
+    // never follow a task-specific link that would add task_id.
+    const mayTimelineRow = page.locator('.growth-timeline-row', {
+      has: page.getByRole('button', { name: `${year}年05月`, exact: true }),
+    })
+    await mayTimelineRow
+      .locator('#growth-month-5')
+      .getByRole('link', { name: '查看本月任务', exact: true })
+      .click()
+    await expect(page).toHaveURL(
+      new RegExp(`/growth/tasks\\?year=${year}&month=5$`),
+    )
     await expect(page.getByRole('heading', { name: '学习任务' })).toBeVisible()
     await expect(page.getByText(seed.l3Code).first()).toBeVisible()
-    await expectNoHorizontalOverflow()
-    await page.getByRole('link', { name: '进入任务' }).click()
-    await expect(
-      page.getByRole('button', { name: '学习记录', exact: true }),
-    ).toBeVisible()
-    await expect(page.getByRole('button', { name: '提交成果' })).toBeVisible()
     await expectNoHorizontalOverflow()
   }
 
