@@ -232,7 +232,7 @@ test.describe('capability standard targets', () => {
     })
   })
 
-  test('Member sees snapshots and submits only personal adjustment inputs', async ({
+  test('Member saves ratings without writing frozen target snapshots', async ({
     page,
   }) => {
     let saved: Record<string, unknown> | null = null
@@ -249,6 +249,7 @@ test.describe('capability standard targets', () => {
       details: [
         {
           id: 1,
+          l3_node_id: 101,
           l3_code: 'P01.01.01',
           l3_name: '适用能力',
           l1_code: 'P01',
@@ -269,6 +270,7 @@ test.describe('capability standard targets', () => {
         },
         {
           id: 2,
+          l3_node_id: 102,
           l3_code: 'P01.01.02',
           l3_name: '不适用能力',
           l1_code: 'P01',
@@ -302,7 +304,7 @@ test.describe('capability standard targets', () => {
     await page.route(/\/api\/assessments\/900(?:\/draft)?$/, async (route) => {
       if (route.request().method() === 'PATCH') {
         saved = route.request().postDataJSON()
-        await route.fulfill({ status: 200, json: { ok: true } })
+        await route.fulfill({ status: 200, json: { revision: 2 } })
         return
       }
       await route.fulfill({ status: 200, json: assessment })
@@ -310,29 +312,35 @@ test.describe('capability standard targets', () => {
 
     await loginAs(page, 'member')
     await page.goto('/capability/assessment')
-    await expect(page.getByText('4 · P4 标准')).toBeVisible()
+    await expect(page.getByText('目标：4 · P4 标准')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
-    // N/A row has no adjustment entry point
+    // N/A rows have no plan action.
     await expect(
-      page.locator('#row-2').getByRole('button', { name: '调整▸' }),
+      page
+        .locator('#row-2')
+        .getByRole('button', { name: /加入提升计划|移出提升计划/ }),
     ).toHaveCount(0)
 
     const okRow = page.locator('#row-1')
-    await okRow.getByRole('button', { name: '调整▸' }).click()
-    await page.getByLabel('启用个人调整 P01.01.01').check()
-    await page.getByLabel('调整目标 P01.01.01').selectOption('5')
-    await page.getByLabel('调整原因 P01.01.01').fill('晋升准备')
-    await page.getByRole('button', { name: '保存草稿' }).click()
+    await okRow
+      .getByLabel('当前等级 P01.01.01')
+      .getByRole('button')
+      .nth(2)
+      .click()
+    await page.getByRole('button', { name: '保存能力评级' }).click()
 
     await expect.poll(() => saved).not.toBeNull()
     const details = saved?.details as Array<Record<string, unknown>>
     expect(details[0]).toMatchObject({
-      target_adjusted: true,
-      adjusted_target_level: 5,
-      target_adjustment_reason: '晋升准备',
+      l3_node_id: 101,
+      l3_code: 'P01.01.01',
+      current_level: 3,
     })
     expect(details[0]).not.toHaveProperty('target_level')
     expect(details[0]).not.toHaveProperty('standard_target_level')
+    expect(details[0]).not.toHaveProperty('target_adjusted')
+    expect(details[0]).not.toHaveProperty('adjusted_target_level')
+    expect(details[0]).not.toHaveProperty('target_adjustment_reason')
   })
 
   test('Leader inspects, copies and blocks an invalid draft without route ambiguity', async ({

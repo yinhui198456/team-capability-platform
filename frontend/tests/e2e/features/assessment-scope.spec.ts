@@ -107,20 +107,17 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await expect(preview).toContainText('进阶 95')
 
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    const header = page.getByTestId('scope-header')
-    await expect(header).toContainText('当前 P4 → 年度目标 P5')
-    await expect(header).toContainText('Legacy Baseline v1')
-    await expect(header).toContainText('适用 238')
-    await expect(header).toContainText('必备 143')
-    await expect(header).toContainText('进阶 95')
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
 
-    // scope filter narrows the visible details deterministically
-    const scopeFilter = page.getByTestId('scope-filter')
-    await scopeFilter.selectOption('target_progressive')
-    await expect(page.locator('tbody tr').first()).toBeVisible()
-    await scopeFilter.selectOption('current_required')
-    await expect(page.locator('tbody tr').first()).toBeVisible()
-    await scopeFilter.selectOption('全部')
+    const domainNav = page.getByRole('navigation', {
+      name: '一级能力域导航',
+    })
+    await expect(
+      domainNav.getByRole('button', { name: '全部能力域' }),
+    ).toBeVisible()
+    await expect(page.getByTestId('assessment-table')).toBeVisible()
   })
 
   test('P4→P4 same level produces zero progressive items', async ({ page }) => {
@@ -167,9 +164,9 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     const fresh = page.getByTestId('scope-preview')
     await expect(fresh).toContainText('当前 P4 → 年度目标 P6')
     await page.getByRole('button', { name: '按最新范围重新确认创建' }).click()
-    await expect(page.getByTestId('scope-header')).toContainText(
-      '当前 P4 → 年度目标 P6',
-    )
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
   })
 
   test('missing member level blocks preview with a structured error', async ({
@@ -248,12 +245,16 @@ test.describe('Issue #60 assessment scope snapshots', () => {
       name: '确认创建年度自评草稿',
     })
     await button.dblclick()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
     expect(await openDraftCount(page)).toBe(1)
     // navigating back shows the existing draft, not another create button
     await page.goto('/dashboard/member')
     await page.goto('/capability/assessment')
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
     await expect(
       page.getByRole('button', { name: '预览评估范围' }),
     ).toHaveCount(0)
@@ -268,7 +269,9 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await page.goto('/capability/assessment')
     await page.getByRole('button', { name: '预览评估范围' }).click()
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
 
     await page.goto('/dashboard/member')
     const levels = page.getByTestId('dashboard-levels')
@@ -294,7 +297,9 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await page.goto('/capability/assessment')
     await page.getByRole('button', { name: '预览评估范围' }).click()
     await page.getByRole('button', { name: '确认创建年度自评草稿' }).click()
-    await expect(page.getByTestId('scope-header')).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeVisible()
 
     await page.goto('/capability/assessment/history')
     const snapshot = page.locator('[data-testid^="history-snapshot-"]').first()

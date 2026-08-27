@@ -29,7 +29,7 @@ async function mockMemberAuth(page: Page) {
   })
 }
 
-test('Issue #52 growth-goals route redirects to the annual plan page', async ({
+test('Issue #52 growth-goals route redirects to the M03 timeline', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -41,8 +41,11 @@ test('Issue #52 growth-goals route redirects to the annual plan page', async ({
   await loginAs(page, 'member')
   await page.goto('/growth/goals')
   await expect(
-    page.getByRole('heading', { name: '年度成长计划', exact: true }),
+    page.getByRole('heading', { name: '月度计划时间轴', exact: true }),
   ).toBeVisible()
+  const taskList = page.getByRole('link', { name: '查看任务列表' })
+  await expect(taskList).toHaveAttribute('href', /\/growth\/tasks\?year=\d+$/)
+  await expect(taskList).not.toHaveAttribute('href', /task_id=/)
 })
 
 test('Issue #52 learning resources show L2 and L3 context at 1440x900', async ({
