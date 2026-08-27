@@ -1367,7 +1367,7 @@ export function AssessmentGapPage() {
                                     已加入后的计划草稿中出现，避免挤占默认能力行。 */}
                                 <div className={s.planZone}>
                                   {/* M02 V1 单动作加入/移出 */}
-                                  {gap === 0 ? (
+                                  {!applicable ? null : gap === 0 ? (
                                     <span className="muted">无需提升</span>
                                   ) : (
                                     <button

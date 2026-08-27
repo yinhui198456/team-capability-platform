@@ -739,6 +739,9 @@ describe('AssessmentGapPage', () => {
         name: /P01/,
       }).textContent,
     ).toContain('1/1')
+    expect(
+      screen.queryByRole('button', { name: '加入提升计划 P01.01.02' }),
+    ).toBeNull()
     expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
   })
 

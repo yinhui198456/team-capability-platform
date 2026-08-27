@@ -4,8 +4,8 @@ import { loginAs } from '../fixtures/auth'
 
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
-  { name: '1920x1080', width: 1920, height: 1080 },
-  { name: '1280x800', width: 1280, height: 800 },
+  { name: '1024x768', width: 1024, height: 768 },
+  { name: '768x900', width: 768, height: 900 },
 ] as const
 
 for (const viewport of VIEWPORTS) {
@@ -46,19 +46,69 @@ for (const viewport of VIEWPORTS) {
     })
 
     test('M04 enters M05 with the task identity chain', async ({ page }) => {
-      await page.goto('/growth/tasks?year=2026&month=7')
+      const tasksResponse = await page.request.get(
+        '/api/planning/learning-tasks?year=2026',
+      )
+      expect(tasksResponse.ok()).toBeTruthy()
+      const tasks = (await tasksResponse.json()) as Array<{
+        id: number
+        plan_item_id: number
+        l3_code: string
+        status: string
+        plan_item_target_month: number | null
+        plan_item_plan_month: string | null
+      }>
+      const seededTask = tasks.find(
+        (candidate) =>
+          candidate.plan_item_target_month != null ||
+          candidate.plan_item_plan_month != null,
+      )
+      expect(seededTask).toBeDefined()
+      const month =
+        seededTask!.plan_item_target_month ??
+        Number(seededTask!.plan_item_plan_month!.slice(-2))
+      const search = new URLSearchParams({
+        year: '2026',
+        month: String(month),
+        search: seededTask!.l3_code,
+        status: seededTask!.status,
+      })
+      await page.goto(`/growth/tasks?${search}`)
       await expect(
         page.getByRole('heading', { name: '学习任务' }),
       ).toBeVisible()
       const task = page.getByRole('link', { name: '进入任务' }).first()
       await expect(task).toBeVisible()
       await task.click()
-      await expect(page).toHaveURL(
-        /\/growth\/tasks\/\d+\?year=2026&month=\d+&.*l3_code=.*plan_item_id=\d+.*task_id=\d+/,
+      const detailUrl = new URL(page.url())
+      expect(detailUrl.pathname).toBe(`/growth/tasks/${seededTask!.id}`)
+      expect(detailUrl.searchParams.get('year')).toBe('2026')
+      expect(detailUrl.searchParams.get('month')).toBe(String(month))
+      expect(detailUrl.searchParams.get('search')).toBe(seededTask!.l3_code)
+      expect(detailUrl.searchParams.get('status')).toBe(seededTask!.status)
+      expect(detailUrl.searchParams.get('l3_code')).toBe(seededTask!.l3_code)
+      expect(detailUrl.searchParams.get('plan_item_id')).toBe(
+        String(seededTask!.plan_item_id),
       )
+      expect(detailUrl.searchParams.get('task_id')).toBe(String(seededTask!.id))
       await expect(
         page.getByRole('heading', { name: '任务概览' }),
       ).toBeVisible()
+      const back = new URL(
+        (await page
+          .getByRole('link', { name: '学习任务' })
+          .getAttribute('href')) ?? '',
+        page.url(),
+      )
+      expect(back.searchParams.get('year')).toBe('2026')
+      expect(back.searchParams.get('month')).toBe(String(month))
+      expect(back.searchParams.get('search')).toBe(seededTask!.l3_code)
+      expect(back.searchParams.get('status')).toBe(seededTask!.status)
+      expect(back.searchParams.get('l3_code')).toBe(seededTask!.l3_code)
+      expect(back.searchParams.get('plan_item_id')).toBe(
+        String(seededTask!.plan_item_id),
+      )
+      expect(back.searchParams.get('task_id')).toBe(String(seededTask!.id))
     })
   })
 }
