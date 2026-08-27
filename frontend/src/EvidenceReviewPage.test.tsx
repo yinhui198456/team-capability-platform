@@ -138,9 +138,7 @@ describe('EvidenceReviewPage — standalone Buddy evidence queue', () => {
       document.querySelector('.evidence-review-page .eyebrow')?.textContent,
     ).toBe('导师指导')
     expect(
-      screen.getByText(
-        '筛选成员、处理成果验收队列并留下反馈；不审核评级或计划。',
-      ),
+      screen.getByText('处理成果验收队列并留下反馈；不审核评级或计划。'),
     ).toBeTruthy()
     const historyButton = screen.getByRole('button', { name: '查看历史反馈' })
     expect(

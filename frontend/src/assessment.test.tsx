@@ -339,6 +339,60 @@ describe('AssessmentGapPage', () => {
     expect(screen.getByRole('button', { name: /C01\.01/ })).toBeTruthy()
   })
 
+  it.each([
+    ['smooth', false],
+    ['instant', true],
+  ])(
+    'uses %s scrolling when reduced motion is %s',
+    async (behavior, reducedMotion) => {
+      const scrollIntoView = vi.fn()
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLElement.prototype,
+        'scrollIntoView',
+      )
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: scrollIntoView,
+      })
+      vi.stubGlobal(
+        'matchMedia',
+        vi.fn(() => ({ matches: reducedMotion })),
+      )
+      try {
+        vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+          { ...mockDraft(), details: undefined },
+        ])
+        vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(mockDraft())
+        render(
+          <MemoryRouter initialEntries={['/capability/assessment']}>
+            <App />
+          </MemoryRouter>,
+        )
+        const search = await screen.findByLabelText('搜索全部能力项')
+        fireEvent.change(search, { target: { value: '数据管道' } })
+        fireEvent.click(screen.getByRole('option', { name: /数据管道/ }))
+        await waitFor(() =>
+          expect(scrollIntoView).toHaveBeenCalledWith({
+            behavior,
+            block: 'center',
+          }),
+        )
+      } finally {
+        vi.unstubAllGlobals()
+        if (descriptor) {
+          Object.defineProperty(
+            HTMLElement.prototype,
+            'scrollIntoView',
+            descriptor,
+          )
+        } else {
+          delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+            .scrollIntoView
+        }
+      }
+    },
+  )
+
   it('sticky bar shows only the prototype draft span and the two actions', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },

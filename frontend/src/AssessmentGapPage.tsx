@@ -792,7 +792,13 @@ export function AssessmentGapPage() {
       const row = document.getElementById(
         `row-${detail.id}`,
       ) as HTMLElement | null
-      row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+      row?.scrollIntoView?.({
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')
+          .matches
+          ? 'instant'
+          : 'smooth',
+        block: 'center',
+      })
       row?.focus()
     }, 50)
   }

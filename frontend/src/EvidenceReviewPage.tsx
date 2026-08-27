@@ -237,7 +237,7 @@ export function EvidenceReviewPage() {
           <p className="eyebrow">导师指导</p>
           <h1>成果验收</h1>
           <p className="muted">
-            筛选成员、处理成果验收队列并留下反馈；不审核评级或计划。
+            处理成果验收队列并留下反馈；不审核评级或计划。
           </p>
         </div>
         <button
