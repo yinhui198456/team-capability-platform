@@ -140,6 +140,14 @@ for (const viewport of VIEWPORTS) {
         page.getByRole('heading', { name: '成长档案', level: 1 }),
       ).toBeVisible()
       await page.getByLabel('查看成员').click()
+      await expect(page.getByText('成果验收', { exact: true })).toHaveCount(1)
+      await expect(
+        page.getByText('Buddy 复核中心', { exact: true }),
+      ).toHaveCount(0)
+      await expect(page.getByText('待验收成果', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('已归档任务成果证明')).toBeVisible()
+      await expect(page.getByText('任务完成后归档的已通过记录')).toBeVisible()
+      await expect(page.getByText('任务成果证明 统计')).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page).toHaveScreenshot(
         `ui-06-growth-profile-buddy-selector-${viewport.name}.png`,
