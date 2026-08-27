@@ -301,7 +301,7 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await expect(page.getByText(/P4 标准/).first()).toBeVisible()
   })
 
-  test('legacy assessment without scope keeps applicable filtering and shows unclassified hint', async ({
+  test('legacy assessment preserves M02 denominator and history isolation', async ({
     page,
   }) => {
     const cookie = await adminCookie(page)
@@ -397,16 +397,12 @@ test.describe('Issue #60 assessment scope snapshots', () => {
     await loginUser(page, username)
     await page.goto('/capability/assessment')
 
-    // not-applicable legacy detail stays out of the progress denominator
-    await expect(page.getByText(/0\/1(?!\d)/).first()).toBeVisible()
-
-    // scope filter shows the unclassified hint instead of fabricated groups
-    await page.getByTestId('scope-filter').selectOption('current_required')
-    await expect(page.getByTestId('legacy-scope-hint')).toContainText(
-      '历史评估未按范围分类，必备/进阶筛选不可用',
-    )
-    await expect(page.getByText('历史路径')).toHaveCount(0)
-    await page.getByTestId('scope-filter').selectOption('全部')
+    // Not-applicable legacy detail stays out of the M02 denominator.
+    await expect(page.getByLabel('评估摘要')).toContainText('三级能力项 1')
+    await expect(page.getByTestId('scope-filter')).toHaveCount(0)
+    await expect(
+      page.getByRole('navigation', { name: '一级能力域导航' }),
+    ).toBeVisible()
     await expect(page.getByText('历史路径').first()).toBeVisible()
 
     // history renders the missing-snapshot label without fabricating values

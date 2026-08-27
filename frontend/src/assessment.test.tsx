@@ -715,6 +715,9 @@ describe('AssessmentGapPage', () => {
           target_level: null,
           standard_target_applicable: false,
           standard_target_level: null,
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-05',
           l2_code: 'P01.01',
           l2_name: '数据基础',
         },
@@ -742,6 +745,8 @@ describe('AssessmentGapPage', () => {
     expect(
       screen.queryByRole('button', { name: '加入提升计划 P01.01.02' }),
     ).toBeNull()
+    expect(screen.queryByLabelText('优先级 P01.01.02')).toBeNull()
+    expect(screen.queryByLabelText('计划月份 P01.01.02')).toBeNull()
     expect(screen.queryByRole('button', { name: '定位未完成' })).toBeNull()
   })
 

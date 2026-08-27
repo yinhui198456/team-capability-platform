@@ -1268,7 +1268,8 @@ export function AssessmentGapPage() {
                             // Conditional enable for priority + plan checkboxes
                             const canPlan =
                               hasGap && detail.member_priority !== '暂缓'
-                            const showPlanTime = detail.include_in_plan === true
+                            const showPlanTime =
+                              applicable && detail.include_in_plan === true
                             return (
                               <div
                                 key={detail.id}
