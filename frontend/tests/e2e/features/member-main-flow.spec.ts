@@ -25,10 +25,10 @@ test.describe('Member main flow', () => {
       new RegExp(`/capability/assessment\\?year=${year}`),
     )
 
-    // 3. M03 月度计划时间轴
+    // 3. M03 年度成长旅程
     await page.getByRole('link', { name: '年度成长计划' }).click()
     await expect(
-      page.getByRole('heading', { name: '月度计划时间轴' }),
+      page.getByRole('heading', { name: `${year} 年度成长旅程`, level: 1 }),
     ).toBeVisible()
     await expect(page).toHaveURL(
       new RegExp(`/growth/annual-plan\\?year=${year}`),
@@ -55,12 +55,12 @@ test.describe('Issue #52 L2/L3 cross-page read-only path', () => {
     // #62: the legacy growth-goals route redirects to the annual plan page
     await page.goto('/growth/goals')
     await expect(
-      page.getByRole('heading', { name: '月度计划时间轴' }),
+      page.getByRole('heading', { name: /^\d{4} 年度成长旅程$/, level: 1 }),
     ).toBeVisible()
 
     await page.goto('/growth/annual-plan')
     await expect(
-      page.getByRole('heading', { name: '月度计划时间轴' }),
+      page.getByRole('heading', { name: /^\d{4} 年度成长旅程$/, level: 1 }),
     ).toBeVisible()
 
     await page.goto('/growth/profile')

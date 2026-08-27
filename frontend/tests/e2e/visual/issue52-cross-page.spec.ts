@@ -41,7 +41,7 @@ test('Issue #52 growth-goals route redirects to the M03 timeline', async ({
   await loginAs(page, 'member')
   await page.goto('/growth/goals')
   await expect(
-    page.getByRole('heading', { name: '月度计划时间轴', exact: true }),
+    page.getByRole('heading', { name: /^\d{4} 年度成长旅程$/, level: 1 }),
   ).toBeVisible()
   const taskList = page.getByRole('link', { name: '查看任务列表' })
   await expect(taskList).toHaveAttribute('href', /\/growth\/tasks\?year=\d+$/)

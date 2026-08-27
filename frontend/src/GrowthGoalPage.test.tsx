@@ -32,7 +32,10 @@ describe('GrowthGoalPage route', () => {
     )
     await waitFor(() => {
       expect(
-        screen.getByRole('heading', { name: '月度计划时间轴' }),
+        screen.getByRole('heading', {
+          name: `${new Date().getFullYear()} 年度成长旅程`,
+          level: 1,
+        }),
       ).toBeTruthy()
     })
   })

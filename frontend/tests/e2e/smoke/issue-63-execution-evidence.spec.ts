@@ -824,7 +824,7 @@ test('E2E-63-05 三视口：Member 计划页与 Buddy 验收页无横向溢出�
     await page.setViewportSize(viewport)
     await page.goto(`/growth/annual-plan?year=${year}&month=5`)
     await expect(
-      page.getByRole('heading', { name: '月度计划时间轴' }),
+      page.getByRole('heading', { name: `${year} 年度成长旅程`, level: 1 }),
     ).toBeVisible()
     await expect(page.getByText(seed.l3Code).first()).toBeVisible()
     await expectNoHorizontalOverflow()
