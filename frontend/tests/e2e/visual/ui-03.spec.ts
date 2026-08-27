@@ -96,6 +96,8 @@ for (const viewport of VIEWPORTS) {
       ).toBeVisible()
       const back = new URL(
         (await page
+          .locator('section.page')
+          .filter({ has: page.getByRole('heading', { name: '任务概览' }) })
           .getByRole('link', { name: '学习任务' })
           .getAttribute('href')) ?? '',
         page.url(),

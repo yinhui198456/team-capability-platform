@@ -324,8 +324,7 @@ test.describe('capability standard targets', () => {
     const okRow = page.locator('#row-1')
     await okRow
       .getByLabel('当前等级 P01.01.01')
-      .getByRole('button')
-      .nth(2)
+      .getByRole('button', { name: '3 · 熟练' })
       .click()
     await page.getByRole('button', { name: '保存能力评级' }).click()
 
