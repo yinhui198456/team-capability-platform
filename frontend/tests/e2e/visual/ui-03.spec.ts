@@ -17,7 +17,10 @@ for (const viewport of VIEWPORTS) {
       // future-year smoke drafts.
       await page.goto('/growth/annual-plan?year=2026')
       await expect(
-        page.getByRole('heading', { name: '月度计划时间轴' }),
+        page.getByRole('heading', {
+          name: '2026 年度成长旅程',
+          level: 1,
+        }),
       ).toBeVisible()
       await expect(page.getByLabel('年度任务时间轴')).toBeVisible()
     })

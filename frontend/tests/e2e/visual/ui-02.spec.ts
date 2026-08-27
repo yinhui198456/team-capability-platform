@@ -70,12 +70,20 @@ for (const viewport of VIEWPORTS) {
         page.getByRole('combobox', { name: '搜索全部能力项' }),
       ).toBeVisible()
       await expect(
-        page.getByRole('button', { name: '保存能力评级' }),
+        page
+          .getByRole('heading', { name: '能力评级与提升计划' })
+          .locator('xpath=ancestor::header')
+          .getByRole('button', { name: '保存能力评级' }),
       ).toBeVisible()
       await expect(
         page.getByRole('button', { name: '生成所选学习任务' }),
       ).toBeVisible()
-      await expect(page.getByLabel('计划草稿操作')).toBeVisible()
+      const draftActions = page.getByLabel('计划草稿操作')
+      await expect(draftActions).toBeVisible()
+      await expect(draftActions.getByRole('button')).toHaveCount(1)
+      await expect(
+        draftActions.getByRole('button', { name: '生成所选学习任务' }),
+      ).toBeVisible()
       await expect(page.getByText(/Assessment Review/)).toHaveCount(0)
 
       await domainNav.getByRole('button', { name: '全部能力域' }).focus()
@@ -95,6 +103,23 @@ for (const viewport of VIEWPORTS) {
 
       const table = page.getByTestId('assessment-table')
       await expect(table).toBeVisible()
+      if (viewport.name === '1440x900') {
+        const capacity = await page.evaluate(() => {
+          const main = document.querySelector(
+            '[data-testid="assessment-main-area"]',
+          )
+          const firstRow = main?.querySelector<HTMLElement>('[id^="row-"]')
+          if (!main || !firstRow) return null
+          const mainRect = main.getBoundingClientRect()
+          const rowRect = firstRow.getBoundingClientRect()
+          return {
+            available: mainRect.bottom - rowRect.top,
+            sixRows: rowRect.height * 6,
+          }
+        })
+        expect(capacity).not.toBeNull()
+        expect(capacity!.sixRows).toBeLessThanOrEqual(capacity!.available + 1)
+      }
       const initialRow = table
         .locator('[id^="row-"]')
         .filter({ has: page.locator('button[aria-label^="加入提升计划 "]') })
@@ -209,7 +234,7 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
 
   await page.goto('/growth/annual-plan?year=2026')
   await expect(
-    page.getByRole('heading', { name: '月度计划时间轴' }),
+    page.getByRole('heading', { name: '2026 年度成长旅程', level: 1 }),
   ).toBeVisible()
   await page.goBack()
   await expect(

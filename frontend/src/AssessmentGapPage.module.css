@@ -115,8 +115,8 @@
 }
 .abilityRow {
   position: relative;
-  min-height: 92px;
-  padding: 12px 16px;
+  min-height: 72px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--color-gray-50);
   overflow-wrap: anywhere;
 }

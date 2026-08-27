@@ -79,7 +79,7 @@ export function AnnualPlanTimelinePage() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">我的计划</p>
-          <h1>月度计划时间轴</h1>
+          <h1>{year} 年度成长旅程</h1>
           <p className="muted">按月推进学习任务，持续提升能力。</p>
         </div>
         <Link className="primary-link" to={`/growth/tasks?${taskListQuery}`}>

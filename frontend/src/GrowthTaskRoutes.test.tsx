@@ -248,6 +248,12 @@ describe('S2 approved M03–M05 routes', () => {
       </MemoryRouter>,
     )
     expect(
+      await screen.findByRole('heading', {
+        name: '2026 年度成长旅程',
+        level: 1,
+      }),
+    ).toBeTruthy()
+    expect(
       await screen.findByText('按月推进学习任务，持续提升能力。'),
     ).toBeTruthy()
     expect(

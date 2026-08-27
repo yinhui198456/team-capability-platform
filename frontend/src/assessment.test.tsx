@@ -393,7 +393,7 @@ describe('AssessmentGapPage', () => {
     },
   )
 
-  it('sticky bar shows only the prototype draft span and the two actions', async () => {
+  it('keeps rating save in the header and the sticky bar to draft generation', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -421,7 +421,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
     // Issue #194: 原型底部只有「计划草稿：已选 N 项 · 月份状态」一条状态
-    // 与两个独立动作；未完成/未填优先级/待补月份/未决定等额外统计层移除。
+    // 与页头评级保存和页底显式生成；未完成/未填优先级/待补月份/未决定等额外统计层移除。
     expect(screen.getByText(/计划草稿：已选 1 项/)).toBeTruthy()
     expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
     expect(
@@ -1004,15 +1004,15 @@ describe('AssessmentGapPage', () => {
     expect(detail).not.toHaveProperty('target_adjusted')
     expect(detail).not.toHaveProperty('adjusted_target_level')
     expect(detail).not.toHaveProperty('target_adjustment_reason')
-    // Issue #194 P1：保存能力评级与保存提升计划草稿是两个独立动作，
+    // Issue #194 P1：保存能力评级与提升计划草稿自动保存是两个独立动作，
     // 评级保存（稀疏 PATCH）绝不夹带计划字段；计划草稿由
-    // 「保存提升计划草稿」动作单独提交。
+    // 计划字段由自动保存单独提交。
     expect(detail).not.toHaveProperty('member_priority')
     expect(detail).not.toHaveProperty('include_in_plan')
     expect(detail).not.toHaveProperty('plan_month')
   })
 
-  it('M02 prototype keeps save status in the header and places rating save before generation in the footer', async () => {
+  it('M02 keeps partial rating save beside its status and leaves the footer to generation', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1024,34 +1024,51 @@ describe('AssessmentGapPage', () => {
     })
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
-    vi.spyOn(assessmentApi, 'saveDraft').mockResolvedValue({ ok: true })
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockResolvedValue({ ok: true })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
       </MemoryRouter>,
     )
     await screen.findByText('能力评级与提升计划')
+    const header = screen
+      .getByRole('heading', { name: '能力评级与提升计划' })
+      .closest('header')
     const footer = screen.getByRole('contentinfo', { name: '计划草稿操作' })
+    expect(header).toBeTruthy()
     expect(
-      within(footer).getByRole('button', { name: '保存能力评级' }),
+      within(header!).getByRole('button', { name: '保存能力评级' }),
     ).toBeTruthy()
     expect(
       within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
     expect(
+      within(footer).queryByRole('button', { name: '保存能力评级' }),
+    ).toBeNull()
+    expect(
       Array.from(footer.querySelectorAll('button')).map(
         (button) => button.textContent,
       ),
-    ).toEqual(['保存能力评级', '生成所选学习任务'])
+    ).toEqual(['生成所选学习任务'])
     expect(
       screen
         .getByLabelText('评级保存状态')
-        .parentElement?.querySelector('button'),
-    ).toBeNull()
+        .parentElement?.querySelector('button')?.textContent,
+    ).toBe('保存能力评级')
     // M02 V1：无全局草稿保存按钮——计划草稿随行内变更自动保存。
     expect(
       screen.queryByRole('button', { name: '保存提升计划草稿' }),
     ).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    fireEvent.click(
+      within(header!).getByRole('button', { name: '保存能力评级' }),
+    )
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ current_level: 3 }),
+    ])
   })
 
   it('A1 shows rating save state', async () => {
@@ -2292,7 +2309,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the prototype header, five metrics, toolbar and two bottom actions', async () => {
+  it('renders the prototype header, five metrics, toolbar and bottom generation action', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -2404,14 +2421,14 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(
       within(planZone).getByTestId('plan-month-control-P01.01.01'),
     ).toBeTruthy()
-    // 页底按 M02 原型顺序承载草稿摘要、评级保存与显式生成。
+    // 页底按 A1 原型顺序仅承载草稿摘要与显式生成。
     expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
-    expect(
-      within(footer).getByRole('button', { name: '保存能力评级' }),
-    ).toBeTruthy()
     expect(
       within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
+    expect(
+      within(footer).queryByRole('button', { name: '保存能力评级' }),
+    ).toBeNull()
   })
 })
 
