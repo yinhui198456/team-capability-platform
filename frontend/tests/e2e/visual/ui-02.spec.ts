@@ -104,21 +104,30 @@ for (const viewport of VIEWPORTS) {
       const table = page.getByTestId('assessment-table')
       await expect(table).toBeVisible()
       if (viewport.name === '1440x900') {
-        const capacity = await page.evaluate(() => {
-          const main = document.querySelector(
+        const visibleRowCount = await page.evaluate(() => {
+          const main = document.querySelector<HTMLElement>(
             '[data-testid="assessment-main-area"]',
           )
-          const firstRow = main?.querySelector<HTMLElement>('[id^="row-"]')
-          if (!main || !firstRow) return null
+          if (!main) return null
           const mainRect = main.getBoundingClientRect()
-          const rowRect = firstRow.getBoundingClientRect()
-          return {
-            available: mainRect.bottom - rowRect.top,
-            sixRows: rowRect.height * 6,
-          }
+          const footer = document.querySelector<HTMLElement>(
+            '[aria-label="计划草稿操作"]',
+          )
+          const visibleTop = Math.max(0, mainRect.top)
+          const visibleBottom = Math.min(
+            window.innerHeight,
+            mainRect.bottom,
+            footer?.getBoundingClientRect().top ?? window.innerHeight,
+          )
+          return [...main.querySelectorAll<HTMLElement>('[id^="row-"]')].filter(
+            (row) => {
+              const rect = row.getBoundingClientRect()
+              return rect.top >= visibleTop && rect.bottom <= visibleBottom
+            },
+          ).length
         })
-        expect(capacity).not.toBeNull()
-        expect(capacity!.sixRows).toBeLessThanOrEqual(capacity!.available + 1)
+        expect(visibleRowCount).not.toBeNull()
+        expect(visibleRowCount).toBeGreaterThanOrEqual(6)
       }
       const initialRow = table
         .locator('[id^="row-"]')

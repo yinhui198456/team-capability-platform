@@ -267,7 +267,20 @@ export function AssessmentGapPage() {
     const firstL2 =
       value.l2_groups?.find((group) => group.l1_code === firstDomain)
         ?.l2_code ?? defaultL2(value.details ?? [], firstDomain)
-    if (firstL2) setExpandedL2(new Set([firstL2]))
+    const initiallyExpanded = new Set<string>()
+    let visibleItemCount = 0
+    for (const group of value.l2_groups ?? []) {
+      if (group.l1_code !== firstDomain || !group.l2_code || group.is_empty)
+        continue
+      initiallyExpanded.add(group.l2_code)
+      visibleItemCount += (value.details ?? []).filter(
+        (detail) =>
+          l1Of(detail) === firstDomain && l2Of(detail) === group.l2_code,
+      ).length
+      if (visibleItemCount >= 6) break
+    }
+    if (firstL2 && initiallyExpanded.size === 0) initiallyExpanded.add(firstL2)
+    if (initiallyExpanded.size) setExpandedL2(initiallyExpanded)
   }
 
   // detailsRef 的同步镜像：updateDetail 在变更时刻立即写入（保证行快照

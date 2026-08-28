@@ -135,6 +135,67 @@ describe('AssessmentGapPage', () => {
     ])
   })
 
+  it('initially expands the next L2 group when the first has only five items', async () => {
+    const firstGroup = Array.from({ length: 5 }, (_, index) => ({
+      ...mockDraft().details![0],
+      id: index + 1,
+      l3_code: `P01.01.0${index + 1}`,
+      l3_name: `第一组能力项 ${index + 1}`,
+      l1_code: 'P01',
+      l2_code: 'P01.01',
+      l2_name: '第一分组',
+    }))
+    const sixthItem = {
+      ...mockDraft().details![0],
+      id: 6,
+      l3_code: 'P01.02.01',
+      l3_name: '第六项',
+      l1_code: 'P01',
+      l2_code: 'P01.02',
+      l2_name: '第二分组',
+    }
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...mockDraft(), details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(
+      mockDraft({
+        details: [...firstGroup, sixthItem],
+        l2_groups: [
+          {
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            l2_code: 'P01.01',
+            l2_name: '第一分组',
+            l3_count: 5,
+            is_empty: false,
+            details: firstGroup,
+          },
+          {
+            l1_code: 'P01',
+            l1_name: '数据基础设施',
+            l2_code: 'P01.02',
+            l2_name: '第二分组',
+            l3_count: 1,
+            is_empty: false,
+            details: [sixthItem],
+          },
+        ],
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('第六项')).toBeTruthy()
+    expect(
+      screen
+        .getByRole('button', { name: '▾ P01.02 · 第二分组' })
+        .getAttribute('aria-expanded'),
+    ).toBe('true')
+  })
+
   it('0 and 5 are offered as per-level rating buttons', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },

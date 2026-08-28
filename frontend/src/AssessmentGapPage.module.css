@@ -665,6 +665,29 @@
   color: var(--text-secondary, #888);
 }
 
+@media (min-width: 1101px) {
+  .domainGroup {
+    margin-bottom: var(--space-2);
+  }
+  .domainHeader {
+    padding: var(--space-2) var(--space-4);
+  }
+  .abilityHead,
+  .abilityRow {
+    grid-template-columns:
+      minmax(220px, 1fr) minmax(320px, 1.65fr) minmax(128px, 0.62fr)
+      minmax(240px, 0.9fr);
+    gap: 12px;
+  }
+  .abilityHead {
+    min-height: 30px;
+  }
+  .abilityRow {
+    min-height: 48px;
+    padding-block: 0;
+  }
+}
+
 @media (max-width: 1280px) {
   .contentArea .compact-summary {
     min-height: 24px;
