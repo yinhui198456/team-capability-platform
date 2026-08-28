@@ -9,10 +9,11 @@ import { LoginPage } from './LoginPage'
 import { MemberDashboardPage } from './MemberDashboardPage'
 import { AssessmentGapPage } from './AssessmentGapPage'
 import { AssessmentHistoryPage } from './AssessmentHistoryPage'
-import { AnnualPlanTaskPage } from './AnnualPlanTaskPage'
+import { AnnualPlanTimelinePage } from './AnnualPlanTimelinePage'
+import { TaskListPage } from './TaskListPage'
+import { TaskDetailPage } from './TaskDetailPage'
 import { ProfilePage } from './ProfilePage'
 import { MonthlyReviewPage } from './MonthlyReviewPage'
-import { BuddyReviewCenter } from './BuddyReviewCenter'
 import { EvidenceReviewPage } from './EvidenceReviewPage'
 import { CapabilityModelPage } from './CapabilityModelPage'
 import { CapabilityStandardVersionsPage } from './CapabilityStandardVersionsPage'
@@ -68,10 +69,6 @@ export function App() {
 
         {/* Legacy redirects */}
         <Route
-          path="/growth/tasks"
-          element={<Navigate to="/growth/annual-plan" replace />}
-        />
-        <Route
           path="/mentoring/assessment-review"
           element={<Navigate to="/mentoring/dashboard" replace />}
         />
@@ -100,13 +97,21 @@ export function App() {
             path="/growth/goals"
             element={<Navigate to="/growth/annual-plan" replace />}
           />
-          <Route path="/growth/annual-plan" element={<AnnualPlanTaskPage />} />
+          <Route
+            path="/growth/annual-plan"
+            element={<AnnualPlanTimelinePage />}
+          />
+          <Route path="/growth/tasks" element={<TaskListPage />} />
+          <Route path="/growth/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/growth/profile" element={<ProfilePage />} />
           <Route
             path="/growth/review/monthly"
             element={<MonthlyReviewPage />}
           />
-          <Route path="/mentoring/dashboard" element={<BuddyReviewCenter />} />
+          <Route
+            path="/mentoring/dashboard"
+            element={<Navigate to="/mentoring/evidence-review" replace />}
+          />
           <Route
             path="/mentoring/evidence-review"
             element={

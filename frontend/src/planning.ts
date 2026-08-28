@@ -74,6 +74,11 @@ export type PlanItemStatus =
 export type LearningTaskStatus =
   '未开始' | '进行中' | '已完成' | '延期' | '暂停' | '取消'
 
+/** Keep the persisted status value while using the approved task-flow copy. */
+export function learningTaskStatusLabel(status: LearningTaskStatus): string {
+  return status === '延期' ? '逾期' : status
+}
+
 export const TASK_TRANSITIONS: Record<
   LearningTaskStatus,
   LearningTaskStatus[]
@@ -171,7 +176,43 @@ export type LearningTask = CapabilityContext & {
   plan_item_expected_output: string | null
   plan_item_estimated_hours: string | null
   plan_item_estimated_hours_parsed?: EstimatedHours
+  plan_item_plan_month?: string | null
   plan_item_target_month?: number | null
+  effective_requirement?: RequirementSnapshot | null
+  requirement_change?: RequirementChange | null
+}
+
+export function learningTaskMonth(task: LearningTask): number | null {
+  if (task.plan_item_target_month != null) return task.plan_item_target_month
+  const match = task.plan_item_plan_month?.match(/^\d{4}-(\d{2})$/)
+  return match ? Number(match[1]) : null
+}
+
+export function learningTaskProgress(task: LearningTask): number | null {
+  if (task.status === '已完成') return 100
+  const hours = task.plan_item_estimated_hours_parsed
+  return hours?.is_valid && !hours.is_range && (hours.min_hours ?? 0) > 0
+    ? Math.min(100, Math.round((task.actual_hours / hours.min_hours!) * 100))
+    : null
+}
+
+export type RequirementSnapshot = {
+  snapshot_id: number
+  expected_output: string | null
+  output_type: string | null
+  notes: string | null
+}
+export type RequirementChange = {
+  proposal_detail_id: number
+  new_snapshot_id: number
+  current_snapshot_id: number
+  current: Omit<RequirementSnapshot, 'snapshot_id'>
+  proposed: Omit<RequirementSnapshot, 'snapshot_id'>
+  decision: {
+    choice: 'adopt_new' | 'continue_current'
+    revision: number
+    selected_snapshot_id: number
+  } | null
 }
 
 export type MemberDashboardAssessmentStatus =
@@ -472,8 +513,11 @@ export async function updatePlanItem(
   )
 }
 
-export async function listLearningTasks(): Promise<LearningTask[]> {
-  return request<LearningTask[]>('/api/planning/learning-tasks', {
+export async function listLearningTasks(
+  year?: number,
+): Promise<LearningTask[]> {
+  const query = year === undefined ? '' : `?year=${year}`
+  return request<LearningTask[]>(`/api/planning/learning-tasks${query}`, {
     method: 'GET',
   })
 }
@@ -482,6 +526,19 @@ export async function getLearningTask(task_id: number): Promise<LearningTask> {
   return request<LearningTask>(`/api/planning/learning-tasks/${task_id}`, {
     method: 'GET',
   })
+}
+
+export async function decideTaskRequirement(
+  task_id: number,
+  proposal_detail_id: number,
+  choice: 'adopt_new' | 'continue_current',
+  expected_revision: number,
+): Promise<RequirementChange> {
+  return request<RequirementChange>(
+    `/api/planning/learning-tasks/${task_id}/requirement-decision`,
+    { method: 'PUT' },
+    { proposal_detail_id, choice, expected_revision },
+  )
 }
 
 // Append-only progress log.  Rows are voided (invalidated_at) or corrected
@@ -754,6 +811,18 @@ export type EvidenceReviewConclusion = '通过' | '需补充'
 export type PendingEvidenceReview = Evidence & {
   member_id: number
   username: string
+  is_resubmission?: boolean
+}
+
+export type EvidenceReviewWorkspace = {
+  summary: {
+    pending_count: number
+    needs_supplement_count: number
+    approved_this_month_count: number
+    average_response_days: number | null
+  }
+  members: Array<{ id: number; username: string; pending_count: number }>
+  queue: PendingEvidenceReview[]
 }
 
 // The immutable review history for a task: one closed row per evidence version.
@@ -903,6 +972,16 @@ export async function listPendingEvidenceReviews(): Promise<
     {
       method: 'GET',
     },
+  )
+}
+
+export async function getEvidenceReviewWorkspace(
+  member_id?: number,
+): Promise<EvidenceReviewWorkspace> {
+  const suffix = member_id === undefined ? '' : `?member_id=${member_id}`
+  return request<EvidenceReviewWorkspace>(
+    `/api/planning/evidence-reviews/workspace${suffix}`,
+    { method: 'GET' },
   )
 }
 

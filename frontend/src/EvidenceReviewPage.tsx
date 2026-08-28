@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  FiActivity,
+  FiCheckCircle,
+  FiClock,
+  FiMessageSquare,
+} from 'react-icons/fi'
 
 import {
   listEvidenceReviewsForTask,
-  listPendingEvidenceReviews,
+  getEvidenceReviewWorkspace,
   parseApiErrorDetail,
   submitEvidenceReview,
   type EvidenceReviewConclusion,
   type EvidenceReviewRecord,
+  type EvidenceReviewWorkspace,
   type PendingEvidenceReview,
 } from './planning'
 import type { ApiError } from './shared/api'
@@ -20,16 +27,15 @@ function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString('zh-CN')
 }
 
-function capabilityPath(ev: PendingEvidenceReview): string {
-  const l2 = ev.l2_name
-    ? `${ev.l2_code ?? '未映射'} · ${ev.l2_name}`
-    : (ev.l2_code ?? '未映射')
-  const l3 = ev.l3_name ? `${ev.l3_code} · ${ev.l3_name}` : ev.l3_code
-  return `${l2} → ${l3}`
+function taskTitle(ev: PendingEvidenceReview): string {
+  return ev.l3_name || ev.l3_code
 }
 
 export function EvidenceReviewPage() {
   const [queue, setQueue] = useState<PendingEvidenceReview[]>([])
+  const [workspace, setWorkspace] = useState<EvidenceReviewWorkspace | null>(
+    null,
+  )
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [history, setHistory] = useState<EvidenceReviewRecord[]>([])
   const [conclusion, setConclusion] = useState<EvidenceReviewConclusion | ''>(
@@ -49,23 +55,26 @@ export function EvidenceReviewPage() {
   // silently retargeted to whatever happens to be first afterwards — a
   // conflict that removes the item must end the form, not re-target it.
   const selected = queue.find((ev) => ev.id === selectedId) ?? null
+  const selectedTaskId = selected?.learning_task_id
 
-  async function loadQueue() {
-    const list = await listPendingEvidenceReviews()
-    setQueue(list)
-    return list
+  async function loadWorkspace() {
+    const next = await getEvidenceReviewWorkspace()
+    setWorkspace(next)
+    setQueue(next.queue)
+    return next.queue
   }
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       try {
-        const list = await listPendingEvidenceReviews()
+        const next = await getEvidenceReviewWorkspace()
         if (!cancelled) {
-          setQueue(list)
+          setWorkspace(next)
+          setQueue(next.queue)
           // First load picks the first item; later refreshes (e.g. after a
           // conflict) never re-target a selection the user already made.
-          setSelectedId((prev) => prev ?? list[0]?.id ?? null)
+          setSelectedId((prev) => prev ?? next.queue[0]?.id ?? null)
         }
       } catch (err) {
         if (!cancelled) {
@@ -82,12 +91,12 @@ export function EvidenceReviewPage() {
   }, [])
 
   useEffect(() => {
-    if (!selected) {
+    if (selectedTaskId === undefined) {
       setHistory([])
       return
     }
     // Capture before the closure so the narrowed non-null value stays typed.
-    const taskId = selected.learning_task_id
+    const taskId = selectedTaskId
     let cancelled = false
     async function loadHistory() {
       try {
@@ -108,7 +117,7 @@ export function EvidenceReviewPage() {
     return () => {
       cancelled = true
     }
-  }, [selected?.id, selected?.learning_task_id])
+  }, [selectedId, selectedTaskId])
 
   function selectItem(id: number) {
     setSelectedId(id)
@@ -123,7 +132,11 @@ export function EvidenceReviewPage() {
   }
 
   async function handleSubmit() {
-    if (!selected || !conclusion) return
+    if (!selected) return
+    if (!conclusion) {
+      setError('请先选择“通过”或“需补充”，再提交验收结果。')
+      return
+    }
     if (conclusion === '需补充' && !feedback.trim()) {
       setError('需补充必须填写反馈。')
       return
@@ -153,16 +166,19 @@ export function EvidenceReviewPage() {
         idem.key,
       )
       idemRef.current = null
+      setSelectedId(null)
+      setConclusion('')
+      setFeedback('')
       setMessage(
         conclusion === '通过'
           ? '已通过，评审结论不可变更；任务成果证明已通过。'
           : '已要求补充，等待成员提交新版本。',
       )
-      const list = queue.filter((ev) => ev.id !== selected.id)
-      setQueue(list)
-      setSelectedId(null)
-      setConclusion('')
-      setFeedback('')
+      try {
+        await loadWorkspace()
+      } catch {
+        setError('评审已保存，但工作台刷新失败；请刷新页面后继续。')
+      }
     } catch (err) {
       const mapped = parseApiErrorDetail(err as ApiError)
       if (mapped.status === 403) {
@@ -177,7 +193,7 @@ export function EvidenceReviewPage() {
         idemRef.current = null
         const submittedId = selected.id
         try {
-          const refreshed = await loadQueue()
+          const refreshed = await loadWorkspace()
           if (!refreshed.some((ev) => ev.id === submittedId)) {
             setSelectedId(null)
             setConclusion('')
@@ -205,17 +221,77 @@ export function EvidenceReviewPage() {
 
   if (loading) return <p className="muted">加载中…</p>
 
+  function focusHistory() {
+    if (!selected) return
+    const historyTarget = document.getElementById(
+      `evidence-history-${selected.learning_task_id}`,
+    )
+    historyTarget?.scrollIntoView?.({ block: 'nearest' })
+    historyTarget?.focus()
+  }
+
   return (
     <section className="page evidence-review-page">
-      <header className="page-heading">
+      <header className="page-heading evidence-review-heading">
         <div>
-          <p className="eyebrow">Buddy 工作台 / 验收</p>
-          <h1>待验收成果</h1>
+          <p className="eyebrow">导师指导</p>
+          <h1>成果验收</h1>
           <p className="muted">
-            仅展示当前有效辅导关系下的待评审任务成果证明，与自评复核相互独立。
+            处理成果验收队列并留下反馈；不审核评级或计划。
           </p>
         </div>
+        <button
+          className="evidence-review-history-button"
+          disabled={!selected}
+          onClick={focusHistory}
+          title={selected ? undefined : '暂无待验收成果，无法查看历史反馈'}
+          type="button"
+        >
+          查看历史反馈
+        </button>
       </header>
+      <div className="dashboard-grid" aria-label="验收指标">
+        <article className="dashboard-card metric-card metric-card-warning">
+          <span aria-hidden="true" className="metric-icon">
+            <FiClock className="metric-card-icon" />
+          </span>
+          <div>
+            <span>待验收</span>
+            <strong>{workspace?.summary.pending_count ?? 0}</strong>
+          </div>
+        </article>
+        <article className="dashboard-card metric-card metric-card-danger">
+          <span aria-hidden="true" className="metric-icon">
+            <FiMessageSquare className="metric-card-icon" />
+          </span>
+          <div>
+            <span>需补充</span>
+            <strong>{workspace?.summary.needs_supplement_count ?? 0}</strong>
+          </div>
+        </article>
+        <article className="dashboard-card metric-card metric-card-success">
+          <span aria-hidden="true" className="metric-icon">
+            <FiCheckCircle className="metric-card-icon" />
+          </span>
+          <div>
+            <span>本月通过</span>
+            <strong>{workspace?.summary.approved_this_month_count ?? 0}</strong>
+          </div>
+        </article>
+        <article className="dashboard-card metric-card">
+          <span aria-hidden="true" className="metric-icon">
+            <FiActivity className="metric-card-icon" />
+          </span>
+          <div>
+            <span>平均响应</span>
+            <strong>
+              {workspace?.summary.average_response_days == null
+                ? '—'
+                : `${workspace.summary.average_response_days.toFixed(1)} 天`}
+            </strong>
+          </div>
+        </article>
+      </div>
       {message && (
         <p className="success" role="status">
           {message}
@@ -226,94 +302,88 @@ export function EvidenceReviewPage() {
           {error}
         </p>
       )}
-      {queue.length === 0 ? (
-        <p className="muted">暂无待验收成果。</p>
-      ) : (
-        <div className="buddy-review-layout">
-          <aside className="dashboard-card buddy-member-list">
-            <h2>待验收队列</h2>
-            {queue.map((ev) => (
+      <div className="buddy-review-layout evidence-review-layout">
+        <aside className="dashboard-card buddy-member-list evidence-review-queue">
+          <h2>待办队列</h2>
+          {queue.length === 0 ? (
+            <p className="muted">暂无待验收成果。</p>
+          ) : (
+            queue.map((ev) => (
               <button
                 className={selected?.id === ev.id ? 'active' : ''}
                 key={ev.id}
                 onClick={() => selectItem(ev.id)}
                 type="button"
               >
+                <span
+                  className={`status-pill ${
+                    ev.is_resubmission ? 'error' : 'warning'
+                  }`}
+                >
+                  {ev.is_resubmission ? '补充后重提' : '待验收'}
+                </span>
                 <strong>{ev.username ?? `成员 ${ev.member_id}`}</strong>
-                <span className="member-count">
-                  版本 {ev.version_number} · {ev.l3_code}
+                <span className="evidence-review-task">
+                  {ev.l3_name ?? ev.l3_code} · 版本 {ev.version_number}
                 </span>
               </button>
-            ))}
-          </aside>
+            ))
+          )}
+        </aside>
 
-          <article className="dashboard-card buddy-workspace">
-            <h2>验收工作区</h2>
-            {!selected ? (
+        <article
+          aria-label="验收工作区"
+          className="dashboard-card buddy-workspace evidence-review-workspace"
+        >
+          {!selected ? (
+            <>
+              <h2>验收工作区</h2>
               <p className="muted">选择一项待验收成果后查看依据和历史反馈。</p>
-            ) : (
-              <>
-                <p>
-                  <strong>
-                    {selected.username ?? `成员 ${selected.member_id}`}
-                  </strong>{' '}
-                  · {capabilityPath(selected)} · 任务成果证明 版本{' '}
-                  {selected.version_number} · 提交于{' '}
-                  {formatDateTime(selected.submitted_at)}
-                </p>
-                <div className="evidence-content">
-                  <h3>提交内容</h3>
-                  {selected.description && (
-                    <p className="muted">{selected.description}</p>
-                  )}
-                  <p>{selected.content || '未提供提交内容。'}</p>
-                  {selected.evidence_link && (
-                    <a
-                      href={selected.evidence_link}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      查看任务成果证明链接
-                    </a>
-                  )}
+            </>
+          ) : (
+            <>
+              <div className="evidence-review-title">
+                <div>
+                  <small>
+                    {selected.username ?? `成员 ${selected.member_id}`} ·{' '}
+                    {selected.l3_code}
+                  </small>
+                  <h2>{taskTitle(selected)}</h2>
                 </div>
-                <fieldset>
-                  <legend>评审结论</legend>
-                  {CONCLUSIONS.map((value) => (
-                    <label className="radio" key={value}>
-                      <input
-                        checked={conclusion === value}
-                        name="conclusion"
-                        onChange={() => setConclusion(value)}
-                        type="radio"
-                        value={value}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </fieldset>
-                <label>
-                  反馈
-                  <textarea
-                    onChange={(event) => setFeedback(event.target.value)}
-                    placeholder="请输入评审反馈"
-                    value={feedback}
-                  />
-                </label>
-                {conclusion === '需补充' && (
-                  <p className="muted">需补充必须填写反馈。</p>
+                <span className="status-pill status-待-Evidence-Review">
+                  成果 v{selected.version_number}
+                </span>
+              </div>
+              <div className="evidence-content evidence-review-preview">
+                <h3>
+                  {selected.description?.trim() ||
+                    selected.content?.trim() ||
+                    '未提供成果内容。'}
+                </h3>
+                {selected.description?.trim() && selected.content?.trim() && (
+                  <p className="muted">{selected.content}</p>
                 )}
-                <div className="actions">
-                  <button
-                    disabled={!conclusion || submitting}
-                    onClick={() => void handleSubmit()}
-                    type="button"
+                {selected.evidence_link && (
+                  <a
+                    href={selected.evidence_link}
+                    rel="noreferrer"
+                    target="_blank"
                   >
-                    提交评审结论
-                  </button>
-                </div>
-
-                <h3>历史版本与评审（只读）</h3>
+                    查看成果文件
+                  </a>
+                )}
+              </div>
+              <section
+                aria-labelledby={`evidence-history-${selected.learning_task_id}`}
+                className="evidence-review-history"
+              >
+                <h3
+                  id={`evidence-history-${selected.learning_task_id}`}
+                  tabIndex={-1}
+                >
+                  历史反馈
+                </h3>
+                <p className="muted">只读历史记录。</p>
                 {history.length === 0 ? (
                   <p className="muted">暂无历史评审记录。</p>
                 ) : (
@@ -331,11 +401,49 @@ export function EvidenceReviewPage() {
                     ))}
                   </ul>
                 )}
-              </>
-            )}
-          </article>
-        </div>
-      )}
+              </section>
+              <div
+                aria-label="评审结论"
+                className="decision-row evidence-review-decision-row"
+              >
+                {CONCLUSIONS.map((value) => (
+                  <button
+                    aria-pressed={conclusion === value}
+                    className="evidence-review-decision"
+                    data-conclusion={value}
+                    key={value}
+                    onClick={() => setConclusion(value)}
+                    type="button"
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+              <label className="evidence-review-feedback">
+                反馈建议
+                <textarea
+                  onChange={(event) => setFeedback(event.target.value)}
+                  placeholder="通过时可填写建议；需补充时请具体说明缺少什么。"
+                  value={feedback}
+                />
+              </label>
+              {conclusion === '需补充' && (
+                <p className="muted">需补充必须填写反馈。</p>
+              )}
+              <div className="actions">
+                <button
+                  className="evidence-review-submit-button"
+                  disabled={submitting}
+                  onClick={() => void handleSubmit()}
+                  type="button"
+                >
+                  提交验收结果
+                </button>
+              </div>
+            </>
+          )}
+        </article>
+      </div>
     </section>
   )
 }

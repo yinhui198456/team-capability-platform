@@ -259,27 +259,17 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+def _create_assessment_and_generate_plan_items(
+    connection: psycopg.Connection, username: str
+) -> int:
     desired_details = [
         {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        },
-        {
             "l3_code": "P01-L2A-L3B",
-            "current_level": 1,
-            "target_level": 3,
+            "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         },
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A", "P01-L2A-L3B"])
@@ -300,11 +290,11 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
         {"year": 2026, "scope_token": preview["scope_token"]},
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, body
     assert body is not None
     assessment_id = body["id"]
     status, body, _ = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": standard_target_payload(
@@ -317,30 +307,16 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     assert status == 200
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {
+            "l3_codes": [detail["l3_code"] for detail in desired_details],
+            "expected_revision": 2,
+        },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, body
+    assert body["created"] == [detail["l3_code"] for detail in desired_details]
     return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
 
 def test_legacy_generate_endpoint_blocked(
@@ -356,20 +332,19 @@ def test_legacy_generate_endpoint_blocked(
     assert body["detail"]["code"] == "legacy_planning_write_disabled"
 
 
-def test_approval_creates_plan_items_and_is_idempotent(
+def test_explicit_generation_creates_plan_items_and_is_idempotent(
     planning_schema: psycopg.Connection,
 ) -> None:
-    member_id = _create_test_user(planning_schema, "member_plan", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_plan", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
+    _create_test_user(planning_schema, "member_plan", ["Member"])
     _ensure_l3_node(planning_schema, "P01-L2A-L3A")
     planning_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(planning_schema, "member_plan")
-    _approve_assessment(planning_schema, assessment_id, "buddy_plan")
+    assessment_id = _create_assessment_and_generate_plan_items(
+        planning_schema, "member_plan"
+    )
 
     member_cookies = _login(planning_schema, "member_plan")
-    # The approval atomically created the plan, items and tasks.
+    # Explicit generation atomically created the plan, items and tasks.
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
@@ -378,7 +353,7 @@ def test_approval_creates_plan_items_and_is_idempotent(
     assert plan["planning_source_type"] == "assessment_approval"
     assert plan["source_assessment_id"] == assessment_id
     items = plan["items"]
-    assert len(items) == 2
+    assert len(items) == 1
     for item in items:
         assert item["source_assessment_detail_id"] is not None
         assert item["planning_source_type"] == "assessment_approval"
@@ -387,47 +362,31 @@ def test_approval_creates_plan_items_and_is_idempotent(
         "GET", "/api/planning/annual-plan?year=2026", cookies=member_cookies
     )
     assert status == 200
-    assert len(plan2["items"]) == 2
+    assert len(plan2["items"]) == 1
 
-    # re-approval (without key) is rejected; nothing is duplicated
-    from app.assessment.repository import ReviewError, submit_assessment_review
-
-    review_id = planning_schema.execute(
-        "SELECT id FROM assessment_review WHERE assessment_id=%s",
-        (assessment_id,),
-    ).fetchone()[0]
-    try:
-        submit_assessment_review(
-            planning_schema,
-            int(review_id),
-            buddy_id,
-            "认可",
-            "重复",
-            expected_revision=3,
-            assessment_id_from_url=assessment_id,
-        )
-        raise AssertionError("duplicate approval should be rejected")
-    except ReviewError as exc:
-        assert exc.code == "assessment_already_reviewed"
+    assert (
+        planning_schema.execute(
+            "SELECT COUNT(*) FROM assessment_review WHERE assessment_id=%s",
+            (assessment_id,),
+        ).fetchone()[0]
+        == 0
+    )
 
     status, tasks, _ = _request(
         "GET", "/api/planning/learning-tasks", cookies=member_cookies
     )
     assert status == 200
-    assert len(tasks) == 2
+    assert len(tasks) == 1
 
 
-def test_approval_plan_item_parses_hour_suffix_ranges(
+def test_explicit_generation_plan_item_parses_hour_suffix_ranges(
     planning_schema: psycopg.Connection,
 ) -> None:
-    member_id = _create_test_user(planning_schema, "member_range", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_range", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
-    _ensure_l3_node(planning_schema, "P01-L2A-L3A", estimated_hours="4–6h")
+    _create_test_user(planning_schema, "member_range", ["Member"])
+    _ensure_l3_node(planning_schema, "P01-L2A-L3B", estimated_hours="4–6h")
     planning_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(planning_schema, "member_range")
-    _approve_assessment(planning_schema, assessment_id, "buddy_range")
+    _create_assessment_and_generate_plan_items(planning_schema, "member_range")
 
     member_cookies = _login(planning_schema, "member_range")
     status, plan, _ = _request(
@@ -456,14 +415,11 @@ def test_approval_plan_item_parses_hour_suffix_ranges(
 def test_member_can_adjust_own_plan_item_schedule_and_pause_execution(
     planning_schema: psycopg.Connection,
 ) -> None:
-    member_id = _create_test_user(planning_schema, "member_adjust_plan", ["Member"])
-    buddy_id = _create_test_user(planning_schema, "buddy_adjust_plan", ["Buddy"])
-    create_buddy_relationship(planning_schema, member_id, buddy_id)
+    _create_test_user(planning_schema, "member_adjust_plan", ["Member"])
     _ensure_l3_node(planning_schema, "P01-L2A-L3A")
     planning_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(planning_schema, "member_adjust_plan")
-    _approve_assessment(planning_schema, assessment_id, "buddy_adjust_plan")
+    _create_assessment_and_generate_plan_items(planning_schema, "member_adjust_plan")
     cookies = _login(planning_schema, "member_adjust_plan")
     status, plan, _ = _request(
         "GET", "/api/planning/annual-plan?year=2026", cookies=cookies
@@ -574,8 +530,7 @@ def _seed_cas_plan_item(
     _ensure_l3_node(connection, "P01-L2A-L3A")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, "member_cas")
-    _approve_assessment(connection, assessment_id, "buddy_cas")
+    _create_assessment_and_generate_plan_items(connection, "member_cas")
 
     cookies = _login(connection, "member_cas")
     status, plan, _ = _request(
@@ -1091,7 +1046,7 @@ def test_plan_item_dates_quarter_and_month_both_bound_end(
     )
     item = plan["items"][0]
     assert item["plan_quarter"] == "Q2"
-    assert item["plan_month"] == 5
+    assert item["plan_month"] == "2026-05"
     revision = int(item["revision"])
 
     # End inside Q2 but outside the source month is still rejected.

@@ -11,10 +11,7 @@ from app.access.schema import create_access_schema
 from app.assessment.repository import list_gaps
 from app.assessment.schema import create_assessment_schema
 from app.main import app
-from tests.standard_target_support import (
-    ensure_capability_nodes,
-    standard_target_payload,
-)
+from tests.review_support import save_canonical_draft
 
 SESSION_COOKIE = "tcp_session"
 
@@ -168,77 +165,54 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(
+def _create_canonical_assessment(
     connection: psycopg.Connection,
     username: str,
     details: list[dict[str, object]] | None = None,
 ) -> int:
-    desired_details = details or [
+    """Seed retained gap coverage through the current draft contract."""
+    details = details or [
         {
             "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
+            "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
-    ensure_capability_nodes(
-        connection, [str(detail["l3_code"]) for detail in desired_details]
-    )
-    cookies = _login(connection, username)
-    status, preview, _ = _request(
-        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
-    )
-
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        "/api/assessments",
-        {"year": 2026, "scope_token": preview["scope_token"]},
-        cookies=cookies,
-    )
-    assert status == 200
-    assert body is not None
-    assessment_id = body["id"]
-    status, body, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": standard_target_payload(
-                connection, assessment_id, desired_details
-            ),
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
-    return assessment_id
+    member_id = connection.execute(
+        "SELECT id FROM tcp_user WHERE username=%s", (username,)
+    ).fetchone()
+    assert member_id is not None
+    canonical = []
+    for detail in details:
+        item = {
+            key: value
+            for key, value in detail.items()
+            if key not in {"target_level", "plan_quarter"}
+        }
+        if isinstance(item.get("plan_month"), int):
+            item["plan_month"] = f"2026-{int(item['plan_month']):02d}"
+        canonical.append(item)
+    return save_canonical_draft(connection, int(member_id[0]), 2026, canonical)
 
 
-def test_gap_generated_on_submit(assessment_schema: psycopg.Connection) -> None:
+def test_gap_generated_on_canonical_draft(
+    assessment_schema: psycopg.Connection,
+) -> None:
     member_id = _create_test_user(assessment_schema, "member_gap", ["Member"])
     buddy_id = _create_test_user(assessment_schema, "buddy_gap", ["Buddy"])
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_gap")
+    assessment_id = _create_canonical_assessment(assessment_schema, "member_gap")
 
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     assert len(gaps) == 1
     assert gaps[0]["l3_code"] == "P01-L2A-L3A"
-    assert gaps[0]["current_level"] == 2
-    assert gaps[0]["target_level"] == 4
+    assert gaps[0]["current_level"] == 0
+    assert gaps[0]["target_level"] == 2
     assert gaps[0]["gap_value"] == 2
     assert gaps[0]["priority"] == "高"
     assert gaps[0]["plan_candidate"] is True
@@ -252,7 +226,7 @@ def test_gap_not_generated_when_gap_value_zero(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
+    assessment_id = _create_canonical_assessment(
         assessment_schema,
         "member_zero",
         [
@@ -278,7 +252,7 @@ def test_member_update_gap_blocked_by_scope_v1(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_update")
+    assessment_id = _create_canonical_assessment(assessment_schema, "member_update")
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     gap_id = int(gaps[0]["id"])
 
@@ -303,7 +277,7 @@ def test_non_member_update_gap_blocked_by_scope_v1(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_owner")
+    assessment_id = _create_canonical_assessment(assessment_schema, "member_owner")
     gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
     gap_id = int(gaps[0]["id"])
 
@@ -327,9 +301,7 @@ def test_buddy_can_view_assigned_member_gaps(
     create_buddy_relationship(assessment_schema, member_id, buddy_id)
     assessment_schema.commit()
 
-    assessment_id = _create_and_submit_assessment(
-        assessment_schema, "member_buddy_view"
-    )
+    assessment_id = _create_canonical_assessment(assessment_schema, "member_buddy_view")
 
     buddy_cookies = _login(assessment_schema, "buddy_view")
     status, body, _ = _request(
@@ -349,73 +321,9 @@ def test_buddy_can_view_assigned_member_gaps(
 def test_leader_can_view_all_gaps(assessment_schema: psycopg.Connection) -> None:
     _create_test_user(assessment_schema, "member_leader", ["Member"])
     _create_test_user(assessment_schema, "leader_gap", ["Leader"])
-    _create_and_submit_assessment(assessment_schema, "member_leader")
+    _create_canonical_assessment(assessment_schema, "member_leader")
 
     leader_cookies = _login(assessment_schema, "leader_gap")
     status, body, _ = _request("GET", "/api/gaps", cookies=leader_cookies)
     assert status == 200
     assert len(body) == 1
-
-
-def test_resubmit_does_not_duplicate_gap(assessment_schema: psycopg.Connection) -> None:
-    member_id = _create_test_user(assessment_schema, "member_resubmit", ["Member"])
-    buddy_id = _create_test_user(assessment_schema, "buddy_resubmit", ["Buddy"])
-    create_buddy_relationship(assessment_schema, member_id, buddy_id)
-    assessment_schema.commit()
-
-    assessment_id = _create_and_submit_assessment(assessment_schema, "member_resubmit")
-
-    buddy_cookies = _login(assessment_schema, "buddy_resubmit")
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "建议调整", "feedback": "请补充", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
-
-    member_cookies = _login(assessment_schema, "member_resubmit")
-    status, body, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": standard_target_payload(
-                assessment_schema,
-                assessment_id,
-                [
-                    {
-                        "l3_code": "P01-L2A-L3A",
-                        "current_level": 2,
-                        "target_level": 5,
-                        "evidence_note": "已补充",
-                        "member_priority": "高",
-                        "include_in_plan": True,
-                        "plan_quarter": "Q2",
-                        "plan_month": 5,
-                    }
-                ],
-            ),
-            "expected_revision": 4,
-        },
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 5},
-        cookies=member_cookies,
-    )
-    assert status == 200
-
-    gaps = list_gaps(assessment_schema, assessment_id=assessment_id)
-    assert len(gaps) == 1
-    assert gaps[0]["target_level"] == 5
-    assert gaps[0]["gap_value"] == 3

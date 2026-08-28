@@ -16,10 +16,7 @@ from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
 from app.planning.schema import create_planning_schema
-from tests.standard_target_support import (
-    ensure_capability_nodes,
-    standard_target_payload,
-)
+from tests.review_support import create_generated_plan_items
 
 SESSION_COOKIE = "tcp_session"
 
@@ -285,76 +282,6 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
-    desired_details = [
-        {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
-            "evidence_note": "测试中",
-            "member_priority": "高",
-            "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
-        }
-    ]
-    ensure_capability_nodes(connection, ["P01-L2A-L3A"])
-    cookies = _login(connection, username)
-    status, preview, _ = _request(
-        "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
-    )
-
-    assert status == 200
-
-    status, body, _ = _request(
-        "POST",
-        "/api/assessments",
-        {"year": 2026, "scope_token": preview["scope_token"]},
-        cookies=cookies,
-    )
-    assert status == 200
-    assert body is not None
-    assessment_id = body["id"]
-    status, body, _ = _request(
-        "PUT",
-        f"/api/assessments/{assessment_id}/draft",
-        {
-            "details": standard_target_payload(
-                connection, assessment_id, desired_details
-            ),
-            "expected_revision": 1,
-        },
-        cookies=cookies,
-    )
-    assert status == 200
-    status, body, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
-        cookies=cookies,
-    )
-    assert status == 200
-    return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
-
-
 def _build_full_profile(
     connection: psycopg.Connection,
     member_username: str = "member_profile",
@@ -366,8 +293,21 @@ def _build_full_profile(
     _ensure_l3_node(connection, "P01-L2A-L3A")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, member_username)
-    _approve_assessment(connection, assessment_id, buddy_username)
+    create_generated_plan_items(
+        connection,
+        member_id,
+        2026,
+        [
+            {
+                "l3_code": "P01-L2A-L3A",
+                "current_level": 0,
+                "evidence_note": "测试中",
+                "member_priority": "高",
+                "include_in_plan": True,
+                "plan_month": "2026-05",
+            }
+        ],
+    )
 
     member_cookies = _login(connection, member_username)
     status, plan, _ = _request(
@@ -450,10 +390,9 @@ def test_member_views_own_profile_with_aggregation(
 
     assert len(body["assessments"]) == 1
     assessment = body["assessments"][0]
-    assert assessment["status"] == "已归档"
-    assert assessment["submitted_at"] is not None
-    assert len(assessment["reviews"]) == 1
-    assert assessment["reviews"][0]["conclusion"] == "认可"
+    assert assessment["status"] == "草稿"
+    assert assessment["submitted_at"] is None
+    assert assessment["reviews"] == []
 
     assert body["annual_plan"] is not None
     assert body["annual_plan"]["year"] == 2026
@@ -1095,7 +1034,7 @@ def test_profile_query_count_bounded_with_multiple_items(
             l3_code,
             status="未开始",
             estimated_hours="10",
-            plan_month=5,
+            plan_month="2026-05",
         )
     profile_schema.commit()
 

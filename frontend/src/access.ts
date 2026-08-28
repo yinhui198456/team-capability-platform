@@ -34,7 +34,7 @@ export async function me(): Promise<User> {
 export function defaultRouteFor(roles: string[]): string {
   if (roles.includes('Admin')) return '/system/users'
   if (roles.includes('Leader')) return '/operations/analytics'
-  if (roles.includes('Buddy')) return '/mentoring/dashboard'
+  if (roles.includes('Buddy')) return '/mentoring/evidence-review'
   if (roles.includes('Member')) return '/dashboard/member'
   return '/capability/model'
 }
