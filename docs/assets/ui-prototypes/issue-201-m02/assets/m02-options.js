@@ -7,62 +7,50 @@ const ratings = [
   [5, "专家"],
 ];
 
-const capabilities = [
-  {
-    code: "C01.01.01",
-    name: "常用办公工具基础",
-    rating: 2,
-    target: 2,
-    level: "P4 标准",
-  },
-  {
-    code: "C01.01.02",
-    name: "文件命名与目录结构规范",
-    rating: 1,
-    target: 2,
-    level: "P4 标准",
-    selected: true,
-    priority: "高",
-    month: "2026-05",
-  },
-  {
-    code: "C01.01.03",
-    name: "文件版本管理与变更记录",
-    rating: 0,
-    target: 2,
-    level: "P4 标准",
-  },
-  {
-    code: "C01.01.04",
-    name: "PDF、截图与附件整理",
-    rating: 3,
-    target: 3,
-    level: "P5 标准",
-  },
-  {
-    code: "C01.01.05",
-    name: "项目资料归档与可追溯管理",
-    rating: 2,
-    target: 3,
-    level: "P5 标准",
-  },
-];
-
 const state = {
-  items: capabilities.map((item) => ({ ...item })),
-  ratingSaved: true,
+  items: [
+    { code: "C01.01.01", name: "常用办公工具基础", rating: 2, target: 2 },
+    {
+      code: "C01.01.02",
+      name: "文件命名与目录结构规范",
+      rating: 1,
+      target: 2,
+      selected: true,
+      priority: "高",
+      month: "2026-05",
+    },
+    {
+      code: "C01.01.03",
+      name: "文件版本管理与变更记录",
+      rating: 0,
+      target: 2,
+    },
+    { code: "C01.01.04", name: "PDF、截图与附件整理", rating: 3, target: 3 },
+    {
+      code: "C01.01.05",
+      name: "项目资料归档与可追溯管理",
+      rating: 2,
+      target: 3,
+    },
+  ],
   message: null,
 };
 
-const layout = document.body.dataset.layout;
-const layoutNames = {
-  inline: "方案 1 · 行内展开",
-  stacked: "方案 2 · 上下工作区",
-  side: "方案 3 · 左右工作台",
-};
+const requestedLayout = document.body.dataset.layout;
+if (requestedLayout && requestedLayout !== "inline") {
+  location.replace("01-inline-expand.html");
+}
 
 function gapOf(item) {
   return Math.max(0, item.target - item.rating);
+}
+
+function ratingLabel(value) {
+  return ratings.find(([rating]) => rating === value)?.[1] ?? "—";
+}
+
+function selectedItems() {
+  return state.items.filter((item) => item.selected);
 }
 
 function ratingControl(item) {
@@ -81,12 +69,13 @@ function ratingControl(item) {
 }
 
 function planButton(item) {
-  const gap = gapOf(item);
-  if (!gap) return `<span class="no-plan">无需提升</span>`;
-  return `<button type="button" class="btn plan-toggle ${item.selected ? "success-soft" : ""}" data-action="toggle-plan" data-code="${item.code}">${item.selected ? "已加入" : "加入提升计划"}</button>`;
+  if (!gapOf(item)) return '<span class="no-plan">无需提升</span>';
+  return `<button type="button" class="btn plan-toggle ${item.selected ? "success-soft" : ""}" data-action="toggle-plan" data-code="${item.code}">${item.selected ? "已加入计划" : "加入提升计划"}</button>`;
 }
 
-function planFields(item, mode = "row") {
+function planFields(item) {
+  const id = item.code.replaceAll(".", "-");
+  const monthError = `month-error-${id}`;
   const monthOptions = [
     "",
     "2026-05",
@@ -95,57 +84,38 @@ function planFields(item, mode = "row") {
     "2026-08",
     "2026-09",
   ];
-  return `<div class="plan-fields ${mode}" data-plan-code="${item.code}">
-    <div class="plan-identity"><b>${item.name}</b><small>${item.code} · Gap ${gapOf(item)}</small></div>
-    <label>优先级
-      <select data-action="priority" data-code="${item.code}">
+  return `<div class="plan-fields inline-editor" data-plan-code="${item.code}" role="group" aria-label="${item.name} 提升计划设置">
+    <div class="plan-identity"><span>提升计划设置</span><b>${item.name}</b><small>${item.code} · Gap ${gapOf(item)}</small></div>
+    <div class="plan-control">
+      <label for="priority-${id}">优先级</label>
+      <select id="priority-${id}" data-action="priority" data-code="${item.code}">
         ${["高", "中", "低"].map((value) => `<option ${item.priority === value ? "selected" : ""}>${value}</option>`).join("")}
       </select>
-    </label>
-    <label class="month-label">计划月份 <span aria-hidden="true">*</span>
-      <select data-action="month" data-code="${item.code}">
-        ${monthOptions.map((value) => `<option value="${value}" ${item.month === value ? "selected" : ""}>${value ? value.replace("-", " 年 ") + " 月" : "待补计划月份"}</option>`).join("")}
+    </div>
+    <div class="plan-control">
+      <label for="month-${id}">计划月份 <span aria-hidden="true">*</span></label>
+      <select id="month-${id}" data-action="month" data-code="${item.code}" ${item.month ? "" : `aria-invalid="true" aria-describedby="${monthError}"`}>
+        ${monthOptions.map((value) => `<option value="${value}" ${item.month === value ? "selected" : ""}>${value ? value.replace("-", " 年 ") + " 月" : "请选择计划月份"}</option>`).join("")}
       </select>
-      ${item.month ? "" : '<small class="field-error">请选择计划月份</small>'}
-    </label>
-    <span class="saved-state" role="status">${item.month ? "已保存" : "待补月份"}</span>
-    <button type="button" class="text-action danger-text" data-action="remove" data-code="${item.code}">移出计划</button>
+      ${item.month ? "" : `<small class="field-error" id="${monthError}">请选择计划月份</small>`}
+    </div>
+    <div class="plan-state"><span>草稿状态</span><b class="${item.month ? "saved" : "missing"}">${item.month ? "已保存" : "待补月份"}</b></div>
+    <div class="plan-remove"><span>操作</span><button type="button" class="btn danger-button" data-action="remove" data-code="${item.code}">移出计划</button></div>
   </div>`;
 }
 
-function capabilityRow(item, withInlineEditor = false) {
+function capabilityRow(item) {
   return `<article class="capability-row ${item.selected ? "selected" : ""}" id="cap-${item.code}">
-    <div class="capability-name"><b>${item.name}</b><small>${item.code} · 当前职级必备</small></div>
+    <div class="capability-name"><b>${item.name}</b><small>${item.code} · L3 能力项</small></div>
     ${ratingControl(item)}
-    <div class="target-gap"><b>目标：${item.target} · ${item.level}</b><span>Gap：${gapOf(item)}</span></div>
+    <div class="target-gap"><b>目标 ${item.target} · ${ratingLabel(item.target)}</b><span>Gap ${gapOf(item)}</span></div>
     <div class="plan-action">${planButton(item)}</div>
-    ${withInlineEditor && item.selected ? planFields(item, "inline-editor") : ""}
+    ${item.selected ? planFields(item) : ""}
   </article>`;
 }
 
 function tableHeader() {
-  return `<div class="capability-head"><span>能力项</span><span>当前评级</span><span>目标与差距</span><span>提升计划</span></div>`;
-}
-
-function selectedItems() {
-  return state.items.filter((item) => item.selected);
-}
-
-function statusBlock() {
-  if (!state.message) return "";
-  return `<div class="feedback ${state.message.type}" role="status" tabindex="-1"><b>${state.message.title}</b><span>${state.message.detail}</span></div>`;
-}
-
-function actionSummary(includeSave = true) {
-  const selected = selectedItems();
-  const missing = selected.filter((item) => !item.month).length;
-  return `<div class="action-summary">
-    <div><b>计划草稿：已选 ${selected.length} 项</b><span>${missing ? `待补月份 ${missing} 项` : "计划月份已完整"}</span></div>
-    <div class="action-buttons">
-      ${includeSave ? '<button type="button" class="btn" data-action="save-ratings">保存能力评级</button>' : ""}
-      <button type="button" class="btn primary" data-action="generate">生成所选学习任务</button>
-    </div>
-  </div>`;
+  return '<div class="capability-head"><span>能力项</span><span>当前评级</span><span>目标与差距</span><span>提升计划</span></div>';
 }
 
 function filters() {
@@ -161,63 +131,41 @@ function filters() {
   </div>`;
 }
 
-function inlineLayout() {
+function statusBlock() {
+  if (!state.message) return "";
+  return `<div class="feedback ${state.message.type}" role="status" tabindex="-1"><b>${state.message.title}</b><span>${state.message.detail}</span></div>`;
+}
+
+function actionSummary() {
+  const selected = selectedItems();
+  const missing = selected.filter((item) => !item.month).length;
+  return `<div class="action-summary">
+    <div><b>计划草稿：已选 ${selected.length} 项</b><span>${missing ? `待补月份 ${missing} 项` : "计划月份已完整"}</span></div>
+    <div class="action-buttons">
+      <button type="button" class="btn" data-action="save-ratings">保存能力评级</button>
+      <button type="button" class="btn primary" data-action="generate">生成所选学习任务</button>
+    </div>
+  </div>`;
+}
+
+function content() {
+  const selected = selectedItems();
   return `<section class="capability-panel inline-layout">
-    <header class="group-heading"><div><b>C01.01 · 办公工具与文件管理基础</b><span>5 条达成路径</span></div><strong>5/5</strong></header>
+    <header class="group-heading"><div><b>C01.01 · 办公工具与文件管理</b><span>5 个 L3 能力项</span></div><strong>5/5</strong></header>
     ${tableHeader()}
-    ${state.items.map((item) => capabilityRow(item, true)).join("")}
+    ${state.items.map((item) => capabilityRow(item)).join("")}
   </section>
+  ${selected.length ? "" : '<div class="empty-state plan-empty">尚未加入提升计划，请从有 Gap 的能力项开始。</div>'}
   ${statusBlock()}
   <div class="sticky-actions">${actionSummary()}</div>`;
 }
 
-function stackedLayout() {
-  const selected = selectedItems();
-  return `<section class="capability-panel rating-zone">
-    <header class="zone-heading"><div><span>评级区</span><h2>逐项完成当前评级</h2><p>可以分批保存；保存评级不会生成任务。</p></div><span class="saved-state">${state.ratingSaved ? "评级已保存" : "评级有未保存修改"}</span></header>
-    ${tableHeader()}
-    ${state.items
-      .slice(0, 3)
-      .map((item) => capabilityRow(item))
-      .join("")}
-    <footer class="zone-footer"><button type="button" class="btn" data-action="save-ratings">保存本页评级</button></footer>
-  </section>
-  <div class="flow-connector" aria-hidden="true"><span></span><b>已加入的能力在下方集中维护</b><span></span></div>
-  <section class="capability-panel draft-zone">
-    <header class="zone-heading"><div><span>计划区</span><h2>提升计划草稿（${selected.length}）</h2><p>补齐每个已选能力的优先级与计划月份，再显式生成任务。</p></div></header>
-    <div class="draft-list">${selected.length ? selected.map((item) => planFields(item, "draft-row")).join("") : '<div class="empty-state">尚未加入提升计划，请先在上方选择有 Gap 的能力项。</div>'}</div>
-    ${statusBlock()}
-    ${actionSummary(false)}
-  </section>`;
-}
-
-function sideLayout() {
-  const selected = selectedItems();
-  return `<div class="side-layout">
-    <section class="capability-panel side-rating-zone">
-      ${tableHeader()}
-      ${state.items.map((item) => capabilityRow(item)).join("")}
-    </section>
-    <aside class="plan-workbench" aria-labelledby="workbench-title">
-      <header><div><span>计划区</span><h2 id="workbench-title">提升计划草稿</h2></div><strong>${selected.length}</strong></header>
-      <div class="workbench-list">${selected.length ? selected.map((item) => planFields(item, "workbench-card")).join("") : '<div class="empty-state">从左侧加入有 Gap 的能力项。</div>'}</div>
-      ${statusBlock()}
-      <p class="helper-copy">保存评级不会生成任务。</p>
-      ${actionSummary()}
-    </aside>
-  </div>`;
-}
-
-function shell(content) {
+function shell() {
   return `<div class="prototype-lab selected-mode issue-201-prototype">
     <div class="labbar">
-      <a class="lab-home" href="../index.html"><span class="lab-home-full">阶段 1 方案索引</span><span class="lab-home-short">方案索引</span></a>
-      <div class="lab-page"><span>M02 · 能力评级与提升计划</span><strong>${layoutNames[layout]}</strong></div>
-      <nav class="option-switch" aria-label="切换原型方案">
-        <a class="${layout === "inline" ? "active" : ""}" href="01-inline-expand.html">方案 1</a>
-        <a class="${layout === "stacked" ? "active" : ""}" href="02-stacked-zones.html">方案 2</a>
-        <a class="${layout === "side" ? "active" : ""}" href="03-side-workbench.html">方案 3</a>
-      </nav>
+      <a class="lab-home" href="../index.html"><span class="lab-home-full">M02 原型索引</span><span class="lab-home-short">原型索引</span></a>
+      <div class="lab-page"><span>Issue #201 · 阶段 1 高保真候选</span><strong>行内连续编辑</strong></div>
+      <span class="selected-direction">已选方向 · 方案 1</span>
     </div>
     <div class="product-shell">
       <header class="product-top"><b>Team Capability Platform</b><div><button type="button">2026 年</button><span>数据范围：本人</span><strong>Member User</strong><button type="button">退出</button></div></header>
@@ -226,21 +174,15 @@ function shell(content) {
         <div class="page-intro"><div><span>能力成长</span><h1>能力评级与提升计划</h1><p>逐项完成评级，再为有差距的能力设置提升计划。</p></div><span class="autosave-state">计划草稿自动保存中</span></div>
         <div class="summary-strip"><span>能力域 <b>6</b></span><span>三级能力项 <b>238</b></span><span>已评级 <b>238</b></span><span>存在差距 <b>16</b></span><span>已加入计划 <b>${selectedItems().length}</b></span></div>
         ${filters()}
-        ${content}
+        ${content()}
       </main>
-      <footer class="product-foot"><span>当前原型：M02 · ${layoutNames[layout]}</span><span>计划周期：2026-07-01 至 2027-06-30</span></footer>
+      <footer class="product-foot"><span>当前原型：M02 · 行内连续编辑</span><span>计划周期：2026-07-01 至 2027-06-30</span></footer>
     </div>
   </div>`;
 }
 
 function render() {
-  const content =
-    layout === "inline"
-      ? inlineLayout()
-      : layout === "stacked"
-        ? stackedLayout()
-        : sideLayout();
-  document.querySelector("#root").innerHTML = shell(content);
+  document.querySelector("#root").innerHTML = shell();
 }
 
 function findItem(code) {
@@ -251,11 +193,11 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const item = findItem(target.dataset.code);
+  let focusSelector = null;
 
   if (target.dataset.action === "rate" && item) {
     item.rating = Number(target.dataset.rating);
     if (!gapOf(item)) item.selected = false;
-    state.ratingSaved = false;
     state.message = null;
   }
   if (target.dataset.action === "toggle-plan" && item) {
@@ -268,7 +210,6 @@ document.addEventListener("click", (event) => {
     state.message = null;
   }
   if (target.dataset.action === "save-ratings") {
-    state.ratingSaved = true;
     state.message = {
       type: "success",
       title: "能力评级已保存",
@@ -295,12 +236,12 @@ document.addEventListener("click", (event) => {
             title: "已生成所选学习任务",
             detail: `本次创建 ${selected.length} 项；重复操作不会创建重复任务。`,
           };
+    focusSelector = missing
+      ? `#month-${missing.code.replaceAll(".", "-")}`
+      : ".feedback";
   }
   render();
-  if (target.dataset.action === "generate") {
-    const feedback = document.querySelector(".feedback");
-    feedback?.focus();
-  }
+  document.querySelector(focusSelector)?.focus();
 });
 
 document.addEventListener("change", (event) => {

@@ -4,7 +4,7 @@
 
 1. **既有视觉基线 PNG（历史确认稿）**：[UI-01-my-growth-dashboard.png](UI-01-my-growth-dashboard.png) ～ [UI-05-team-capability-analysis.png](UI-05-team-capability-analysis.png)，为早期迭代确认的静态视觉基线；页面规格冲突时以 `docs/04_UI.md` 页面规格为准。
 2. **交互原型基线（Issue #187 阶段 0，新）**：`prototype-v1/`，第一批页面的故事线、页面地图与可交互静态原型，作为交互与信息架构基线。
-3. **M02 新方向候选（Issue #201 阶段 1）**：[`issue-201-m02/`](issue-201-m02/)，复用既有 TCP 视觉资产，以三套共享交互的静态 HTML 比较连续操作布局；用户确认前不替换 M02 定版入口。
+3. **M02 行内连续编辑高保真候选（Issue #201 阶段 1）**：[`issue-201-m02/`](issue-201-m02/)，复用既有 TCP 视觉资产；方案 2、3 已放弃，用户确认方案 1 前不替换 M02 定版入口。
 
 页面矩阵（页面编号、角色、路由、故事节点、最终版本、master 落地状态、批次、Chrome 验收）的唯一权威位置在 [../../04_UI.md](../../04_UI.md)（§4.9）；业务规则唯一来源是 [../../01_Product.md](../../01_Product.md)（Issue #187 故事合同）。原型不定义任何 API、指标口径或数据库字段；`prototype-v1` 为纯静态 HTML/CSS/JS，不连接后端。
 

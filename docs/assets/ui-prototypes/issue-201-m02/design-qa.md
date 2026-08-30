@@ -1,49 +1,41 @@
-# Issue #201 · M02 阶段 1 原型 Design QA
+# Issue #201 · M02 方案 1 高保真 Design QA
 
 **Findings**
 
-- 当前无可执行的 P0 / P1 / P2 差异。三套实现均保留各自概念图的核心布局关系，并统一回到 TCP 既有外壳、色板、间距和信息层级。
-- P3：概念图中的字体细节和控件密度未逐像素复刻。该差异为有意选择：候选原型复用 `prototype-v1/assets/index-Cw_G5jg6.css`，避免建立第二套设计系统。
+- 当前无可执行的 P0 / P1 / P2 差异。
+- P3：方向概念图把标签与控件横向混排；高保真实现采用标签在上、控件在下的稳定字段轨。该差异是有意修正，提升了窄屏可读性和字段关系清晰度。
 
 **Open Questions**
 
-- 三套页面仍是阶段 1 候选，不是 M02 权威验收基线；需用户选择一种方向后才能进入阶段 2 规格细化。
+- 方案 1 仍是阶段 1 高保真候选，不是 M02 权威验收基线；需用户确认后才能进入下一阶段。
 
 **Implementation Checklist**
 
-- [x] 字体与排版：沿用 TCP 系统字体、字号层级和表格密度，中文无异常截断。
-- [x] 间距与布局：桌面、平板、窄屏均无水平溢出；主区域、选中态和操作区不重叠。
-- [x] 色彩与视觉令牌：沿用 TCP 蓝色主色、成功/错误语义色、边框与阴影令牌。
-- [x] 图片与资产：无新增装饰图片、伪图标、内联 SVG 或 CSS 绘图；仅保留概念图和浏览器证据图。
-- [x] 文案与内容：统一使用 0–5 评级，Gap 不小于 0；“保存评级”与“生成任务”结果明确分离。
-- [x] 状态与交互：评级、加入/移出计划、优先级、计划月份、保存、缺失月份拦截和生成成功均已验证。
-- [x] 可访问性：语义按钮/表单标签、键盘焦点、状态播报、替代文本和减少动画偏好已覆盖。
+- [x] 字体与排版：沿用 TCP 系统字体和层级，标签、控件、状态、操作共享基线。
+- [x] 间距与布局：使用统一间距轨道；1440、1024、768、375 与 900×375 无横向溢出。
+- [x] 色彩与令牌：沿用 TCP 蓝色主色和成功/错误语义色，未引入第二套视觉系统。
+- [x] 图片与资产：无新增装饰图片、伪图标、内联 SVG 或 CSS 绘图。
+- [x] 文案与内容：移除职级要求；评级保持 0–5，Gap 不小于 0，三个业务动作继续分离。
+- [x] 状态与交互：空态、保存成功、缺月份错误、聚焦修复与生成成功均已验证。
+- [x] 可访问性：显式 `<label for>`、`aria-invalid`、`aria-describedby`、可见焦点和减少动画偏好已覆盖。
 
 ## Evidence
 
-- Source visual truth:
-  - `references/01-inline-expand-concept.png`（1585 × 992）
-  - `references/02-stacked-zones-concept.png`（1487 × 1058）
-  - `references/03-side-workbench-concept.png`（1487 × 1058）
-- Browser-rendered implementation:
-  - `qa/01-inline-expand-implementation-1536x1024.png`
-  - `qa/02-stacked-zones-implementation-1536x1024.png`
-  - `qa/03-side-workbench-implementation-1536x1024.png`
-- Full-view combined comparisons:
-  - `qa/01-inline-expand-comparison.png`
-  - `qa/02-stacked-zones-comparison.png`
-  - `qa/03-side-workbench-comparison.png`
-- Responsive evidence: each option has `1440x1024`、`1024x768`、`768x900` captures under `screenshots/`.
-- Viewport/state: implementation CSS viewport 1536 × 1024, deviceScaleFactor 1, desktop light theme, one plan item selected. Source concepts have different native dimensions, so `qa/compare.html` places both artifacts in equal-width 600px-high `object-fit: contain` frames; comparison is structural rather than pixel-precise.
-- Focused regions: not required for this low-fidelity direction decision. The full-view paired evidence keeps navigation, rating controls, Gap, plan fields, and primary actions readable; the 768px captures separately verify responsive behavior.
-- Primary interactions tested: rate 0–5, create Gap, add/remove plan, select priority/month, save ratings, reject missing month, generate selected tasks.
-- Browser coverage: Google Chrome headless at 1536×1024, 1440×1024, 1024×768 and 768×900; 3 options × 4 viewports plus 3 complete interaction flows.
-- Console/page errors: none. Horizontal overflow: none.
+- Source visual truth: `references/01-inline-expand-concept.png`（1585 × 992）。
+- Existing TCP baseline: `../UI-02-assessment-gap.png`（历史视觉基线）与 `../prototype-v1/assets/index-Cw_G5jg6.css`（复用样式）。
+- Browser-rendered implementation: `qa/01-inline-expand-hifi-implementation-1536x1024.png`（1536 × 1024）。
+- Full-view combined comparison: `qa/01-inline-expand-hifi-comparison.png`。
+- Focused comparison: `qa/01-inline-expand-alignment-before-after.png`；直接显示月份控件修复前下沉 22px、修复后与优先级同基线。
+- Responsive evidence: `screenshots/01-inline-expand-hifi-1440x1024.png`、`screenshots/01-inline-expand-hifi-1024x768.png`、`screenshots/01-inline-expand-hifi-768x900.png`。
+- Viewport/state: CSS viewport 1536 × 1024，deviceScaleFactor 1，桌面浅色状态，一个计划项已选且月份完整。概念图原生尺寸不同，通过 `qa/compare.html` 在等宽、600px 高的 `object-fit: contain` 画框中做结构对照，不声称逐像素一致。
+- Primary interactions tested: 0–5 评级、产生 Gap、加入/移出计划、优先级、月份、保存评级、缺月份整批拦截、焦点定位和生成成功。
+- Browser coverage: Google Chrome headless；1440×1024、1024×768、768×900、375×812、900×375；旧方案 2/3 地址重定向也已验证。
+- Console/page errors: 0。Horizontal overflow: 0。
 
 ## Comparison History
 
-1. Initial responsive inspection found two P2 issues at 768px: the inherited prototype CSS hid the text-only index link, and scheme 1's sticky action bar obscured content.
-2. Fix: added explicit full/short index labels and changed the narrow-screen action bar to normal document flow.
-3. Post-fix evidence: all three `screenshots/*-768x900.png` captures show a readable “方案索引”; scheme 1 no longer has a floating action panel covering rows. The repeated browser check reports zero failures.
+1. 初始审计发现 P1：月份控件比优先级下沉 22px；P2：状态/操作无统一基线、弃选入口仍可见、职级文案违背 M02 规格、1024px 操作条遮挡编辑区。
+2. 修复：重构为固定标签/控件/反馈轨；状态与操作进入同一网格；移除弃选入口；改为 L3/目标等级文案；1180px 以下取消粘性操作条。
+3. 复验：组合对照图确认桌面对齐；5 个视口、1 条完整交互链路、2 个弃选地址回退均为 0 失败。
 
 final result: passed
