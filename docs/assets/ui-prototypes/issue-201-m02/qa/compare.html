@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Issue #201 M02 原型对照 QA</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #e8edf5;
+        color: #13233a;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        display: grid;
+        gap: 24px;
+        padding: 24px;
+      }
+      .comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        padding: 16px;
+      }
+      h1 {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 20px;
+      }
+      figure {
+        margin: 0;
+      }
+      figcaption {
+        margin-bottom: 8px;
+        color: #53637a;
+        font-weight: 700;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: 600px;
+        border: 1px solid #d7dfeb;
+        object-fit: contain;
+        object-position: top;
+        background: #f8fafc;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="comparison" id="option-1">
+        <h1>方案 1 · 行内展开</h1>
+        <figure>
+          <figcaption>方向概念图</figcaption>
+          <img
+            src="../references/01-inline-expand-concept.png"
+            alt="方案 1 方向概念图"
+          />
+        </figure>
+        <figure>
+          <figcaption>TCP 资产复用实现 · 1536 × 1024</figcaption>
+          <img
+            src="01-inline-expand-implementation-1536x1024.png"
+            alt="方案 1 实现截图"
+          />
+        </figure>
+      </section>
+      <section class="comparison" id="option-2">
+        <h1>方案 2 · 上下分区</h1>
+        <figure>
+          <figcaption>方向概念图</figcaption>
+          <img
+            src="../references/02-stacked-zones-concept.png"
+            alt="方案 2 方向概念图"
+          />
+        </figure>
+        <figure>
+          <figcaption>TCP 资产复用实现 · 1536 × 1024</figcaption>
+          <img
+            src="02-stacked-zones-implementation-1536x1024.png"
+            alt="方案 2 实现截图"
+          />
+        </figure>
+      </section>
+      <section class="comparison" id="option-3">
+        <h1>方案 3 · 右侧工作台</h1>
+        <figure>
+          <figcaption>方向概念图</figcaption>
+          <img
+            src="../references/03-side-workbench-concept.png"
+            alt="方案 3 方向概念图"
+          />
+        </figure>
+        <figure>
+          <figcaption>TCP 资产复用实现 · 1536 × 1024</figcaption>
+          <img
+            src="03-side-workbench-implementation-1536x1024.png"
+            alt="方案 3 实现截图"
+          />
+        </figure>
+      </section>
+    </main>
+  </body>
+</html>
