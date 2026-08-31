@@ -106,6 +106,12 @@ for (const viewport of VIEWPORTS) {
       const ratingGroup = table.locator('[aria-label^="当前等级 "]').first()
       const levelNames = ratingGroup.locator('button small')
       await expect(levelNames).toHaveCount(6)
+      await expect(
+        ratingGroup.getByRole('button', {
+          name: '0 · 未接触/无可验证输出',
+        }),
+      ).toBeVisible()
+      await expect(levelNames.first()).toHaveText('未接触')
       for (let index = 0; index < 6; index += 1) {
         await expect(levelNames.nth(index)).toBeVisible()
       }

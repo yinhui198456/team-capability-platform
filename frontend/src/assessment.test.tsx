@@ -224,11 +224,11 @@ describe('AssessmentGapPage', () => {
       item = item.parentElement
     }
     expect(item).toBeTruthy()
-    expect(
-      within(item!).getByRole('button', {
-        name: /0 · 未接触\/无可验证输出/,
-      }),
-    ).toBeTruthy()
+    const zero = within(item!).getByRole('button', {
+      name: '0 · 未接触/无可验证输出',
+    })
+    expect(within(zero).getByText('未接触')).toBeTruthy()
+    expect(within(zero).queryByText(/无可验证输出/)).toBeNull()
     expect(within(item!).getByRole('button', { name: /5 · 专家/ })).toBeTruthy()
   })
 

@@ -1489,6 +1489,7 @@ export function AssessmentGapPage() {
                                         className={
                                           active ? s.ratingActive : undefined
                                         }
+                                        aria-label={`${level} · ${LEVEL_LABELS[level]}`}
                                         aria-pressed={active}
                                         disabled={!editable || !applicable}
                                         onClick={() =>
@@ -1500,7 +1501,11 @@ export function AssessmentGapPage() {
                                         }
                                       >
                                         {level}
-                                        <small> · {LEVEL_LABELS[level]}</small>
+                                        <small>
+                                          {level === 0
+                                            ? '未接触'
+                                            : LEVEL_LABELS[level]}
+                                        </small>
                                       </button>
                                     )
                                   })}
