@@ -847,9 +847,6 @@
     font-size: 12px;
     white-space: nowrap;
   }
-  .rating button small {
-    display: none;
-  }
 }
 @media (max-width: 820px) {
   /* Issue #194: 定版原型 768——摘要与底部动作换行，不做横向表/裁切替代 */
@@ -873,7 +870,7 @@
   }
   .rating {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 4px;
   }
   .rating button {
@@ -909,5 +906,11 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-2);
+  }
+}
+
+@media (max-width: 520px) {
+  .rating {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

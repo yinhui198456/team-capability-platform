@@ -1822,6 +1822,59 @@ describe('AssessmentGapPage', () => {
     expect(planningApi.getAnnualPlan).toHaveBeenCalledWith(2026)
   })
 
+  it('disables generation while its request is in flight (#201)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-05',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveGenerate!: (value: {
+      ok: boolean
+      created: string[]
+      existing: string[]
+    }) => void
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveGenerate = resolve
+          }),
+      )
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    const generateButton = screen.getByRole('button', {
+      name: '生成所选学习任务',
+    }) as HTMLButtonElement
+    fireEvent.click(generateButton)
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(generateButton.disabled).toBe(true)
+      expect(generateButton.textContent).toBe('生成中…')
+    })
+    fireEvent.click(generateButton)
+    expect(generate).toHaveBeenCalledTimes(1)
+
+    resolveGenerate({ ok: true, created: ['P01.01.01'], existing: [] })
+    await waitFor(() => {
+      expect(generateButton.disabled).toBe(false)
+      expect(generateButton.textContent).toBe('生成所选学习任务')
+    })
+  })
+
   it('maps a structured generation reason without scanning its message (#201)', async () => {
     const draft = mockDraft({
       details: [

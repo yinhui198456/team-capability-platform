@@ -236,6 +236,7 @@ export function AssessmentGapPage() {
     existing: number
     planTotal: number | null
   } | null>(null)
+  const [generationBusy, setGenerationBusy] = useState(false)
   const planQueueRef = useRef<DraftDetailInput[]>([])
   const planPumpingRef = useRef(false)
   const planFlushPromiseRef = useRef<Promise<void> | null>(null)
@@ -734,7 +735,7 @@ export function AssessmentGapPage() {
   }
 
   async function handleGeneratePlan() {
-    if (!assessment) return
+    if (!assessment || generationBusy) return
     setError('')
     setMessage('')
     setGenerationSummary(null)
@@ -775,6 +776,7 @@ export function AssessmentGapPage() {
         setMessage('已生成所选学习任务（演示）。')
         return
       }
+      setGenerationBusy(true)
       // M02 V1: 生成前先等待在途计划自动保存完成（同一 revision 序列）——
       // 失败（队列非空）则中止本次生成并保留队列，由用户重试；避免
       // 部分写入、revision 冲突与生成读旧值。未保存评级仍保留在本地。
@@ -837,6 +839,8 @@ export function AssessmentGapPage() {
               ? err.message
               : '生成失败',
       )
+    } finally {
+      setGenerationBusy(false)
     }
   }
 
@@ -1214,13 +1218,21 @@ export function AssessmentGapPage() {
           </section>
         )}
         {(error || planSaveError) && (
-          <p className="error global-assessment-error">
+          <p className="error global-assessment-error" role="alert">
             {error || planSaveError}
           </p>
         )}
-        {message && <p className="success">{message}</p>}
+        {message && (
+          <p className="success" role="status">
+            {message}
+          </p>
+        )}
         {generationSummary && (
-          <section className={s.generationSummary} aria-label="生成结果摘要">
+          <section
+            className={s.generationSummary}
+            aria-label="生成结果摘要"
+            role="status"
+          >
             <span>当前草稿已选 {stickyStats.inPlan} 项</span>
             <span>本次新建 {generationSummary.created} 项</span>
             <span>已有任务 {generationSummary.existing} 项</span>
@@ -1786,8 +1798,9 @@ export function AssessmentGapPage() {
                 type="button"
                 className="primary"
                 onClick={handleGeneratePlan}
+                disabled={generationBusy}
               >
-                生成所选学习任务
+                {generationBusy ? '生成中…' : '生成所选学习任务'}
               </button>
             </div>
           </footer>

@@ -103,6 +103,18 @@ for (const viewport of VIEWPORTS) {
 
       const table = page.getByTestId('assessment-table')
       await expect(table).toBeVisible()
+      const ratingGroup = table.locator('[aria-label^="当前等级 "]').first()
+      const levelNames = ratingGroup.locator('button small')
+      await expect(levelNames).toHaveCount(6)
+      for (let index = 0; index < 6; index += 1) {
+        await expect(levelNames.nth(index)).toBeVisible()
+      }
+      if (viewport.width === 768) {
+        const columns = await ratingGroup.evaluate((element) =>
+          getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
+        )
+        expect(columns).toHaveLength(6)
+      }
       if (viewport.name === '1440x900') {
         const visibleRowCount = await page.evaluate(() => {
           const main = document.querySelector<HTMLElement>(
