@@ -182,6 +182,17 @@ function isStructuredAssessmentError(value: unknown): value is {
   )
 }
 
+function structuredPlanField(value: {
+  code: string
+  reason: string
+  message: string
+}): 'priority' | 'month' | null {
+  const text = `${value.code} ${value.reason} ${value.message}`.toLowerCase()
+  if (text.includes('priority') || text.includes('优先级')) return 'priority'
+  if (text.includes('month') || text.includes('月份')) return 'month'
+  return null
+}
+
 function computeGap(detail: AssessmentDetail): number | null {
   const current = detail.current_level
   const target = effectiveTarget(detail)
@@ -225,6 +236,9 @@ export function AssessmentGapPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [planSaveError, setPlanSaveError] = useState('')
+  const [planFieldErrors, setPlanFieldErrors] = useState<
+    Record<string, { priority?: string; month?: string }>
+  >({})
   const [loading, setLoading] = useState(true)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   // Issue #194 P1-4: 生成所选学习任务的 Idempotency-Key 按 payload 指纹复用，
@@ -262,6 +276,7 @@ export function AssessmentGapPage() {
     ratingChangeVersionsRef.current = new Map()
     setRatingSaveState('评级已保存')
     setGenerationSummary(null)
+    setPlanFieldErrors({})
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     const firstL2 =
@@ -520,7 +535,17 @@ export function AssessmentGapPage() {
                       const target = detailsRef.current.find(
                         (item) => item.l3_code === detail.l3_code,
                       )
-                      if (target) locateDetail(target)
+                      const field = structuredPlanField(detail)
+                      if (target && field) {
+                        setPlanFieldErrors((current) => ({
+                          ...current,
+                          [target.l3_code]: {
+                            ...current[target.l3_code],
+                            [field]: detail.message,
+                          },
+                        }))
+                        locatePlanField(target, field)
+                      } else if (target) locateDetail(target)
                       return detail.message
                     })()
                   : err instanceof Error
@@ -540,13 +565,34 @@ export function AssessmentGapPage() {
 
   /** Issue #194 M02 V1: 单动作加入/移出提升项；加入保留已有月份，
     移出清空计划月份与季度。变更随行内自动保存落库。 */
+  function clearPlanFieldError(l3Code: string, field: 'priority' | 'month') {
+    setPlanFieldErrors((current) => {
+      if (!current[l3Code]?.[field]) return current
+      const next = { ...current, [l3Code]: { ...current[l3Code] } }
+      delete next[l3Code][field]
+      if (!next[l3Code].priority && !next[l3Code].month) delete next[l3Code]
+      return next
+    })
+  }
+
   function toggleIncludePlan(index: number, include: boolean) {
     const detail = detailsRef.current[index]
     updateDetail(index, {
+      member_priority:
+        include && detail?.member_priority === '暂缓'
+          ? null
+          : (detail?.member_priority ?? null),
       include_in_plan: include,
       plan_quarter: include ? (detail?.plan_quarter ?? null) : null,
       plan_month: include ? (detail?.plan_month ?? null) : null,
     })
+    if (!include && detail) {
+      setPlanFieldErrors((current) => {
+        const next = { ...current }
+        delete next[detail.l3_code]
+        return next
+      })
+    }
   }
 
   /** 应用服务端 auto_cleared 裁决：清空相应行的计划字段，并把该行从
@@ -666,27 +712,40 @@ export function AssessmentGapPage() {
     setMessage('')
     setGenerationSummary(null)
     try {
-      if (isMockEnabled()) {
-        setAssessment({ ...mockAssessmentSubmitted, details })
-        setMessage('已生成所选学习任务（演示）。')
-        return
-      }
       const selected = details.filter((d) => d.include_in_plan === true)
       if (selected.length === 0) {
+        setPlanFieldErrors({})
         setError('请先加入提升项到计划草稿，再生成所选学习任务。')
         return
       }
-      // Issue #187 合同第 6 条：缺计划月份 → 整批不提交，保留输入，逐项中文提示。
-      const missingMonth = selected.filter((d) => !d.plan_month)
-      if (missingMonth.length > 0) {
-        setError(
-          `以下项计划月份待补（请选择 YYYY-MM）：${missingMonth
-            .map((d) => d.l3_code)
-            .join('、')}`,
-        )
-        const target = missingMonth[0]
-        const index = details.findIndex((d) => d.l3_code === target.l3_code)
-        if (index >= 0) locateDetail(target)
+      const nextFieldErrors = Object.fromEntries(
+        selected.flatMap((detail) => {
+          const fields = {
+            ...(!['高', '中', '低'].includes(detail.member_priority ?? '') && {
+              priority: '请选择优先级',
+            }),
+            ...(!detail.plan_month && { month: '请选择计划月份' }),
+          }
+          return Object.keys(fields).length ? [[detail.l3_code, fields]] : []
+        }),
+      ) as Record<string, { priority?: string; month?: string }>
+      setPlanFieldErrors(nextFieldErrors)
+      const firstPriority = selected.find(
+        (detail) => nextFieldErrors[detail.l3_code]?.priority,
+      )
+      const firstMonth = selected.find(
+        (detail) => nextFieldErrors[detail.l3_code]?.month,
+      )
+      const firstInvalid = firstPriority ?? firstMonth
+      if (firstInvalid) {
+        const field = firstPriority ? 'priority' : 'month'
+        setError('请补全所选提升项的优先级和计划月份，当前未生成任何任务。')
+        locatePlanField(firstInvalid, field)
+        return
+      }
+      if (isMockEnabled()) {
+        setAssessment({ ...mockAssessmentSubmitted, details })
+        setMessage('已生成所选学习任务（演示）。')
         return
       }
       // M02 V1: 生成前先等待在途计划自动保存完成（同一 revision 序列）——
@@ -734,7 +793,17 @@ export function AssessmentGapPage() {
                 const target = details.find(
                   (item) => item.l3_code === detail.l3_code,
                 )
-                if (target) locateDetail(target)
+                const field = structuredPlanField(detail)
+                if (target && field) {
+                  setPlanFieldErrors((current) => ({
+                    ...current,
+                    [target.l3_code]: {
+                      ...current[target.l3_code],
+                      [field]: detail.message,
+                    },
+                  }))
+                  locatePlanField(target, field)
+                } else if (target) locateDetail(target)
                 return detail.message
               })()
             : err instanceof Error
@@ -813,6 +882,31 @@ export function AssessmentGapPage() {
         block: 'center',
       })
       row?.focus()
+    }, 50)
+  }
+
+  function locatePlanField(
+    detail: AssessmentDetail,
+    field: 'priority' | 'month',
+  ) {
+    setActiveDomain(l1Of(detail))
+    setExpandedL2((current) => new Set(current).add(l2Of(detail)))
+    setSearch('')
+    setSearchActiveIndex(-1)
+    setTimeout(() => {
+      const input = document.getElementById(
+        field === 'priority'
+          ? `priority-${detail.id}`
+          : `plan-month-${detail.id}`,
+      ) as HTMLElement | null
+      input?.scrollIntoView?.({
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')
+          .matches
+          ? 'instant'
+          : 'smooth',
+        block: 'center',
+      })
+      input?.focus()
     }, 50)
   }
 
@@ -921,11 +1015,13 @@ export function AssessmentGapPage() {
     const inPlan = assessedDetails.filter(
       (d) => d.include_in_plan === true,
     ).length
-    // Issue #194: 待补计划月份 — 已加入计划但未填 YYYY-MM（生成前必须补齐）。
-    const inPlanNoMonth = assessedDetails.filter(
-      (d) => d.include_in_plan === true && !d.plan_month,
+    const inPlanIncomplete = assessedDetails.filter(
+      (detail) =>
+        detail.include_in_plan === true &&
+        (!['高', '中', '低'].includes(detail.member_priority ?? '') ||
+          !detail.plan_month),
     ).length
-    return { inPlan, inPlanNoMonth }
+    return { inPlan, inPlanIncomplete }
   }, [assessedDetails])
 
   if (loading || (assessment !== null && assessment.year !== year))
@@ -999,24 +1095,6 @@ export function AssessmentGapPage() {
             </p>
           </div>
           <div className="assessment-actions">
-            <div className={s.ratingSaveControl}>
-              <span
-                className={s.ratingSaveStatus}
-                role="status"
-                aria-label="评级保存状态"
-              >
-                {ratingSaveState}
-              </span>
-              {editable && (
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={ratingSaveState === '评级保存中'}
-                >
-                  保存能力评级
-                </button>
-              )}
-            </div>
             <span className={s.autoSaveBadge}>计划草稿自动保存</span>
           </div>
         </header>
@@ -1293,11 +1371,23 @@ export function AssessmentGapPage() {
                             const updated =
                               inherited && isInheritedUpdate(detail)
                             const hasGap = gap != null && gap > 0
-                            // Conditional enable for priority + plan checkboxes
-                            const canPlan =
-                              hasGap && detail.member_priority !== '暂缓'
+                            const canPlan = hasGap
                             const showPlanTime =
                               applicable && detail.include_in_plan === true
+                            const fieldErrors =
+                              planFieldErrors[detail.l3_code] ?? {}
+                            const priorityErrorId = `priority-error-${detail.id}`
+                            const monthErrorId = `plan-month-error-${detail.id}`
+                            const validPriority = ['高', '中', '低'].includes(
+                              detail.member_priority ?? '',
+                            )
+                            const priorityError =
+                              fieldErrors.priority ??
+                              (validPriority ? '' : '请选择优先级')
+                            const monthError =
+                              fieldErrors.month ??
+                              (detail.plan_month ? '' : '请选择计划月份')
+                            const planReady = !priorityError && !monthError
                             return (
                               <div
                                 key={detail.id}
@@ -1367,11 +1457,11 @@ export function AssessmentGapPage() {
                                   {applicable ? (
                                     <>
                                       <span className={s.targetLine}>
-                                        目标：{target ?? '—'} ·{' '}
-                                        {detail.standard_job_level_snapshot ??
-                                          assessment.member_current_level ??
-                                          '—'}{' '}
-                                        标准
+                                        目标 {target ?? '—'} ·{' '}
+                                        {target == null
+                                          ? '未设置'
+                                          : (LEVEL_LABELS[target] ??
+                                            '未知等级')}
                                       </span>
                                       {detail.target_adjusted && (
                                         <span className={s.adjustedBadge}>
@@ -1385,7 +1475,7 @@ export function AssessmentGapPage() {
                                         </small>
                                       )}
                                       <div className={s.gapCell}>
-                                        Gap：{gap ?? '—'}
+                                        Gap {gap ?? '—'}
                                       </div>
                                     </>
                                   ) : (
@@ -1398,71 +1488,91 @@ export function AssessmentGapPage() {
                                   {/* M02 V1 单动作加入/移出 */}
                                   {!applicable ? null : gap === 0 ? (
                                     <span className="muted">无需提升</span>
+                                  ) : detail.include_in_plan === true ? (
+                                    <span className={s.planJoinedStatus}>
+                                      已加入计划
+                                    </span>
                                   ) : (
                                     <button
                                       type="button"
-                                      className={
-                                        detail.include_in_plan === true
-                                          ? s.planToggleJoined
-                                          : undefined
-                                      }
                                       onClick={() =>
-                                        toggleIncludePlan(
-                                          index,
-                                          detail.include_in_plan !== true,
-                                        )
+                                        toggleIncludePlan(index, true)
                                       }
                                       disabled={!editable || !canPlan}
-                                      aria-label={`${detail.include_in_plan === true ? '移出提升计划' : '加入提升计划'} ${detail.l3_code}`}
+                                      aria-label={`加入提升计划 ${detail.l3_code}`}
                                     >
-                                      {detail.include_in_plan === true
-                                        ? '已加入'
-                                        : '加入提升计划'}
+                                      加入提升计划
                                     </button>
                                   )}
-                                  {/* 已加入后在提升计划区原位补充优先级与月份。 */}
-                                  {showPlanTime && (
-                                    <div className={s.planEditor}>
+                                </div>
+                                {showPlanTime && (
+                                  <div
+                                    className={s.planEditor}
+                                    data-testid={`plan-editor-${detail.l3_code}`}
+                                    role="group"
+                                    aria-label={`${detail.l3_code} 提升计划设置`}
+                                  >
+                                    <div className={s.planIdentity}>
+                                      <span>提升计划设置</span>
+                                      <strong>
+                                        {detail.l3_name ?? detail.l3_code}
+                                      </strong>
+                                      <small>
+                                        {detail.l3_code} · Gap {gap ?? '—'}
+                                      </small>
+                                    </div>
+                                    <div className={s.planControl}>
                                       <label htmlFor={`priority-${detail.id}`}>
-                                        优先级
+                                        优先级 *
                                       </label>
                                       <select
                                         id={`priority-${detail.id}`}
                                         value={detail.member_priority ?? ''}
-                                        onChange={(e) => {
-                                          const val =
-                                            (e.target.value as
-                                              '高' | '中' | '低' | '暂缓') ||
-                                            null
-                                          if (val === '暂缓') {
-                                            updateDetail(index, {
-                                              member_priority: '暂缓',
-                                              include_in_plan: false,
-                                              plan_quarter: null,
-                                              plan_month: null,
-                                            })
-                                          } else {
-                                            updateDetail(index, {
-                                              member_priority: val,
-                                            })
-                                          }
+                                        onChange={(event) => {
+                                          updateDetail(index, {
+                                            member_priority:
+                                              (event.target.value as
+                                                '高' | '中' | '低') || null,
+                                          })
+                                          if (event.target.value)
+                                            clearPlanFieldError(
+                                              detail.l3_code,
+                                              'priority',
+                                            )
                                         }}
                                         disabled={!editable || !hasGap}
                                         aria-label={`优先级 ${detail.l3_code}`}
+                                        aria-invalid={
+                                          priorityError ? true : undefined
+                                        }
+                                        aria-describedby={
+                                          priorityError
+                                            ? priorityErrorId
+                                            : undefined
+                                        }
                                       >
                                         <option value="">—</option>
                                         <option value="高">高</option>
                                         <option value="中">中</option>
                                         <option value="低">低</option>
-                                        <option value="暂缓">暂缓</option>
                                       </select>
+                                      {priorityError && (
+                                        <small
+                                          className={s.fieldError}
+                                          id={priorityErrorId}
+                                        >
+                                          {priorityError}
+                                        </small>
+                                      )}
+                                    </div>
+                                    <div className={s.planControl}>
                                       <label
                                         htmlFor={`plan-month-${detail.id}`}
                                       >
                                         计划月份 *
                                       </label>
                                       <div
-                                        className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''}`}
+                                        className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''} ${monthError ? s.fieldInvalid : ''}`}
                                         data-testid={`plan-month-control-${detail.l3_code}`}
                                         aria-disabled={!editable}
                                         onClick={() =>
@@ -1484,27 +1594,75 @@ export function AssessmentGapPage() {
                                             event.stopPropagation()
                                             openMonthPicker(event.currentTarget)
                                           }}
-                                          onChange={(event) =>
+                                          onChange={(event) => {
                                             updateDetail(index, {
                                               plan_month:
                                                 event.target.value || null,
                                             })
-                                          }
+                                            if (event.target.value)
+                                              clearPlanFieldError(
+                                                detail.l3_code,
+                                                'month',
+                                              )
+                                          }}
                                           disabled={!editable}
                                           aria-label={`计划月份 ${detail.l3_code}`}
+                                          aria-invalid={
+                                            monthError ? true : undefined
+                                          }
+                                          aria-describedby={
+                                            monthError
+                                              ? monthErrorId
+                                              : undefined
+                                          }
                                         />
                                       </div>
-                                      {!detail.plan_month && editable && (
+                                      {monthError ? (
                                         <small
-                                          className={s.pendingMonth}
-                                          data-testid={`pending-month-${detail.l3_code}`}
+                                          className={s.fieldError}
+                                          id={monthErrorId}
                                         >
-                                          待补计划月份
+                                          {monthError}
+                                        </small>
+                                      ) : (
+                                        <small className={s.fieldHint}>
+                                          {detail.plan_month
+                                            ? 'YYYY-MM'
+                                            : '请选择计划月份'}
                                         </small>
                                       )}
                                     </div>
-                                  )}
-                                </div>
+                                    <div className={s.planState}>
+                                      <span>草稿状态</span>
+                                      <strong
+                                        className={
+                                          planReady && !planSaveError
+                                            ? s.planStateSaved
+                                            : s.planStatePending
+                                        }
+                                      >
+                                        {planSaveError
+                                          ? '保存失败'
+                                          : planReady
+                                            ? '已保存'
+                                            : '待补字段'}
+                                      </strong>
+                                    </div>
+                                    <div className={s.planRemove}>
+                                      <span>操作</span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          toggleIncludePlan(index, false)
+                                        }
+                                        disabled={!editable}
+                                        aria-label={`移出提升计划 ${detail.l3_code}`}
+                                      >
+                                        移出计划
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                                 {editingId === detail.id && editable && (
                                   <div className={s.evidenceRow}>
                                     <textarea
@@ -1544,28 +1702,48 @@ export function AssessmentGapPage() {
           </div>
         </div>
 
-        {/* Sticky action bar — A1：仅计划草稿状态 + 显式生成。 */}
+        {/* #201 方案 1：评级保存与显式生成同置，生成是唯一主操作。 */}
         {editable && (
-          <footer className={s.stickyActions} aria-label="计划草稿操作">
-            <span
-              className={
-                stickyStats.inPlanNoMonth > 0
-                  ? s.draftIncomplete
-                  : s.draftComplete
-              }
-            >
-              计划草稿：已选 {stickyStats.inPlan} 项 ·{' '}
-              {stickyStats.inPlanNoMonth > 0
-                ? '仍有月份待补'
-                : '计划月份已完整'}
-            </span>
-            <button
-              type="button"
-              className="primary"
-              onClick={handleGeneratePlan}
-            >
-              生成所选学习任务
-            </button>
+          <footer className={s.stickyActions} aria-label="能力评级与计划操作">
+            <div className={s.actionSummary}>
+              <strong>计划草稿：已选 {stickyStats.inPlan} 项</strong>
+              <span
+                className={
+                  stickyStats.inPlanIncomplete > 0
+                    ? s.draftIncomplete
+                    : s.draftComplete
+                }
+              >
+                {stickyStats.inPlanIncomplete > 0
+                  ? '仍有字段待补'
+                  : '计划字段已完整'}
+              </span>
+            </div>
+            <div className={s.actionButtons}>
+              <div className={s.ratingSaveControl}>
+                <span
+                  className={s.ratingSaveStatus}
+                  role="status"
+                  aria-label="评级保存状态"
+                >
+                  {ratingSaveState}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={ratingSaveState === '评级保存中'}
+                >
+                  保存能力评级
+                </button>
+              </div>
+              <button
+                type="button"
+                className="primary"
+                onClick={handleGeneratePlan}
+              >
+                生成所选学习任务
+              </button>
+            </div>
           </footer>
         )}
       </div>

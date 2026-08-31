@@ -454,7 +454,7 @@ describe('AssessmentGapPage', () => {
     },
   )
 
-  it('keeps rating save in the header and the sticky bar to draft generation', async () => {
+  it('keeps rating save and generation together in the bottom action area', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -481,12 +481,21 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力评级与提升计划')
-    // Issue #194: 原型底部只有「计划草稿：已选 N 项 · 月份状态」一条状态
-    // 与页头评级保存和页底显式生成；未完成/未填优先级/待补月份/未决定等额外统计层移除。
+    const header = screen
+      .getByRole('heading', { name: '能力评级与提升计划' })
+      .closest('header')!
+    const footer = screen.getByRole('contentinfo', {
+      name: '能力评级与计划操作',
+    })
     expect(screen.getByText(/计划草稿：已选 1 项/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
     expect(
-      screen.getByRole('button', { name: '生成所选学习任务' }),
+      within(header).queryByRole('button', { name: '保存能力评级' }),
+    ).toBeNull()
+    expect(
+      within(footer).getByRole('button', { name: '保存能力评级' }),
+    ).toBeTruthy()
+    expect(
+      within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
     expect(screen.queryByText(/纳入计划但未填优先级/)).toBeNull()
     expect(screen.queryByText(/项未决定计划/)).toBeNull()
@@ -1073,7 +1082,7 @@ describe('AssessmentGapPage', () => {
     expect(detail).not.toHaveProperty('plan_month')
   })
 
-  it('M02 keeps partial rating save beside its status and leaves the footer to generation', async () => {
+  it('M02 keeps rating save and generation together in bottom action order', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1097,22 +1106,20 @@ describe('AssessmentGapPage', () => {
     const header = screen
       .getByRole('heading', { name: '能力评级与提升计划' })
       .closest('header')
-    const footer = screen.getByRole('contentinfo', { name: '计划草稿操作' })
+    const footer = screen.getByRole('contentinfo', {
+      name: '能力评级与计划操作',
+    })
     expect(header).toBeTruthy()
     expect(
-      within(header!).getByRole('button', { name: '保存能力评级' }),
-    ).toBeTruthy()
-    expect(
-      within(footer).getByRole('button', { name: '生成所选学习任务' }),
-    ).toBeTruthy()
-    expect(
-      within(footer).queryByRole('button', { name: '保存能力评级' }),
+      within(header!).queryByRole('button', { name: '保存能力评级' }),
     ).toBeNull()
-    expect(
-      Array.from(footer.querySelectorAll('button')).map(
-        (button) => button.textContent,
-      ),
-    ).toEqual(['生成所选学习任务'])
+    const buttons = Array.from(footer.querySelectorAll('button'))
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      '保存能力评级',
+      '生成所选学习任务',
+    ])
+    expect(buttons[0].classList.contains('primary')).toBe(false)
+    expect(buttons[1].classList.contains('primary')).toBe(true)
     expect(
       screen
         .getByLabelText('评级保存状态')
@@ -1124,12 +1131,53 @@ describe('AssessmentGapPage', () => {
     ).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.click(
-      within(header!).getByRole('button', { name: '保存能力评级' }),
+      within(footer).getByRole('button', { name: '保存能力评级' }),
     )
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][1]).toEqual([
       expect.objectContaining({ current_level: 3 }),
     ])
+  })
+
+  it('blocks the whole generation batch and focuses the first missing priority before month', async () => {
+    const first = {
+      ...mockDraft().details![0],
+      current_level: 2,
+      include_in_plan: true,
+      member_priority: '高' as const,
+      plan_month: null,
+    }
+    const second = {
+      ...first,
+      id: 2,
+      l3_code: 'P01.01.02',
+      l3_name: '任务2',
+      member_priority: null,
+      plan_month: '2026-08',
+    }
+    const draft = mockDraft({ details: [first, second] })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    const generate = vi.spyOn(assessmentApi, 'generatePlanItems')
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+
+    const priority = screen.getByLabelText('优先级 P01.01.02')
+    const month = screen.getByLabelText('计划月份 P01.01.01')
+    expect(priority.getAttribute('aria-invalid')).toBe('true')
+    expect(priority.getAttribute('aria-describedby')).toBeTruthy()
+    expect(month.getAttribute('aria-invalid')).toBe('true')
+    expect(month.getAttribute('aria-describedby')).toBeTruthy()
+    expect(screen.getByText('请选择优先级')).toBeTruthy()
+    expect(screen.getByText('请选择计划月份')).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(priority))
+    expect(generate).not.toHaveBeenCalled()
   })
 
   it('A1 shows rating save state', async () => {
@@ -2451,8 +2499,9 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(screen.queryByText(/目标职级进阶/)).toBeNull()
     expect(screen.queryByText(/职级要求/)).toBeNull()
     expect(screen.queryByText(/达成路径/)).toBeNull()
-    expect(screen.getByText('目标：4 · P4 标准')).toBeTruthy()
-    expect(screen.getByText('Gap：2')).toBeTruthy()
+    expect(screen.getAllByText('目标 4 · 精通')).toHaveLength(2)
+    expect(screen.getByText('Gap 2')).toBeTruthy()
+    expect(screen.queryByText(/P4 标准/)).toBeNull()
     // 优先级与月份同属已加入的计划草稿；未加入行不占用默认能力项密度。
     expect(screen.getByLabelText('优先级 P01.01.01')).toBeTruthy()
     expect(screen.queryByLabelText('优先级 P01.01.02')).toBeNull()
@@ -2466,30 +2515,35 @@ describe('M02 prototype element inventory (issue #194)', () => {
     const tableIndex = [...content.children].indexOf(
       screen.getByTestId('assessment-main-area'),
     )
-    const footer = screen.getByRole('contentinfo', { name: '计划草稿操作' })
+    const footer = screen.getByRole('contentinfo', {
+      name: '能力评级与计划操作',
+    })
     const footerIndex = [...content.children].indexOf(footer)
     expect(headerIndex).toBeLessThan(summaryIndex)
     expect(summaryIndex).toBeLessThan(navigationIndex)
     expect(navigationIndex).toBeLessThan(tableIndex)
     expect(tableIndex).toBeLessThan(footerIndex)
-    // 已加入行仍保持四区；优先级和整框月份原位属于提升计划区。
+    // 已加入行在四区之后增加全宽编辑轨；第四区只显示非交互加入状态。
     const joinedRow = screen
       .getByLabelText('当前等级 P01.01.01')
       .closest('[id^="row-"]')!
-    expect(joinedRow.children).toHaveLength(4)
+    expect(joinedRow.children).toHaveLength(5)
     const planZone = joinedRow.children[3] as HTMLElement
-    expect(within(planZone).getByLabelText('优先级 P01.01.01')).toBeTruthy()
+    expect(within(planZone).getByText('已加入计划')).toBeTruthy()
+    expect(within(planZone).queryByRole('button')).toBeNull()
+    const planEditor = joinedRow.children[4] as HTMLElement
+    expect(planEditor).toBe(screen.getByTestId('plan-editor-P01.01.01'))
+    expect(within(planEditor).getByLabelText('优先级 P01.01.01')).toBeTruthy()
     expect(
-      within(planZone).getByTestId('plan-month-control-P01.01.01'),
+      within(planEditor).getByTestId('plan-month-control-P01.01.01'),
     ).toBeTruthy()
-    // 页底按 A1 原型顺序仅承载草稿摘要与显式生成。
+    // 页底按 #201 方案 1 顺序承载评级保存与显式生成。
     expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
     expect(
-      within(footer).getByRole('button', { name: '生成所选学习任务' }),
-    ).toBeTruthy()
-    expect(
-      within(footer).queryByRole('button', { name: '保存能力评级' }),
-    ).toBeNull()
+      Array.from(footer.querySelectorAll('button')).map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(['保存能力评级', '生成所选学习任务'])
   })
 })
 
