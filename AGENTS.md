@@ -16,8 +16,10 @@
 
 ## 协作与变更边界
 
-- Ubuntu 是 TCP coding、集成、测试、受控部署和真实 Chrome 验收的主场；每个活跃 Issue 同一时间只有一个被明确指定的 writer 与 commit/push owner。
-- Sol 维护当前 Issue Goal/Plan、任务合同、门禁和验收编排，不旁路修改 Issue worktree。writer 可以是当前合同指定的独立 Writer；切换 writer 前须核对固定 pane、worktree、branch/HEAD 和干净状态，旧 writer 先停止写入。
+- Ubuntu 是 TCP coding、集成、测试、受控部署和真实 Chrome 验收的主场；每个活跃 Issue 同一时间只有一个被明确指定的 writer 与 commit/push owner。除非用户另行授权，全 TCP 同时最多一个 code writer/commit owner 和一个 mutable test/database stack。
+- TCP 不存在跨 Issue 的单一 controller。每个 Issue 有自己的 Sol controller、Goal/Plan、control window/conversation 和 worktree；Sol 只拥有本 Issue，不接管或改写其他 Issue 的 Goal/Plan。`tcp-codex-control` 是容纳各 Issue control windows 的共享 tmux session，不是跨 Issue controller。
+- 多个 Issue Sol 可并行做只读分析、需求澄清、设计和门禁准备；依赖与优先级通过 GitHub Issues/Project 和明确 handoff 协调，不突破全局共享资源上限。
+- Sol 维护本 Issue Goal/Plan、任务合同、门禁和验收编排，不旁路修改 Issue worktree。writer 可以是当前合同指定的独立 Writer；切换 writer 前须核对固定 pane、worktree、branch/HEAD 和干净状态，旧 writer 先停止写入。
 - 默认由 Sol 创建一个只读 `combined_reviewer` 子会话；按任务增加 delivery、risk 或 visual 检查维度。只有确有独立并行收益或单一上下文过大时才拆分额外 reviewer。
 - Reviewer 合同必须禁止写入；除非当前有界合同明确授权并隔离环境，Reviewer 不运行构建、浏览器、Docker/Compose、数据库、迁移或快照更新。工具权限不等于职责授权，未授权写入使该轮审查失效。
 - 未经当前有界合同，不提交、推送、创建 PR、部署、UAT、合并、关闭 Issue 或修改共享运行环境。

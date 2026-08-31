@@ -24,10 +24,12 @@
 
 ## 已确认协作模型
 
-- Sol 是 Issue 总控：拥有 Goal/Plan、合同、门禁和验收编排；产品代码只能由当前合同指定的唯一 writer 修改。
+- TCP 不存在跨 Issue 的单一 controller。每个 Issue 有自己的 Sol controller、Goal/Plan、control window/conversation 和 worktree；Sol 只拥有本 Issue，不接管或改写其他 Issue 的 Goal/Plan。
+- `tcp-codex-control` 是容纳各 Issue control windows 的共享 tmux session，不是跨 Issue controller。多个 Issue Sol 可并行做只读分析、需求澄清、设计和门禁准备；依赖与优先级通过 GitHub Issues/Project 和明确 handoff 协调。
+- Sol 拥有本 Issue 的 Goal/Plan、合同、门禁和验收编排；产品代码只能由当前合同指定的唯一 writer 修改。
 - reviewer 是 Sol 创建的受合同限制的只读子会话；常态为一个 combined reviewer，通过 delivery/risk/visual 维度组合覆盖，不为逻辑角色常驻多个技术会话。
 - agent 是否具备可写工具不等于获准写入；角色、允许对象、检查维度、禁止动作、证据要求、停止条件和返回格式必须写进当前合同。Reviewer 的结论不是 writer 自述的替代品。
-- 同时最多一个 writer 和一个可变测试/数据库栈。需要切换 writer 时，先验证旧 writer 已停止写入，以及 pane、worktree、branch/HEAD、工作区状态和目标环境身份。
+- 上述并行不改变全局共享资源上限：除非用户另行授权，全 TCP 同时最多一个 code writer/commit owner 和一个 mutable test/database stack。需要切换 writer 时，先验证旧 writer 已停止写入，以及 pane、worktree、branch/HEAD、工作区状态和目标环境身份。
 
 ## 证据与状态放置
 
