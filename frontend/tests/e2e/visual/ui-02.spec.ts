@@ -69,21 +69,21 @@ for (const viewport of VIEWPORTS) {
       await expect(
         page.getByRole('combobox', { name: '搜索全部能力项' }),
       ).toBeVisible()
-      await expect(
-        page
-          .getByRole('heading', { name: '能力评级与提升计划' })
-          .locator('xpath=ancestor::header')
-          .getByRole('button', { name: '保存能力评级' }),
-      ).toBeVisible()
+      const draftActions = page.getByLabel('能力评级与计划操作')
+      await expect(draftActions).toBeVisible()
+      await expect(draftActions.getByRole('button')).toHaveCount(2)
+      const ratingSave = draftActions.getByRole('button', {
+        name: '保存能力评级',
+      })
+      const generate = draftActions.getByRole('button', {
+        name: '生成所选学习任务',
+      })
+      await expect(ratingSave).toBeVisible()
+      await expect(ratingSave).not.toHaveClass(/primary/)
+      await expect(generate).toHaveClass(/primary/)
       await expect(
         page.getByRole('button', { name: '生成所选学习任务' }),
-      ).toBeVisible()
-      const draftActions = page.getByLabel('计划草稿操作')
-      await expect(draftActions).toBeVisible()
-      await expect(draftActions.getByRole('button')).toHaveCount(1)
-      await expect(
-        draftActions.getByRole('button', { name: '生成所选学习任务' }),
-      ).toBeVisible()
+      ).toHaveCount(1)
       await expect(page.getByText(/Assessment Review/)).toHaveCount(0)
 
       await domainNav.getByRole('button', { name: '全部能力域' }).focus()
@@ -111,7 +111,7 @@ for (const viewport of VIEWPORTS) {
           if (!main) return null
           const mainRect = main.getBoundingClientRect()
           const footer = document.querySelector<HTMLElement>(
-            '[aria-label="计划草稿操作"]',
+            '[aria-label="能力评级与计划操作"]',
           )
           const visibleTop = Math.max(0, mainRect.top)
           const visibleBottom = Math.min(

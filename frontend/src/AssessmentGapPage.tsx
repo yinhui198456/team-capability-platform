@@ -169,6 +169,7 @@ function isStructuredAssessmentError(value: unknown): value is {
   code: string
   l3_code: string
   l3_node_id?: number
+  field?: string
   reason: string
   message: string
 } {
@@ -177,19 +178,29 @@ function isStructuredAssessmentError(value: unknown): value is {
     value !== null &&
     typeof (value as { code?: unknown }).code === 'string' &&
     typeof (value as { l3_code?: unknown }).l3_code === 'string' &&
+    ((value as { field?: unknown }).field === undefined ||
+      typeof (value as { field?: unknown }).field === 'string') &&
     typeof (value as { reason?: unknown }).reason === 'string' &&
     typeof (value as { message?: unknown }).message === 'string'
   )
 }
 
 function structuredPlanField(value: {
-  code: string
+  field?: string
   reason: string
-  message: string
 }): 'priority' | 'month' | null {
-  const text = `${value.code} ${value.reason} ${value.message}`.toLowerCase()
-  if (text.includes('priority') || text.includes('优先级')) return 'priority'
-  if (text.includes('month') || text.includes('月份')) return 'month'
+  if (value.field === 'member_priority') return 'priority'
+  if (value.field === 'plan_month') return 'month'
+  if (value.reason === 'pending_member_priority') return 'priority'
+  if (
+    [
+      'pending_plan_month',
+      'invalid_plan_month',
+      'plan_month_year_mismatch',
+      'invalid_month_format',
+    ].includes(value.reason)
+  )
+    return 'month'
   return null
 }
 
@@ -236,6 +247,9 @@ export function AssessmentGapPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [planSaveError, setPlanSaveError] = useState('')
+  const [planSaveState, setPlanSaveState] = useState<
+    '保存中' | '已保存' | '保存失败'
+  >('已保存')
   const [planFieldErrors, setPlanFieldErrors] = useState<
     Record<string, { priority?: string; month?: string }>
   >({})
@@ -276,6 +290,8 @@ export function AssessmentGapPage() {
     ratingChangeVersionsRef.current = new Map()
     setRatingSaveState('评级已保存')
     setGenerationSummary(null)
+    setPlanSaveError('')
+    setPlanSaveState('已保存')
     setPlanFieldErrors({})
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
@@ -487,13 +503,20 @@ export function AssessmentGapPage() {
     失败时队列保留（本地输入不丢）并给出中文可操作提示；下次计划变更或
     生成前自动重试。revision 用 ref 跨请求推进，避免并发 PATCH 冲突。 */
   async function pumpPlanSaves(): Promise<void> {
-    if (isMockEnabled()) return
+    if (isMockEnabled()) {
+      planQueueRef.current = []
+      setPlanSaveError('')
+      setPlanSaveState('已保存')
+      return
+    }
     if (planPumpingRef.current) {
       await planFlushPromiseRef.current
       return
     }
-    if (!assessment) return
+    if (!assessment || planQueueRef.current.length === 0) return
     planPumpingRef.current = true
+    setPlanSaveError('')
+    setPlanSaveState('保存中')
     const flush = enqueueMutation(async () => {
       try {
         // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
@@ -513,7 +536,10 @@ export function AssessmentGapPage() {
             if (planQueueRef.current[0] === task) {
               planQueueRef.current.shift()
             }
-            if (planQueueRef.current.length === 0) setPlanSaveError('')
+            if (planQueueRef.current.length === 0) {
+              setPlanSaveError('')
+              setPlanSaveState('已保存')
+            }
             applyAutoCleared(result.auto_cleared ?? [])
             setAssessment((current) =>
               current
@@ -525,6 +551,7 @@ export function AssessmentGapPage() {
                 : current,
             )
           } catch (err: unknown) {
+            setPlanSaveState('保存失败')
             const status = (err as { status?: number }).status
             const detail = (err as { detail?: unknown }).detail
             setPlanSaveError(
@@ -1095,7 +1122,19 @@ export function AssessmentGapPage() {
             </p>
           </div>
           <div className="assessment-actions">
-            <span className={s.autoSaveBadge}>计划草稿自动保存</span>
+            <span
+              className={`${s.autoSaveBadge} ${
+                planSaveState === '已保存'
+                  ? s.autoSaveBadgeSaved
+                  : planSaveState === '保存失败'
+                    ? s.autoSaveBadgeFailed
+                    : s.autoSaveBadgeSaving
+              }`}
+              role="status"
+              aria-label="计划草稿保存状态"
+            >
+              计划草稿{planSaveState}
+            </span>
           </div>
         </header>
 
@@ -1394,7 +1433,9 @@ export function AssessmentGapPage() {
                                 id={`row-${detail.id}`}
                                 tabIndex={-1}
                                 className={`${s.abilityRow} ${
-                                  gap && gap > 0 ? s.rowGap : ''
+                                  detail.include_in_plan === true
+                                    ? s.rowGap
+                                    : ''
                                 }`}
                               >
                                 {/* Zone 1: 能力项 */}
@@ -1636,16 +1677,21 @@ export function AssessmentGapPage() {
                                       <span>草稿状态</span>
                                       <strong
                                         className={
-                                          planReady && !planSaveError
-                                            ? s.planStateSaved
-                                            : s.planStatePending
+                                          planSaveState === '保存失败'
+                                            ? s.planStateFailed
+                                            : planSaveState === '已保存' &&
+                                                planReady
+                                              ? s.planStateSaved
+                                              : s.planStatePending
                                         }
                                       >
-                                        {planSaveError
+                                        {planSaveState === '保存失败'
                                           ? '保存失败'
-                                          : planReady
-                                            ? '已保存'
-                                            : '待补字段'}
+                                          : planSaveState === '保存中'
+                                            ? '保存中'
+                                            : planReady
+                                              ? '已保存'
+                                              : '待补字段'}
                                       </strong>
                                     </div>
                                     <div className={s.planRemove}>

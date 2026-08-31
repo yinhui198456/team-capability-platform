@@ -312,7 +312,7 @@ test.describe('capability standard targets', () => {
 
     await loginAs(page, 'member')
     await page.goto('/capability/assessment')
-    await expect(page.getByText('目标：4 · P4 标准')).toBeVisible()
+    await expect(page.getByText('目标 4 · 精通')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
     // N/A rows have no plan action.
     await expect(

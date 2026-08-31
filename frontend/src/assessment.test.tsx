@@ -1402,10 +1402,15 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
     // M02 V1：三态下拉被单一加入/移出操作取代。
     expect(screen.queryByRole('combobox', { name: /纳入计划/ })).toBeNull()
+    const row = screen
+      .getByLabelText('当前等级 P01.01.01')
+      .closest('[id^="row-"]')!
+    expect(row.className).not.toMatch(/rowGap/)
     const join = screen.getByRole('button', { name: /加入提升计划/ })
     expect(join).toBeTruthy()
     fireEvent.click(join)
     expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
+    expect(row.className).toMatch(/rowGap/)
   })
 
   it('plan change auto-saves a sparse plan payload, never ratings (#194 M02 V1)', async () => {
@@ -1569,12 +1574,26 @@ describe('AssessmentGapPage', () => {
       { target: { value: '高' } },
     )
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(
+      screen.getByRole('status', { name: '计划草稿保存状态' }).textContent,
+    ).toBe('计划草稿保存中')
+    expect(
+      within(screen.getByTestId('plan-editor-P01.01.01')).getByText('保存中'),
+    ).toBeTruthy()
     // 立即显式生成：必须等待在途保存完成
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(gen).not.toHaveBeenCalled()
     resolveSave({ ok: true, revision: 2 })
     await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('status', { name: '计划草稿保存状态' }).textContent,
+      ).toBe('计划草稿已保存')
+      expect(
+        within(screen.getByTestId('plan-editor-P01.01.01')).getByText('已保存'),
+      ).toBeTruthy()
+    })
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(
       gen.mock.invocationCallOrder[0],
     )
@@ -1801,6 +1820,42 @@ describe('AssessmentGapPage', () => {
     expect(screen.getByText('计划总计 3 项')).toBeTruthy()
     expect(screen.queryByText(/已生成 1 个学习任务/)).toBeNull()
     expect(planningApi.getAnnualPlan).toHaveBeenCalledWith(2026)
+  })
+
+  it('maps a structured generation reason without scanning its message (#201)', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          current_level: 2,
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-05',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    vi.spyOn(assessmentApi, 'generatePlanItems').mockRejectedValue({
+      detail: {
+        code: 'plan_generation_validation',
+        l3_code: 'P01.01.01',
+        field: 'l3_codes',
+        reason: 'pending_plan_month',
+        message: '优先级错误',
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    const month = screen.getByLabelText('计划月份 P01.01.01')
+    await waitFor(() => expect(month.getAttribute('aria-invalid')).toBe('true'))
+    await waitFor(() => expect(document.activeElement).toBe(month))
   })
 
   it('generation success keeps unsaved local ratings (#194)', async () => {
@@ -2462,7 +2517,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
       .closest('header')
     expect(header).toBeTruthy()
     expect(within(header!).getByText('能力成长')).toBeTruthy()
-    expect(screen.getByText('计划草稿自动保存')).toBeTruthy()
+    expect(screen.getByText('计划草稿已保存')).toBeTruthy()
     // R6: 年度/版本/内部范围和 P4–P8 长要求不再占用默认主层级；直达
     // 路由与兼容修复另行保留。
     expect(screen.queryByTestId('scope-header')).toBeNull()

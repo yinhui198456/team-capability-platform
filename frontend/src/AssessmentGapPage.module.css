@@ -277,6 +277,11 @@
   background: var(--color-warning-bg);
   color: var(--color-warning);
 }
+.planStateFailed {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
 .planRemove button {
   min-height: 40px;
   border-color: var(--color-danger);
@@ -716,10 +721,20 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: var(--radius-lg);
-  background: #ecfdf3;
-  color: var(--color-success);
   font-size: var(--text-xs);
   font-weight: 600;
+}
+.autoSaveBadgeSaved {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+.autoSaveBadgeSaving {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+.autoSaveBadgeFailed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .ratingSaveControl {
