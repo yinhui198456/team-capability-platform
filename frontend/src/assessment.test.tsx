@@ -295,7 +295,7 @@ describe('AssessmentGapPage', () => {
     expect(month).toHaveProperty('type', 'month')
   })
 
-  it('M02 V1 prototype: per-level rating buttons in the item row, two independent primary actions', async () => {
+  it('M02 V1 prototype: ratings auto-save and generation is the only CTA', async () => {
     vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
       { ...mockDraft(), details: undefined },
     ])
@@ -317,8 +317,7 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力评级与提升计划')
-    // M02 V1 故事合同：两个独立主操作保留。
-    expect(screen.getByRole('button', { name: '保存能力评级' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '保存能力评级' })).toBeNull()
     expect(
       screen.getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
@@ -492,8 +491,8 @@ describe('AssessmentGapPage', () => {
       within(header).queryByRole('button', { name: '保存能力评级' }),
     ).toBeNull()
     expect(
-      within(footer).getByRole('button', { name: '保存能力评级' }),
-    ).toBeTruthy()
+      within(footer).queryByRole('button', { name: '保存能力评级' }),
+    ).toBeNull()
     expect(
       within(footer).getByRole('button', { name: '生成所选学习任务' }),
     ).toBeTruthy()
@@ -936,7 +935,7 @@ describe('AssessmentGapPage', () => {
     ).toBe(false)
   })
 
-  it('saves dirty details with PATCH before explicit generation', async () => {
+  it('generates after rating then legacy-priority PATCHes with continuous revisions', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -951,7 +950,8 @@ describe('AssessmentGapPage', () => {
     vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
     const save = vi
       .spyOn(assessmentApi, 'saveDraft')
-      .mockResolvedValue({ ok: true, revision: 2 })
+      .mockResolvedValueOnce({ ok: true, revision: 2 })
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
     const generate = vi
       .spyOn(assessmentApi, 'generatePlanItems')
       .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
@@ -961,21 +961,26 @@ describe('AssessmentGapPage', () => {
       </MemoryRouter>,
     )
     await screen.findByText('能力评级与提升计划')
-    // Issue #194 P1：生成前的落草稿只涉及计划字段（三独立动作）
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
-      { target: { value: '高' } },
-    )
+    fireEvent.click(screen.getByRole('button', { name: /2 · 基础/ }))
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await waitFor(() => expect(generate).toHaveBeenCalled())
-    expect(save).toHaveBeenCalledWith(7, expect.any(Array), 1)
-    expect(save.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(save.mock.calls[0]).toEqual([
+      7,
+      [expect.objectContaining({ current_level: 2 })],
+      1,
+    ])
+    expect(save.mock.calls[1]).toEqual([
+      7,
+      [expect.objectContaining({ member_priority: '低' })],
+      2,
+    ])
+    expect(save.mock.invocationCallOrder[1]).toBeLessThan(
       generate.mock.invocationCallOrder[0],
     )
     expect(generate).toHaveBeenCalledWith(
       7,
       ['P01.01.01'],
-      2,
+      3,
       expect.any(String),
     )
   })
@@ -1017,7 +1022,6 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
     fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => {
       expect(screen.getByLabelText('评估摘要').textContent).toContain(
         '存在差距 0',
@@ -1067,22 +1071,19 @@ describe('AssessmentGapPage', () => {
     expect(screen.queryByText('调整▸')).toBeNull()
     expect(screen.queryByLabelText('调整目标 P01.01.01')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /3.*熟练/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
 
     await waitFor(() => expect(save).toHaveBeenCalled())
     const detail = save.mock.calls[0][1][0]
     expect(detail).not.toHaveProperty('target_adjusted')
     expect(detail).not.toHaveProperty('adjusted_target_level')
     expect(detail).not.toHaveProperty('target_adjustment_reason')
-    // Issue #194 P1：保存能力评级与提升计划草稿自动保存是两个独立动作，
-    // 评级保存（稀疏 PATCH）绝不夹带计划字段；计划草稿由
-    // 计划字段由自动保存单独提交。
+    // Issue #201：评级与计划草稿自动保存仍使用独立稀疏载荷。
     expect(detail).not.toHaveProperty('member_priority')
     expect(detail).not.toHaveProperty('include_in_plan')
     expect(detail).not.toHaveProperty('plan_month')
   })
 
-  it('M02 keeps rating save and generation together in bottom action order', async () => {
+  it('M02 auto-saves ratings and keeps generation as the only bottom action', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1115,31 +1116,21 @@ describe('AssessmentGapPage', () => {
     ).toBeNull()
     const buttons = Array.from(footer.querySelectorAll('button'))
     expect(buttons.map((button) => button.textContent)).toEqual([
-      '保存能力评级',
       '生成所选学习任务',
     ])
-    expect(buttons[0].classList.contains('primary')).toBe(false)
-    expect(buttons[1].classList.contains('primary')).toBe(true)
-    expect(
-      screen
-        .getByLabelText('评级保存状态')
-        .parentElement?.querySelector('button')?.textContent,
-    ).toBe('保存能力评级')
+    expect(buttons[0].classList.contains('primary')).toBe(true)
     // M02 V1：无全局草稿保存按钮——计划草稿随行内变更自动保存。
     expect(
       screen.queryByRole('button', { name: '保存提升计划草稿' }),
     ).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    fireEvent.click(
-      within(footer).getByRole('button', { name: '保存能力评级' }),
-    )
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][1]).toEqual([
       expect.objectContaining({ current_level: 3 }),
     ])
   })
 
-  it('blocks the whole generation batch and focuses the first missing priority before month', async () => {
+  it('blocks generation only for a missing month and focuses it', async () => {
     const first = {
       ...mockDraft().details![0],
       current_level: 2,
@@ -1170,13 +1161,16 @@ describe('AssessmentGapPage', () => {
 
     const priority = screen.getByLabelText('优先级 P01.01.02')
     const month = screen.getByLabelText('计划月份 P01.01.01')
-    expect(priority.getAttribute('aria-invalid')).toBe('true')
-    expect(priority.getAttribute('aria-describedby')).toBeTruthy()
+    expect((priority as HTMLSelectElement).value).toBe('低')
+    expect((priority as HTMLSelectElement).required).toBe(false)
+    expect(priority.getAttribute('aria-invalid')).toBeNull()
+    expect((month as HTMLInputElement).required).toBe(true)
+    expect(month.getAttribute('aria-required')).toBe('true')
     expect(month.getAttribute('aria-invalid')).toBe('true')
     expect(month.getAttribute('aria-describedby')).toBeTruthy()
-    expect(screen.getByText('请选择优先级')).toBeTruthy()
+    expect(screen.queryByText('请选择优先级')).toBeNull()
     expect(screen.getByText('请选择计划月份')).toBeTruthy()
-    await waitFor(() => expect(document.activeElement).toBe(priority))
+    await waitFor(() => expect(document.activeElement).toBe(month))
     expect(generate).not.toHaveBeenCalled()
   })
 
@@ -1210,8 +1204,6 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
 
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    expect(screen.getByText('评级未保存')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(screen.getByText('评级保存中')).toBeTruthy()
     resolveRatingSave({ ok: true, revision: 2 })
@@ -1316,7 +1308,6 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
 
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][2]).toBe(1)
 
@@ -1329,7 +1320,7 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.calls[1][2]).toBe(2)
     expect(save.mock.calls[1][1][0]).toMatchObject({
       include_in_plan: true,
-      member_priority: null,
+      member_priority: '低',
       plan_month: null,
     })
   })
@@ -1364,18 +1355,16 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
 
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
     resolveFirstSave({ ok: true, revision: 2 })
 
-    await waitFor(() => expect(screen.getByText('评级未保存')).toBeTruthy())
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(
       screen
         .getByRole('button', { name: /4 · 精通/ })
         .getAttribute('aria-pressed'),
     ).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
     expect(save.mock.calls[1][2]).toBe(2)
     expect(save.mock.calls[1][1][0]).toMatchObject({ current_level: 4 })
@@ -1435,17 +1424,21 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
 
-    // 未保存评级（当前等级 2 → 3）
+    // 评级先自动保存（当前等级 2 → 3）
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     // 行内加入 → 自动保存，仅计划字段
     fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-    const row = save.mock.calls[0][1][0]
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    const ratingRow = save.mock.calls[0][1][0]
+    expect(ratingRow).toMatchObject({ current_level: 3 })
+    expect(ratingRow).not.toHaveProperty('include_in_plan')
+    const row = save.mock.calls[1][1][0]
     expect(row).toMatchObject({ include_in_plan: true })
+    expect(row).toMatchObject({ member_priority: '低' })
     expect(row).not.toHaveProperty('current_level')
     expect(row).not.toHaveProperty('target_adjusted')
     expect(row).not.toHaveProperty('evidence_note')
-    // 未保存评级保留在本地
+    // 自动保存期间本地输入始终保留
     expect(
       screen
         .getByRole('button', { name: /3 · 熟练/ })
@@ -1477,7 +1470,6 @@ describe('AssessmentGapPage', () => {
     await screen.findByText('能力评级与提升计划')
 
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(save.mock.calls[0][2]).toBe(1)
 
@@ -1486,7 +1478,7 @@ describe('AssessmentGapPage', () => {
     expect(save.mock.calls[1][2]).toBe(2)
     expect(save.mock.calls[1][1][0]).toMatchObject({
       include_in_plan: true,
-      member_priority: null,
+      member_priority: '低',
       plan_month: null,
     })
     expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
@@ -1525,7 +1517,8 @@ describe('AssessmentGapPage', () => {
     })
     // 输入保留：行内状态仍为已加入
     expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
-    // 脏集合未清：下一次计划变更自动重试补交
+
+    // 队列未清：下一次计划变更自动重试补交。
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
       { target: { value: '高' } },
@@ -1624,7 +1617,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
 
-    // 评级变更归脏集合；计划变更入队自动保存（两动作互不夹带）
+    // 评级与计划变更分别自动保存（两类载荷互不夹带）
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
@@ -1634,10 +1627,14 @@ describe('AssessmentGapPage', () => {
       target: { value: '2026-05' },
     })
 
-    // 保存能力评级：先等待计划自动保存落库，再只提交评级字段（稀疏 PATCH）
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
-    const planRow = save.mock.calls[0][1][0]
+    const ratingRow = save.mock.calls[0][1][0]
+    expect(ratingRow).toMatchObject({
+      current_level: 3,
+      evidence_note: '已有依据',
+    })
+    expect(ratingRow).not.toHaveProperty('member_priority')
+    const planRow = save.mock.calls[1][1][0]
     expect(planRow).toMatchObject({
       member_priority: '高',
       include_in_plan: true,
@@ -1646,11 +1643,6 @@ describe('AssessmentGapPage', () => {
     expect(planRow).not.toHaveProperty('current_level')
     expect(planRow).not.toHaveProperty('target_adjusted')
     expect(planRow).not.toHaveProperty('evidence_note')
-    const ratingRow = save.mock.calls[1][1][0]
-    expect(ratingRow).toMatchObject({
-      current_level: 3,
-      evidence_note: '已有依据',
-    })
     expect(ratingRow).not.toHaveProperty('target_adjusted')
     expect(ratingRow).not.toHaveProperty('member_priority')
     expect(ratingRow).not.toHaveProperty('include_in_plan')
@@ -1749,7 +1741,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
 
-    // 未保存评级：当前等级改 3 但不点保存
+    // 评级自动保存；计划载荷仍保持稀疏。
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
@@ -1760,9 +1752,10 @@ describe('AssessmentGapPage', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
-    // 生成前先等待在途计划自动保存（稀疏 PATCH），落库后只提交最新计划快照
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-    const planRow = save.mock.calls[0][1][0]
+    // 生成前严格等待评级、计划两类稀疏 PATCH。
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[0][1][0]).toMatchObject({ current_level: 3 })
+    const planRow = save.mock.calls[1][1][0]
     expect(planRow).toMatchObject({
       member_priority: '高',
       include_in_plan: true,
@@ -1911,8 +1904,7 @@ describe('AssessmentGapPage', () => {
     await waitFor(() => expect(document.activeElement).toBe(month))
   })
 
-  it('generation success keeps unsaved local ratings (#194)', async () => {
-    // P1-1：生成成功不得重载草稿（服务端旧评级会覆盖本地输入）。
+  it('generation success keeps the auto-saved local rating visible (#201)', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -1938,7 +1930,7 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
 
-    // 未保存评级：当前等级 2 → 3；计划字段一并修改
+    // 当前等级 2 → 3 自动保存；计划字段一并修改。
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     fireEvent.change(
       screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
@@ -1950,10 +1942,10 @@ describe('AssessmentGapPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
-    // 生成前的计划自动保存只含计划字段
-    expect(save.mock.calls[0][1][0]).not.toHaveProperty('current_level')
-    expect(save.mock.calls[0][1][0]).not.toHaveProperty('target_adjusted')
-    // 本地未保存评级与计划选择、月份均保留
+    expect(save.mock.calls[0][1][0]).toMatchObject({ current_level: 3 })
+    expect(save.mock.calls[1][1][0]).not.toHaveProperty('current_level')
+    expect(save.mock.calls[1][1][0]).not.toHaveProperty('target_adjusted')
+    // 本地评级与计划选择、月份均保留
     expect(
       screen
         .getByRole('button', { name: /3 · 熟练/ })
@@ -2053,14 +2045,14 @@ describe('AssessmentGapPage', () => {
     expect(generate.mock.calls[3][3]).not.toBe(generate.mock.calls[2][3])
   })
 
-  it('keeps a failed plan auto-save warning through a rating save until retry succeeds (#194)', async () => {
+  it('keeps a failed rating and queued join local without sending plan PATCH (#201)', async () => {
     const draft = mockDraft({
       details: [
         {
           ...mockDraft().details![0],
           current_level: 2,
           evidence_note: '已有依据',
-          include_in_plan: true,
+          include_in_plan: null,
         },
       ],
     })
@@ -2070,8 +2062,9 @@ describe('AssessmentGapPage', () => {
       .spyOn(assessmentApi, 'saveDraft')
       .mockRejectedValueOnce({ status: 409 })
       .mockRejectedValueOnce({ status: 409 })
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, revision: 2 })
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+    const generate = vi.spyOn(assessmentApi, 'generatePlanItems')
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -2079,30 +2072,43 @@ describe('AssessmentGapPage', () => {
     )
     await screen.findByText('能力评级与提升计划')
 
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
-      { target: { value: '高' } },
-    )
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
-    fireEvent.click(screen.getByRole('button', { name: '保存能力评级' }))
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(
       screen.getByText(
         '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
       ),
     ).toBeTruthy()
+    expect(screen.getByText('评级保存失败')).toBeTruthy()
 
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /优先级 P01\.01\.01/ }),
-      { target: { value: '中' } },
-    )
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(4))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(save).toHaveBeenCalledTimes(1)
     expect(
-      screen.queryByText(
-        '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
-      ),
-    ).toBeNull()
+      screen
+        .getByRole('button', { name: /3 · 熟练/ })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+    expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-05' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(generate).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(4))
+    expect(save.mock.calls[2][1][0]).toMatchObject({ current_level: 4 })
+    expect(save.mock.calls[2][2]).toBe(1)
+    expect(save.mock.calls[3][1][0]).toMatchObject({
+      include_in_plan: true,
+      member_priority: '低',
+      plan_month: '2026-05',
+    })
+    expect(save.mock.calls[3][2]).toBe(2)
+    await waitFor(() => expect(screen.getByText('评级已保存')).toBeTruthy())
   })
 
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
@@ -2562,7 +2568,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
     // 定版原型页头说明
     expect(
       screen.getByText(
-        '逐项保存评级；选择存在差距的提升项，补充计划月份后再显式生成任务。',
+        '评级自动保存；选择存在差距的提升项，补充计划月份后再显式生成任务。',
       ),
     ).toBeTruthy()
     const header = screen
@@ -2651,7 +2657,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
       Array.from(footer.querySelectorAll('button')).map(
         (button) => button.textContent,
       ),
-    ).toEqual(['保存能力评级', '生成所选学习任务'])
+    ).toEqual(['生成所选学习任务'])
   })
 })
 

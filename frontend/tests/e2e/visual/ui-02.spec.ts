@@ -73,16 +73,14 @@ for (const viewport of VIEWPORTS) {
       ).toBeVisible()
       const draftActions = page.getByLabel('能力评级与计划操作')
       await expect(draftActions).toBeVisible()
-      await expect(draftActions.getByRole('button')).toHaveCount(2)
-      const ratingSave = draftActions.getByRole('button', {
-        name: '保存能力评级',
-      })
+      await expect(draftActions.getByRole('button')).toHaveCount(1)
       const generate = draftActions.getByRole('button', {
         name: '生成所选学习任务',
       })
-      await expect(ratingSave).toBeVisible()
-      await expect(ratingSave).not.toHaveClass(/primary/)
       await expect(generate).toHaveClass(/primary/)
+      await expect(
+        page.getByRole('button', { name: '保存能力评级' }),
+      ).toHaveCount(0)
       await expect(
         page.getByRole('button', { name: '生成所选学习任务' }),
       ).toHaveCount(1)
@@ -158,18 +156,24 @@ for (const viewport of VIEWPORTS) {
       const row = page.locator(`#${rowId}`)
       const rating = row.locator('[aria-label^="当前等级"] button').first()
       if ((await rating.getAttribute('aria-pressed')) === 'true') {
+        const clearRatingPatch = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'PATCH' &&
+            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+            response.ok(),
+        )
         await rating.click()
+        await clearRatingPatch
       }
-      await rating.click()
-      await expect(rating).toHaveAttribute('aria-pressed', 'true')
       const ratingPatch = page.waitForResponse(
         (response) =>
           response.request().method() === 'PATCH' &&
           response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
           response.ok(),
       )
-      await ratingSave.click()
+      await rating.click()
       await ratingPatch
+      await expect(rating).toHaveAttribute('aria-pressed', 'true')
       await expect(
         page.getByRole('status', { name: '评级保存状态' }),
       ).toHaveText('评级已保存')
@@ -239,19 +243,24 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
   if (!code) throw new Error('expected the stable row capability code')
   const rating = row.locator('[aria-label^="当前等级"] button').first()
   if ((await rating.getAttribute('aria-pressed')) === 'true') {
+    const clearRatingPatch = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'PATCH' &&
+        response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+        response.ok(),
+    )
     await rating.click()
+    await clearRatingPatch
   }
-  await rating.click()
-  await expect(rating).toHaveAttribute('aria-pressed', 'true')
-
   const ratingSave = page.waitForResponse(
     (response) =>
       response.request().method() === 'PATCH' &&
       response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
       response.ok(),
   )
-  await page.getByRole('button', { name: '保存能力评级' }).click()
+  await rating.click()
   await ratingSave
+  await expect(rating).toHaveAttribute('aria-pressed', 'true')
   await expect(
     page.getByRole('status', { name: '评级保存状态' }),
   ).toContainText('评级已保存')
@@ -264,6 +273,7 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
   )
   await row.locator('button[aria-label^="加入提升计划 "]').click()
   await planSave
+  await expect(row.getByLabel(`优先级 ${code}`)).toHaveValue('低')
 
   planSave = page.waitForResponse(
     (response) =>

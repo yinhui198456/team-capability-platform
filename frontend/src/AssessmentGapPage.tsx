@@ -222,14 +222,18 @@ export function AssessmentGapPage() {
   // 不在原型中，已移除；搜索承担跨能力域定位。
   const [search, setSearch] = useState('')
   const [expandedL2, setExpandedL2] = useState<Set<string>>(new Set())
-  // Issue #194 P1: 保存评级与维护计划草稿是两个独立动作。评级/调整/依据
-  // 走 ratingDirtyIds；计划字段（优先级/纳入/月份）随行内变更自动保存。
-  // M02 V1: 计划草稿无全局保存按钮——变更入队后由泵串行提交（任务载荷为
-  // 变更时刻的行快照），revision 用 ref 跨请求推进，避免并发 PATCH 冲突。
+  // Issue #201 M02: 评级与计划都自动保存，但仍以稀疏载荷分开入队；两个泵
+  // 共享 mutation tail 和 revision，确保评级先于依赖它的计划变更落库。
   const ratingDirtyIdsRef = useRef<Set<number>>(new Set())
   const ratingChangeVersionsRef = useRef<Map<number, number>>(new Map())
+  const ratingQueueRef = useRef<
+    Array<{ id: number; version: number; row: DraftDetailInput }>
+  >([])
+  const ratingPumpingRef = useRef(false)
+  const ratingFlushPromiseRef = useRef<Promise<boolean> | null>(null)
+  const ratingSaveFailureRef = useRef('')
   const [ratingSaveState, setRatingSaveState] = useState<
-    '评级已保存' | '评级未保存' | '评级保存中' | '评级保存失败'
+    '评级已保存' | '评级保存中' | '评级保存失败'
   >('评级已保存')
   const [generationSummary, setGenerationSummary] = useState<{
     created: number
@@ -239,7 +243,8 @@ export function AssessmentGapPage() {
   const [generationBusy, setGenerationBusy] = useState(false)
   const planQueueRef = useRef<DraftDetailInput[]>([])
   const planPumpingRef = useRef(false)
-  const planFlushPromiseRef = useRef<Promise<void> | null>(null)
+  const planFlushPromiseRef = useRef<Promise<boolean> | null>(null)
+  const planSaveFailureRef = useRef('')
   const mutationTailRef = useRef<Promise<void>>(Promise.resolve())
   const revisionRef = useRef<number>(1)
   const detailsRef = useRef<AssessmentDetail[]>([])
@@ -285,7 +290,14 @@ export function AssessmentGapPage() {
     // M02 V1: 重新加载即视为新的草稿会话——同步镜像、自动保存队列与
     // revision 全部重置，避免旧会话任务泄漏进新草稿。
     detailsRef.current = value.details ?? []
+    ratingQueueRef.current = []
+    ratingPumpingRef.current = false
+    ratingFlushPromiseRef.current = null
+    ratingSaveFailureRef.current = ''
     planQueueRef.current = []
+    planPumpingRef.current = false
+    planFlushPromiseRef.current = null
+    planSaveFailureRef.current = ''
     revisionRef.current = value.revision ?? 1
     ratingDirtyIdsRef.current = new Set()
     ratingChangeVersionsRef.current = new Map()
@@ -434,8 +446,7 @@ export function AssessmentGapPage() {
     setDetails(next)
     const detail = next[index]
     if (detail?.id != null) {
-      // Issue #194 M02 V1: 评级字段归脏集合（保存能力评级显式提交），
-      // 计划字段入队自动保存——两动作互不夹带，串行泵逐条提交。
+      // 评级和计划字段分别进入稀疏自动保存队列，避免互相夹带。
       const hasPlanField = Object.keys(patch).some((key) =>
         PLAN_FIELDS.has(key),
       )
@@ -445,11 +456,20 @@ export function AssessmentGapPage() {
       if (hasRatingField) {
         const dirty = new Set(ratingDirtyIdsRef.current).add(detail.id)
         ratingDirtyIdsRef.current = dirty
-        ratingChangeVersionsRef.current.set(
-          detail.id,
-          (ratingChangeVersionsRef.current.get(detail.id) ?? 0) + 1,
+        const version =
+          (ratingChangeVersionsRef.current.get(detail.id) ?? 0) + 1
+        ratingChangeVersionsRef.current.set(detail.id, version)
+        const task = {
+          id: detail.id,
+          version,
+          row: buildDraftRows([detail], 'rating')[0],
+        }
+        ratingQueueRef.current = ratingQueueRef.current.filter(
+          (queued) => queued.id !== detail.id,
         )
-        setRatingSaveState('评级未保存')
+        ratingQueueRef.current.push(task)
+        setRatingSaveState('评级保存中')
+        void pumpRatingSaves()
       }
       if (hasPlanField) {
         const task = buildDraftRows([next[index]], 'plan')[0]
@@ -464,7 +484,7 @@ export function AssessmentGapPage() {
     }
   }
 
-  /** Issue #194 P1: 只取某动作的字段构造稀疏 PATCH 行——评级/依据
+  /** Issue #201: 只取某动作的字段构造稀疏 PATCH 行——评级/依据
     或 计划（优先级/纳入/月份），绝不夹带另一动作的字段。 */
   function buildDraftRows(
     rows: AssessmentDetail[],
@@ -500,95 +520,203 @@ export function AssessmentGapPage() {
     return run
   }
 
+  async function pumpRatingSaves(): Promise<boolean> {
+    if (isMockEnabled()) {
+      ratingQueueRef.current = []
+      ratingDirtyIdsRef.current = new Set()
+      ratingSaveFailureRef.current = ''
+      setRatingSaveState('评级已保存')
+      return true
+    }
+    if (ratingPumpingRef.current) {
+      return (await ratingFlushPromiseRef.current) ?? false
+    }
+    if (!assessment || ratingQueueRef.current.length === 0) {
+      return (
+        ratingDirtyIdsRef.current.size === 0 &&
+        ratingSaveFailureRef.current === ''
+      )
+    }
+    ratingPumpingRef.current = true
+    ratingSaveFailureRef.current = ''
+    setError('')
+    setRatingSaveState('评级保存中')
+    const flush = enqueueMutation(async () => {
+      await Promise.resolve()
+      while (ratingQueueRef.current.length > 0) {
+        const task = ratingQueueRef.current[0]
+        try {
+          const result = await saveDraft(
+            assessment.id,
+            [task.row],
+            revisionRef.current,
+          )
+          revisionRef.current = result.revision ?? revisionRef.current + 1
+          if (ratingQueueRef.current[0] === task) {
+            ratingQueueRef.current.shift()
+          }
+          if (ratingChangeVersionsRef.current.get(task.id) === task.version) {
+            const remaining = new Set(ratingDirtyIdsRef.current)
+            remaining.delete(task.id)
+            ratingDirtyIdsRef.current = remaining
+          }
+          applyAutoCleared(result.auto_cleared ?? [])
+          setAssessment((current) =>
+            current
+              ? {
+                  ...current,
+                  revision: result.revision ?? current.revision,
+                  gap_summary: result.gap_summary ?? current.gap_summary,
+                }
+              : current,
+          )
+        } catch (err: unknown) {
+          const status = (err as { status?: number }).status
+          const detail = (err as { detail?: unknown }).detail
+          const failure =
+            status === 409
+              ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+              : isStructuredAssessmentError(detail)
+                ? detail.message
+                : err instanceof Error
+                  ? err.message
+                  : '评级自动保存失败，本地输入已保留；请重试。'
+          ratingSaveFailureRef.current = failure
+          setRatingSaveState('评级保存失败')
+          setError(failure)
+          if (isStructuredAssessmentError(detail)) {
+            const target = detailsRef.current.find(
+              (item) => item.l3_code === detail.l3_code,
+            )
+            if (target) locateDetail(target)
+          }
+          return false
+        }
+      }
+      ratingSaveFailureRef.current = ''
+      setRatingSaveState('评级已保存')
+      return true
+    })
+    ratingFlushPromiseRef.current = flush
+    try {
+      return await flush
+    } finally {
+      ratingPumpingRef.current = false
+      if (planQueueRef.current.length > 0) void pumpPlanSaves()
+    }
+  }
+
   /** Issue #194 M02 V1: 计划草稿自动保存泵 — 串行提交队列中的计划行快照。
     失败时队列保留（本地输入不丢）并给出中文可操作提示；下次计划变更或
     生成前自动重试。revision 用 ref 跨请求推进，避免并发 PATCH 冲突。 */
-  async function pumpPlanSaves(): Promise<void> {
+  async function pumpPlanSaves(): Promise<boolean> {
     if (isMockEnabled()) {
       planQueueRef.current = []
+      planSaveFailureRef.current = ''
       setPlanSaveError('')
       setPlanSaveState('已保存')
-      return
+      return true
     }
     if (planPumpingRef.current) {
-      await planFlushPromiseRef.current
-      return
+      return (await planFlushPromiseRef.current) ?? false
     }
-    if (!assessment || planQueueRef.current.length === 0) return
+    if (!assessment || planQueueRef.current.length === 0) {
+      return planSaveFailureRef.current === ''
+    }
     planPumpingRef.current = true
-    setPlanSaveError('')
-    setPlanSaveState('保存中')
-    const flush = enqueueMutation(async () => {
+    const flush = (async () => {
       try {
+        if (!(await pumpRatingSaves())) {
+          planSaveFailureRef.current = '评级自动保存失败，计划变更尚未保存。'
+          setPlanSaveState('保存失败')
+          return false
+        }
+        if (
+          ratingQueueRef.current.length > 0 ||
+          ratingDirtyIdsRef.current.size > 0 ||
+          ratingSaveFailureRef.current
+        ) {
+          planSaveFailureRef.current = '评级自动保存失败，计划变更尚未保存。'
+          setPlanSaveState('保存失败')
+          return false
+        }
+        planSaveFailureRef.current = ''
+        setPlanSaveError('')
+        setPlanSaveState('保存中')
         // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
         // 去重替换队首，首个请求总是携带最新快照。
         await Promise.resolve()
-        while (planQueueRef.current.length > 0) {
-          const task = planQueueRef.current[0]
-          try {
-            const result = await saveDraft(
-              assessment.id,
-              [task],
-              revisionRef.current,
-            )
-            revisionRef.current = result.revision ?? revisionRef.current + 1
-            // 仅当队首仍是本次保存的任务时才出队：保存在途期间若该行被
-            // 再次变更（队首被替换为更新的快照），保留它让下一轮提交最新。
-            if (planQueueRef.current[0] === task) {
-              planQueueRef.current.shift()
+        return await enqueueMutation(async () => {
+          while (planQueueRef.current.length > 0) {
+            const task = planQueueRef.current[0]
+            try {
+              const result = await saveDraft(
+                assessment.id,
+                [task],
+                revisionRef.current,
+              )
+              revisionRef.current = result.revision ?? revisionRef.current + 1
+              // 仅当队首仍是本次保存的任务时才出队：保存在途期间若该行被
+              // 再次变更（队首被替换为更新的快照），保留它让下一轮提交最新。
+              if (planQueueRef.current[0] === task) {
+                planQueueRef.current.shift()
+              }
+              if (planQueueRef.current.length === 0) {
+                planSaveFailureRef.current = ''
+                setPlanSaveError('')
+                setPlanSaveState('已保存')
+              }
+              applyAutoCleared(result.auto_cleared ?? [])
+              setAssessment((current) =>
+                current
+                  ? {
+                      ...current,
+                      revision: result.revision ?? current.revision,
+                      gap_summary: result.gap_summary ?? current.gap_summary,
+                    }
+                  : current,
+              )
+            } catch (err: unknown) {
+              setPlanSaveState('保存失败')
+              const status = (err as { status?: number }).status
+              const detail = (err as { detail?: unknown }).detail
+              const failure =
+                status === 409
+                  ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
+                  : isStructuredAssessmentError(detail)
+                    ? (() => {
+                        const target = detailsRef.current.find(
+                          (item) => item.l3_code === detail.l3_code,
+                        )
+                        const field = structuredPlanField(detail)
+                        if (target && field) {
+                          setPlanFieldErrors((current) => ({
+                            ...current,
+                            [target.l3_code]: {
+                              ...current[target.l3_code],
+                              [field]: detail.message,
+                            },
+                          }))
+                          locatePlanField(target, field)
+                        } else if (target) locateDetail(target)
+                        return detail.message
+                      })()
+                    : err instanceof Error
+                      ? err.message
+                      : '计划草稿自动保存失败，本地输入已保留；请重试。'
+              planSaveFailureRef.current = failure
+              setPlanSaveError(failure)
+              return false
             }
-            if (planQueueRef.current.length === 0) {
-              setPlanSaveError('')
-              setPlanSaveState('已保存')
-            }
-            applyAutoCleared(result.auto_cleared ?? [])
-            setAssessment((current) =>
-              current
-                ? {
-                    ...current,
-                    revision: result.revision ?? current.revision,
-                    gap_summary: result.gap_summary ?? current.gap_summary,
-                  }
-                : current,
-            )
-          } catch (err: unknown) {
-            setPlanSaveState('保存失败')
-            const status = (err as { status?: number }).status
-            const detail = (err as { detail?: unknown }).detail
-            setPlanSaveError(
-              status === 409
-                ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-                : isStructuredAssessmentError(detail)
-                  ? (() => {
-                      const target = detailsRef.current.find(
-                        (item) => item.l3_code === detail.l3_code,
-                      )
-                      const field = structuredPlanField(detail)
-                      if (target && field) {
-                        setPlanFieldErrors((current) => ({
-                          ...current,
-                          [target.l3_code]: {
-                            ...current[target.l3_code],
-                            [field]: detail.message,
-                          },
-                        }))
-                        locatePlanField(target, field)
-                      } else if (target) locateDetail(target)
-                      return detail.message
-                    })()
-                  : err instanceof Error
-                    ? err.message
-                    : '计划草稿自动保存失败，本地输入已保留；请重试。',
-            )
-            break // 队列保留，下次计划变更或生成前重试
           }
-        }
+          return true
+        })
       } finally {
         planPumpingRef.current = false
       }
-    })
+    })()
     planFlushPromiseRef.current = flush
-    await flush
+    return await flush
   }
 
   /** Issue #194 M02 V1: 单动作加入/移出提升项；加入保留已有月份，
@@ -606,10 +734,11 @@ export function AssessmentGapPage() {
   function toggleIncludePlan(index: number, include: boolean) {
     const detail = detailsRef.current[index]
     updateDetail(index, {
-      member_priority:
-        include && detail?.member_priority === '暂缓'
-          ? null
-          : (detail?.member_priority ?? null),
+      member_priority: include
+        ? detail?.member_priority === '暂缓'
+          ? '低'
+          : (detail?.member_priority ?? '低')
+        : (detail?.member_priority ?? null),
       include_in_plan: include,
       plan_quarter: include ? (detail?.plan_quarter ?? null) : null,
       plan_month: include ? (detail?.plan_month ?? null) : null,
@@ -636,100 +765,26 @@ export function AssessmentGapPage() {
       )
       if (row) clearedCodes.add(row.l3_code)
     }
-    for (const item of cleared) {
-      setDetails((current) =>
-        current.map((detail) => {
-          if (detail.l3_node_id === item.l3_node_id) {
-            const patch: Partial<AssessmentDetail> = {}
-            for (const f of item.fields) {
-              if (f === 'member_priority') patch.member_priority = null
-              if (f === 'include_in_plan') patch.include_in_plan = null
-              if (f === 'plan_quarter') patch.plan_quarter = null
-              if (f === 'plan_month') patch.plan_month = null
-            }
-            return { ...detail, ...patch }
+    const next = detailsRef.current.map((detail) => {
+      for (const item of cleared) {
+        if (detail.l3_node_id === item.l3_node_id) {
+          const patch: Partial<AssessmentDetail> = {}
+          for (const f of item.fields) {
+            if (f === 'member_priority') patch.member_priority = null
+            if (f === 'include_in_plan') patch.include_in_plan = null
+            if (f === 'plan_quarter') patch.plan_quarter = null
+            if (f === 'plan_month') patch.plan_month = null
           }
-          return detail
-        }),
-      )
-    }
+          return { ...detail, ...patch }
+        }
+      }
+      return detail
+    })
+    detailsRef.current = next
+    setDetails(next)
     if (clearedCodes.size) {
       planQueueRef.current = planQueueRef.current.filter(
         (task) => !clearedCodes.has(task.l3_code),
-      )
-    }
-  }
-
-  async function handleSave() {
-    if (!assessment) return
-    const changed = details.filter(
-      (detail) => detail.id != null && ratingDirtyIdsRef.current.has(detail.id),
-    )
-    if (!changed.length) return
-    const savedVersions = new Map(
-      changed.map((detail) => [
-        detail.id!,
-        ratingChangeVersionsRef.current.get(detail.id!) ?? 0,
-      ]),
-    )
-    // 评级与计划泵共用 mutation tail；先清空已排队计划，再把评级接在同一
-    // revision 链尾端。评级只提交评级/调整/依据字段（稀疏 PATCH）。
-    await pumpPlanSaves()
-    setError('')
-    setMessage('')
-    setRatingSaveState('评级保存中')
-    try {
-      if (isMockEnabled()) {
-        setMessage('能力评级已保存')
-        ratingDirtyIdsRef.current = new Set()
-        setRatingSaveState('评级已保存')
-        return
-      }
-      const result = await enqueueMutation(() =>
-        saveDraft(
-          assessment.id,
-          buildDraftRows(changed, 'rating'),
-          revisionRef.current,
-        ),
-      )
-      revisionRef.current = result.revision ?? revisionRef.current + 1
-      setAssessment((current) =>
-        current
-          ? {
-              ...current,
-              revision: result.revision ?? current.revision,
-              gap_summary: result.gap_summary ?? current.gap_summary,
-            }
-          : current,
-      )
-      const remaining = new Set(ratingDirtyIdsRef.current)
-      for (const [id, version] of savedVersions) {
-        if (ratingChangeVersionsRef.current.get(id) === version) {
-          remaining.delete(id)
-        }
-      }
-      ratingDirtyIdsRef.current = remaining
-      applyAutoCleared(result.auto_cleared ?? [])
-      setMessage('能力评级已保存')
-      setRatingSaveState(remaining.size ? '评级未保存' : '评级已保存')
-    } catch (err: unknown) {
-      setRatingSaveState('评级保存失败')
-      const status = (err as { status?: number }).status
-      const detail = (err as { detail?: unknown }).detail
-      setError(
-        status === 409
-          ? '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。'
-          : isStructuredAssessmentError(detail)
-            ? (() => {
-                const target = details.find(
-                  (item) => item.l3_code === detail.l3_code,
-                )
-                if (target) locateDetail(target)
-                return detail.message
-              })()
-            : err instanceof Error
-              ? err.message
-              : '保存失败',
       )
     }
   }
@@ -740,7 +795,9 @@ export function AssessmentGapPage() {
     setMessage('')
     setGenerationSummary(null)
     try {
-      const selected = details.filter((d) => d.include_in_plan === true)
+      let selected = detailsRef.current.filter(
+        (d) => d.include_in_plan === true,
+      )
       if (selected.length === 0) {
         setPlanFieldErrors({})
         setError('请先加入提升项到计划草稿，再生成所选学习任务。')
@@ -749,39 +806,67 @@ export function AssessmentGapPage() {
       const nextFieldErrors = Object.fromEntries(
         selected.flatMap((detail) => {
           const fields = {
-            ...(!['高', '中', '低'].includes(detail.member_priority ?? '') && {
-              priority: '请选择优先级',
-            }),
             ...(!detail.plan_month && { month: '请选择计划月份' }),
           }
           return Object.keys(fields).length ? [[detail.l3_code, fields]] : []
         }),
       ) as Record<string, { priority?: string; month?: string }>
       setPlanFieldErrors(nextFieldErrors)
-      const firstPriority = selected.find(
-        (detail) => nextFieldErrors[detail.l3_code]?.priority,
-      )
       const firstMonth = selected.find(
         (detail) => nextFieldErrors[detail.l3_code]?.month,
       )
-      const firstInvalid = firstPriority ?? firstMonth
-      if (firstInvalid) {
-        const field = firstPriority ? 'priority' : 'month'
-        setError('请补全所选提升项的优先级和计划月份，当前未生成任何任务。')
-        locatePlanField(firstInvalid, field)
+      if (firstMonth) {
+        setError('请补全所选提升项的计划月份，当前未生成任何任务。')
+        locatePlanField(firstMonth, 'month')
         return
       }
+      for (const detail of selected) {
+        if (detail.member_priority == null) {
+          const index = detailsRef.current.findIndex(
+            (item) => item.id === detail.id,
+          )
+          if (index >= 0) updateDetail(index, { member_priority: '低' })
+        }
+      }
       if (isMockEnabled()) {
-        setAssessment({ ...mockAssessmentSubmitted, details })
+        setAssessment({
+          ...mockAssessmentSubmitted,
+          details: detailsRef.current,
+        })
         setMessage('已生成所选学习任务（演示）。')
         return
       }
       setGenerationBusy(true)
-      // M02 V1: 生成前先等待在途计划自动保存完成（同一 revision 序列）——
-      // 失败（队列非空）则中止本次生成并保留队列，由用户重试；避免
-      // 部分写入、revision 冲突与生成读旧值。未保存评级仍保留在本地。
-      await pumpPlanSaves()
-      if (planQueueRef.current.length > 0) return
+      if (!(await pumpRatingSaves())) return
+      if (!(await pumpPlanSaves())) return
+      let tail: Promise<void>
+      do {
+        tail = mutationTailRef.current
+        await tail
+      } while (tail !== mutationTailRef.current)
+      if (
+        ratingQueueRef.current.length > 0 ||
+        ratingDirtyIdsRef.current.size > 0 ||
+        ratingSaveFailureRef.current ||
+        planQueueRef.current.length > 0 ||
+        planSaveFailureRef.current
+      ) {
+        return
+      }
+      selected = detailsRef.current.filter((d) => d.include_in_plan === true)
+      const latestMissingMonth = selected.find((detail) => !detail.plan_month)
+      if (!selected.length) {
+        setError('请先加入提升项到计划草稿，再生成所选学习任务。')
+        return
+      }
+      if (latestMissingMonth) {
+        setPlanFieldErrors({
+          [latestMissingMonth.l3_code]: { month: '请选择计划月份' },
+        })
+        setError('请补全所选提升项的计划月份，当前未生成任何任务。')
+        locatePlanField(latestMissingMonth, 'month')
+        return
+      }
       const revision = revisionRef.current
       const fingerprint = `${[...selected.map((d) => d.l3_code)].sort().join('|')}|${revision}`
       if (
@@ -1047,10 +1132,7 @@ export function AssessmentGapPage() {
       (d) => d.include_in_plan === true,
     ).length
     const inPlanIncomplete = assessedDetails.filter(
-      (detail) =>
-        detail.include_in_plan === true &&
-        (!['高', '中', '低'].includes(detail.member_priority ?? '') ||
-          !detail.plan_month),
+      (detail) => detail.include_in_plan === true && !detail.plan_month,
     ).length
     return { inPlan, inPlanIncomplete }
   }, [assessedDetails])
@@ -1122,7 +1204,7 @@ export function AssessmentGapPage() {
             <h1>能力评级与提升计划</h1>
             {/* 定版原型 M02 V1 页头说明 */}
             <p className="muted">
-              逐项保存评级；选择存在差距的提升项，补充计划月份后再显式生成任务。
+              评级自动保存；选择存在差距的提升项，补充计划月份后再显式生成任务。
             </p>
           </div>
           <div className="assessment-actions">
@@ -1427,18 +1509,11 @@ export function AssessmentGapPage() {
                               applicable && detail.include_in_plan === true
                             const fieldErrors =
                               planFieldErrors[detail.l3_code] ?? {}
-                            const priorityErrorId = `priority-error-${detail.id}`
                             const monthErrorId = `plan-month-error-${detail.id}`
-                            const validPriority = ['高', '中', '低'].includes(
-                              detail.member_priority ?? '',
-                            )
-                            const priorityError =
-                              fieldErrors.priority ??
-                              (validPriority ? '' : '请选择优先级')
                             const monthError =
                               fieldErrors.month ??
                               (detail.plan_month ? '' : '请选择计划月份')
-                            const planReady = !priorityError && !monthError
+                            const planReady = !monthError
                             return (
                               <div
                                 key={detail.id}
@@ -1491,7 +1566,11 @@ export function AssessmentGapPage() {
                                         }
                                         aria-label={`${level} · ${LEVEL_LABELS[level]}`}
                                         aria-pressed={active}
-                                        disabled={!editable || !applicable}
+                                        disabled={
+                                          !editable ||
+                                          !applicable ||
+                                          generationBusy
+                                        }
                                         onClick={() =>
                                           updateDetail(index, {
                                             current_level: active
@@ -1556,7 +1635,9 @@ export function AssessmentGapPage() {
                                       onClick={() =>
                                         toggleIncludePlan(index, true)
                                       }
-                                      disabled={!editable || !canPlan}
+                                      disabled={
+                                        !editable || !canPlan || generationBusy
+                                      }
                                       aria-label={`加入提升计划 ${detail.l3_code}`}
                                     >
                                       加入提升计划
@@ -1581,47 +1662,29 @@ export function AssessmentGapPage() {
                                     </div>
                                     <div className={s.planControl}>
                                       <label htmlFor={`priority-${detail.id}`}>
-                                        优先级 *
+                                        优先级（默认低）
                                       </label>
                                       <select
                                         id={`priority-${detail.id}`}
-                                        value={detail.member_priority ?? ''}
+                                        value={detail.member_priority ?? '低'}
                                         onChange={(event) => {
                                           updateDetail(index, {
-                                            member_priority:
-                                              (event.target.value as
-                                                '高' | '中' | '低') || null,
+                                            member_priority: event.target
+                                              .value as '高' | '中' | '低',
                                           })
-                                          if (event.target.value)
-                                            clearPlanFieldError(
-                                              detail.l3_code,
-                                              'priority',
-                                            )
                                         }}
-                                        disabled={!editable || !hasGap}
+                                        disabled={
+                                          !editable || !hasGap || generationBusy
+                                        }
                                         aria-label={`优先级 ${detail.l3_code}`}
-                                        aria-invalid={
-                                          priorityError ? true : undefined
-                                        }
-                                        aria-describedby={
-                                          priorityError
-                                            ? priorityErrorId
-                                            : undefined
-                                        }
                                       >
-                                        <option value="">—</option>
-                                        <option value="高">高</option>
-                                        <option value="中">中</option>
                                         <option value="低">低</option>
+                                        <option value="中">中</option>
+                                        <option value="高">高</option>
                                       </select>
-                                      {priorityError && (
-                                        <small
-                                          className={s.fieldError}
-                                          id={priorityErrorId}
-                                        >
-                                          {priorityError}
-                                        </small>
-                                      )}
+                                      <small className={s.fieldHint}>
+                                        可选调整为中或高
+                                      </small>
                                     </div>
                                     <div className={s.planControl}>
                                       <label
@@ -1630,9 +1693,11 @@ export function AssessmentGapPage() {
                                         计划月份 *
                                       </label>
                                       <div
-                                        className={`${s.monthControl} ${!editable ? s.monthControlDisabled : ''} ${monthError ? s.fieldInvalid : ''}`}
+                                        className={`${s.monthControl} ${!editable || generationBusy ? s.monthControlDisabled : ''} ${monthError ? s.fieldInvalid : ''}`}
                                         data-testid={`plan-month-control-${detail.l3_code}`}
-                                        aria-disabled={!editable}
+                                        aria-disabled={
+                                          !editable || generationBusy
+                                        }
                                         onClick={() =>
                                           openMonthPicker(
                                             document.getElementById(
@@ -1647,6 +1712,8 @@ export function AssessmentGapPage() {
                                         <input
                                           id={`plan-month-${detail.id}`}
                                           type="month"
+                                          required
+                                          aria-required="true"
                                           value={detail.plan_month ?? ''}
                                           onClick={(event) => {
                                             event.stopPropagation()
@@ -1663,7 +1730,7 @@ export function AssessmentGapPage() {
                                                 'month',
                                               )
                                           }}
-                                          disabled={!editable}
+                                          disabled={!editable || generationBusy}
                                           aria-label={`计划月份 ${detail.l3_code}`}
                                           aria-invalid={
                                             monthError ? true : undefined
@@ -1718,7 +1785,7 @@ export function AssessmentGapPage() {
                                         onClick={() =>
                                           toggleIncludePlan(index, false)
                                         }
-                                        disabled={!editable}
+                                        disabled={!editable || generationBusy}
                                         aria-label={`移出提升计划 ${detail.l3_code}`}
                                       >
                                         移出计划
@@ -1731,6 +1798,7 @@ export function AssessmentGapPage() {
                                     <textarea
                                       autoFocus
                                       value={editingText}
+                                      disabled={generationBusy}
                                       onChange={(event) =>
                                         setEditingText(event.target.value)
                                       }
@@ -1738,6 +1806,7 @@ export function AssessmentGapPage() {
                                     />
                                     <button
                                       type="button"
+                                      disabled={generationBusy}
                                       onClick={() =>
                                         setEvidence(index, editingText)
                                       }
@@ -1765,7 +1834,7 @@ export function AssessmentGapPage() {
           </div>
         </div>
 
-        {/* #201 方案 1：评级保存与显式生成同置，生成是唯一主操作。 */}
+        {/* #201 方案 1：评级自动保存，生成是唯一显式主操作。 */}
         {editable && (
           <footer className={s.stickyActions} aria-label="能力评级与计划操作">
             <div className={s.actionSummary}>
@@ -1791,13 +1860,6 @@ export function AssessmentGapPage() {
                 >
                   {ratingSaveState}
                 </span>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={ratingSaveState === '评级保存中'}
-                >
-                  保存能力评级
-                </button>
               </div>
               <button
                 type="button"
