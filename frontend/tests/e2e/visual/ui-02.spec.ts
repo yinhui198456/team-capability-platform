@@ -11,7 +11,9 @@ const VIEWPORTS = [
 type AssessmentDraftState = {
   revision: number
   details: Array<{
+    l3_node_id: number | null
     l3_code: string
+    current_level: number | null
     include_in_plan: boolean | null
     member_priority: string | null
     plan_month: string | null
@@ -187,113 +189,94 @@ for (const viewport of VIEWPORTS) {
       )
       if (!initialPlan) throw new Error(`expected assessment detail ${code}`)
       const rating = row.locator('[aria-label^="当前等级"] button').first()
-      const selectedRating = row.locator(
-        '[aria-label^="当前等级"] button[aria-pressed="true"]',
-      )
-      const initialRatingName = (await selectedRating.count())
-        ? await selectedRating.getAttribute('aria-label')
-        : null
-      if ((await rating.getAttribute('aria-pressed')) === 'true') {
-        await rating.click()
-      }
-      await rating.click()
-      await expect(rating).toHaveAttribute('aria-pressed', 'true')
-      const ratingPatch = page.waitForResponse(
-        (response) =>
-          response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-          response.ok(),
-      )
-      await ratingSave.click()
-      await ratingPatch
-      await expect(
-        page.getByRole('status', { name: '评级保存状态' }),
-      ).toHaveText('评级已保存')
-
-      const join = row.locator('button[aria-label^="加入提升计划 "]')
-      await expect(join).toBeEnabled()
-      let planSave = page.waitForResponse(
-        (response) =>
-          response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-          response.ok(),
-      )
-      await join.click()
-      await planSave
-      const planEditor = row.locator('[data-testid^="plan-editor-"]')
-      await expect(planEditor).toBeVisible()
-      expect(
-        await planEditor.evaluate((element) =>
-          getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
-        ),
-      ).toHaveLength(viewport.width === 768 ? 2 : 5)
-      expect(
-        await planEditor.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth + 1,
-        ),
-      ).toBe(true)
-
-      planSave = page.waitForResponse(
-        (response) =>
-          response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-          response.ok(),
-      )
-      await row.locator('button[aria-label^="移出提升计划 "]').click()
-      await planSave
-      await expect(join).toBeVisible()
-      const ratingName = await rating.getAttribute('aria-label')
-      if (initialRatingName !== ratingName) {
-        if (initialRatingName) {
-          await row.getByRole('button', { name: initialRatingName }).click()
-        } else {
+      try {
+        if ((await rating.getAttribute('aria-pressed')) === 'true') {
           await rating.click()
         }
-        const cleanupPatch = page.waitForResponse(
+        await rating.click()
+        await expect(rating).toHaveAttribute('aria-pressed', 'true')
+        const ratingPatch = page.waitForResponse(
           (response) =>
             response.request().method() === 'PATCH' &&
             response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
             response.ok(),
         )
         await ratingSave.click()
-        await cleanupPatch
+        await ratingPatch
         await expect(
           page.getByRole('status', { name: '评级保存状态' }),
         ).toHaveText('评级已保存')
-      }
 
-      const currentDraft = await getAssessmentDraftState(page, draftId)
-      const restoreResponse = await page.request.patch(
-        `/api/assessments/${draftId}/draft`,
-        {
-          data: {
-            expected_revision: currentDraft.revision,
-            details: [
-              {
-                l3_code: code,
-                include_in_plan: initialPlan.include_in_plan,
-                member_priority: initialPlan.member_priority,
-                plan_month: initialPlan.plan_month,
-              },
-            ],
+        const join = row.locator('button[aria-label^="加入提升计划 "]')
+        await expect(join).toBeEnabled()
+        let planSave = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'PATCH' &&
+            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+            response.ok(),
+        )
+        await join.click()
+        await planSave
+        const planEditor = row.locator('[data-testid^="plan-editor-"]')
+        await expect(planEditor).toBeVisible()
+        expect(
+          await planEditor.evaluate((element) =>
+            getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
+          ),
+        ).toHaveLength(viewport.width === 768 ? 2 : 5)
+        expect(
+          await planEditor.evaluate(
+            (element) => element.scrollWidth <= element.clientWidth + 1,
+          ),
+        ).toBe(true)
+
+        planSave = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'PATCH' &&
+            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+            response.ok(),
+        )
+        await row.locator('button[aria-label^="移出提升计划 "]').click()
+        await planSave
+        await expect(join).toBeVisible()
+      } finally {
+        const currentDraft = await getAssessmentDraftState(page, draftId)
+        const restoreResponse = await page.request.patch(
+          `/api/assessments/${draftId}/draft`,
+          {
+            data: {
+              expected_revision: currentDraft.revision,
+              details: [
+                {
+                  l3_node_id: initialPlan.l3_node_id,
+                  l3_code: code,
+                  current_level: initialPlan.current_level,
+                  include_in_plan: initialPlan.include_in_plan,
+                  member_priority: initialPlan.member_priority,
+                  plan_month: initialPlan.plan_month,
+                },
+              ],
+            },
           },
-        },
-      )
-      const restoreBody = (await restoreResponse.json()) as {
-        ok?: boolean
-        revision?: number
-      }
-      expect(restoreResponse.ok(), JSON.stringify(restoreBody)).toBeTruthy()
-      expect(restoreBody.ok).toBe(true)
+        )
+        const restoreBody = (await restoreResponse.json()) as {
+          ok?: boolean
+          revision?: number
+        }
+        expect(restoreResponse.ok(), JSON.stringify(restoreBody)).toBeTruthy()
+        expect(restoreBody.ok).toBe(true)
 
-      const restoredDraft = await getAssessmentDraftState(page, draftId)
-      expect(
-        restoredDraft.details.find((detail) => detail.l3_code === code),
-      ).toMatchObject({
-        include_in_plan: initialPlan.include_in_plan,
-        member_priority: initialPlan.member_priority,
-        plan_month: initialPlan.plan_month,
-      })
+        const restoredDraft = await getAssessmentDraftState(page, draftId)
+        expect(
+          restoredDraft.details.find((detail) => detail.l3_code === code),
+        ).toMatchObject({
+          l3_node_id: initialPlan.l3_node_id,
+          current_level: initialPlan.current_level,
+          include_in_plan: initialPlan.include_in_plan,
+          member_priority: initialPlan.member_priority,
+          plan_month: initialPlan.plan_month,
+        })
+      }
     })
   })
 }
