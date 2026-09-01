@@ -33,7 +33,7 @@
 - **故事线 V1**：[prototype-v1/storyline-v1.html](prototype-v1/storyline-v1.html)（业务确认稿，自包含单文件）。
 - **页面地图 V1**：[prototype-v1/page-map-v1.html](prototype-v1/page-map-v1.html)（自包含单文件）。
 
-本地直接双击 HTML 即可打开；如浏览器限制模块脚本，可用任意静态文件服务器（如 `python3 -m http.server`）从 `prototype-v1/` 上级目录起服务。
+M02 必须保留 `prototype-v1/pages/` 与 `prototype-v1/assets/` 的相对目录结构：请 clone 或下载完整 `prototype-v1/` 目录，或从仓库的 `docs/` 目录启动静态文件服务器；不支持单独保存 `m02-selected.html`。其他自包含 HTML（如故事线和页面地图）可直接双击打开。
 
 ## 权威性声明
 
