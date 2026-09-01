@@ -3,36 +3,14 @@ import { expect, test, type Page } from '@playwright/test'
 import { loginAs } from '../fixtures/auth'
 
 const VIEWPORTS = [
-  { name: '1440x900', width: 1440, height: 900 },
-  { name: '1024x768', width: 1024, height: 768 },
-  { name: '768x900', width: 768, height: 900 },
+  { name: '1440x900', width: 1440, height: 900, year: 2401 },
+  { name: '1024x768', width: 1024, height: 768, year: 2402 },
+  { name: '768x900', width: 768, height: 900, year: 2403 },
 ] as const
 
-type AssessmentDraftState = {
-  revision: number
-  details: Array<{
-    l3_node_id: number | null
-    l3_code: string
-    current_level: number | null
-    include_in_plan: boolean | null
-    member_priority: string | null
-    plan_month: string | null
-  }>
-}
-
-async function getAssessmentDraftState(
-  page: Page,
-  draftId: number,
-): Promise<AssessmentDraftState> {
-  const response = await page.request.get(`/api/assessments/${draftId}`)
-  const body = (await response.json()) as AssessmentDraftState
-  expect(response.ok(), JSON.stringify(body)).toBeTruthy()
-  return body
-}
-
-async function ensure2026Draft(page: Page): Promise<number> {
+async function ensureDraft(page: Page, year: number): Promise<number> {
   const preview = await page.request.get(
-    '/api/assessments/scope-preview?year=2026',
+    `/api/assessments/scope-preview?year=${year}`,
   )
   expect(preview.ok()).toBeTruthy()
   const previewBody = (await preview.json()) as {
@@ -43,7 +21,7 @@ async function ensure2026Draft(page: Page): Promise<number> {
 
   const created = await page.request.post('/api/assessments', {
     data: {
-      year: 2026,
+      year,
       assessment_type: '年度',
       scope_token: previewBody.scope_token,
     },
@@ -53,8 +31,8 @@ async function ensure2026Draft(page: Page): Promise<number> {
   return createdBody.id
 }
 
-async function openM02(page: Page) {
-  await page.goto('/capability/assessment')
+async function openM02(page: Page, year: number) {
+  await page.goto(`/capability/assessment?year=${year}`)
   await expect(
     page.getByRole('heading', { name: '能力评级与提升计划' }),
   ).toBeVisible()
@@ -71,8 +49,8 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
-      draftId = await ensure2026Draft(page)
-      await openM02(page)
+      draftId = await ensureDraft(page, viewport.year)
+      await openM02(page, viewport.year)
     })
 
     test('keeps the approved M02 actions, navigation, and no-clipping contract', async ({
@@ -178,105 +156,56 @@ for (const viewport of VIEWPORTS) {
       const rowId = await initialRow.getAttribute('id')
       expect(rowId).toBeTruthy()
       const row = page.locator(`#${rowId}`)
-      const ratingLabel = await row
-        .locator('[aria-label^="当前等级"]')
-        .getAttribute('aria-label')
-      if (!ratingLabel) throw new Error('expected the stable row rating label')
-      const code = ratingLabel.replace('当前等级 ', '')
-      const initialDraft = await getAssessmentDraftState(page, draftId)
-      const initialPlan = initialDraft.details.find(
-        (detail) => detail.l3_code === code,
-      )
-      if (!initialPlan) throw new Error(`expected assessment detail ${code}`)
       const rating = row.locator('[aria-label^="当前等级"] button').first()
-      try {
-        if ((await rating.getAttribute('aria-pressed')) === 'true') {
-          await rating.click()
-        }
+      if ((await rating.getAttribute('aria-pressed')) === 'true') {
         await rating.click()
-        await expect(rating).toHaveAttribute('aria-pressed', 'true')
-        const ratingPatch = page.waitForResponse(
-          (response) =>
-            response.request().method() === 'PATCH' &&
-            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-            response.ok(),
-        )
-        await ratingSave.click()
-        await ratingPatch
-        await expect(
-          page.getByRole('status', { name: '评级保存状态' }),
-        ).toHaveText('评级已保存')
-
-        const join = row.locator('button[aria-label^="加入提升计划 "]')
-        await expect(join).toBeEnabled()
-        let planSave = page.waitForResponse(
-          (response) =>
-            response.request().method() === 'PATCH' &&
-            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-            response.ok(),
-        )
-        await join.click()
-        await planSave
-        const planEditor = row.locator('[data-testid^="plan-editor-"]')
-        await expect(planEditor).toBeVisible()
-        expect(
-          await planEditor.evaluate((element) =>
-            getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
-          ),
-        ).toHaveLength(viewport.width === 768 ? 2 : 5)
-        expect(
-          await planEditor.evaluate(
-            (element) => element.scrollWidth <= element.clientWidth + 1,
-          ),
-        ).toBe(true)
-
-        planSave = page.waitForResponse(
-          (response) =>
-            response.request().method() === 'PATCH' &&
-            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
-            response.ok(),
-        )
-        await row.locator('button[aria-label^="移出提升计划 "]').click()
-        await planSave
-        await expect(join).toBeVisible()
-      } finally {
-        const currentDraft = await getAssessmentDraftState(page, draftId)
-        const restoreResponse = await page.request.patch(
-          `/api/assessments/${draftId}/draft`,
-          {
-            data: {
-              expected_revision: currentDraft.revision,
-              details: [
-                {
-                  l3_node_id: initialPlan.l3_node_id,
-                  l3_code: code,
-                  current_level: initialPlan.current_level,
-                  include_in_plan: initialPlan.include_in_plan,
-                  member_priority: initialPlan.member_priority,
-                  plan_month: initialPlan.plan_month,
-                },
-              ],
-            },
-          },
-        )
-        const restoreBody = (await restoreResponse.json()) as {
-          ok?: boolean
-          revision?: number
-        }
-        expect(restoreResponse.ok(), JSON.stringify(restoreBody)).toBeTruthy()
-        expect(restoreBody.ok).toBe(true)
-
-        const restoredDraft = await getAssessmentDraftState(page, draftId)
-        expect(
-          restoredDraft.details.find((detail) => detail.l3_code === code),
-        ).toMatchObject({
-          l3_node_id: initialPlan.l3_node_id,
-          current_level: initialPlan.current_level,
-          include_in_plan: initialPlan.include_in_plan,
-          member_priority: initialPlan.member_priority,
-          plan_month: initialPlan.plan_month,
-        })
       }
+      await rating.click()
+      await expect(rating).toHaveAttribute('aria-pressed', 'true')
+      const ratingPatch = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+          response.ok(),
+      )
+      await ratingSave.click()
+      await ratingPatch
+      await expect(
+        page.getByRole('status', { name: '评级保存状态' }),
+      ).toHaveText('评级已保存')
+
+      const join = row.locator('button[aria-label^="加入提升计划 "]')
+      await expect(join).toBeEnabled()
+      let planSave = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+          response.ok(),
+      )
+      await join.click()
+      await planSave
+      const planEditor = row.locator('[data-testid^="plan-editor-"]')
+      await expect(planEditor).toBeVisible()
+      expect(
+        await planEditor.evaluate((element) =>
+          getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
+        ),
+      ).toHaveLength(viewport.width === 768 ? 2 : 5)
+      expect(
+        await planEditor.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth + 1,
+        ),
+      ).toBe(true)
+
+      planSave = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+          response.ok(),
+      )
+      await row.locator('button[aria-label^="移出提升计划 "]').click()
+      await planSave
+      await expect(join).toBeVisible()
     })
   })
 }
@@ -288,10 +217,11 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
     !process.env.TCP_E2E_ISOLATED,
     'M02 prepares a controlled draft only in the isolated E2E environment',
   )
+  const year = 2404
   await page.setViewportSize({ width: 1440, height: 900 })
   await loginAs(page, 'member2')
-  const draftId = await ensure2026Draft(page)
-  await openM02(page)
+  const draftId = await ensureDraft(page, year)
+  await openM02(page, year)
 
   const table = page.getByTestId('assessment-table')
   const initialRow = table
@@ -350,7 +280,7 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
       response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
       response.ok(),
   )
-  await row.getByLabel(`计划月份 ${code}`).fill('2026-05')
+  await row.getByLabel(`计划月份 ${code}`).fill(`${year}-05`)
   await planSave
 
   await page.reload()
@@ -368,12 +298,12 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
   ).toBeVisible()
   await expect(persistedRow.getByLabel(`优先级 ${code}`)).toHaveValue('高')
   await expect(persistedRow.getByLabel(`计划月份 ${code}`)).toHaveValue(
-    '2026-05',
+    `${year}-05`,
   )
 
-  await page.goto('/growth/annual-plan?year=2026')
+  await page.goto(`/growth/annual-plan?year=${year}`)
   await expect(
-    page.getByRole('heading', { name: '2026 年度成长旅程', level: 1 }),
+    page.getByRole('heading', { name: `${year} 年度成长旅程`, level: 1 }),
   ).toBeVisible()
   await page.goBack()
   await expect(
@@ -390,7 +320,7 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
   ).toBeVisible()
   await expect(persistedRow.getByLabel(`优先级 ${code}`)).toHaveValue('高')
   await expect(persistedRow.getByLabel(`计划月份 ${code}`)).toHaveValue(
-    '2026-05',
+    `${year}-05`,
   )
   await expect(page.getByText(/Assessment Review/)).toHaveCount(0)
 })
