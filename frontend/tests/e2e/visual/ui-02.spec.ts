@@ -163,6 +163,31 @@ for (const viewport of VIEWPORTS) {
 
       const join = row.locator('button[aria-label^="加入提升计划 "]')
       await expect(join).toBeEnabled()
+      let planSave = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          /\/api\/assessments\/\d+\/draft$/.test(response.url()) &&
+          response.ok(),
+      )
+      await join.click()
+      await planSave
+      const planEditor = row.locator('[data-testid^="plan-editor-"]')
+      await expect(planEditor).toBeVisible()
+      expect(
+        await planEditor.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth + 1,
+        ),
+      ).toBe(true)
+
+      planSave = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          /\/api\/assessments\/\d+\/draft$/.test(response.url()) &&
+          response.ok(),
+      )
+      await row.locator('button[aria-label^="移出提升计划 "]').click()
+      await planSave
+      await expect(join).toBeVisible()
       await rating.click()
       await expect(rating).toHaveAttribute('aria-pressed', 'false')
     })
