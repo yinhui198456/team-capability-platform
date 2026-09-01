@@ -716,7 +716,7 @@
   gap: var(--space-3);
 }
 
-/* M02 V1: 页头只保留计划草稿自动保存状态。 */
+/* M02 V1: 页头只保留评级自动保存状态。 */
 .autoSaveBadge {
   display: inline-block;
   padding: 2px 8px;

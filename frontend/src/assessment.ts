@@ -298,7 +298,7 @@ export async function saveDraft(
   )
 }
 
-/** Issue #194: M02 第三个独立动作 — 显式生成所选学习任务。
+/** Issue #194: M02 连续流程的显式生成步骤。
 
 Retired contract: POST /submit (submit-and-auto-generate) → 422
 legacy_assessment_submit_disabled; generation is now explicit and
