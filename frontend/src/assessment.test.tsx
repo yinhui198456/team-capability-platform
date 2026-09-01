@@ -1441,6 +1441,76 @@ describe('AssessmentGapPage', () => {
     ).toBe('2026-09')
   })
 
+  it('re-saves an existing plan cleared by an obsolete rating snapshot', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          l3_node_id: 101,
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+          member_priority: '高',
+          plan_month: '2026-09',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveFirst!: (
+      value: Awaited<ReturnType<typeof assessmentApi.saveDraft>>,
+    ) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+      .mockResolvedValueOnce({ ok: true, revision: 4 })
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /2 · 基础/ }))
+    resolveFirst({
+      ok: true,
+      revision: 2,
+      auto_cleared: [
+        {
+          l3_node_id: 101,
+          fields: ['member_priority', 'include_in_plan', 'plan_month'],
+        },
+      ],
+    })
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    expect(save.mock.calls.map((call) => call[2])).toEqual([1, 2, 3])
+    expect(save.mock.calls[2][1][0]).toMatchObject({
+      member_priority: '高',
+      include_in_plan: true,
+      plan_month: '2026-09',
+    })
+    expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
+    expect(
+      (screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement).value,
+    ).toBe('2026-09')
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    expect(generate.mock.calls[0][2]).toBe(4)
+  })
+
   it('does not apply auto-clears from an obsolete in-flight plan snapshot', async () => {
     const draft = mockDraft({
       details: [

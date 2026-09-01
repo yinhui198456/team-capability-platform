@@ -576,6 +576,22 @@ export function AssessmentGapPage() {
             remaining.delete(task.id)
             ratingDirtyIdsRef.current = remaining
             applyAutoCleared(result.auto_cleared ?? [])
+          } else {
+            for (const cleared of result.auto_cleared ?? []) {
+              const current = detailsRef.current.find(
+                (detail) => detail.l3_node_id === cleared.l3_node_id,
+              )
+              if (
+                current?.include_in_plan === true &&
+                (computeGap(current) ?? 0) > 0
+              ) {
+                const restore = buildDraftRows([current], 'plan')[0]
+                planQueueRef.current = planQueueRef.current.filter(
+                  (queued) => queued.l3_code !== restore.l3_code,
+                )
+                planQueueRef.current.push(restore)
+              }
+            }
           }
           setAssessment((current) =>
             current
