@@ -175,8 +175,8 @@ for (const viewport of VIEWPORTS) {
       await ratingPatch
       await expect(rating).toHaveAttribute('aria-pressed', 'true')
       await expect(
-        page.getByRole('status', { name: '评级保存状态' }),
-      ).toHaveText('评级已保存')
+        page.getByRole('status', { name: '评级自动保存状态' }),
+      ).toHaveText('评级已自动保存')
 
       const join = row.locator('button[aria-label^="加入提升计划 "]')
       await expect(join).toBeEnabled()
@@ -262,8 +262,8 @@ test('persists one isolated M02 rating and plan draft at 1440', async ({
   await ratingSave
   await expect(rating).toHaveAttribute('aria-pressed', 'true')
   await expect(
-    page.getByRole('status', { name: '评级保存状态' }),
-  ).toContainText('评级已保存')
+    page.getByRole('status', { name: '评级自动保存状态' }),
+  ).toContainText('评级已自动保存')
 
   let planSave = page.waitForResponse(
     (response) =>

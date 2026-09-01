@@ -246,6 +246,7 @@ export function AssessmentGapPage() {
   const planFlushPromiseRef = useRef<Promise<boolean> | null>(null)
   const planSaveFailureRef = useRef('')
   const mutationTailRef = useRef<Promise<void>>(Promise.resolve())
+  const sessionEpochRef = useRef(0)
   const revisionRef = useRef<number>(1)
   const detailsRef = useRef<AssessmentDetail[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -285,6 +286,7 @@ export function AssessmentGapPage() {
   } | null>(null)
 
   function loadAssessment(value: Assessment) {
+    sessionEpochRef.current += 1
     setAssessment(value)
     setDetails(value.details ?? [])
     // M02 V1: 重新加载即视为新的草稿会话——同步镜像、自动保存队列与
@@ -298,14 +300,18 @@ export function AssessmentGapPage() {
     planPumpingRef.current = false
     planFlushPromiseRef.current = null
     planSaveFailureRef.current = ''
+    mutationTailRef.current = Promise.resolve()
     revisionRef.current = value.revision ?? 1
     ratingDirtyIdsRef.current = new Set()
     ratingChangeVersionsRef.current = new Map()
     setRatingSaveState('评级已保存')
+    setError('')
+    setMessage('')
     setGenerationSummary(null)
     setPlanSaveError('')
     setPlanSaveState('已保存')
     setPlanFieldErrors({})
+    setLoading(false)
     const firstDomain =
       value.l2_groups?.[0]?.l1_code ?? defaultDomain(value.details ?? [])
     const firstL2 =
@@ -335,6 +341,9 @@ export function AssessmentGapPage() {
 
   useEffect(() => {
     let cancelled = false
+    const initEpoch = ++sessionEpochRef.current
+    const isCurrentInit = () =>
+      !cancelled && sessionEpochRef.current === initEpoch
     setLoading(true)
     setAssessment(null)
     setDetails([])
@@ -343,7 +352,7 @@ export function AssessmentGapPage() {
     async function init() {
       try {
         if (isMockEnabled()) {
-          if (!cancelled) loadAssessment(mockAssessment)
+          if (isCurrentInit()) loadAssessment(mockAssessment)
         } else {
           const list = await listAssessments()
           const draft = list.find(
@@ -353,14 +362,14 @@ export function AssessmentGapPage() {
           )
           if (draft) {
             const full = await getAssessment(draft.id)
-            if (!cancelled) loadAssessment(full)
+            if (isCurrentInit()) loadAssessment(full)
           }
         }
       } catch (err: unknown) {
-        if (!cancelled)
+        if (isCurrentInit())
           setError(err instanceof Error ? err.message : '加载失败')
       } finally {
-        if (!cancelled) setLoading(false)
+        if (isCurrentInit()) setLoading(false)
       }
     }
     void init()
@@ -537,30 +546,37 @@ export function AssessmentGapPage() {
         ratingSaveFailureRef.current === ''
       )
     }
+    const epoch = sessionEpochRef.current
+    const assessmentId = assessment.id
+    const isCurrentSession = () => sessionEpochRef.current === epoch
     ratingPumpingRef.current = true
     ratingSaveFailureRef.current = ''
     setError('')
     setRatingSaveState('评级保存中')
     const flush = enqueueMutation(async () => {
       await Promise.resolve()
+      if (!isCurrentSession()) return false
       while (ratingQueueRef.current.length > 0) {
         const task = ratingQueueRef.current[0]
         try {
           const result = await saveDraft(
-            assessment.id,
+            assessmentId,
             [task.row],
             revisionRef.current,
           )
+          if (!isCurrentSession()) return false
           revisionRef.current = result.revision ?? revisionRef.current + 1
+          const isLatest =
+            ratingChangeVersionsRef.current.get(task.id) === task.version
           if (ratingQueueRef.current[0] === task) {
             ratingQueueRef.current.shift()
           }
-          if (ratingChangeVersionsRef.current.get(task.id) === task.version) {
+          if (isLatest) {
             const remaining = new Set(ratingDirtyIdsRef.current)
             remaining.delete(task.id)
             ratingDirtyIdsRef.current = remaining
+            applyAutoCleared(result.auto_cleared ?? [])
           }
-          applyAutoCleared(result.auto_cleared ?? [])
           setAssessment((current) =>
             current
               ? {
@@ -571,6 +587,7 @@ export function AssessmentGapPage() {
               : current,
           )
         } catch (err: unknown) {
+          if (!isCurrentSession()) return false
           const status = (err as { status?: number }).status
           const detail = (err as { detail?: unknown }).detail
           const failure =
@@ -593,6 +610,7 @@ export function AssessmentGapPage() {
           return false
         }
       }
+      if (!isCurrentSession()) return false
       ratingSaveFailureRef.current = ''
       setRatingSaveState('评级已保存')
       return true
@@ -601,8 +619,10 @@ export function AssessmentGapPage() {
     try {
       return await flush
     } finally {
-      ratingPumpingRef.current = false
-      if (planQueueRef.current.length > 0) void pumpPlanSaves()
+      if (isCurrentSession()) {
+        ratingPumpingRef.current = false
+        if (planQueueRef.current.length > 0) void pumpPlanSaves()
+      }
     }
   }
 
@@ -623,20 +643,27 @@ export function AssessmentGapPage() {
     if (!assessment || planQueueRef.current.length === 0) {
       return planSaveFailureRef.current === ''
     }
+    const epoch = sessionEpochRef.current
+    const assessmentId = assessment.id
+    const isCurrentSession = () => sessionEpochRef.current === epoch
     planPumpingRef.current = true
     const flush = (async () => {
       try {
         if (!(await pumpRatingSaves())) {
+          if (!isCurrentSession()) return false
           planSaveFailureRef.current = '评级自动保存失败，计划变更尚未保存。'
+          setPlanSaveError('评级自动保存失败，计划变更尚未保存。')
           setPlanSaveState('保存失败')
           return false
         }
+        if (!isCurrentSession()) return false
         if (
           ratingQueueRef.current.length > 0 ||
           ratingDirtyIdsRef.current.size > 0 ||
           ratingSaveFailureRef.current
         ) {
           planSaveFailureRef.current = '评级自动保存失败，计划变更尚未保存。'
+          setPlanSaveError('评级自动保存失败，计划变更尚未保存。')
           setPlanSaveState('保存失败')
           return false
         }
@@ -646,19 +673,23 @@ export function AssessmentGapPage() {
         // 微任务沉降：让同一同步块内紧随的其它计划变更先完成
         // 去重替换队首，首个请求总是携带最新快照。
         await Promise.resolve()
+        if (!isCurrentSession()) return false
         return await enqueueMutation(async () => {
+          if (!isCurrentSession()) return false
           while (planQueueRef.current.length > 0) {
             const task = planQueueRef.current[0]
             try {
               const result = await saveDraft(
-                assessment.id,
+                assessmentId,
                 [task],
                 revisionRef.current,
               )
+              if (!isCurrentSession()) return false
               revisionRef.current = result.revision ?? revisionRef.current + 1
+              const isLatest = planQueueRef.current[0] === task
               // 仅当队首仍是本次保存的任务时才出队：保存在途期间若该行被
               // 再次变更（队首被替换为更新的快照），保留它让下一轮提交最新。
-              if (planQueueRef.current[0] === task) {
+              if (isLatest) {
                 planQueueRef.current.shift()
               }
               if (planQueueRef.current.length === 0) {
@@ -666,7 +697,7 @@ export function AssessmentGapPage() {
                 setPlanSaveError('')
                 setPlanSaveState('已保存')
               }
-              applyAutoCleared(result.auto_cleared ?? [])
+              if (isLatest) applyAutoCleared(result.auto_cleared ?? [])
               setAssessment((current) =>
                 current
                   ? {
@@ -677,6 +708,7 @@ export function AssessmentGapPage() {
                   : current,
               )
             } catch (err: unknown) {
+              if (!isCurrentSession()) return false
               setPlanSaveState('保存失败')
               const status = (err as { status?: number }).status
               const detail = (err as { detail?: unknown }).detail
@@ -712,7 +744,7 @@ export function AssessmentGapPage() {
           return true
         })
       } finally {
-        planPumpingRef.current = false
+        if (isCurrentSession()) planPumpingRef.current = false
       }
     })()
     planFlushPromiseRef.current = flush
@@ -1210,16 +1242,21 @@ export function AssessmentGapPage() {
           <div className="assessment-actions">
             <span
               className={`${s.autoSaveBadge} ${
-                planSaveState === '已保存'
+                ratingSaveState === '评级已保存'
                   ? s.autoSaveBadgeSaved
-                  : planSaveState === '保存失败'
+                  : ratingSaveState === '评级保存失败'
                     ? s.autoSaveBadgeFailed
                     : s.autoSaveBadgeSaving
               }`}
               role="status"
-              aria-label="计划草稿保存状态"
+              aria-label="评级自动保存状态"
+              aria-atomic="true"
             >
-              计划草稿{planSaveState}
+              {ratingSaveState === '评级已保存'
+                ? '评级已自动保存'
+                : ratingSaveState === '评级保存失败'
+                  ? '评级自动保存失败'
+                  : '评级自动保存中'}
             </span>
           </div>
         </header>
@@ -1301,7 +1338,9 @@ export function AssessmentGapPage() {
         )}
         {(error || planSaveError) && (
           <p className="error global-assessment-error" role="alert">
-            {error || planSaveError}
+            {error && <span>{error}</span>}
+            {error && planSaveError && ' '}
+            {planSaveError && <span>{planSaveError}</span>}
           </p>
         )}
         {message && (
@@ -1852,15 +1891,6 @@ export function AssessmentGapPage() {
               </span>
             </div>
             <div className={s.actionButtons}>
-              <div className={s.ratingSaveControl}>
-                <span
-                  className={s.ratingSaveStatus}
-                  role="status"
-                  aria-label="评级保存状态"
-                >
-                  {ratingSaveState}
-                </span>
-              </div>
               <button
                 type="button"
                 className="primary"

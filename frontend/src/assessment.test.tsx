@@ -952,9 +952,7 @@ describe('AssessmentGapPage', () => {
       .spyOn(assessmentApi, 'saveDraft')
       .mockResolvedValueOnce({ ok: true, revision: 2 })
       .mockResolvedValueOnce({ ok: true, revision: 3 })
-    const generate = vi
-      .spyOn(assessmentApi, 'generatePlanItems')
-      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
+    const generate = vi.spyOn(assessmentApi, 'generatePlanItems')
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -1205,9 +1203,19 @@ describe('AssessmentGapPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
-    expect(screen.getByText('评级保存中')).toBeTruthy()
+    expect(
+      screen.getByRole('status', { name: '评级自动保存状态' }).textContent,
+    ).toBe('评级自动保存中')
     resolveRatingSave({ ok: true, revision: 2 })
-    await waitFor(() => expect(screen.getByText('评级已保存')).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status', { name: '评级自动保存状态' }).textContent,
+      ).toBe('评级已自动保存'),
+    )
+    const footer = screen.getByRole('contentinfo', {
+      name: '能力评级与计划操作',
+    })
+    expect(within(footer).queryByRole('status')).toBeNull()
   })
 
   it('A1 month control keeps YYYY-MM visible and opens the native picker from its whole frame', async () => {
@@ -1368,6 +1376,226 @@ describe('AssessmentGapPage', () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
     expect(save.mock.calls[1][2]).toBe(2)
     expect(save.mock.calls[1][1][0]).toMatchObject({ current_level: 4 })
+  })
+
+  it('does not apply auto-clears from an obsolete in-flight rating snapshot', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          l3_node_id: 101,
+          current_level: 2,
+          evidence_note: '已有依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveFirst!: (
+      value: Awaited<ReturnType<typeof assessmentApi.saveDraft>>,
+    ) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+      .mockResolvedValueOnce({ ok: true, revision: 4 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.click(screen.getByRole('button', { name: /4 · 精通/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: /2 · 基础/ }))
+    fireEvent.click(screen.getByRole('button', { name: /加入提升计划/ }))
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-09' },
+    })
+
+    resolveFirst({
+      ok: true,
+      revision: 2,
+      auto_cleared: [
+        {
+          l3_node_id: 101,
+          fields: ['member_priority', 'include_in_plan', 'plan_month'],
+        },
+      ],
+    })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    expect(save.mock.calls[2][1][0]).toMatchObject({
+      member_priority: '低',
+      include_in_plan: true,
+      plan_month: '2026-09',
+    })
+    expect(screen.getByRole('button', { name: /移出提升计划/ })).toBeTruthy()
+    expect(
+      (screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement).value,
+    ).toBe('2026-09')
+  })
+
+  it('does not apply auto-clears from an obsolete in-flight plan snapshot', async () => {
+    const draft = mockDraft({
+      details: [
+        {
+          ...mockDraft().details![0],
+          l3_node_id: 101,
+          current_level: 2,
+          evidence_note: '已有依据',
+          include_in_plan: true,
+          member_priority: '低',
+          plan_month: '2026-05',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([draft])
+    vi.spyOn(assessmentApi, 'getAssessment').mockResolvedValue(draft)
+    let resolveFirst!: (
+      value: Awaited<ReturnType<typeof assessmentApi.saveDraft>>,
+    ) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 3 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-06' },
+    })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('计划月份 P01.01.01'), {
+      target: { value: '2026-07' },
+    })
+    resolveFirst({
+      ok: true,
+      revision: 2,
+      auto_cleared: [
+        {
+          l3_node_id: 101,
+          fields: ['plan_month'],
+        },
+      ],
+    })
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][1][0]).toMatchObject({ plan_month: '2026-07' })
+    expect(
+      (screen.getByLabelText('计划月份 P01.01.01') as HTMLInputElement).value,
+    ).toBe('2026-07')
+  })
+
+  it('ignores an old assessment save response after switching year', async () => {
+    vi.spyOn(planningApi, 'getAvailableYears').mockResolvedValue({
+      available_years: [2026, 2027],
+      active_year: 2026,
+    })
+    const oldDraft = mockDraft({
+      id: 7,
+      year: 2026,
+      details: [
+        {
+          ...mockDraft().details![0],
+          l3_node_id: 101,
+          current_level: 2,
+        },
+      ],
+    })
+    const newDraft = mockDraft({
+      id: 8,
+      year: 2027,
+      revision: 10,
+      details: [
+        {
+          ...mockDraft().details![0],
+          id: 2,
+          l3_node_id: 202,
+          current_level: 1,
+          evidence_note: '新年度依据',
+        },
+      ],
+    })
+    vi.spyOn(assessmentApi, 'listAssessments').mockResolvedValue([
+      { ...oldDraft, details: undefined },
+      { ...newDraft, details: undefined },
+    ])
+    vi.spyOn(assessmentApi, 'getAssessment').mockImplementation((id) =>
+      Promise.resolve(id === 7 ? oldDraft : newDraft),
+    )
+    let resolveOld!: (
+      value: Awaited<ReturnType<typeof assessmentApi.saveDraft>>,
+    ) => void
+    const save = vi
+      .spyOn(assessmentApi, 'saveDraft')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 11 })
+    render(
+      <MemoryRouter initialEntries={['/capability/assessment?year=2026']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('能力评级与提升计划')
+    fireEvent.click(screen.getByRole('button', { name: /3 · 熟练/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('选择年度'), {
+      target: { value: '2027' },
+    })
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('button', { name: /1 · 入门/ })
+          .getAttribute('aria-pressed'),
+      ).toBe('true'),
+    )
+    resolveOld({
+      ok: true,
+      revision: 99,
+      auto_cleared: [
+        {
+          l3_node_id: 101,
+          fields: ['member_priority', 'include_in_plan', 'plan_month'],
+        },
+      ],
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(
+      screen
+        .getByRole('button', { name: /1 · 入门/ })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+    expect(
+      screen.getByRole('status', { name: '评级自动保存状态' }).textContent,
+    ).toBe('评级已自动保存')
+    expect(
+      screen.getByLabelText('当前等级 P01.01.01').closest('[id^="row-"]')?.id,
+    ).toBe('row-2')
+
+    fireEvent.click(screen.getByRole('button', { name: /2 · 基础/ }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(save.mock.calls[1][0]).toBe(8)
+    expect(save.mock.calls[1][2]).toBe(10)
   })
 
   it('row plan control is a single join/leave action (#194 M02 V1)', async () => {
@@ -1568,9 +1796,6 @@ describe('AssessmentGapPage', () => {
     )
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
     expect(
-      screen.getByRole('status', { name: '计划草稿保存状态' }).textContent,
-    ).toBe('计划草稿保存中')
-    expect(
       within(screen.getByTestId('plan-editor-P01.01.01')).getByText('保存中'),
     ).toBeTruthy()
     // 立即显式生成：必须等待在途保存完成
@@ -1580,9 +1805,6 @@ describe('AssessmentGapPage', () => {
     resolveSave({ ok: true, revision: 2 })
     await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
     await waitFor(() => {
-      expect(
-        screen.getByRole('status', { name: '计划草稿保存状态' }).textContent,
-      ).toBe('计划草稿已保存')
       expect(
         within(screen.getByTestId('plan-editor-P01.01.01')).getByText('已保存'),
       ).toBeTruthy()
@@ -2064,7 +2286,9 @@ describe('AssessmentGapPage', () => {
       .mockRejectedValueOnce({ status: 409 })
       .mockResolvedValueOnce({ ok: true, revision: 2 })
       .mockResolvedValueOnce({ ok: true, revision: 3 })
-    const generate = vi.spyOn(assessmentApi, 'generatePlanItems')
+    const generate = vi
+      .spyOn(assessmentApi, 'generatePlanItems')
+      .mockResolvedValue({ ok: true, created: ['P01.01.01'], existing: [] })
     render(
       <MemoryRouter initialEntries={['/capability/assessment']}>
         <App />
@@ -2080,7 +2304,10 @@ describe('AssessmentGapPage', () => {
         '数据已被其他操作更新，已保留本地输入；请重新加载后再保存。',
       ),
     ).toBeTruthy()
-    expect(screen.getByText('评级保存失败')).toBeTruthy()
+    expect(screen.getByText('评级自动保存失败')).toBeTruthy()
+    expect(
+      screen.getByText('评级自动保存失败，计划变更尚未保存。'),
+    ).toBeTruthy()
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(save).toHaveBeenCalledTimes(1)
@@ -2108,7 +2335,25 @@ describe('AssessmentGapPage', () => {
       plan_month: '2026-05',
     })
     expect(save.mock.calls[3][2]).toBe(2)
-    await waitFor(() => expect(screen.getByText('评级已保存')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('评级已自动保存')).toBeTruthy())
+    expect(
+      screen.queryByText('评级自动保存失败，计划变更尚未保存。'),
+    ).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+    expect(save.mock.invocationCallOrder[2]).toBeLessThan(
+      save.mock.invocationCallOrder[3],
+    )
+    expect(save.mock.invocationCallOrder[3]).toBeLessThan(
+      generate.mock.invocationCallOrder[0],
+    )
+    expect(generate).toHaveBeenCalledWith(
+      7,
+      ['P01.01.01'],
+      3,
+      expect.any(String),
+    )
   })
 
   it('treats a not-applicable snapshot as complete and disables adjustment', async () => {
@@ -2576,7 +2821,7 @@ describe('M02 prototype element inventory (issue #194)', () => {
       .closest('header')
     expect(header).toBeTruthy()
     expect(within(header!).getByText('能力成长')).toBeTruthy()
-    expect(screen.getByText('计划草稿已保存')).toBeTruthy()
+    expect(screen.getByText('评级已自动保存')).toBeTruthy()
     // R6: 年度/版本/内部范围和 P4–P8 长要求不再占用默认主层级；直达
     // 路由与兼容修复另行保留。
     expect(screen.queryByTestId('scope-header')).toBeNull()
@@ -2651,8 +2896,9 @@ describe('M02 prototype element inventory (issue #194)', () => {
     expect(
       within(planEditor).getByTestId('plan-month-control-P01.01.01'),
     ).toBeTruthy()
-    // 页底按 #201 方案 1 顺序承载评级保存与显式生成。
+    // 页底只承载显式生成；评级自动保存状态固定在页头。
     expect(within(footer).getByText(/计划草稿：/)).toBeTruthy()
+    expect(within(footer).queryByRole('status')).toBeNull()
     expect(
       Array.from(footer.querySelectorAll('button')).map(
         (button) => button.textContent,
