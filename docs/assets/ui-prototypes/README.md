@@ -5,6 +5,8 @@
 1. **既有视觉基线 PNG（历史确认稿）**：[UI-01-my-growth-dashboard.png](UI-01-my-growth-dashboard.png) ～ [UI-05-team-capability-analysis.png](UI-05-team-capability-analysis.png)，为早期迭代确认的静态视觉基线；页面规格冲突时以 `docs/04_UI.md` 页面规格为准。
 2. **交互原型基线（Issue #187 阶段 0，新）**：`prototype-v1/`，第一批页面的故事线、页面地图与可交互静态原型，作为交互与信息架构基线。
 
+另有 **Issue #132 阶段 1 用户评审候选**：[`issue-132-capability-map/index.html`](issue-132-capability-map/index.html)，用于确认能力地图 URL/Hash、L1/L2/L3、搜索/深链、浏览器历史、L2 职级内容和键盘交互。该候选尚待阶段 2 用户确认，不替代本页既有定版清单或 `docs/04_UI.md`。
+
 页面矩阵（页面编号、角色、路由、故事节点、最终版本、master 落地状态、批次、Chrome 验收）的唯一权威位置在 [../../04_UI.md](../../04_UI.md)（§4.9）；业务规则唯一来源是 [../../01_Product.md](../../01_Product.md)（Issue #187 故事合同）。原型不定义任何 API、指标口径或数据库字段；`prototype-v1` 为纯静态 HTML/CSS/JS，不连接后端。
 
 ## prototype-v1 最终版本清单（第一批定版）
