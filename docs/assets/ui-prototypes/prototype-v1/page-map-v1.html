@@ -28,12 +28,12 @@
     </section>
 
     <section class="card section">
-      <div class="section-head"><div><h2>1. 故事步骤映射到页面</h2><p>注意：评级、选择、填写月份、生成任务是同一页面里的连续动作，不应拆成四页。</p></div><span class="tag keep">主路径</span></div>
+      <div class="section-head"><div><h2>1. 故事步骤映射到页面</h2><p>注意：评级、选择、填写月份、生成任务是同一页面里的连续环节，不应拆成四页。</p></div><span class="tag keep">主路径</span></div>
       <div class="step-map">
         <article class="mapped-step"><span class="n">01 标准</span><h3>发布适用能力标准</h3><p>维护能力要求与适用范围。</p><span class="page-ref">S01 能力地图</span></article>
-        <article class="mapped-step"><span class="n">02 评级</span><h3>增量保存能力评级</h3><p>任意若干 L3 随时保存。</p><span class="page-ref">M02 能力评级与提升计划</span></article>
-        <article class="mapped-step"><span class="n">03 选择</span><h3>选择本次提升项</h3><p>只选择已评级且存在 Gap 的项目。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
-        <article class="mapped-step"><span class="n">04 排期</span><h3>补充计划月份</h3><p>整框点击选择年月，草稿可恢复。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
+        <article class="mapped-step"><span class="n">02 评级</span><h3>评级自动保存</h3><p>任意若干 L3 逐项选择并自动保存。</p><span class="page-ref">M02 能力评级与提升计划</span></article>
+        <article class="mapped-step"><span class="n">03 选择</span><h3>选择本次提升项</h3><p>只选择已评级且存在 Gap 的项目；优先级默认低，可选调整。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
+        <article class="mapped-step"><span class="n">04 排期</span><h3>补充计划月份</h3><p>月份必填，整框点击选择年月，草稿可恢复。</p><span class="page-ref">仍在 M02，不新增页面</span></article>
         <article class="mapped-step"><span class="n">05 生成</span><h3>生成所选学习任务</h3><p>显式生成正式计划与任务。</p><span class="page-ref">M03 年度成长计划</span><span class="page-ref">M04 学习任务</span></article>
         <article class="mapped-step"><span class="n">06 执行</span><h3>学习、记录与提交成果</h3><p>日志、时长、复盘和 Evidence；Buddy/Leader 同步看进度。</p><span class="page-ref">M05 学习任务详情</span><span class="page-ref">D01 成员学习进度看板</span><span class="page-ref">M06 月度复盘（第二批）</span></article>
         <article class="mapped-step"><span class="n">07 验收</span><h3>Buddy 验收成果</h3><p>队列与验收工作区在同一页面。</p><span class="page-ref">B01 成果验收</span></article>
@@ -46,7 +46,7 @@
       <div class="lanes">
         <div class="lane" data-lane="member"><div class="lane-head"><b>Member</b><span>评级 → 计划 → 执行 → 成果</span></div><div class="lane-pages">
           <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M01</div><h3>我的工作台</h3><p>只回答“我下一步做什么”。</p><ul><li>待评级、待排期、待确认</li><li>进行中与逾期任务</li><li>待补成果</li></ul></article>
-          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M02</div><h3>能力评级与提升计划</h3><p>一次完成评级、选择、计划月份和显式生成。</p><ul><li>增量保存</li><li>计划草稿</li><li>生成所选任务</li></ul></article>
+          <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M02</div><h3>能力评级与提升计划</h3><p>一次完成评级、选择、计划月份和显式生成。</p><ul><li>评级自动保存</li><li>默认低优先级、月份必填</li><li>生成所选任务</li></ul></article>
           <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M03</div><h3>年度成长计划</h3><p>按月份查看正式计划的整体结构。</p><ul><li>已生成计划项</li><li>月份分布</li><li>进度与调整记录</li></ul></article>
           <article class="page-card" data-page-role="member"><span class="tag keep">核心</span><div class="code">M04 / M05</div><h3>学习任务 / 任务详情</h3><p>列表负责定位，详情负责执行。</p><ul><li>日志、时长、Evidence</li><li>L3 要求变化待确认</li><li>新旧要求版本选择</li></ul></article>
           <article class="page-card" data-page-role="member"><span class="tag later">第二批</span><div class="code">M06</div><h3>月度复盘</h3><p>跨任务总结本月投入、产出和下一步行动。</p><ul><li>不重复录入任务日志</li><li>自动汇总后补充结论</li></ul></article>
@@ -81,7 +81,7 @@
       <div class="section-head"><div><h2>3. 页面职责矩阵</h2><p>一页只负责一类主要结果；明确“不做什么”可以防止页面再次膨胀。</p></div></div>
       <table class="matrix"><thead><tr><th>页面</th><th>主要用户结果</th><th>页面负责</th><th>页面明确不负责</th></tr></thead><tbody>
         <tr><td>M01 工作台</td><td>快速知道下一步</td><td>聚合待办、风险和继续入口</td><td>不在卡片中完成复杂编辑</td></tr>
-        <tr><td>M02 评级与提升计划</td><td>随时评级并生成所选任务</td><td>评级、选择、月份、草稿和显式生成</td><td>不执行任务，不验收成果</td></tr>
+        <tr><td>M02 评级与提升计划</td><td>随时评级并生成所选任务</td><td>评级自动保存、默认低优先级、必填月份、计划草稿和显式生成</td><td>不执行任务，不验收成果</td></tr>
         <tr><td>M03 年度成长计划</td><td>看清全年正式计划</td><td>按月份组织计划项、显示整体进度</td><td>不重新做能力评级</td></tr>
         <tr><td>M04/M05 学习任务</td><td>完成一项具体学习</td><td>日志、时长、要求版本、Evidence</td><td>不维护能力标准</td></tr>
         <tr><td>M06 月度复盘<br><span class="tag later">第二批</span></td><td>总结本月并决定下月行动</td><td>自动汇总后填写结论和行动</td><td>不重复录入每项任务日志</td></tr>
@@ -101,7 +101,7 @@
         <article class="cut"><span class="tag merge">合并</span><h3>评估历史</h3><p>它是成长档案的一种历史数据，不需要占用一级业务入口。</p><div class="fromto">合并到：M07 成长档案 → 评级历史页签</div></article>
         <article class="cut"><span class="tag merge">内嵌</span><h3>Gap 摘要</h3><p>Gap 是评级结果与筛选维度，不是一个完整业务流程。</p><div class="fromto">放入：M02 顶部摘要、筛选和侧边详情</div></article>
         <article class="cut"><span class="tag merge">合并</span><h3>用户 / 角色 / Buddy 关系</h3><p>三者都围绕同一身份配置，拆成多页只会增加跳转。</p><div class="fromto">合并为：A01 用户、角色与辅导关系</div></article>
-        <article class="cut"><span class="tag remove">删除</span><h3>整份自评提交</h3><p>与增量评级、增量任务生成冲突，也会制造虚假的全局完成门槛。</p><div class="fromto">替换为：M02 保存评级 + 生成所选任务</div></article>
+        <article class="cut"><span class="tag remove">删除</span><h3>整份自评提交</h3><p>与逐项评级自动保存、显式任务生成冲突，也会制造虚假的全局完成门槛。</p><div class="fromto">替换为：M02 评级自动保存 + 生成所选任务</div></article>
         <article class="cut"><span class="tag remove">不新增</span><h3>独立通知中心</h3><p>自学项目暂时没有足够通知量支撑新页面。</p><div class="fromto">L3 变化直接显示在 M01、M04 和 M05</div></article>
         <article class="cut"><span class="tag later">暂不规划</span><h3>L02 年度能力重点</h3><p>当前没有明确且高频的用户动作，先不为“规划”单独建设页面。</p><div class="fromto">Leader 首批只保留：L01 团队能力分析</div></article>
       </div>
