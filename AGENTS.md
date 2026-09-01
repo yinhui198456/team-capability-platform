@@ -1,47 +1,39 @@
-# Team Capability Platform Delivery Rules
+# Team Capability Platform — 项目级指令
 
-本文件是 Codex 在本仓库的完整项目指令；`CLAUDE.md` 仅供 Claude Code 回退使用。
+本文件只放 TCP 每次会话都需遵循的短规则。设置或恢复 Issue、会话压缩后恢复、准备测试环境或交接时，先读取 `.agents/tcp-delivery-memory.md`；当前 Issue、SHA、CI、临时授权和会话状态以 GitHub Issue/PR 与当前 Goal/Plan 为准。
+
+创建新 Issue worktree 前，必须确认其基础分支已包含经批准的最新版 `AGENTS.md` 与 `.agents/tcp-delivery-memory.md`；缺失或落后时先通过独立记忆 PR 落地，禁止从运行/UAT checkout 手工复制或提交。
 
 ## 产品与权威来源
 
-- TCP 不是 LMS、考试、课程管理或绩效系统；所有功能服务于：Capability Model → Assessment → Gap Analysis → Growth Plan → Learning Task → Evidence → Buddy Review → Capability Profile。
-- 权威顺序：`capability-model/`（业务规则）→ `docs/`（`01_Product.md`、`02_Design.md`、`03_Data.md`、`04_UI.md`、`05_Development.md`）→ `backend/` 与 `frontend/`。代码不得反向定义设计；规则缺失时停止并提问。
-- 固定角色：Member、Buddy、Leader、Admin；固定名称：Growth Plan、Learning Task、Evidence、Buddy Review、Capability Profile。不得猜测业务规则、增加角色或核心业务对象。
+- TCP 服务于：Capability Model → Assessment → Gap Analysis → Growth Plan → Learning Task → Evidence → Buddy Review → Capability Profile；不是 LMS、考试、课程管理或绩效系统。
+- 业务权威顺序：`capability-model/` → `docs/01_Product.md`、`02_Design.md`、`03_Data.md`、`04_UI.md`、`05_Development.md` → 代码。业务规则缺失时停止猜测并提出问题。
+- 固定角色：Member、Buddy、Leader、Admin；固定核心对象：Growth Plan、Learning Task、Evidence、Buddy Review、Capability Profile。设计变更先改权威 Markdown，再改代码。
 
-## 布局与交付
+## 仓库布局与检查
 
-- `backend/` 是 FastAPI/SQLAlchemy 与 pytest；迁移在 `backend/app/migrations/versions/`，由 `runner.py` 顺序注册。`frontend/` 是 React/TypeScript/Ant Design Pro，Vitest 测试与源码同置，Playwright 在 `frontend/tests/e2e/`。`docs/` 是设计与验收映射；`runtime/` 不是事实来源；`compose.yaml` 仅供本地开发。
-- 后端命令（在 `backend/`）：`ruff check app tests && black --check app tests`、`pytest tests -q`、`pytest tests/test_<module>.py -v`。前端命令（在 `frontend/`）：`npm test`、`npm run test:e2e`，以及项目的 eslint/Prettier 脚本。
-- 先理解、再设计、后实现；设计变更先更新 Markdown。以最小能产生可见结果的改动交付，不重构目录，也不添加“以后可能需要”的抽象。
-- 一次仅一名写入者；提交、推送、PR、UAT 或部署仅在实时任务合同明确授权时执行。提交前核对本仓库 `origin`；不得 force-push 或跨 Issue/分支/运行时对象操作。
-- 遇到凭据/MFA 缺失、疑似生产、删除/重置/恢复、目标或所有权不明、业务规则不明确、范围扩张或配置模式无法验证时停止并询问。绝不自动 Ready、merge、close 或发布。
+- `backend/` 是 FastAPI/SQLAlchemy 与 pytest；迁移位于 `backend/app/migrations/versions/` 并由 `runner.py` 顺序注册。`frontend/` 是 React/TypeScript/Ant Design Pro；Vitest 与源码同置，Playwright 位于 `frontend/tests/e2e/`。
+- 后端在 `backend/` 运行 `ruff check app tests && black --check app tests`、`pytest tests -q` 或直接相关测试。前端在 `frontend/` 运行项目的 Vitest、eslint/Prettier 与必要的 Playwright 检查。
+- `runtime/` 不是事实来源；`compose.yaml` 仅供本地开发。实施应是产生完整可见结果的最小改动，不重构目录或增加未验证的抽象。
 
-## UI/UX 验收
+## 协作与变更边界
 
-- `docs/04_UI.md` 与 `docs/assets/ui-prototypes/UI-01..UI-05` 是 UI 验收基线。
-- 浏览器验收分为两层：自动 smoke 验证登录、导航和无权限反馈；截图对照验证原型的关键区域、信息层级与交互入口。两层结论必须分开记录。
-- API、单元测试或页面可打开，均不能替代原型视觉验收。
-- 浏览器测试默认只读；创建、编辑、提交或删除业务数据前，需获得本轮明确授权。
+- Ubuntu 是 TCP coding、集成、测试、受控部署和真实 Chrome 验收的主场；每个活跃 Issue 同一时间只有一个被明确指定的 writer 与 commit/push owner。除非用户另行授权，全 TCP 同时最多一个 code writer/commit owner 和一个 mutable test/database stack。
+- TCP 不存在跨 Issue 的单一 controller。每个 Issue 有自己的 Sol controller、Goal/Plan、control window/conversation 和 worktree；Sol 只拥有本 Issue，不接管或改写其他 Issue 的 Goal/Plan。`tcp-codex-control` 是容纳各 Issue control windows 的共享 tmux session，不是跨 Issue controller。
+- 多个 Issue Sol 可并行做只读分析、需求澄清、设计和门禁准备；依赖与优先级通过 GitHub Issues/Project 和明确 handoff 协调，不突破全局共享资源上限。
+- Sol 维护本 Issue Goal/Plan、任务合同、门禁和验收编排，不旁路修改 Issue worktree。writer 可以是当前合同指定的独立 Writer；切换 writer 前须核对固定 pane、worktree、branch/HEAD 和干净状态，旧 writer 先停止写入。
+- 默认由 Sol 创建一个只读 `combined_reviewer` 子会话；按任务增加 delivery、risk 或 visual 检查维度。只有确有独立并行收益或单一上下文过大时才拆分额外 reviewer。
+- Reviewer 合同必须禁止写入；除非当前有界合同明确授权并隔离环境，Reviewer 不运行构建、浏览器、Docker/Compose、数据库、迁移或快照更新。工具权限不等于职责授权，未授权写入使该轮审查失效。
+- 未经当前有界合同，不提交、推送、创建 PR、部署、UAT、合并、关闭 Issue 或修改共享运行环境。
 
-## UAT 与项目状态
+## 项目记忆与 Git worktree
 
-- Codex 浏览器验收、用户 UAT 和发布决策是不同门禁。测试卡 `Done` 仅表示测试已执行；正文中的通过/失败结论决定是否可进入下一门禁。
-- 将测试结论同步到 Git Project 时，写明测试范围、未执行的写操作、失败项和复验条件。
-- UI-01、UI-04、UI-05 的原型差异修复后，先重跑浏览器 UI/UX 验收，再请求用户执行对应 UAT。
+- `AGENTS.md` 与 `.agents/tcp-delivery-memory.md` 是同一 Git 仓库中的唯一逻辑路径；任一 checkout/worktree 只是对应分支的版本快照，不是第二份权威记忆。
+- 经确认的跨 Issue 稳定事实，应在当前 Issue worktree 修改并随该分支提交、PR 审查及合并回基础分支；不得在主 checkout 与 Issue worktree 之间手工复制、双写或反向同步。
+- 新 Issue worktree 应从已经包含最新项目记忆的基础提交创建。既有 worktree 不自动更新；只在安全检查点通过正常 merge/rebase 获得新基线。
 
-## 自动校验
+## 验收与运行环境
 
-- `scripts/uiux-smoke.py` 只覆盖稳定的浏览器行为契约；不要用脆弱的像素比对替代人工截图验收。
-- 修改角色导航或权限反馈后，运行浏览器 smoke 与已有 `scripts/e2e-smoke.sh`。
-
-## Ubuntu Codex CLI 协作
-
-- Sol 控制者、Luna 监控者与 Terra 执行者必须作为独立 Codex 进程运行；禁止从开启 YOLO 的父会话派生子 Agent。
-- Sol 与 Luna 保持只读：Sol 负责需求、审查和门禁；Luna 只做低成本状态核对。两者不得修改产品代码、运行状态型测试、操作容器或数据库。
-- Luna 的常态监控由 `systemd --user` timer 调用独立、临时、只读的 Luna `codex exec --ephemeral`；持久 Luna TUI 仅用于明确的人工诊断，不作为默认常驻进程。
-- 每个自动化任务合同必须明确目标、允许写入路径、允许检查、commit/push 授权、停止条件和通知目标；合同缺失时，Terra 不得启动。
-- Terra 是唯一写入者，只能通过带全局 `flock` 的 TCP worker 启动器进入一个明确的 Issue worktree；YOLO 仅可用于该独立 Terra 单次任务。
-- 同一时间只能有一个代码写入者和一个状态型测试/数据库栈。Claude Code 作为回退执行者时，不得与 Terra 同时写同一 worktree。
-- 共享 Linux 账号下禁止使用 `pkill`、`killall` 或模糊进程匹配清理 Codex；生命周期操作必须先核对归属，并精确指向本试点的 tmux session 或 PID。
-- 当前 Issue、SHA、检查状态和临时授权不写入本文件；以 GitHub Issue/PR/Actions 和当前任务合同为准。
-- 禁止自动生产、Ready、merge、close。浏览器/UAT、共享数据库写入和破坏性清理仍需当前任务合同明确授权。
+- 长期用户测试环境、Issue writer 测试夹具和遗留隔离验收环境必须分开；只有当前 GitHub 环境合同指定的目标可写入、迁移或运行状态型测试。目标身份不明即停止。
+- 阶段 4–7 以批准原型和阶段 1 需求矩阵为权威。专业前端审查、同版本 GitHub Actions/E2E、真实 Chrome 和用户最终 UAT 是互补证据，均不可相互替代。
+- 同一精确候选的验收至少记录需求 ID、页面/状态/视口、证据、结论和未覆盖项。通用 smoke、截图、错误版本或 Agent 自述均不能替代需求级证据。
