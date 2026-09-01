@@ -735,7 +735,7 @@ def submit(
     connection: Connection,
     request: SubmitRequest,
 ) -> dict[str, object]:
-    """Issue #194: 退役 — 生成学习任务已改为显式动作（M02 三个独立动作）。
+    """Issue #194: 退役 — 生成学习任务已改为 M02 连续流程。
 
     旧的一键 submit-and-generate 契约被替换；该端点保持存在但零写入，
     返回 422 legacy_assessment_submit_disabled 提示迁移到新动作。
@@ -747,8 +747,8 @@ def submit(
             "code": "legacy_assessment_submit_disabled",
             "message": (
                 "提交并自动生成学习任务已退役：请使用"
-                "保存能力评级 → 加入/移出提升计划草稿 → "
-                "生成所选学习任务（POST /generate-plan-items）三个独立动作"
+                "能力评级逐项自动保存 → 加入/移出提升计划草稿 → "
+                "显式生成所选学习任务（POST /generate-plan-items）"
             ),
         },
     )

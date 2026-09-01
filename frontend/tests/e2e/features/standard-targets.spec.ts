@@ -326,8 +326,9 @@ test.describe('capability standard targets', () => {
       .getByLabel('当前等级 P01.01.01')
       .getByRole('button', { name: '3 · 熟练' })
       .click()
-    await page.getByRole('button', { name: '保存能力评级' }).click()
-
+    await expect(
+      page.getByRole('button', { name: '保存能力评级' }),
+    ).toHaveCount(0)
     await expect.poll(() => saved).not.toBeNull()
     const details = saved?.details as Array<Record<string, unknown>>
     expect(details[0]).toMatchObject({
