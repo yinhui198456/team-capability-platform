@@ -208,6 +208,15 @@ def _dashboard(profile_schema, member_cookies: dict[str, str], year: int = 2026)
     return body
 
 
+def _current_month_plan_fields(
+    connection: psycopg.Connection,
+) -> tuple[int, str, str]:
+    month = int(
+        connection.execute("SELECT EXTRACT(MONTH FROM CURRENT_DATE)::INT").fetchone()[0]
+    )
+    return month, f"2026-{month:02d}", f"Q{(month - 1) // 3 + 1}"
+
+
 def test_dashboard_meta_identifies_scope_and_as_of(
     profile_schema: psycopg.Connection,
 ) -> None:
@@ -267,15 +276,16 @@ def test_dashboard_current_month_counts_reconcilable(
     profile_schema: psycopg.Connection,
 ) -> None:
     member_id, member_cookies = _build_full_profile(profile_schema)
-    # Move the sole plan item into the current month (2026-08, Q3), 进行中.
+    month, plan_month, plan_quarter = _current_month_plan_fields(profile_schema)
+    # Move the sole plan item into PostgreSQL's current month, 进行中.
     profile_schema.execute(
         """
-        UPDATE plan_item SET plan_month = '2026-08', plan_quarter = 'Q3'
+        UPDATE plan_item SET plan_month = %s, plan_quarter = %s
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )
         """,
-        (member_id,),
+        (plan_month, plan_quarter, member_id),
     )
     profile_schema.commit()
 
@@ -293,22 +303,23 @@ def test_dashboard_current_month_counts_reconcilable(
         for pi_id in current_month["planned_ids"]
         if any(t["plan_item_id"] == pi_id for t in body["current_tasks"])
     )
-    assert current_month["actual_hours"] == 0  # March log is not an August log
+    assert current_month["actual_hours"] == (5 if month == 3 else 0)
 
 
 def test_dashboard_current_month_delayed_and_pending_evidence(
     profile_schema: psycopg.Connection,
 ) -> None:
     member_id, member_cookies = _build_full_profile(profile_schema)
+    _, plan_month, plan_quarter = _current_month_plan_fields(profile_schema)
     profile_schema.execute(
         """
         UPDATE plan_item
-        SET plan_month = '2026-08', plan_quarter = 'Q3', status = '延期'
+        SET plan_month = %s, plan_quarter = %s, status = '延期'
         WHERE annual_growth_plan_id IN (
             SELECT id FROM annual_growth_plan WHERE member_id = %s
         )
         """,
-        (member_id,),
+        (plan_month, plan_quarter, member_id),
     )
     profile_schema.execute(
         """

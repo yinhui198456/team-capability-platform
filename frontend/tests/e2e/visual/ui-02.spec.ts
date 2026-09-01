@@ -40,6 +40,8 @@ async function openM02(page: Page) {
 
 for (const viewport of VIEWPORTS) {
   test.describe(`M02 V1 @ ${viewport.name}`, () => {
+    let draftId: number
+
     test.beforeEach(async ({ page }) => {
       test.skip(
         !process.env.TCP_E2E_ISOLATED,
@@ -47,7 +49,7 @@ for (const viewport of VIEWPORTS) {
       )
       await page.setViewportSize(viewport)
       await loginAs(page, 'member2')
-      await ensure2026Draft(page)
+      draftId = await ensure2026Draft(page)
       await openM02(page)
     })
 
@@ -155,18 +157,35 @@ for (const viewport of VIEWPORTS) {
       expect(rowId).toBeTruthy()
       const row = page.locator(`#${rowId}`)
       const rating = row.locator('[aria-label^="当前等级"] button').first()
+      const selectedRating = row.locator(
+        '[aria-label^="当前等级"] button[aria-pressed="true"]',
+      )
+      const initialRatingName = (await selectedRating.count())
+        ? await selectedRating.getAttribute('aria-label')
+        : null
       if ((await rating.getAttribute('aria-pressed')) === 'true') {
         await rating.click()
       }
       await rating.click()
       await expect(rating).toHaveAttribute('aria-pressed', 'true')
+      const ratingPatch = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+          response.ok(),
+      )
+      await ratingSave.click()
+      await ratingPatch
+      await expect(
+        page.getByRole('status', { name: '评级保存状态' }),
+      ).toHaveText('评级已保存')
 
       const join = row.locator('button[aria-label^="加入提升计划 "]')
       await expect(join).toBeEnabled()
       let planSave = page.waitForResponse(
         (response) =>
           response.request().method() === 'PATCH' &&
-          /\/api\/assessments\/\d+\/draft$/.test(response.url()) &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
           response.ok(),
       )
       await join.click()
@@ -187,14 +206,31 @@ for (const viewport of VIEWPORTS) {
       planSave = page.waitForResponse(
         (response) =>
           response.request().method() === 'PATCH' &&
-          /\/api\/assessments\/\d+\/draft$/.test(response.url()) &&
+          response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
           response.ok(),
       )
       await row.locator('button[aria-label^="移出提升计划 "]').click()
       await planSave
       await expect(join).toBeVisible()
-      await rating.click()
-      await expect(rating).toHaveAttribute('aria-pressed', 'false')
+      const ratingName = await rating.getAttribute('aria-label')
+      if (initialRatingName !== ratingName) {
+        if (initialRatingName) {
+          await row.getByRole('button', { name: initialRatingName }).click()
+        } else {
+          await rating.click()
+        }
+        const cleanupPatch = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'PATCH' &&
+            response.url().endsWith(`/api/assessments/${draftId}/draft`) &&
+            response.ok(),
+        )
+        await ratingSave.click()
+        await cleanupPatch
+        await expect(
+          page.getByRole('status', { name: '评级保存状态' }),
+        ).toHaveText('评级已保存')
+      }
     })
   })
 }
