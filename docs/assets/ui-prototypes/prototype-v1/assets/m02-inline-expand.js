@@ -8,6 +8,7 @@ const ratings = [
 ];
 
 const state = {
+  ratingSave: "saved",
   items: [
     { code: "C01.01.01", name: "常用办公工具基础", rating: 2, target: 2 },
     {
@@ -16,7 +17,7 @@ const state = {
       rating: 1,
       target: 2,
       selected: true,
-      priority: "高",
+      priority: "低",
       month: "2026-05",
     },
     {
@@ -36,6 +37,8 @@ const state = {
   message: null,
 };
 
+let ratingSaveTimer;
+
 function gapOf(item) {
   return Math.max(0, item.target - item.rating);
 }
@@ -46,6 +49,24 @@ function ratingLabel(value) {
 
 function selectedItems() {
   return state.items.filter((item) => item.selected);
+}
+
+function ratingSaveStatus() {
+  const text = {
+    saving: "评级自动保存中…",
+    saved: "评级已自动保存",
+    error: "评级自动保存失败，请检查网络后重试",
+  }[state.ratingSave];
+  return `<span class="autosave-state ${state.ratingSave}" role="status" aria-atomic="true">${text}</span>`;
+}
+
+function queueRatingSave() {
+  clearTimeout(ratingSaveTimer);
+  state.ratingSave = "saving";
+  ratingSaveTimer = setTimeout(() => {
+    state.ratingSave = navigator.onLine ? "saved" : "error";
+    render();
+  }, 600);
 }
 
 function ratingControl(item) {
@@ -82,9 +103,9 @@ function planFields(item) {
   return `<div class="plan-fields inline-editor" data-plan-code="${item.code}" role="group" aria-label="${item.name} 提升计划设置">
     <div class="plan-identity"><span>提升计划设置</span><b>${item.name}</b><small>${item.code} · Gap ${gapOf(item)}</small></div>
     <div class="plan-control">
-      <label for="priority-${id}">优先级</label>
+      <label for="priority-${id}">优先级（默认低）</label>
       <select id="priority-${id}" data-action="priority" data-code="${item.code}">
-        ${["高", "中", "低"].map((value) => `<option ${item.priority === value ? "selected" : ""}>${value}</option>`).join("")}
+        ${["低", "中", "高"].map((value) => `<option ${item.priority === value ? "selected" : ""}>${value}</option>`).join("")}
       </select>
     </div>
     <div class="plan-control">
@@ -137,7 +158,6 @@ function actionSummary() {
   return `<div class="action-summary">
     <div><b>计划草稿：已选 ${selected.length} 项</b><span>${missing ? `待补月份 ${missing} 项` : "计划月份已完整"}</span></div>
     <div class="action-buttons">
-      <button type="button" class="btn" data-action="save-ratings">保存能力评级</button>
       <button type="button" class="btn primary" data-action="generate">生成所选学习任务</button>
     </div>
   </div>`;
@@ -166,7 +186,7 @@ function shell() {
       <header class="product-top"><b>Team Capability Platform</b><div><button type="button">2026 年</button><span>数据范围：本人</span><strong>Member User</strong><button type="button">退出</button></div></header>
       <aside class="product-nav"><nav><b>我的成长</b><button type="button">我的工作台</button><button type="button" class="active">能力评级与提升计划</button><button type="button">年度成长计划</button><button type="button">学习任务</button><button type="button">学习任务详情</button></nav><div class="nav-foot">TCP 学习环境</div></aside>
       <main class="page-canvas">
-        <div class="page-intro"><div><span>能力成长</span><h1>能力评级与提升计划</h1><p>逐项完成评级，再为有差距的能力设置提升计划。</p></div><span class="autosave-state">计划草稿自动保存中</span></div>
+        <div class="page-intro"><div><span>能力成长</span><h1>能力评级与提升计划</h1><p>评级自动保存，再为有差距的能力设置提升计划。</p></div>${ratingSaveStatus()}</div>
         <div class="summary-strip"><span>能力域 <b>6</b></span><span>三级能力项 <b>238</b></span><span>已评级 <b>238</b></span><span>存在差距 <b>16</b></span><span>已加入计划 <b>${selectedItems().length}</b></span></div>
         ${filters()}
         ${content()}
@@ -194,22 +214,16 @@ document.addEventListener("click", (event) => {
     item.rating = Number(target.dataset.rating);
     if (!gapOf(item)) item.selected = false;
     state.message = null;
+    queueRatingSave();
   }
   if (target.dataset.action === "toggle-plan" && item) {
     item.selected = !item.selected;
-    item.priority ||= "高";
+    item.priority ||= "低";
     state.message = null;
   }
   if (target.dataset.action === "remove" && item) {
     item.selected = false;
     state.message = null;
-  }
-  if (target.dataset.action === "save-ratings") {
-    state.message = {
-      type: "success",
-      title: "能力评级已保存",
-      detail: "保存评级不会生成学习任务。",
-    };
   }
   if (target.dataset.action === "generate") {
     const selected = selectedItems();
@@ -247,6 +261,17 @@ document.addEventListener("change", (event) => {
   if (target.dataset.action === "priority") item.priority = target.value;
   if (target.dataset.action === "month") item.month = target.value;
   state.message = null;
+  render();
+});
+
+window.addEventListener("offline", () => {
+  clearTimeout(ratingSaveTimer);
+  state.ratingSave = "error";
+  render();
+});
+
+window.addEventListener("online", () => {
+  queueRatingSave();
   render();
 });
 

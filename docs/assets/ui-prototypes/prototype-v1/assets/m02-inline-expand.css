@@ -91,12 +91,19 @@ select:focus-visible {
   color: var(--success);
   font-size: 12px;
   font-weight: 700;
-}
-
-.autosave-state {
   border-radius: 999px;
   background: var(--success-soft);
   padding: 7px 12px;
+}
+
+.autosave-state.saving {
+  background: var(--processing-soft);
+  color: var(--processing);
+}
+
+.autosave-state.error {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .summary-strip {
@@ -646,7 +653,7 @@ select:focus-visible {
 
   .action-buttons {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .sticky-actions {
