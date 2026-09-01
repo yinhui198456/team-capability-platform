@@ -174,6 +174,11 @@ for (const viewport of VIEWPORTS) {
       const planEditor = row.locator('[data-testid^="plan-editor-"]')
       await expect(planEditor).toBeVisible()
       expect(
+        await planEditor.evaluate((element) =>
+          getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/),
+        ),
+      ).toHaveLength(viewport.width === 768 ? 2 : 5)
+      expect(
         await planEditor.evaluate(
           (element) => element.scrollWidth <= element.clientWidth + 1,
         ),
