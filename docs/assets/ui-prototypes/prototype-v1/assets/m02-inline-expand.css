@@ -293,10 +293,16 @@ select:focus-visible {
   padding-inline: 8px;
 }
 
-.success-soft {
-  border-color: #7fcbaa;
+.plan-status {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
   background: var(--success-soft);
   color: var(--success);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .no-plan {

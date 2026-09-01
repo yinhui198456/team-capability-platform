@@ -70,13 +70,14 @@ function queueRatingSave() {
 }
 
 function ratingControl(item) {
+  const id = item.code.replaceAll(".", "-");
   return `<div class="rating compact-rating" role="radiogroup" aria-label="${item.name} 当前评级">
     ${ratings
       .map(
         ([
           value,
           label,
-        ]) => `<button type="button" role="radio" aria-checked="${item.rating === value}" class="${item.rating === value ? "active" : ""}" data-action="rate" data-code="${item.code}" data-rating="${value}">
+        ]) => `<button id="rating-${id}-${value}" type="button" role="radio" aria-checked="${item.rating === value}" class="${item.rating === value ? "active" : ""}" data-action="rate" data-code="${item.code}" data-rating="${value}">
           <b>${value}</b><small>${label}</small>
         </button>`,
       )
@@ -86,7 +87,8 @@ function ratingControl(item) {
 
 function planButton(item) {
   if (!gapOf(item)) return '<span class="no-plan">无需提升</span>';
-  return `<button type="button" class="btn plan-toggle ${item.selected ? "success-soft" : ""}" data-action="toggle-plan" data-code="${item.code}">${item.selected ? "已加入计划" : "加入提升计划"}</button>`;
+  if (item.selected) return '<span class="plan-status">已加入计划</span>';
+  return `<button id="plan-${item.code.replaceAll(".", "-")}" type="button" class="btn plan-toggle" data-action="toggle-plan" data-code="${item.code}">加入提升计划</button>`;
 }
 
 function planFields(item) {
@@ -110,7 +112,7 @@ function planFields(item) {
     </div>
     <div class="plan-control">
       <label for="month-${id}">计划月份 <span aria-hidden="true">*</span></label>
-      <select id="month-${id}" data-action="month" data-code="${item.code}" ${item.month ? "" : `aria-invalid="true" aria-describedby="${monthError}"`}>
+      <select id="month-${id}" data-action="month" data-code="${item.code}" required aria-required="true" ${item.month ? "" : `aria-invalid="true" aria-describedby="${monthError}"`}>
         ${monthOptions.map((value) => `<option value="${value}" ${item.month === value ? "selected" : ""}>${value ? value.replace("-", " 年 ") + " 月" : "请选择计划月份"}</option>`).join("")}
       </select>
       ${item.month ? "" : `<small class="field-error" id="${monthError}">请选择计划月份</small>`}
@@ -196,8 +198,13 @@ function shell() {
   </div>`;
 }
 
-function render() {
+function render(focusSelector) {
+  const activeSelector = document.activeElement?.id
+    ? `#${document.activeElement.id}`
+    : null;
   document.querySelector("#root").innerHTML = shell();
+  const nextFocus = focusSelector ?? activeSelector;
+  if (nextFocus) document.querySelector(nextFocus)?.focus();
 }
 
 function findItem(code) {
@@ -220,10 +227,12 @@ document.addEventListener("click", (event) => {
     item.selected = !item.selected;
     item.priority ||= "低";
     state.message = null;
+    focusSelector = `#priority-${item.code.replaceAll(".", "-")}`;
   }
   if (target.dataset.action === "remove" && item) {
     item.selected = false;
     state.message = null;
+    focusSelector = `#plan-${item.code.replaceAll(".", "-")}`;
   }
   if (target.dataset.action === "generate") {
     const selected = selectedItems();
@@ -249,8 +258,7 @@ document.addEventListener("click", (event) => {
       ? `#month-${missing.code.replaceAll(".", "-")}`
       : ".feedback";
   }
-  render();
-  document.querySelector(focusSelector)?.focus();
+  render(focusSelector);
 });
 
 document.addEventListener("change", (event) => {
