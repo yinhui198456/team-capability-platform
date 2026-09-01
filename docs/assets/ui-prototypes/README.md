@@ -3,8 +3,8 @@
 本目录是 TCP 页面视觉与交互资产的唯一索引目录，包含两部分：
 
 1. **既有视觉基线 PNG（历史确认稿）**：[UI-01-my-growth-dashboard.png](UI-01-my-growth-dashboard.png) ～ [UI-05-team-capability-analysis.png](UI-05-team-capability-analysis.png)，为早期迭代确认的静态视觉基线；页面规格冲突时以 `docs/04_UI.md` 页面规格为准。
-2. **交互原型基线（Issue #187 阶段 0，新）**：`prototype-v1/`，第一批页面的故事线、页面地图与可交互静态原型，作为交互与信息架构基线。
-3. **M02 行内连续编辑高保真候选（Issue #201 阶段 1）**：[`issue-201-m02/`](issue-201-m02/)，复用既有 TCP 视觉资产；方案 2、3 已放弃，用户确认方案 1 前不替换 M02 定版入口。
+2. **统一交互原型基线**：`prototype-v1/`，包含第一批页面的故事线、页面地图与可交互静态原型；M02 使用 Issue #201 已批准的方案 1 高保真实现。
+3. **M02 历史证据与兼容入口**：[`issue-201-m02/`](issue-201-m02/) 保留截图和 QA 证据，旧 HTML 地址统一跳转到 `prototype-v1`，不再作为推荐入口。
 
 页面矩阵（页面编号、角色、路由、故事节点、最终版本、master 落地状态、批次、Chrome 验收）的唯一权威位置在 [../../04_UI.md](../../04_UI.md)（§4.9）；业务规则唯一来源是 [../../01_Product.md](../../01_Product.md)（Issue #187 故事合同）。原型不定义任何 API、指标口径或数据库字段；`prototype-v1` 为纯静态 HTML/CSS/JS，不连接后端。
 
@@ -28,8 +28,8 @@
 
 ## 打开方式
 
-- **定版候选索引（推荐起点）**：[prototype-v1/index.html?collection=selected](prototype-v1/index.html?collection=selected)（或 [prototype-v1/selected.html](prototype-v1/selected.html) 自动跳转）。浏览器地址栏加 `&page=<编号>`（如 `&page=M02`）可直达指定页面。
-- **单页独立入口**：`prototype-v1/pages/<编号>-selected.html`（自动跳转到索引对应页）。
+- **定版候选索引（唯一推荐起点）**：[prototype-v1/index.html?collection=selected](prototype-v1/index.html?collection=selected)（或 [prototype-v1/selected.html](prototype-v1/selected.html) 自动跳转）。浏览器地址栏加 `&page=<编号>` 可直达指定页面；`&page=M02` 会进入独立高保真页面。
+- **单页独立入口**：`prototype-v1/pages/<编号>-selected.html`；M02 是实际高保真实现，其余入口跳转到索引对应页。
 - **故事线 V1**：[prototype-v1/storyline-v1.html](prototype-v1/storyline-v1.html)（业务确认稿，自包含单文件）。
 - **页面地图 V1**：[prototype-v1/page-map-v1.html](prototype-v1/page-map-v1.html)（自包含单文件）。
 
@@ -38,7 +38,7 @@
 ## 权威性声明
 
 - `manifest.json` 的 `selected` 数组与上表 9 个最终入口是**权威定版**；`pages` 数组中未选中的 30 个探索版本（`*-v1/v2/v3.html`）仅用于历史对照，**非权威**，且未随仓库提交（完整探索稿在阶段 0 输入包 `tcp-prototype-baseline-selected-20260816.tar.gz`，SHA256 `5875a74d859ad3bc720999560322f7217a8137b96ba08336ebd220e67850646d`）。
-- 单一打包 JS（`assets/index-LwRo0KzH.js`）内含全部候选版本实现，未拆改构建产物；以 `?collection=selected` 展示定版集合，以默认无参数入口展示候选总览（未提交的探索页在仓库内不可打开，属预期）。
+- 单一打包 JS（`assets/index-LwRo0KzH.js`）内含原候选版本实现且保持未改；定版索引通过轻量 URL 桥把 M02 导向 `pages/m02-selected.html`，其高保真差异位于 `assets/m02-inline-expand.css` 和 `assets/m02-inline-expand.js`。
 - 原型展示的指标数字（如 D01 本周学习时间、任务数等）仅为界面示例，口径须经独立 Issue 确认后方可实施。
 
 ## 验证

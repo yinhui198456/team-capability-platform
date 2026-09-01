@@ -5,9 +5,9 @@
 - 当前无可执行的 P0 / P1 / P2 差异。
 - P3：方向概念图把标签与控件横向混排；高保真实现采用标签在上、控件在下的稳定字段轨。该差异是有意修正，提升了窄屏可读性和字段关系清晰度。
 
-**Open Questions**
+**Approved Prototype**
 
-- 方案 1 仍是阶段 1 高保真候选，不是 M02 权威验收基线；需用户确认后才能进入下一阶段。
+- 唯一推荐入口：[`../prototype-v1/pages/m02-selected.html`](../prototype-v1/pages/m02-selected.html)；本目录截图与 QA 文件仅作为审阅证据。
 
 **Implementation Checklist**
 
@@ -22,7 +22,7 @@
 ## Evidence
 
 - Source visual truth: `references/01-inline-expand-concept.png`（1585 × 992）。
-- Existing TCP baseline: `../UI-02-assessment-gap.png`（历史视觉基线）与 `../prototype-v1/assets/index-Cw_G5jg6.css`（复用样式）。
+- Existing TCP baseline: `../UI-02-assessment-gap.png`（历史视觉基线）与 `../prototype-v1/assets/index-Cw_G5jg6.css`（复用样式）；M02 差异样式与交互位于 `../prototype-v1/assets/m02-inline-expand.css` 和 `../prototype-v1/assets/m02-inline-expand.js`。
 - Browser-rendered implementation: `qa/01-inline-expand-hifi-implementation-1536x1024.png`（1536 × 1024）。
 - Full-view combined comparison: `qa/01-inline-expand-hifi-comparison.png`。
 - Focused comparison: `qa/01-inline-expand-alignment-before-after.png`；直接显示月份控件修复前下沉 22px、修复后与优先级同基线。

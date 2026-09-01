@@ -36,11 +36,6 @@ const state = {
   message: null,
 };
 
-const requestedLayout = document.body.dataset.layout;
-if (requestedLayout && requestedLayout !== "inline") {
-  location.replace("01-inline-expand.html");
-}
-
 function gapOf(item) {
   return Math.max(0, item.target - item.rating);
 }
@@ -163,8 +158,8 @@ function content() {
 function shell() {
   return `<div class="prototype-lab selected-mode issue-201-prototype">
     <div class="labbar">
-      <a class="lab-home" href="../index.html"><span class="lab-home-full">M02 原型索引</span><span class="lab-home-short">原型索引</span></a>
-      <div class="lab-page"><span>Issue #201 · 阶段 1 高保真候选</span><strong>行内连续编辑</strong></div>
+      <a class="lab-home" href="../index.html?collection=selected"><span class="lab-home-full">M02 原型索引</span><span class="lab-home-short">原型索引</span></a>
+      <div class="lab-page"><span>M02 · 高保真定版原型</span><strong>行内连续编辑</strong></div>
       <span class="selected-direction">已选方向 · 方案 1</span>
     </div>
     <div class="product-shell">
