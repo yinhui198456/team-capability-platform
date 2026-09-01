@@ -2331,7 +2331,7 @@ def generate_plan_items_for_selection(
     *,
     idempotency_key: str | None = None,
 ) -> dict[str, object]:
-    """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）.
+    """Issue #194: 显式生成所选学习任务（M02 连续流程的显式生成步骤）.
 
     Generates plan items + learning tasks ONLY for the selected l3_codes.
 

@@ -680,7 +680,7 @@ def generate_plan_items(
     connection: Connection,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, object]:
-    """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）。
+    """Issue #194: 显式生成所选学习任务（M02 连续流程的显式生成步骤）。
 
     Only the selected l3_codes are generated.  Any unready item fails the
     whole batch with a per-L3 Chinese error (zero writes).  Idempotency:
