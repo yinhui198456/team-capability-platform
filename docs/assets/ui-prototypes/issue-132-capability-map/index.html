@@ -3,11 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Issue #132 能力地图 URL、搜索、深链与键盘交互高保真原型"
-    />
-    <title>能力地图 · Issue #132 阶段 1 原型</title>
+    <meta name="description" content="Issue #132 阶段 1 修订版高保真交互原型，供阶段 2 用户评审。" />
+    <title>能力地图 · 阶段 1 修订版高保真交互原型</title>
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
   <body>
@@ -15,30 +12,38 @@
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="index.html">Team Capability Platform</a>
-        <div class="topbar-context" aria-label="当前数据上下文">
+        <div class="topbar-context" aria-label="当前用户">
           <span>2026 年</span>
+          <span id="topbar-user">Member User</span>
+          <button id="logout" type="button">退出</button>
         </div>
       </header>
 
-      <aside class="sidebar" aria-label="主导航">
-        <section>
+      <aside class="sidebar" aria-label="主导航" id="sidebar">
+        <section data-nav="member">
           <h2>我的工作台</h2>
           <a href="#prototype-only">我的工作台</a>
         </section>
-        <section>
+        <section data-nav="member">
           <h2>能力成长</h2>
           <a href="#prototype-only">能力自评与 Gap</a>
           <a href="#prototype-only">评估历史</a>
         </section>
-        <section>
+        <section data-nav="member">
           <h2>我的计划</h2>
           <a href="#prototype-only">年度成长计划</a>
           <a href="#prototype-only">学习任务</a>
         </section>
-        <section>
+        <section data-nav="common">
           <h2>成长管理</h2>
           <a href="#prototype-only">月度复盘</a>
           <a href="#prototype-only">成长档案</a>
+        </section>
+        <section data-nav="leader">
+          <h2>团队运营</h2>
+          <a href="#prototype-only">团队能力分析</a>
+          <a href="#prototype-only">团队年度能力规划</a>
+          <a href="#prototype-only">学习资源</a>
         </section>
         <section>
           <h2>能力标准</h2>
@@ -55,7 +60,9 @@
               <p class="muted">技术架构与开发专业线能力模型 · V1.0</p>
             </div>
 
-            <div class="search-panel">
+            <div class="header-actions">
+              <button id="standard-versions" class="standard-versions" type="button" hidden>标准版本维护</button>
+              <div class="search-panel">
               <label for="capability-search">搜索能力地图</label>
               <div class="search-control">
                 <input
@@ -81,6 +88,7 @@
                 aria-label="能力地图搜索结果"
                 hidden
               ></div>
+              </div>
             </div>
           </header>
 
@@ -102,6 +110,7 @@
                 <p class="section-kicker">当前能力域</p>
                 <h2 id="domain-title"></h2>
               </div>
+              <button id="edit-domain" class="l2-edit" type="button" hidden>编辑能力域</button>
             </header>
 
             <div class="domain-overview">
@@ -134,7 +143,7 @@
 
     <div class="drawer-backdrop" hidden></div>
     <aside
-      class="drawer"
+      class="drawer view-drawer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="drawer-title"
@@ -151,6 +160,15 @@
       </header>
       <div class="drawer-body"></div>
     </aside>
+
+    <aside class="drawer edit-drawer" role="dialog" aria-modal="true" aria-labelledby="edit-drawer-title" tabindex="-1" hidden>
+      <header>
+        <div><p class="section-kicker">标准维护</p><h2 id="edit-drawer-title">编辑能力标准</h2></div>
+        <button class="drawer-close" type="button">关闭</button>
+      </header>
+      <form class="edit-form" id="edit-form"></form>
+    </aside>
+    <p class="save-notice" id="save-notice" role="status" aria-live="polite" hidden></p>
 
     <p class="sr-only" id="live-status" aria-live="polite" aria-atomic="true"></p>
     <script src="assets/prototype.js"></script>

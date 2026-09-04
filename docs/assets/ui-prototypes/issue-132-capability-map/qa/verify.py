@@ -6,7 +6,7 @@ from playwright.sync_api import expect, sync_playwright
 
 PROTOTYPE = Path(__file__).resolve().parents[1]
 REPO = Path(__file__).resolve().parents[5]
-BASE_URL = "http://127.0.0.1:8132/index.html"
+BASE_URL = "http://127.0.0.1:8132/issue-132-capability-map/index.html"
 SOURCE_1440 = (
     REPO
     / "frontend/tests/e2e/visual/capability-map.spec.ts-snapshots"
@@ -45,6 +45,20 @@ def compare(source_path: Path, implementation_path: Path, output_path: Path, cro
     canvas.save(output_path)
 
 
+def compare_shells(paths: list[Path], output_path: Path):
+    images = [Image.open(path).convert("RGB") for path in paths]
+    labels = ["M02 shell", "M03 shell", "CM01 capability map"]
+    label_height = 28
+    canvas = Image.new("RGB", (sum(image.width for image in images), max(image.height for image in images) + label_height), "white")
+    draw = ImageDraw.Draw(canvas)
+    x = 0
+    for image, label in zip(images, labels):
+        draw.text((x + 12, 8), label, fill="#101828")
+        canvas.paste(image, (x, label_height))
+        x += image.width
+    canvas.save(output_path)
+
+
 def run():
     evidence = PROTOTYPE / "qa"
     evidence.mkdir(exist_ok=True)
@@ -63,7 +77,7 @@ def run():
 
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
-        expect(page.get_by_role("tab", name="P01 Data Infra 能力")).to_have_attribute(
+        expect(page.locator('[data-domain-code="P01"]')).to_have_attribute(
             "aria-selected", "true"
         )
         assert page.url.endswith("/index.html")
@@ -72,7 +86,7 @@ def run():
         default_1440 = evidence / "prototype-default-1440x900.png"
         page.screenshot(path=default_1440, full_page=True)
 
-        page.get_by_role("tab", name="P02 AI Infra / Agent 能力").click()
+        page.locator('[data-domain-code="P02"]').click()
         assert page.url.endswith("#P02")
         page.locator('[data-l2-code="P02.02"]').click()
         assert page.url.endswith("#P02.02")
@@ -92,7 +106,7 @@ def run():
 
         page.reload()
         page.wait_for_load_state("networkidle")
-        expect(page.get_by_role("tab", name="P02 AI Infra / Agent 能力")).to_have_attribute(
+        expect(page.locator('[data-domain-code="P02"]')).to_have_attribute(
             "aria-selected", "true"
         )
         expect(page.locator('[data-l2-code="P02.02"]')).to_have_attribute(
@@ -102,14 +116,14 @@ def run():
             "aria-current", "location"
         )
 
-        page.get_by_role("tab", name="C01 基本办公能力").click()
+        page.locator('[data-domain-code="C01"]').click()
         assert page.url.endswith("#C01")
         page.go_back()
         expect(page.locator('[data-l3-code="P02.02.08"]')).to_have_attribute(
             "aria-current", "location"
         )
         page.go_forward()
-        expect(page.get_by_role("tab", name="C01 基本办公能力")).to_have_attribute(
+        expect(page.locator('[data-domain-code="C01"]')).to_have_attribute(
             "aria-selected", "true"
         )
 
@@ -161,7 +175,7 @@ def run():
 
         page.goto(BASE_URL + "#P02.02.99")
         expect(page.get_by_role("alert")).to_contain_text("P02.02.99")
-        expect(page.get_by_role("tab", name="P02 AI Infra / Agent 能力")).to_have_attribute(
+        expect(page.locator('[data-domain-code="P02"]')).to_have_attribute(
             "aria-selected", "true"
         )
         invalid_recognized = evidence / "prototype-invalid-P02-1440x900.png"
@@ -174,7 +188,7 @@ def run():
         )
         page.get_by_role("button", name="清除无效路径并返回 P01").click()
         assert page.url.endswith("/index.html")
-        expect(page.get_by_role("tab", name="P01 Data Infra 能力")).to_have_attribute(
+        expect(page.locator('[data-domain-code="P01"]')).to_have_attribute(
             "aria-selected", "true"
         )
 
@@ -200,8 +214,71 @@ def run():
             page.wait_for_load_state("networkidle")
             assert_no_horizontal_overflow(page)
             expect(page.get_by_role("combobox", name="搜索能力地图")).to_be_visible()
+            if width == 768:
+                page.locator('[data-domain-code="C01"]').click()
+                tab = page.locator('[data-domain-code="C01"]')
+                bounds = tab.bounding_box()
+                tabs_bounds = page.locator(".domain-tabs").bounding_box()
+                assert bounds and tabs_bounds
+                assert bounds["x"] >= tabs_bounds["x"]
+                assert bounds["x"] + bounds["width"] <= tabs_bounds["x"] + tabs_bounds["width"]
             page.mouse.move(0, 0)
             page.screenshot(path=evidence / name, full_page=True)
+
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(BASE_URL + "?role=member#P02.02.08")
+        expect(page.get_by_text("Member User", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="标准版本维护")).to_be_hidden()
+        page.screenshot(path=evidence / "prototype-member-1440x900.png")
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        expect(page.locator(".domain-tabs")).to_be_in_viewport()
+        page.screenshot(path=evidence / "prototype-sticky-member-1440x900.png")
+
+        page.goto(BASE_URL + "?role=leader#P02.02")
+        expect(page.get_by_text("Leader User", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="标准版本维护")).to_be_visible()
+        expect(page.get_by_role("button", name="编辑能力域")).to_be_visible()
+        page.get_by_role("button", name="编辑能力域").click()
+        expect(page.locator(".edit-drawer")).to_be_visible()
+        name_input = page.get_by_label("名称")
+        expect(name_input).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        expect(page.get_by_role("button", name="关闭").last).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        expect(page.get_by_role("button", name="保存")).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(page.get_by_role("button", name="关闭").last).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(name_input).to_be_focused()
+        page.screenshot(path=evidence / "prototype-leader-edit-1440x900.png")
+        page.get_by_role("button", name="保存").click()
+        expect(page.get_by_role("status")).to_contain_text("已保存")
+        page.screenshot(path=evidence / "prototype-leader-save-1440x900.png")
+        page.get_by_role("button", name="编辑能力标准").first.click()
+        expect(page.locator(".edit-drawer")).to_be_visible()
+        page.get_by_role("button", name="取消").click()
+        expect(page.get_by_role("button", name="编辑能力标准").first).to_be_focused()
+        page.locator('[data-l2-code="P02.02"]').click()
+        page.get_by_role("button", name="编辑").first.click()
+        expect(page.locator(".edit-drawer")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("button", name="编辑").first).to_be_focused()
+
+        page.goto("http://127.0.0.1:8132/prototype-v1/index.html?collection=selected&page=M02")
+        page.wait_for_timeout(300)
+        assert "/prototype-v1/viewer.html?collection=selected&page=M02" in page.url
+        page.screenshot(path=evidence / "reference-m02-shell-1440x900.png")
+        page.goto("http://127.0.0.1:8132/prototype-v1/index.html?collection=selected&page=M03")
+        page.wait_for_timeout(300)
+        page.screenshot(path=evidence / "reference-m03-shell-1440x900.png")
+        page.goto("http://127.0.0.1:8132/prototype-v1/index.html")
+        expect(page.get_by_role("link", name="全员只读")).to_be_visible()
+        expect(page.get_by_role("link", name="Leader 维护")).to_be_visible()
+        for code in ["M01", "M02", "M03", "M04", "M05", "B01", "D01", "L01", "A01"]:
+            expect(page.get_by_role("link", name=f"打开 {code}")).to_have_attribute(
+                "href", f"viewer.html?collection=selected&page={code}"
+            )
+        page.screenshot(path=evidence / "prototype-review-package-1440x900.png", full_page=True)
 
         assert not browser_errors, "\n".join(browser_errors)
         browser.close()
@@ -211,6 +288,14 @@ def run():
         default_1440,
         evidence / "compare-full-default-1440.png",
     )
+    compare_shells(
+        [
+            evidence / "reference-m02-shell-1440x900.png",
+            evidence / "reference-m03-shell-1440x900.png",
+            evidence / "prototype-member-1440x900.png",
+        ],
+        evidence / "compare-shell-m02-m03-cm01-1440.png",
+    )
     compare(
         SOURCE_1440,
         default_1440,
@@ -219,7 +304,7 @@ def run():
     )
 
     print("PASS: URL/hash, L1/L2/L3, refresh, back/forward, search keyboard, invalid links, L2 content, drawer focus")
-    print("PASS: 1440/1920/1024/768 screenshots, zero horizontal overflow, zero browser errors")
+    print("PASS: Member/Leader, sticky L1, edit/save, unified routing, 1440/1920/1024/768, zero overflow/errors")
 
 
 if __name__ == "__main__":

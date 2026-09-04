@@ -5,7 +5,7 @@
 1. **既有视觉基线 PNG（历史确认稿）**：[UI-01-my-growth-dashboard.png](UI-01-my-growth-dashboard.png) ～ [UI-05-team-capability-analysis.png](UI-05-team-capability-analysis.png)，为早期迭代确认的静态视觉基线；页面规格冲突时以 `docs/04_UI.md` 页面规格为准。
 2. **交互原型基线（Issue #187 阶段 0，新）**：`prototype-v1/`，第一批页面的故事线、页面地图与可交互静态原型，作为交互与信息架构基线。
 
-另有 **Issue #132 阶段 1 用户评审候选**：[`issue-132-capability-map/index.html`](issue-132-capability-map/index.html)，用于确认能力地图 URL/Hash、L1/L2/L3、搜索/深链、浏览器历史、L2 职级内容和键盘交互。该候选尚待阶段 2 用户确认，不替代本页既有定版清单或 `docs/04_UI.md`。
+另有 **Issue #132 阶段 1 修订版高保真交互原型**，纳入 [`prototype-v1/index.html`](prototype-v1/index.html) 的 **阶段 2 评审包**：CM01 能力地图（或 [`issue-132-capability-map/index.html?role=member`](issue-132-capability-map/index.html?role=member) / [`?role=leader`](issue-132-capability-map/index.html?role=leader)），供阶段 2 用户评审 URL/Hash、L1/L2/L3、搜索/深链、浏览器历史、sticky L1、键盘与 Leader 维护状态。该原型不替代既有定版清单或 `docs/04_UI.md`。
 
 页面矩阵（页面编号、角色、路由、故事节点、最终版本、master 落地状态、批次、Chrome 验收）的唯一权威位置在 [../../04_UI.md](../../04_UI.md)（§4.9）；业务规则唯一来源是 [../../01_Product.md](../../01_Product.md)（Issue #187 故事合同）。原型不定义任何 API、指标口径或数据库字段；`prototype-v1` 为纯静态 HTML/CSS/JS，不连接后端。
 
@@ -22,6 +22,7 @@
 | D01 | 成员学习进度看板 | Buddy / Leader | V3（统一为 V1/V2 浅色调；原型数字仅为候选指标，非业务口径） | [prototype-v1/pages/d01-selected.html](prototype-v1/pages/d01-selected.html) |
 | L01 | 团队能力分析 | Leader | V1 | [prototype-v1/pages/l01-selected.html](prototype-v1/pages/l01-selected.html) |
 | A01 | 用户、角色与辅导关系 | Admin | V1（含新增用户状态与用户等级设置） | [prototype-v1/pages/a01-selected.html](prototype-v1/pages/a01-selected.html) |
+| CM01 | 能力地图 | Member / Buddy / Leader / Admin | 阶段 1 修订版高保真交互原型；供阶段 2 用户评审 | [阶段 2 评审包](prototype-v1/index.html) |
 
 - **第二批**：M06 月度复盘、M07 成长档案，不在本轮。
 - **不实施**：L02 年度能力重点，已移出实施范围。
@@ -38,7 +39,7 @@
 
 ## 权威性声明
 
-- `manifest.json` 的 `selected` 数组与上表 9 个最终入口是**权威定版**；`pages` 数组中未选中的 30 个探索版本（`*-v1/v2/v3.html`）仅用于历史对照，**非权威**，且未随仓库提交（完整探索稿在阶段 0 输入包 `tcp-prototype-baseline-selected-20260816.tar.gz`，SHA256 `5875a74d859ad3bc720999560322f7217a8137b96ba08336ebd220e67850646d`）。
+- `manifest.json` 的 `selected` 数组与上表 9 个既有最终入口是**权威定版**；CM01 是独立的 #132 阶段 1 修订版高保真交互原型，收录于阶段 2 评审包，但不改变既有定版页面。`pages` 数组中未选中的 30 个探索版本（`*-v1/v2/v3.html`）仅用于历史对照，**非权威**，且未随仓库提交（完整探索稿在阶段 0 输入包 `tcp-prototype-baseline-selected-20260816.tar.gz`，SHA256 `5875a74d859ad3bc720999560322f7217a8137b96ba08336ebd220e67850646d`）。
 - 单一打包 JS（`assets/index-LwRo0KzH.js`）内含全部候选版本实现，未拆改构建产物；以 `?collection=selected` 展示定版集合，以默认无参数入口展示候选总览（未提交的探索页在仓库内不可打开，属预期）。
 - 原型展示的指标数字（如 D01 本周学习时间、任务数等）仅为界面示例，口径须经独立 Issue 确认后方可实施。
 

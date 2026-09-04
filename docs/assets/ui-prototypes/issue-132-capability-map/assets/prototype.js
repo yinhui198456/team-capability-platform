@@ -307,7 +307,12 @@
     searchOpen: false,
     drawerCode: '',
     returnFocusCode: '',
+    editCode: '',
+    editReturnFocus: '',
   }
+
+  var role = new URLSearchParams(window.location.search).get('role') === 'leader' ? 'leader' : 'member'
+  var isLeader = role === 'leader'
 
   data.forEach(function (domain) {
     state.expanded[domain.code] = new Set()
@@ -333,6 +338,18 @@
   var drawerTitle = document.querySelector('#drawer-title')
   var drawerName = document.querySelector('#drawer-name')
   var drawerBody = document.querySelector('.drawer-body')
+  var editDrawer = document.querySelector('.edit-drawer')
+  var editForm = document.querySelector('#edit-form')
+  var saveNotice = document.querySelector('#save-notice')
+  var editDomain = document.querySelector('#edit-domain')
+  var topbarUser = document.querySelector('#topbar-user')
+  var standardVersions = document.querySelector('#standard-versions')
+
+  topbarUser.textContent = isLeader ? 'Leader User' : 'Member User'
+  standardVersions.hidden = !isLeader
+  editDomain.hidden = !isLeader
+  document.querySelectorAll('[data-nav="member"]').forEach(function (section) { section.hidden = isLeader })
+  document.querySelectorAll('[data-nav="leader"]').forEach(function (section) { section.hidden = !isLeader })
 
   function escapeHtml(value) {
     return String(value)
@@ -456,6 +473,66 @@
     }
   }
 
+  function nodeDetails(node) {
+    if (node.kind === 'L1') return { name: node.domain.name, enabled: node.domain.enabled !== false, detail: node.domain.overview, label: '能力域概述' }
+    if (node.kind === 'L2') return { name: node.group.name, enabled: node.group.enabled !== false, detail: node.group.levels.P5.full, label: 'P5 职级要求' }
+    return { name: node.path.name, enabled: node.path.enabled !== false, detail: node.path.output, label: '预期输出 / 验收方式' }
+  }
+
+  function openEdit(code, trigger) {
+    if (!isLeader) return
+    var node = findNode(code)
+    if (!node) return
+    closeDrawer(false)
+    state.editCode = code
+    state.editReturnFocus = trigger || ''
+    var details = nodeDetails(node)
+    document.querySelector('#edit-drawer-title').textContent = '编辑 ' + code + ' ' + KIND_LABEL[node.kind]
+    editForm.innerHTML = '<label>名称<input name="name" required value="' + escapeHtml(details.name) + '"></label><label class="enabled"><input name="enabled" type="checkbox" ' + (details.enabled ? 'checked' : '') + '>启用</label><label>' + details.label + '<textarea name="detail">' + escapeHtml(details.detail) + '</textarea></label><div class="form-actions"><button type="button" data-edit-cancel>取消</button><button type="submit">保存</button></div>'
+    editDrawer.hidden = false
+    drawerBackdrop.hidden = false
+    appShell.inert = true
+    editForm.elements.name.focus()
+  }
+
+  function closeEdit(restoreFocus) {
+    if (!state.editCode) return
+    editDrawer.hidden = true
+    drawerBackdrop.hidden = true
+    appShell.inert = false
+    var returnFocus = state.editReturnFocus
+    state.editCode = ''
+    if (restoreFocus && returnFocus) {
+      var trigger = document.querySelector(returnFocus)
+      if (trigger) trigger.focus()
+    }
+  }
+
+  function saveEdit(event) {
+    event.preventDefault()
+    var node = findNode(state.editCode)
+    if (!node) return
+    var form = new FormData(editForm)
+    var name = String(form.get('name') || '').trim()
+    var detail = String(form.get('detail') || '').trim()
+    if (!name) return
+    var enabled = form.get('enabled') === 'on'
+    if (node.kind === 'L1') { node.domain.name = name; node.domain.overview = detail; node.domain.enabled = enabled }
+    if (node.kind === 'L2') { node.group.name = name; node.group.levels.P5.full = detail; node.group.enabled = enabled }
+    if (node.kind === 'L3') { node.path.name = name; node.path.output = detail; node.path.enabled = enabled }
+    var savedCode = node.code
+    var returnFocus = state.editReturnFocus
+    closeEdit(false)
+    render()
+    if (returnFocus) {
+      var trigger = document.querySelector(returnFocus)
+      if (trigger) trigger.focus()
+    }
+    saveNotice.textContent = savedCode + ' 已保存（仅此原型会话，未写入后端）。'
+    saveNotice.hidden = false
+    window.setTimeout(function () { saveNotice.hidden = true }, 3200)
+  }
+
   function setSelection(node, shouldFocus) {
     closeDrawer(false)
     state.invalidHash = ''
@@ -556,7 +633,9 @@
           domain.l2Count +
           ' 个 L2 · ' +
           domain.l3Count +
-          ' 个 L3</small></button>'
+          ' 个 L3' +
+          (domain.enabled === false ? ' · 已停用' : '') +
+          '</small></button>'
         )
       })
       .join('')
@@ -578,6 +657,8 @@
         buttons[next].focus()
       })
     })
+    var activeTab = tabs.querySelector('[aria-selected="true"]')
+    if (activeTab) activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }
 
   function levelMarkup(group) {
@@ -630,7 +711,7 @@
 
   function pathMarkup(path) {
     var selected = state.selectedCode === path.code
-    return (
+    var button =
       '<button class="l3-row' +
       (selected ? ' selected' : '') +
       '" type="button" data-l3-code="' +
@@ -648,7 +729,9 @@
       '<br />预计时长：' +
       escapeHtml(path.hours) +
       ' · 查看详情</span></button>'
-    )
+    return isLeader
+      ? '<div class="l3-actions">' + button + '<button class="l3-edit" type="button" data-edit-code="' + escapeHtml(path.code) + '">编辑</button></div>'
+      : button
   }
 
   function groupMarkup(group) {
@@ -688,7 +771,10 @@
       escapeHtml(group.name) +
       '</strong><small>能力标准 · ' +
       group.count +
-      ' 条达成路径</small></button>' +
+      ' 条达成路径' +
+      (group.enabled === false ? ' · 已停用' : '') +
+      '</small></button>' +
+      (isLeader ? '<button class="l2-edit" type="button" data-edit-code="' + escapeHtml(group.code) + '">编辑能力标准</button>' : '') +
       expanded +
       '</section>'
     )
@@ -759,6 +845,12 @@
         var code = button.dataset.l3Code
         selectCode(code, { history: 'push', focus: false })
         openDrawer(code)
+      })
+    })
+
+    l2List.querySelectorAll('[data-edit-code]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        openEdit(button.dataset.editCode, '[data-edit-code="' + CSS.escape(button.dataset.editCode) + '"]')
       })
     })
   }
@@ -979,6 +1071,25 @@
     }
   }
 
+  function editDrawerKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeEdit(true)
+      return
+    }
+    if (event.key !== 'Tab') return
+    var focusable = Array.from(editDrawer.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled])'))
+    var first = focusable[0]
+    var last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   searchInput.addEventListener('input', function () {
     state.searchOpen = Boolean(searchInput.value.trim())
     state.activeSearchIndex = 0
@@ -1073,14 +1184,34 @@
     closeDrawer(true)
   })
   drawerBackdrop.addEventListener('click', function () {
-    closeDrawer(true)
+    if (state.editCode) closeEdit(true)
+    else closeDrawer(true)
   })
   drawer.addEventListener('keydown', drawerKeydown)
+  editDrawer.querySelector('.drawer-close').addEventListener('click', function () {
+    closeEdit(true)
+  })
+  editDrawer.addEventListener('keydown', editDrawerKeydown)
+  editForm.addEventListener('submit', saveEdit)
+  editForm.addEventListener('click', function (event) {
+    if (event.target.matches('[data-edit-cancel]')) closeEdit(true)
+  })
+  editDomain.addEventListener('click', function () {
+    openEdit(state.activeDomain, '#edit-domain')
+  })
+  standardVersions.addEventListener('click', function () {
+    saveNotice.textContent = '标准版本维护页面不属于 #132；本评审仅确认入口。'
+    saveNotice.hidden = false
+    window.setTimeout(function () { saveNotice.hidden = true }, 3200)
+  })
+  document.querySelector('#logout').addEventListener('click', function () {
+    announce('阶段 1 修订版高保真交互原型不执行退出操作。')
+  })
 
   document.querySelectorAll('.sidebar a:not(.active)').forEach(function (link) {
     link.addEventListener('click', function (event) {
       event.preventDefault()
-      announce('阶段 1 原型只演示能力地图，不跳转其他页面。')
+      announce('阶段 1 修订版高保真交互原型只演示能力地图，不跳转其他页面。')
     })
   })
 

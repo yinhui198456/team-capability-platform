@@ -107,6 +107,14 @@ button:active {
   gap: 18px;
 }
 
+.topbar-context button {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font: inherit;
+  padding: 6px 0;
+}
+
 .sidebar {
   background: var(--surface);
   border-right: 1px solid var(--border-subtle);
@@ -163,6 +171,9 @@ button:active {
   justify-content: space-between;
   margin-bottom: 18px;
 }
+
+.header-actions { min-width: min(360px, 42%); }
+.standard-versions { background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; color: #fff; float: right; margin: 0 0 8px; min-height: 38px; padding: 7px 10px; }
 
 .eyebrow {
   color: #0c63e7;
@@ -348,7 +359,12 @@ h3 {
   overflow-x: auto;
   padding: 0 4px;
   scrollbar-width: thin;
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
+
+.domain-tabs::before { background: var(--surface); box-shadow: 0 2px 7px rgb(16 24 40 / 8%); content: ""; inset: -8px -4px 0; pointer-events: none; position: absolute; z-index: -1; }
 
 .domain-tab {
   background: transparent;
@@ -387,6 +403,9 @@ h3 {
   color: var(--muted);
   font-size: 11px;
 }
+
+.l2-edit, .l3-edit { color: var(--accent); font-size: 12px; font-weight: 700; }
+.l2-edit, .l3-edit { background: transparent; border: 0; padding: 4px; }
 
 .domain-content {
   min-width: 0;
@@ -509,6 +528,8 @@ h3 {
   white-space: nowrap;
 }
 
+.l2-group > .l2-edit { margin: 0 8px 8px; }
+
 .l2-expanded {
   border-top: 1px solid #f2f4f7;
   padding: 10px;
@@ -624,6 +645,9 @@ h3 {
   line-height: 1.45;
 }
 
+.l3-actions { align-items: center; background: var(--surface-subtle); border: 1px solid var(--border-subtle); border-radius: 7px; display: flex; gap: 8px; padding-right: 10px; }
+.l3-actions .l3-row { border: 0; flex: 1; }
+
 .l3-row .meta {
   text-align: right;
 }
@@ -689,6 +713,17 @@ h3 {
 .drawer-body {
   padding: 18px 0;
 }
+
+.edit-form { display: grid; gap: 14px; padding: 18px 0; }
+.edit-form label { color: var(--text-secondary); display: grid; font-size: 13px; font-weight: 700; gap: 6px; }
+.edit-form input, .edit-form textarea { border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; min-height: 40px; padding: 8px 10px; width: 100%; }
+.edit-form textarea { min-height: 92px; resize: vertical; }
+.edit-form .enabled { align-items: center; display: flex; font-weight: 500; }
+.edit-form .enabled input { height: 18px; min-height: 0; width: 18px; }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.form-actions button { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-height: 38px; padding: 7px 12px; }
+.form-actions button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.save-notice { background: #ecfdf3; border: 1px solid #abefc6; border-radius: 6px; bottom: 20px; color: #067647; margin: 0; padding: 10px 14px; position: fixed; right: 20px; z-index: 100; }
 
 .detail-grid {
   display: grid;
@@ -791,6 +826,8 @@ h3 {
     width: 100%;
   }
 
+  .header-actions { min-width: 0; width: 100%; }
+
   .search-results {
     top: 66px;
   }
@@ -865,6 +902,7 @@ h3 {
     align-items: start;
     grid-template-columns: 52px minmax(0, 1fr);
   }
+
 
   .l2-toggle small {
     grid-column: 2;

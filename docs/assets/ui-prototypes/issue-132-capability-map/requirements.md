@@ -1,4 +1,12 @@
-# Issue #132 · 阶段 1 需求与验收矩阵
+# Issue #132 · 阶段 1 修订版高保真交互原型：阶段 2 评审包需求与验证矩阵
+
+## 本轮已纳入的评审状态
+
+- 同一入口以 `?role=member`（默认）和 `?role=leader` 提供只读与维护状态；没有页面内伪造角色切换。Member、Buddy、Leader、Admin 都可查看；只有 Leader 维护，Admin 未兼任 Leader 时保持只读。
+- 顶栏统一显示年度、用户姓名和退出，不显示“数据范围”。Member 为 `Member User`；Leader 为 `Leader User`。侧栏按 `frontend/src/Layout.tsx` 的 Member / Leader 信息架构展示。
+- Leader 有“标准版本维护”入口（仅提示该页不属于 #132）、L1/L2/L3 编辑入口、名称/启用状态/相应标准文本表单、取消/保存和仅原型会话内的成功反馈；查看 L3 与编辑 Drawer 分离。无创建、硬删除、持久化或后端调用。
+- 仅 L1 Tab 行 sticky；它有必要的白色背景和轻微阴影，`scroll-padding`/`scroll-margin` 保证深链和键盘目标不被遮挡，窄视口横向可滚动并保持当前 Tab 可见。
+- 统一评审入口固定为 `docs/assets/ui-prototypes/prototype-v1/index.html`；`?collection=selected&page=M02` 等既有 URL 原样转给 `viewer.html`（保留原编译产物），CM01 提供 Member 与 Leader 两个链接。
 
 ## 决策完整性
 
@@ -7,7 +15,7 @@
 - 接受目标：让能力地图页面状态与可分享 URL 始终一致，并统一搜索、深链接、刷新、后退/前进和键盘操作。
 - 修改既有方法：`docs/04_UI.md` 只规定初始 L3 Hash 定位；#132 要求将同一规则扩展到用户主动选择的 L1/L2/L3，并监听浏览器历史变化。
 - 不采用静态图片或只修搜索点击：二者都无法完整覆盖状态恢复、键盘和无效深链接。
-- 不修改业务模型、权限、接口、数据库或 #201；阶段 1 仅形成可评审交互合同。
+- 不修改业务模型、权限、接口、数据库或 #201；阶段 1 修订版高保真交互原型仅形成可评审交互合同。
 
 ## URL 合同
 
@@ -43,6 +51,10 @@
 | A-12 | docs/04_UI.md | 清除搜索 | 保留当前 URL 选择、能力域与 L2 展开状态 |
 | A-13 | docs/04_UI.md | 点击 L3 行并关闭 Drawer | URL 定位到该 L3；Drawer 展示上下文；Escape/关闭后焦点返回触发行 |
 | A-14 | docs/04_UI.md | 在 1440×900、1920×1080、1024×768 与 768×1024 查看 | 无页面级横向滚动、遮挡和文字碎裂；核心导航与搜索仍可操作 |
+| A-15 | #132 approved feedback | 打开 `?role=member` 与 `?role=leader` | 两种可评审状态 URL 可分享；无页面内角色切换；顶栏和侧栏符合对应角色 |
+| A-16 | #132 approved feedback | Leader 编辑 L1、L2、L3 | 仅 Leader 看见维护操作；独立编辑 Drawer 提供标签、启用、取消/保存和成功反馈 |
+| A-17 | #132 approved feedback | 滚动后使用 Tab、深链或键盘焦点 | 仅 L1 Tab 粘附，目标未被遮挡；窄视口仍可操作 |
+| A-18 | #132 approved feedback | 打开统一入口与原有 M02 wrapper | CM01 两条状态链接可打开；`?collection=selected&page=M02` 仍进入既有 viewer |
 
 ## 范围边界
 

@@ -1,4 +1,18 @@
-# Issue #132 · Design QA
+# Issue #132 · 阶段 1 修订版高保真交互原型 Design QA（阶段 2 评审包）
+
+## 本轮浏览器渲染证据
+
+- **Shell source：** `qa/reference-m02-shell-1440x900.png`、`qa/reference-m03-shell-1440x900.png`（既有编译 viewer 渲染）；**content source：** `frontend/tests/e2e/visual/capability-map.spec.ts-snapshots/capability-map-1440x900-chromium-linux.png`。
+- **Implementation：** `qa/prototype-review-package-1440x900.png`、`qa/prototype-member-1440x900.png`、`qa/prototype-leader-1440x900.png`、`qa/prototype-sticky-member-1440x900.png`、`qa/prototype-leader-edit-1440x900.png`、`qa/prototype-leader-save-1440x900.png`，DPR 1、CSS 1440×900。
+- **同画布比较：** `qa/compare-shell-m02-m03-cm01-1440.png`（M02/M03 shell 与 CM01）、`qa/compare-full-default-1440.png` / `qa/compare-focused-header-tabs-1440.png`（能力地图内容）。已打开并人工检查这些渲染图，而不是从代码或独立截图推断。
+- 这些是静态原型的浏览器渲染与交互验证，不是 UAT、用户验收或产品实现验收。
+
+## 阶段 2 评审包结论
+
+- M02/M03 的深蓝顶栏、年度/姓名/退出、浅色工作区和紧凑左侧信息架构被复用；CM01 有意不显示“数据范围”。Member 与 Leader 侧栏遵循 `Layout.tsx` 的可见项规则。
+- 唯一 sticky 表面是 L1 Tab；白底和轻微阴影保证滚动时可辨识，深链/键盘目标未被遮挡。1440/1920/1024/768 的渲染检查均无页面横向溢出。
+- Leader 的标准版本维护入口、L1/L2/L3 编辑、标签化输入、启用状态、取消/保存、成功反馈和单独的 L3 查看 Drawer 都已渲染并交互验证。保存明确标注为仅原型会话，不暗示后端持久化。
+- 字体/层级、间距、颜色 token、无图像资产、真实能力地图文案、可见焦点、键盘和 reduced motion 均与既有约束一致。无 P0/P1/P2。
 
 ## 比较对象
 
@@ -73,6 +87,6 @@
 
 ## Follow-up polish
 
-- P3：展开/收起使用文字按钮而非源基线的单字符加减号。这是有意的自包含无障碍选择；若阶段 2 要求逐像素贴近，可在产品实现中复用项目已安装的统一图标组件，同时保留可访问名称。
+- P3：展开/收起使用文字按钮而非源基线的单字符加减号。这是有意的自包含无障碍选择；若阶段 2 用户评审要求逐像素贴近，可在产品实现中复用项目已安装的统一图标组件，同时保留可访问名称。
 
 final result: passed
