@@ -822,8 +822,8 @@
   .abilityHead,
   .abilityRow {
     grid-template-columns:
-      minmax(140px, 1.25fr) minmax(185px, 1fr) minmax(84px, 0.5fr)
-      minmax(120px, 0.66fr);
+      minmax(120px, 0.8fr) minmax(0, 2fr) minmax(80px, 0.5fr)
+      minmax(100px, 0.65fr);
     gap: 8px;
   }
   .abilityHead {
