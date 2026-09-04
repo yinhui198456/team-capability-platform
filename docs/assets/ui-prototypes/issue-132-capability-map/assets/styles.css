@@ -718,6 +718,7 @@ h3 {
 .edit-form { display: grid; gap: 14px; padding: 18px 0; }
 .edit-form label { color: var(--text-secondary); display: grid; font-size: 13px; font-weight: 700; gap: 6px; }
 .edit-form input, .edit-form select, .edit-form textarea { border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; min-height: 40px; padding: 8px 10px; width: 100%; }
+.edit-form small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .edit-form textarea { min-height: 92px; resize: vertical; }
 .edit-form .enabled { align-items: center; display: flex; font-weight: 500; }
 .edit-form .enabled input { height: 18px; min-height: 0; width: 18px; }

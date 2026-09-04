@@ -168,6 +168,8 @@ def run():
         dialog = page.get_by_role("dialog", name="P02.02.08")
         expect(dialog).to_be_visible()
         expect(dialog).to_be_focused()
+        expect(dialog).to_contain_text("Capability Standard Baseline v1 · Member 目标职级 P5")
+        expect(dialog.locator(".mastery-grid .target")).to_have_count(1)
         page.keyboard.press("Escape")
         expect(dialog).to_be_hidden()
         expect(page.locator('[data-l3-code="P02.02.08"]')).to_be_focused()
@@ -273,6 +275,7 @@ def run():
         page.get_by_role("button", name="保存").click()
         expect(page.get_by_role("status")).to_contain_text("已保存")
         page.screenshot(path=evidence / "prototype-leader-save-1440x900.png")
+        expect(page.get_by_role("status")).to_be_hidden(timeout=4000)
         page.get_by_role("button", name="编辑能力标准").first.click()
         expect(page.locator(".edit-drawer")).to_be_visible()
         page.get_by_role("button", name="取消").click()
@@ -281,13 +284,17 @@ def run():
         expect(page.locator(".edit-drawer")).to_be_visible()
         edit_form = page.locator(".edit-form")
         form_labels = " ".join(edit_form.locator("label").all_inner_texts())
-        for label in ["代码", "所属能力组", "名称", "建议起始等级", "预计时长", "预期输出", "输出类型", "原始学习材料", "备注"]:
+        for label in ["代码", "所属能力组", "名称", "建议起始职级", "预计时长", "预期输出", "输出类型", "原始学习材料", "备注"]:
             assert label in form_labels
         expect(edit_form.locator("input[readonly]")).to_have_count(2)
         expect(page.get_by_label("启用", exact=True)).to_be_checked()
         expect(page.get_by_role("group", name="关联资源")).to_be_visible()
         expect(page.get_by_role("checkbox")).to_have_count(4)
-        start_level = edit_form.locator('select[name="startLevel"]')
+        start_level = edit_form.locator('input[name="startLevel"]')
+        expect(start_level).to_have_value("P5")
+        expect(edit_form.locator('select[name="startLevel"]')).to_have_count(0)
+        expect(edit_form.get_by_text("可填写单一职级或范围，例如 P4 或 P4–P5")).to_be_visible()
+        page.screenshot(path=evidence / "prototype-leader-l3-edit-1440x900.png")
         expected_output = edit_form.locator('textarea[name="output"]')
         resource = page.get_by_role("checkbox", name="P02-M004 · Agent 工程实践")
         start_level.focus()
@@ -316,6 +323,8 @@ def run():
         dialog = page.get_by_role("dialog", name="P02.02.08")
         expect(dialog).to_contain_text("可部署应用、演练记录与回滚验证")
         expect(dialog).to_contain_text("P02-M004 · Agent 工程实践")
+        expect(dialog).to_contain_text("Capability Standard Baseline v1 · Leader 维护视图")
+        assert dialog.locator(".mastery-grid .target").count() == 0
         expect(dialog).to_contain_text("该 P4–P8 已发布矩阵在此只读")
         assert dialog.locator("input, select, textarea").count() == 0
         page.get_by_role("button", name="标准版本维护").last.click()

@@ -58,9 +58,9 @@
 | A-18 | #132 approved feedback | 打开统一入口与原有 M02 wrapper | CM01 两条状态链接可打开；`?collection=selected&page=M02` 仍进入既有 viewer |
 | A-19 | #132 Stage-2 feedback | 在同一滚动位置依次点击 P01 / P02 / P03 / C01 | sticky L1 行 top 与 `window.scrollY` 不漂移；窄视口仍将活动 Tab 保持在横向可见区 |
 | A-20 | #132 Stage-2 feedback | Leader 桌面页头 | 搜索输入与“标准版本维护”按钮底部控件基线对齐；窄视口整洁纵向排列 |
-| A-21 | docs/03_Data.md §3.7、生产 NodeEditForm | Leader 编辑 L3 | 只读代码/L2 上下文；可编辑名称、启用、建议起始等级、预计时长、预期输出、输出类型、原始学习材料、备注和既有资源关联；会话保存同步更新行与详情 |
-| A-22 | docs/04_UI.md §4.6/§5 | 查看 L3 Drawer 的 P4–P8 | 已发布矩阵只读，明确说明仅可通过现有“标准版本维护”流程修改；Leader 有复用该入口的操作，L3 表单没有 P4–P8 编辑字段 |
-| A-23 | #132 Stage-2 feedback | 在 L3 编辑 Drawer 使用键盘 | select、textarea、checkbox 都可进入 Tab 序；关闭和保存端点形成焦点循环 |
+| A-21 | docs/03_Data.md §3.7、生产 NodeEditForm | Leader 编辑 L3 | 只读代码/L2 上下文；可编辑名称、启用、建议起始职级（接受单一职级或范围，如 P4 或 P4–P5）、预计时长、预期输出、输出类型、原始学习材料、备注和既有资源关联；会话保存同步更新行与详情 |
+| A-22 | docs/04_UI.md §4.6/§5 | 查看 L3 Drawer 的 P4–P8 | 已发布矩阵只读，明确说明仅可通过现有“标准版本维护”流程修改；Member 显示 P5 目标，Leader 仅显示中性的维护视图且没有目标高亮；L3 表单没有 P4–P8 编辑字段 |
+| A-23 | #132 Stage-2 feedback | 在 L3 编辑 Drawer 使用键盘 | input、textarea、checkbox 都可进入 Tab 序；关闭和保存端点形成焦点循环 |
 
 ## 范围边界
 

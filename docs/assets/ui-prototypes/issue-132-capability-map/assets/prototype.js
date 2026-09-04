@@ -514,7 +514,7 @@
         '<fieldset><legend>达成路径</legend>' +
         '<label>名称<input name="name" required value="' + escapeHtml(node.path.name) + '"></label>' +
         '<label class="enabled"><input name="enabled" type="checkbox" ' + (node.path.enabled !== false ? 'checked' : '') + '>启用</label>' +
-        '<label>建议起始等级<select name="startLevel"><option>' + escapeHtml(node.path.startLevel) + '</option><option>P4</option><option>P5</option><option>P6</option><option>P7</option><option>P8</option></select></label>' +
+        '<label>建议起始职级<input name="startLevel" value="' + escapeHtml(node.path.startLevel) + '"><small>可填写单一职级或范围，例如 P4 或 P4–P5</small></label>' +
         '<label>预计时长<input name="hours" value="' + escapeHtml(node.path.hours) + '"></label>' +
         '<label>预期输出<textarea name="output">' + escapeHtml(node.path.output) + '</textarea></label>' +
         '<label>输出类型<input name="outputType" value="' + escapeHtml(node.path.outputType) + '"></label>' +
@@ -1086,12 +1086,12 @@
       '</p><p><strong>备注：</strong>' + escapeHtml(node.path.notes) +
       '</p></section>' +
       '<section class="drawer-section"><h3>当前已发布职级标准</h3>' +
-      '<p>Capability Standard Baseline v1 · Member 目标职级 P5</p>' +
+      '<p>Capability Standard Baseline v1 · ' + (isLeader ? 'Leader 维护视图' : 'Member 目标职级 P5') + '</p>' +
       '<div class="mastery-grid">' +
       LEVELS.map(function (level, indexNumber) {
         return (
           '<div class="' +
-          (level === 'P5' ? 'target' : '') +
+          (!isLeader && level === 'P5' ? 'target' : '') +
           '"><strong>' +
           level +
           '</strong><span>目标掌握度 ' +

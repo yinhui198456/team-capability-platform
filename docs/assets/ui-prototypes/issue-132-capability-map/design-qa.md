@@ -3,7 +3,7 @@
 ## 本轮浏览器渲染证据
 
 - **Shell source：** `qa/reference-m02-shell-1440x900.png`、`qa/reference-m03-shell-1440x900.png`（既有编译 viewer 渲染）；**content source：** `frontend/tests/e2e/visual/capability-map.spec.ts-snapshots/capability-map-1440x900-chromium-linux.png`。
-- **Implementation：** `qa/prototype-review-package-1440x900.png`、`qa/prototype-member-1440x900.png`、`qa/prototype-leader-1440x900.png`、`qa/prototype-sticky-member-1440x900.png`、`qa/prototype-leader-edit-1440x900.png`、`qa/prototype-leader-save-1440x900.png`，DPR 1、CSS 1440×900。
+- **Implementation：** `qa/prototype-review-package-1440x900.png`、`qa/prototype-member-1440x900.png`、`qa/prototype-leader-1440x900.png`、`qa/prototype-sticky-member-1440x900.png`、`qa/prototype-leader-edit-1440x900.png`、`qa/prototype-leader-l3-edit-1440x900.png`、`qa/prototype-leader-save-1440x900.png`，DPR 1、CSS 1440×900。
 - **Stage-2 feedback comparison：** `qa/prototype-before-feedback-1440x900.png` 与本轮 `qa/prototype-default-1440x900.png` 在 `qa/compare-stage2-feedback-1440.png` 同画布比较；两者均为 CSS 1440×900、DPR 1 的浏览器证据。
 - **同画布比较：** `qa/compare-shell-m02-m03-cm01-1440.png`（M02/M03 shell 与 CM01）、`qa/compare-full-default-1440.png` / `qa/compare-focused-header-tabs-1440.png`（能力地图内容）。已打开并人工检查这些渲染图，而不是从代码或独立截图推断。
 - 这些是静态原型的浏览器渲染与交互验证，不是 UAT、用户验收或产品实现验收。
@@ -14,7 +14,7 @@
 - 唯一 sticky 表面是 L1 Tab；白底和轻微阴影保证滚动时可辨识，深链/键盘目标未被遮挡。1440/1920/1024/768 的渲染检查均无页面横向溢出。
 - Leader 的标准版本维护入口、L1/L2/L3 编辑、标签化输入、启用状态、取消/保存、成功反馈和单独的 L3 查看 Drawer 都已渲染并交互验证。保存明确标注为仅原型会话，不暗示后端持久化。
 - Stage-2 反馈修订后，Tab 激活只写入 `.domain-tabs` 的横向 scroll 位置；P01/P02/P03/C01 从同一滚动状态点击不会改变 sticky 行 top 或 `window.scrollY`。Leader 页头搜索输入和标准版本按钮共享控件底边；窄视口改为整洁堆叠。
-- L3 编辑与生产 `NodeEditForm` 字段范围一致：代码和父 L2 只读，其余目录字段与既有资源关联可编辑；已发布 P4–P8 矩阵始终无编辑控件，并指向既有标准版本维护入口。
+- L3 编辑与生产 `NodeEditForm` 字段范围一致：代码和父 L2 只读，建议起始职级为接受单一职级或范围的原生文本输入，其余目录字段与既有资源关联可编辑；已发布 P4–P8 矩阵始终无编辑控件，Member 的 P5 目标不投射到 Leader 维护视图，并指向既有标准版本维护入口。
 - 字体/层级、间距、颜色 token、无图像资产、真实能力地图文案、可见焦点、键盘和 reduced motion 均与既有约束一致。无 P0/P1/P2。
 
 ## 比较对象
@@ -70,7 +70,7 @@
 - Drawer Escape 关闭并将焦点返回 L3；
 - 四个视口均无横向溢出；
 - console error 0，page error 0。
-- P01/P02/P03/C01 Tab 点击无纵向 scroll drift，L3 表单字段/保存/只读发布矩阵/焦点循环及桌面页头基线均有精确断言。
+- P01/P02/P03/C01 Tab 点击无纵向 scroll drift，L3 文本职级输入/保存/只读发布矩阵/焦点循环及桌面页头基线均有精确断言；`prototype-leader-l3-edit-1440x900.png` 记录了打开 P02.02.08 后的 Leader L3 编辑 Drawer，滚动字段和保存操作由同一流程覆盖。
 
 ## 比较历史
 
