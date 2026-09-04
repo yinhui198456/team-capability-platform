@@ -5,6 +5,7 @@
 - 同一入口以 `?role=member`（默认）和 `?role=leader` 提供只读与维护状态；没有页面内伪造角色切换。Member、Buddy、Leader、Admin 都可查看；只有 Leader 维护，Admin 未兼任 Leader 时保持只读。
 - 顶栏统一显示年度、用户姓名和退出，不显示“数据范围”。Member 为 `Member User`；Leader 为 `Leader User`。侧栏按 `frontend/src/Layout.tsx` 的 Member / Leader 信息架构展示。
 - Leader 有“标准版本维护”入口（仅提示该页不属于 #132）、L1/L2/L3 编辑入口、名称/启用状态/相应标准文本表单、取消/保存和仅原型会话内的成功反馈；查看 L3 与编辑 Drawer 分离。无创建、硬删除、持久化或后端调用。
+- 本轮 Stage-2 反馈修订：L1 Tab 切换仅调整 Tab 容器横向可见性，不改变页面纵向滚动；Leader 页头的搜索输入与“标准版本维护”在同一控件基线；L3 编辑仅覆盖当前更新 API 的业务字段。
 - 仅 L1 Tab 行 sticky；它有必要的白色背景和轻微阴影，`scroll-padding`/`scroll-margin` 保证深链和键盘目标不被遮挡，窄视口横向可滚动并保持当前 Tab 可见。
 - 统一评审入口固定为 `docs/assets/ui-prototypes/prototype-v1/index.html`；`?collection=selected&page=M02` 等既有 URL 原样转给 `viewer.html`（保留原编译产物），CM01 提供 Member 与 Leader 两个链接。
 
@@ -55,6 +56,11 @@
 | A-16 | #132 approved feedback | Leader 编辑 L1、L2、L3 | 仅 Leader 看见维护操作；独立编辑 Drawer 提供标签、启用、取消/保存和成功反馈 |
 | A-17 | #132 approved feedback | 滚动后使用 Tab、深链或键盘焦点 | 仅 L1 Tab 粘附，目标未被遮挡；窄视口仍可操作 |
 | A-18 | #132 approved feedback | 打开统一入口与原有 M02 wrapper | CM01 两条状态链接可打开；`?collection=selected&page=M02` 仍进入既有 viewer |
+| A-19 | #132 Stage-2 feedback | 在同一滚动位置依次点击 P01 / P02 / P03 / C01 | sticky L1 行 top 与 `window.scrollY` 不漂移；窄视口仍将活动 Tab 保持在横向可见区 |
+| A-20 | #132 Stage-2 feedback | Leader 桌面页头 | 搜索输入与“标准版本维护”按钮底部控件基线对齐；窄视口整洁纵向排列 |
+| A-21 | docs/03_Data.md §3.7、生产 NodeEditForm | Leader 编辑 L3 | 只读代码/L2 上下文；可编辑名称、启用、建议起始等级、预计时长、预期输出、输出类型、原始学习材料、备注和既有资源关联；会话保存同步更新行与详情 |
+| A-22 | docs/04_UI.md §4.6/§5 | 查看 L3 Drawer 的 P4–P8 | 已发布矩阵只读，明确说明仅可通过现有“标准版本维护”流程修改；Leader 有复用该入口的操作，L3 表单没有 P4–P8 编辑字段 |
+| A-23 | #132 Stage-2 feedback | 在 L3 编辑 Drawer 使用键盘 | select、textarea、checkbox 都可进入 Tab 序；关闭和保存端点形成焦点循环 |
 
 ## 范围边界
 
@@ -62,3 +68,4 @@
 - 不新增路由、API、权限、业务角色或数据对象。
 - 不改变 L2“能力标准/职级要求”、L3“达成路径/学习实践项”的正式语义。
 - 不把原型中的示例文本或数量反向定义为生产数据。
+- L3 表单不编辑已发布 P4–P8 掌握度目标，也不发明 `sort_order`；它们不在当前 L3 更新 API 中。发布矩阵只由独立的“标准版本维护”流程维护。

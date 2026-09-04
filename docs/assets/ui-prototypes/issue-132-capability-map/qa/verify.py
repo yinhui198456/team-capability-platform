@@ -86,6 +86,21 @@ def run():
         default_1440 = evidence / "prototype-default-1440x900.png"
         page.screenshot(path=default_1440, full_page=True)
 
+        page.evaluate("window.scrollTo(0, 100)")
+        sticky_top = page.locator(".domain-tabs").bounding_box()["y"]
+        for code in ["P01", "P02", "P03", "C01"]:
+            page.evaluate("window.scrollTo(0, 100)")
+            before_scroll = page.evaluate("window.scrollY")
+            before_top = page.locator(".domain-tabs").bounding_box()["y"]
+            page.locator(f'[data-domain-code="{code}"]').click()
+            page.wait_for_timeout(50)
+            after_scroll = page.evaluate("window.scrollY")
+            assert abs(after_scroll - before_scroll) <= 1, (code, before_scroll, after_scroll)
+            assert abs(page.locator(".domain-tabs").bounding_box()["y"] - before_top) <= 1
+            assert abs(page.locator(".domain-tabs").bounding_box()["y"] - sticky_top) <= 1
+
+        page.goto(BASE_URL)
+
         page.locator('[data-domain-code="P02"]').click()
         assert page.url.endswith("#P02")
         page.locator('[data-l2-code="P02.02"]').click()
@@ -237,6 +252,10 @@ def run():
         page.goto(BASE_URL + "?role=leader#P02.02")
         expect(page.get_by_text("Leader User", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="标准版本维护")).to_be_visible()
+        input_box = page.get_by_role("combobox", name="搜索能力地图").bounding_box()
+        versions_box = page.get_by_role("button", name="标准版本维护").bounding_box()
+        assert input_box and versions_box
+        assert abs((input_box["y"] + input_box["height"]) - (versions_box["y"] + versions_box["height"])) <= 1
         expect(page.get_by_role("button", name="编辑能力域")).to_be_visible()
         page.get_by_role("button", name="编辑能力域").click()
         expect(page.locator(".edit-drawer")).to_be_visible()
@@ -258,11 +277,52 @@ def run():
         expect(page.locator(".edit-drawer")).to_be_visible()
         page.get_by_role("button", name="取消").click()
         expect(page.get_by_role("button", name="编辑能力标准").first).to_be_focused()
-        page.locator('[data-l2-code="P02.02"]').click()
-        page.get_by_role("button", name="编辑").first.click()
+        page.locator('[data-l3-code="P02.02.08"] + [data-edit-code="P02.02.08"]').click()
         expect(page.locator(".edit-drawer")).to_be_visible()
+        edit_form = page.locator(".edit-form")
+        form_labels = " ".join(edit_form.locator("label").all_inner_texts())
+        for label in ["代码", "所属能力组", "名称", "建议起始等级", "预计时长", "预期输出", "输出类型", "原始学习材料", "备注"]:
+            assert label in form_labels
+        expect(edit_form.locator("input[readonly]")).to_have_count(2)
+        expect(page.get_by_label("启用", exact=True)).to_be_checked()
+        expect(page.get_by_role("group", name="关联资源")).to_be_visible()
+        expect(page.get_by_role("checkbox")).to_have_count(4)
+        start_level = edit_form.locator('select[name="startLevel"]')
+        expected_output = edit_form.locator('textarea[name="output"]')
+        resource = page.get_by_role("checkbox", name="P02-M004 · Agent 工程实践")
+        start_level.focus()
+        page.keyboard.press("Tab")
+        expect(edit_form.locator('input[name="hours"]')).to_be_focused()
+        expected_output.focus()
+        page.keyboard.press("Tab")
+        expect(edit_form.locator('input[name="outputType"]')).to_be_focused()
+        resource.focus()
+        expect(resource).to_be_focused()
+        edit_form.get_by_role("button", name="保存").focus()
+        page.keyboard.press("Tab")
+        expect(page.locator(".edit-drawer .drawer-close")).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        expect(edit_form.get_by_role("button", name="保存")).to_be_focused()
+        edit_form.locator('input[name="name"]').fill("Agent / 应用链发布演练")
+        edit_form.locator('input[name="hours"]').fill("18 小时")
+        expected_output.fill("可部署应用、演练记录与回滚验证")
+        edit_form.locator('textarea[name="materialsText"]').fill("P02-M004 · Agent 工程实践")
+        resource.check()
+        edit_form.get_by_role("button", name="保存").click()
+        expect(page.get_by_role("status")).to_contain_text("已保存（仅此原型会话，未写入后端）")
+        expect(page.locator('[data-l3-code="P02.02.08"]')).to_contain_text("Agent / 应用链发布演练")
+        expect(page.locator('[data-l3-code="P02.02.08"]')).to_contain_text("18 小时")
+        page.locator('[data-l3-code="P02.02.08"]').click()
+        dialog = page.get_by_role("dialog", name="P02.02.08")
+        expect(dialog).to_contain_text("可部署应用、演练记录与回滚验证")
+        expect(dialog).to_contain_text("P02-M004 · Agent 工程实践")
+        expect(dialog).to_contain_text("该 P4–P8 已发布矩阵在此只读")
+        assert dialog.locator("input, select, textarea").count() == 0
+        page.get_by_role("button", name="标准版本维护").last.click()
+        expect(page.get_by_role("status")).to_contain_text("标准版本维护页面不属于 #132")
         page.keyboard.press("Escape")
-        expect(page.get_by_role("button", name="编辑").first).to_be_focused()
+        expect(dialog).to_be_hidden()
+        expect(page.locator('[data-l3-code="P02.02.08"]')).to_be_focused()
 
         page.goto("http://127.0.0.1:8132/prototype-v1/index.html?collection=selected&page=M02")
         page.wait_for_timeout(300)
@@ -302,9 +362,14 @@ def run():
         evidence / "compare-focused-header-tabs-1440.png",
         crop=(0, 0, 1440, 650),
     )
+    compare(
+        evidence / "prototype-before-feedback-1440x900.png",
+        default_1440,
+        evidence / "compare-stage2-feedback-1440.png",
+    )
 
     print("PASS: URL/hash, L1/L2/L3, refresh, back/forward, search keyboard, invalid links, L2 content, drawer focus")
-    print("PASS: Member/Leader, sticky L1, edit/save, unified routing, 1440/1920/1024/768, zero overflow/errors")
+    print("PASS: tabs preserve sticky top/scrollY; header baseline; L3 fields/save; published matrix boundary; focus loop; 1440/1920/1024/768 zero overflow/errors")
 
 
 if __name__ == "__main__":

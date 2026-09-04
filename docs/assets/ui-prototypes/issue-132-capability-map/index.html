@@ -61,34 +61,34 @@
             </div>
 
             <div class="header-actions">
-              <button id="standard-versions" class="standard-versions" type="button" hidden>标准版本维护</button>
               <div class="search-panel">
-              <label for="capability-search">搜索能力地图</label>
-              <div class="search-control">
-                <input
-                  id="capability-search"
-                  type="search"
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-expanded="false"
-                  aria-controls="search-results"
-                  aria-describedby="search-hint"
-                  autocomplete="off"
-                  placeholder="搜索 L1 / L2 / L3 编号或名称"
-                />
-                <button class="clear-search" type="button" hidden>清除</button>
+                <label for="capability-search">搜索能力地图</label>
+                <div class="search-control">
+                  <input
+                    id="capability-search"
+                    type="search"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="search-results"
+                    aria-describedby="search-hint"
+                    autocomplete="off"
+                    placeholder="搜索 L1 / L2 / L3 编号或名称"
+                  />
+                  <button class="clear-search" type="button" hidden>清除</button>
+                </div>
+                <p class="sr-only" id="search-hint">
+                  输入后使用上下方向键浏览结果，Enter 选择，Escape 关闭。
+                </p>
+                <div
+                  class="search-results"
+                  id="search-results"
+                  role="listbox"
+                  aria-label="能力地图搜索结果"
+                  hidden
+                ></div>
               </div>
-              <p class="sr-only" id="search-hint">
-                输入后使用上下方向键浏览结果，Enter 选择，Escape 关闭。
-              </p>
-              <div
-                class="search-results"
-                id="search-results"
-                role="listbox"
-                aria-label="能力地图搜索结果"
-                hidden
-              ></div>
-              </div>
+              <button id="standard-versions" class="standard-versions" type="button" hidden>标准版本维护</button>
             </div>
           </header>
 

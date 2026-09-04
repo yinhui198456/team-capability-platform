@@ -2,6 +2,11 @@
   'use strict'
 
   var LEVELS = ['P4', 'P5', 'P6', 'P7', 'P8']
+  var RESOURCES = [
+    { code: 'P02-M004', name: 'Agent 工程实践' },
+    { code: 'P02-M011', name: 'Agent 应用发布指南' },
+    { code: 'P01-M001', name: '产品体系材料' },
+  ]
   var KIND_LABEL = {
     L1: '能力域',
     L2: '能力标准',
@@ -56,7 +61,20 @@
       output: output,
       hours: hours,
       resources: resources || '暂未关联资源',
+      materialsText: resources || '暂无原始学习材料',
+      outputType: '文档 / 演示',
+      notes: '原型示例：保存仅更新当前浏览器会话。',
+      resourceCodes: resources ? [resources.split(' · ')[0]] : [],
     }
+  }
+
+  function resourceSummary(path) {
+    var labels = RESOURCES.filter(function (resource) {
+      return path.resourceCodes.includes(resource.code)
+    }).map(function (resource) {
+      return resource.code + ' · ' + resource.name
+    })
+    return labels.join('；') || '暂未关联资源'
   }
 
   function l2(code, name, count, children, levels) {
@@ -488,7 +506,26 @@
     state.editReturnFocus = trigger || ''
     var details = nodeDetails(node)
     document.querySelector('#edit-drawer-title').textContent = '编辑 ' + code + ' ' + KIND_LABEL[node.kind]
-    editForm.innerHTML = '<label>名称<input name="name" required value="' + escapeHtml(details.name) + '"></label><label class="enabled"><input name="enabled" type="checkbox" ' + (details.enabled ? 'checked' : '') + '>启用</label><label>' + details.label + '<textarea name="detail">' + escapeHtml(details.detail) + '</textarea></label><div class="form-actions"><button type="button" data-edit-cancel>取消</button><button type="submit">保存</button></div>'
+    if (node.kind === 'L3') {
+      editForm.innerHTML =
+        '<fieldset><legend>只读上下文</legend>' +
+        '<label class="read-only">代码<input readonly value="' + escapeHtml(node.path.code) + '"></label>' +
+        '<label class="read-only">所属能力组<input readonly value="' + escapeHtml(node.group.code + ' · ' + node.group.name) + '"></label></fieldset>' +
+        '<fieldset><legend>达成路径</legend>' +
+        '<label>名称<input name="name" required value="' + escapeHtml(node.path.name) + '"></label>' +
+        '<label class="enabled"><input name="enabled" type="checkbox" ' + (node.path.enabled !== false ? 'checked' : '') + '>启用</label>' +
+        '<label>建议起始等级<select name="startLevel"><option>' + escapeHtml(node.path.startLevel) + '</option><option>P4</option><option>P5</option><option>P6</option><option>P7</option><option>P8</option></select></label>' +
+        '<label>预计时长<input name="hours" value="' + escapeHtml(node.path.hours) + '"></label>' +
+        '<label>预期输出<textarea name="output">' + escapeHtml(node.path.output) + '</textarea></label>' +
+        '<label>输出类型<input name="outputType" value="' + escapeHtml(node.path.outputType) + '"></label>' +
+        '<label>原始学习材料<textarea name="materialsText">' + escapeHtml(node.path.materialsText) + '</textarea></label>' +
+        '<label>备注<textarea name="notes">' + escapeHtml(node.path.notes) + '</textarea></label></fieldset>' +
+        '<fieldset><legend>关联资源</legend>' + RESOURCES.map(function (resource) {
+          return '<label class="resource-option"><input name="resourceCodes" type="checkbox" value="' + resource.code + '" ' + (node.path.resourceCodes.includes(resource.code) ? 'checked' : '') + '>' + resource.code + ' · ' + resource.name + '</label>'
+        }).join('') + '</fieldset><div class="form-actions"><button type="button" data-edit-cancel>取消</button><button type="submit">保存</button></div>'
+    } else {
+      editForm.innerHTML = '<label>名称<input name="name" required value="' + escapeHtml(details.name) + '"></label><label class="enabled"><input name="enabled" type="checkbox" ' + (details.enabled ? 'checked' : '') + '>启用</label><label>' + details.label + '<textarea name="detail">' + escapeHtml(details.detail) + '</textarea></label><div class="form-actions"><button type="button" data-edit-cancel>取消</button><button type="submit">保存</button></div>'
+    }
     editDrawer.hidden = false
     drawerBackdrop.hidden = false
     appShell.inert = true
@@ -519,7 +556,18 @@
     var enabled = form.get('enabled') === 'on'
     if (node.kind === 'L1') { node.domain.name = name; node.domain.overview = detail; node.domain.enabled = enabled }
     if (node.kind === 'L2') { node.group.name = name; node.group.levels.P5.full = detail; node.group.enabled = enabled }
-    if (node.kind === 'L3') { node.path.name = name; node.path.output = detail; node.path.enabled = enabled }
+    if (node.kind === 'L3') {
+      node.path.name = name
+      node.path.enabled = enabled
+      node.path.startLevel = String(form.get('startLevel') || '').trim()
+      node.path.hours = String(form.get('hours') || '').trim()
+      node.path.output = String(form.get('output') || '').trim()
+      node.path.outputType = String(form.get('outputType') || '').trim()
+      node.path.materialsText = String(form.get('materialsText') || '').trim()
+      node.path.notes = String(form.get('notes') || '').trim()
+      node.path.resourceCodes = form.getAll('resourceCodes').map(String)
+      node.path.resources = resourceSummary(node.path)
+    }
     var savedCode = node.code
     var returnFocus = state.editReturnFocus
     closeEdit(false)
@@ -642,7 +690,13 @@
 
     tabs.querySelectorAll('[data-domain-code]').forEach(function (button) {
       button.addEventListener('click', function () {
-        selectCode(button.dataset.domainCode, { history: 'push' })
+        var scrollY = window.scrollY
+        selectCode(button.dataset.domainCode, { history: 'push', focus: false })
+        window.requestAnimationFrame(function () {
+          window.scrollTo(0, scrollY)
+          var selectedTab = tabs.querySelector('[aria-selected="true"]')
+          if (selectedTab) selectedTab.focus({ preventScroll: true })
+        })
       })
       button.addEventListener('keydown', function (event) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -658,7 +712,14 @@
       })
     })
     var activeTab = tabs.querySelector('[aria-selected="true"]')
-    if (activeTab) activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    if (activeTab) keepTabVisible(activeTab)
+  }
+
+  function keepTabVisible(tab) {
+    var left = tab.offsetLeft
+    var right = left + tab.offsetWidth
+    if (left < tabs.scrollLeft) tabs.scrollLeft = left
+    else if (right > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = right - tabs.clientWidth
   }
 
   function levelMarkup(group) {
@@ -1018,9 +1079,11 @@
       '</dd></div>' +
       '<div><dt>预计时长</dt><dd>' +
       escapeHtml(node.path.hours) +
+      '</dd></div><div><dt>输出类型</dt><dd>' + escapeHtml(node.path.outputType) +
       '</dd></div></dl>' +
-      '<section class="drawer-section"><h3>材料与资源</h3><p>' +
-      escapeHtml(node.path.resources) +
+      '<section class="drawer-section"><h3>材料与资源</h3><p><strong>原始学习材料：</strong>' +
+      escapeHtml(node.path.materialsText) + '</p><p><strong>关联资源：</strong>' + escapeHtml(node.path.resources) +
+      '</p><p><strong>备注：</strong>' + escapeHtml(node.path.notes) +
       '</p></section>' +
       '<section class="drawer-section"><h3>当前已发布职级标准</h3>' +
       '<p>Capability Standard Baseline v1 · Member 目标职级 P5</p>' +
@@ -1036,10 +1099,14 @@
           ' / 5</span></div>'
         )
       }).join('') +
+      '</div><div class="published-boundary"><p>该 P4–P8 已发布矩阵在此只读；请仅通过标准版本维护流程修改。</p>' +
+      (isLeader ? '<button class="l2-edit" type="button" data-standard-versions>标准版本维护</button>' : '') +
       '</div></section>'
     drawer.hidden = false
     drawerBackdrop.hidden = false
     appShell.inert = true
+    var standardVersionAction = drawerBody.querySelector('[data-standard-versions]')
+    if (standardVersionAction) standardVersionAction.addEventListener('click', showStandardVersionsNotice)
     window.requestAnimationFrame(function () {
       drawer.focus()
     })
@@ -1078,7 +1145,7 @@
       return
     }
     if (event.key !== 'Tab') return
-    var focusable = Array.from(editDrawer.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled])'))
+    var focusable = Array.from(editDrawer.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])'))
     var first = focusable[0]
     var last = focusable[focusable.length - 1]
     if (event.shiftKey && document.activeElement === first) {
@@ -1200,10 +1267,14 @@
     openEdit(state.activeDomain, '#edit-domain')
   })
   standardVersions.addEventListener('click', function () {
+    showStandardVersionsNotice()
+  })
+
+  function showStandardVersionsNotice() {
     saveNotice.textContent = '标准版本维护页面不属于 #132；本评审仅确认入口。'
     saveNotice.hidden = false
     window.setTimeout(function () { saveNotice.hidden = true }, 3200)
-  })
+  }
   document.querySelector('#logout').addEventListener('click', function () {
     announce('阶段 1 修订版高保真交互原型不执行退出操作。')
   })
