@@ -37,6 +37,7 @@ export function MonthlyReviewPage() {
   const problemsRef = useRef<HTMLTextAreaElement>(null)
   const nextMonthFocusRef = useRef<HTMLTextAreaElement>(null)
   const notesRef = useRef<HTMLTextAreaElement>(null)
+  const loadSequence = useRef(0)
   const [error, setError] = useState('')
   const [conflict, setConflict] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -44,11 +45,13 @@ export function MonthlyReviewPage() {
 
   const load = useCallback(
     (targetMonth: number, keepDraft = false) => {
+      const sequence = ++loadSequence.current
       setLoading(true)
       setError('')
       setConflict(false)
       getMonthlyReview(year, targetMonth)
         .then((review) => {
+          if (sequence !== loadSequence.current) return
           setData(review)
           if (!keepDraft) {
             setDraft({
@@ -60,15 +63,21 @@ export function MonthlyReviewPage() {
           }
         })
         .catch((err) => {
+          if (sequence !== loadSequence.current) return
           setError(err instanceof Error ? err.message : '加载失败')
         })
-        .finally(() => setLoading(false))
+        .finally(() => {
+          if (sequence === loadSequence.current) setLoading(false)
+        })
     },
     [year],
   )
 
   useEffect(() => {
     load(month)
+    return () => {
+      loadSequence.current += 1
+    }
   }, [month, load])
 
   function setDraftField(field: keyof MonthlyReviewWriteFields) {

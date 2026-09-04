@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Issue #201 · M02 方案 1 高保真对照</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #e8edf5;
+        color: #13233a;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        display: grid;
+        gap: 24px;
+        padding: 24px;
+      }
+      .comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        padding: 16px;
+      }
+      h1 {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 20px;
+      }
+      figure {
+        margin: 0;
+      }
+      figcaption {
+        margin-bottom: 8px;
+        color: #53637a;
+        font-weight: 700;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: 600px;
+        border: 1px solid #d7dfeb;
+        object-fit: contain;
+        object-position: top;
+        background: #f8fafc;
+      }
+      .detail img {
+        height: 180px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="comparison" id="full-view">
+        <h1>方案 1 · 行内连续编辑</h1>
+        <figure>
+          <figcaption>选定方向概念图</figcaption>
+          <img
+            src="../references/01-inline-expand-concept.png"
+            alt="方案 1 方向概念图"
+          />
+        </figure>
+        <figure>
+          <figcaption>TCP 高保真实现 · 1536 × 1024</figcaption>
+          <img
+            src="01-inline-expand-hifi-implementation-1536x1024.png"
+            alt="方案 1 高保真实现截图"
+          />
+        </figure>
+      </section>
+      <section class="comparison detail" id="alignment-detail">
+        <h1>计划字段对齐修复</h1>
+        <figure>
+          <figcaption>修复前：计划月份下沉 22px</figcaption>
+          <img
+            src="audit-before/02-plan-editor-detail.png"
+            alt="修复前计划字段错位"
+          />
+        </figure>
+        <figure>
+          <figcaption>修复后：标签、控件、状态共享基线</figcaption>
+          <img
+            src="../screenshots/01-inline-expand-hifi-plan-editor.png"
+            alt="修复后计划字段对齐"
+          />
+        </figure>
+      </section>
+    </main>
+  </body>
+</html>

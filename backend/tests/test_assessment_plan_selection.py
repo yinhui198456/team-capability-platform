@@ -2,7 +2,7 @@
 
 Covers:
 - current_level=0 semantic (distinct from NULL)
-- member_priority is never auto-generated
+- member_priority defaults to low only when a positive-gap item joins the plan
 - 暂缓 ↔ include_in_plan mutual exclusion
 - include_in_plan tri-state (NULL/TRUE/FALSE)
 - Quarter-month mapping (Q1=1-3, Q2=4-6, Q3=7-9, Q4=10-12)
@@ -415,8 +415,8 @@ def test_current_level_zero_valid_and_submit_retired(
     )
 
 
-def test_priority_not_auto_generated(plan_schema: psycopg.Connection) -> None:
-    """System must never auto-generate member_priority."""
+def test_priority_not_defaulted_for_new_draft(plan_schema: psycopg.Connection) -> None:
+    """A new draft remains unselected and must not receive a priority."""
     member_id = _create_test_user(plan_schema, "m_noauto", ["Member"])
     _enable_one_l3(plan_schema)
     assessment_id = create_scoped_draft(plan_schema, member_id, 2026)
@@ -465,10 +465,10 @@ def test_hold_and_plan_mutually_exclusive(plan_schema: psycopg.Connection) -> No
     assert status == 422, f"expected 422, got {status}: {body}"
 
 
-def test_include_in_plan_pending_month_persists(
+def test_include_in_plan_defaults_low_and_pending_month_persists(
     plan_schema: psycopg.Connection,
 ) -> None:
-    """#194: include_in_plan=TRUE 且 plan_month 未填（待补计划月份）可持久化。
+    """#201: 加入计划默认低，且 plan_month 未填时仍可持久化。
 
     Superseded contract: include_in_plan=TRUE without quarter+month → 422
     (old ``plan_time_required`` CHECK).  The story contract allows joining
@@ -496,7 +496,6 @@ def test_include_in_plan_pending_month_persists(
                     "l3_node_id": node_id,
                     "l3_code": code,
                     "current_level": 0,
-                    "member_priority": "高",
                     "include_in_plan": True,
                     # plan_month omitted → 待补计划月份 must be persistable
                 }
@@ -506,15 +505,21 @@ def test_include_in_plan_pending_month_persists(
         cookies=cookies,
     )
     assert status == 200, f"待补计划月份必须可持久化, got {status}: {body}"
+    assert "member_priority" not in {
+        field
+        for item in body.get("auto_cleared", [])
+        for field in item.get("fields", [])
+    }
 
     saved = plan_schema.execute(
-        "SELECT include_in_plan, plan_month, plan_quarter "
+        "SELECT include_in_plan, member_priority, plan_month, plan_quarter "
         "FROM assessment_detail WHERE assessment_id=%s AND l3_code=%s",
         (assessment_id, code),
     ).fetchone()
     assert saved[0] is True
-    assert saved[1] is None
+    assert saved[1] == "低"
     assert saved[2] is None
+    assert saved[3] is None
 
     # Cross-refresh/relogin persistence: reload through the API.
     from app.assessment.repository import get_assessment
@@ -522,6 +527,7 @@ def test_include_in_plan_pending_month_persists(
     reloaded = get_assessment(plan_schema, assessment_id)
     row = next(d for d in reloaded["details"] if d["l3_code"] == code)
     assert row["include_in_plan"] is True
+    assert row["member_priority"] == "低"
     assert row["plan_month"] is None
     assert row["plan_quarter"] is None
 
@@ -991,8 +997,7 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert saved["plan_quarter"] == "Q2"
     assert saved["plan_month"] == "2026-06"
 
-    # Explicit null on priority while include_in_plan remains TRUE is a
-    # persistable incomplete plan draft.
+    # A selected positive-gap row defaults an explicit NULL priority to low.
     status, body = _request(
         "PATCH",
         f"/api/assessments/{assessment_id}/draft",
@@ -1008,7 +1013,12 @@ def test_patch_unset_vs_null(plan_schema: psycopg.Connection) -> None:
     assert body["revision"] == 4
     assessment = get_assessment(plan_schema, assessment_id)
     saved = next(d for d in assessment["details"] if d["l3_code"] == code)
-    assert saved["member_priority"] is None
+    assert saved["member_priority"] == "低"
+    assert "member_priority" not in {
+        field
+        for item in body.get("auto_cleared", [])
+        for field in item.get("fields", [])
+    }
     assert saved["include_in_plan"] is True
     assert saved["plan_quarter"] == "Q2"
     assert saved["plan_month"] == "2026-06"

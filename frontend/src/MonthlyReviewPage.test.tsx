@@ -1,5 +1,6 @@
 /// @vitest-environment jsdom
 
+import { StrictMode } from 'react'
 import {
   act,
   cleanup,
@@ -419,6 +420,60 @@ describe('MonthlyReviewPage', () => {
       5,
       expect.objectContaining({ notes: tooLong }),
       0,
+    )
+  })
+
+  it('keeps user input when an obsolete StrictMode load resolves last', async () => {
+    stubYear()
+    stubMember()
+    let resolveOld!: (review: planningApi.MonthlyReview) => void
+    let resolveLatest!: (review: planningApi.MonthlyReview) => void
+    const getReview = vi
+      .spyOn(planningApi, 'getMonthlyReview')
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLatest = resolve
+          }),
+      )
+    const upsert = vi
+      .spyOn(planningApi, 'upsertMonthlyReview')
+      .mockResolvedValue({
+        written: { ...reviewFixture().written!, revision: 3 },
+        history: reviewFixture().history,
+      })
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/growth/review/monthly?month=5']}>
+          <App />
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    await waitFor(() => expect(getReview).toHaveBeenCalledTimes(2))
+    await act(async () => resolveLatest(reviewFixture()))
+    await screen.findByRole('heading', { name: '月度复盘', level: 1 })
+
+    const notes = screen.getByLabelText('备注') as HTMLTextAreaElement
+    const tooLong = 'a'.repeat(3001)
+    fireEvent.change(notes, { target: { value: tooLong } })
+    await act(async () =>
+      resolveOld(reviewFixture({ written: null, history: [] })),
+    )
+    expect(notes.value).toBe(tooLong)
+
+    fireEvent.click(screen.getByRole('button', { name: '保存月度复盘' }))
+    await waitFor(() => expect(upsert).toHaveBeenCalledTimes(1))
+    expect(upsert).toHaveBeenCalledWith(
+      2026,
+      5,
+      expect.objectContaining({ notes: tooLong }),
+      2,
     )
   })
 

@@ -312,7 +312,7 @@ test.describe('capability standard targets', () => {
 
     await loginAs(page, 'member')
     await page.goto('/capability/assessment')
-    await expect(page.getByText('目标：4 · P4 标准')).toBeVisible()
+    await expect(page.getByText('目标 4 · 精通')).toBeVisible()
     await expect(page.getByText('不适用', { exact: true })).toBeVisible()
     // N/A rows have no plan action.
     await expect(
@@ -326,8 +326,9 @@ test.describe('capability standard targets', () => {
       .getByLabel('当前等级 P01.01.01')
       .getByRole('button', { name: '3 · 熟练' })
       .click()
-    await page.getByRole('button', { name: '保存能力评级' }).click()
-
+    await expect(
+      page.getByRole('button', { name: '保存能力评级' }),
+    ).toHaveCount(0)
     await expect.poll(() => saved).not.toBeNull()
     const details = saved?.details as Array<Record<string, unknown>>
     expect(details[0]).toMatchObject({
