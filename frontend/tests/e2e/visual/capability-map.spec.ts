@@ -176,6 +176,18 @@ test('capability map Leader edit layout evidence 1440x900', async ({
   await page.goto('/capability/model')
   await page.getByTestId('l2-toggle-P01.01').click()
   await expect(page.getByTestId('l3-edit-P01.01.01')).toBeVisible()
+  const search = page.getByRole('combobox', { name: '搜索能力地图' })
+  const standardAction = page.getByRole('button', { name: '标准版本维护' })
+  await expect(search).toBeVisible()
+  await expect(standardAction).toBeVisible()
+  const searchBox = await search.boundingBox()
+  const actionBox = await standardAction.boundingBox()
+  expect(searchBox).not.toBeNull()
+  expect(actionBox).not.toBeNull()
+  expect(searchBox!.y + searchBox!.height).toBe(
+    actionBox!.y + actionBox!.height,
+  )
+  await page.mouse.move(0, 0)
   await expect(page).toHaveScreenshot('capability-map-leader-1440x900.png', {
     maxDiffPixelRatio: 0.05,
     fullPage: true,

@@ -1,6 +1,7 @@
 /// @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -900,7 +901,13 @@ describe('catalog routes', () => {
     expect(search.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('listbox')).toBeNull()
 
-    fireEvent.focus(search)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('l2-toggle-P02.02'),
+      ),
+    )
+    act(() => search.focus())
+    expect(document.activeElement).toBe(search)
     expect(screen.getByRole('listbox')).toBeTruthy()
     fireEvent.keyDown(search, { key: 'Escape' })
     expect(screen.queryByRole('listbox')).toBeNull()

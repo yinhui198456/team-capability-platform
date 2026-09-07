@@ -256,6 +256,7 @@ test.describe('Issue #52 capability map', () => {
     await expect(search).toHaveValue('P02.03')
     await expect(search).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('listbox')).toHaveCount(0)
+    await expect(page.getByTestId('l2-toggle-P02.03')).toBeFocused()
     await search.focus()
     await expect(page.getByRole('listbox')).toBeVisible()
     await page.keyboard.press('Escape')
