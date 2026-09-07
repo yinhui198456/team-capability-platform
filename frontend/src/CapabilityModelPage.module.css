@@ -7,7 +7,7 @@
 }
 
 .header {
-  align-items: flex-start;
+  align-items: flex-end;
   display: flex;
   gap: 24px;
   justify-content: space-between;
@@ -19,12 +19,24 @@
 }
 
 .headerActions {
-  min-width: min(360px, 42%);
-  position: relative;
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  min-width: min(430px, 48%);
 }
 
 .standardVersionsAction {
-  margin: 0 0 8px auto;
+  grid-column: 2;
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+.searchPanel {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  position: relative;
 }
 
 .searchLabel {
@@ -102,7 +114,8 @@
 }
 
 .searchResult:hover,
-.searchResult:focus-visible {
+.searchResult:focus-visible,
+.searchResult[aria-selected='true'] {
   background: #f5f8ff;
   outline: none;
 }
@@ -132,12 +145,16 @@
 }
 
 .domainTabs {
+  background: #fff;
   border-bottom: 1px solid #d0d5dd;
   display: flex;
   gap: 6px;
   margin: 0 -4px 16px;
   overflow-x: auto;
   padding: 0 4px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .domainTab,
@@ -184,6 +201,12 @@
 .domainContent {
   min-width: 0;
   outline: none;
+  scroll-margin-top: 88px;
+}
+
+.l2Toggle,
+.l3Trigger {
+  scroll-margin-top: 88px;
 }
 
 .domainHeading,
@@ -380,6 +403,11 @@
   min-width: 0;
   padding: 8px;
   text-align: left;
+}
+
+.l2Toggle[aria-current='location'],
+.l3Trigger[aria-current='location'] {
+  background: #eef4ff;
 }
 
 .l2Toggle small {
@@ -598,8 +626,24 @@
   }
 
   .headerActions {
+    grid-template-columns: 1fr;
     margin-top: 12px;
     min-width: 0;
+    width: 100%;
+  }
+
+  .searchPanel,
+  .standardVersionsAction {
+    grid-column: 1;
+  }
+
+  .searchPanel {
+    grid-row: 1;
+  }
+
+  .standardVersionsAction {
+    grid-row: 2;
+    justify-self: start;
   }
 
   .searchResults {
