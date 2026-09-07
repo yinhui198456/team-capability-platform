@@ -2,6 +2,8 @@
   'use strict'
 
   var LEVELS = ['P4', 'P5', 'P6', 'P7', 'P8']
+  var START_LEVELS = ['P4', 'P5', 'P6', 'P7', 'P8', 'P4–P5', 'P5–P6', 'P6–P7', 'P7–P8', 'P6–P8', 'P5–P8']
+  var OUTPUT_TYPES = ['文档 / 演示', '实操', '方案设计', '问题处理', '经验沉淀', '方法论沉淀', '架构图+说明', '实操+说明', '实操+方案', '实操+分析', '实操+设计', '实操+验证', 'Demo+交付物', 'POC 验证报告']
   var RESOURCES = [
     { code: 'P02-M004', name: 'Agent 工程实践' },
     { code: 'P02-M011', name: 'Agent 应用发布指南' },
@@ -497,6 +499,33 @@
     return { name: node.path.name, enabled: node.path.enabled !== false, detail: node.path.output, label: '预期输出 / 验收方式' }
   }
 
+  function selectOptions(values, selected) {
+    return values.map(function (value) {
+      return '<option value="' + escapeHtml(value) + '"' + (value === selected ? ' selected' : '') + '>' + escapeHtml(value) + '</option>'
+    }).join('')
+  }
+
+  function editHoursValue(hours) {
+    return hours === '16 小时' ? '16' : hours
+  }
+
+  function displayHours(hours) {
+    return hours && /小时$/.test(hours) ? hours : hours ? hours + ' 小时' : ''
+  }
+
+  function hoursError(value) {
+    return value && !/^\d+(?:\.\d)?$/.test(value) ? '预计时长（小时）只能填写非负整数或一位小数。' : ''
+  }
+
+  function showHoursError(input) {
+    var error = hoursError(input.value.trim())
+    var message = document.querySelector('#hours-error')
+    input.setAttribute('aria-invalid', String(Boolean(error)))
+    message.textContent = error
+    message.hidden = !error
+    return error
+  }
+
   function openEdit(code, trigger) {
     if (!isLeader) return
     var node = findNode(code)
@@ -514,10 +543,10 @@
         '<fieldset><legend>达成路径</legend>' +
         '<label>名称<input name="name" required value="' + escapeHtml(node.path.name) + '"></label>' +
         '<label class="enabled"><input name="enabled" type="checkbox" ' + (node.path.enabled !== false ? 'checked' : '') + '>启用</label>' +
-        '<label>建议起始职级<input name="startLevel" value="' + escapeHtml(node.path.startLevel) + '"><small>可填写单一职级或范围，例如 P4 或 P4–P5</small></label>' +
-        '<label>预计时长<input name="hours" value="' + escapeHtml(node.path.hours) + '"></label>' +
+        '<label>建议起始职级<select name="startLevel">' + selectOptions(START_LEVELS, node.path.startLevel) + '</select></label>' +
+        '<label>预计时长（小时）<input name="hours" inputmode="decimal" value="' + escapeHtml(editHoursValue(node.path.hours)) + '" aria-describedby="hours-hint hours-error"><small id="hours-hint">可留空；接受整数或一位小数。</small><span class="field-error" id="hours-error" role="alert" hidden></span></label>' +
         '<label>预期输出<textarea name="output">' + escapeHtml(node.path.output) + '</textarea></label>' +
-        '<label>输出类型<input name="outputType" value="' + escapeHtml(node.path.outputType) + '"></label>' +
+        '<label>输出类型<select name="outputType">' + selectOptions(OUTPUT_TYPES, node.path.outputType) + '</select></label>' +
         '<label>原始学习材料<textarea name="materialsText">' + escapeHtml(node.path.materialsText) + '</textarea></label>' +
         '<label>备注<textarea name="notes">' + escapeHtml(node.path.notes) + '</textarea></label></fieldset>' +
         '<fieldset><legend>关联资源</legend>' + RESOURCES.map(function (resource) {
@@ -530,6 +559,7 @@
     drawerBackdrop.hidden = false
     appShell.inert = true
     editForm.elements.name.focus()
+    if (node.kind === 'L3') editForm.elements.hours.addEventListener('input', function () { showHoursError(this) })
   }
 
   function closeEdit(restoreFocus) {
@@ -557,10 +587,12 @@
     if (node.kind === 'L1') { node.domain.name = name; node.domain.overview = detail; node.domain.enabled = enabled }
     if (node.kind === 'L2') { node.group.name = name; node.group.levels.P5.full = detail; node.group.enabled = enabled }
     if (node.kind === 'L3') {
+      var hours = String(form.get('hours') || '').trim()
+      if (showHoursError(editForm.elements.hours)) return
       node.path.name = name
       node.path.enabled = enabled
       node.path.startLevel = String(form.get('startLevel') || '').trim()
-      node.path.hours = String(form.get('hours') || '').trim()
+      node.path.hours = hours
       node.path.output = String(form.get('output') || '').trim()
       node.path.outputType = String(form.get('outputType') || '').trim()
       node.path.materialsText = String(form.get('materialsText') || '').trim()
@@ -788,7 +820,7 @@
       '<span class="meta">建议起始职级：' +
       escapeHtml(path.startLevel) +
       '<br />预计时长：' +
-      escapeHtml(path.hours) +
+      escapeHtml(displayHours(path.hours)) +
       ' · 查看详情</span></button>'
     return isLeader
       ? '<div class="l3-actions">' + button + '<button class="l3-edit" type="button" data-edit-code="' + escapeHtml(path.code) + '">编辑</button></div>'
@@ -1078,7 +1110,7 @@
       escapeHtml(node.path.output) +
       '</dd></div>' +
       '<div><dt>预计时长</dt><dd>' +
-      escapeHtml(node.path.hours) +
+      escapeHtml(displayHours(node.path.hours)) +
       '</dd></div><div><dt>输出类型</dt><dd>' + escapeHtml(node.path.outputType) +
       '</dd></div></dl>' +
       '<section class="drawer-section"><h3>材料与资源</h3><p><strong>原始学习材料：</strong>' +
