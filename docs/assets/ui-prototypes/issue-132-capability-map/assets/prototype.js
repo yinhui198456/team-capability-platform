@@ -506,7 +506,7 @@
   }
 
   function editHoursValue(hours) {
-    return hours === '16 小时' ? '16' : hours
+    return /^\d+(?:\.\d+)?\s*小时$/.test(hours) ? hours.replace(/\s*小时$/, '') : hours
   }
 
   function displayHours(hours) {
@@ -588,7 +588,10 @@
     if (node.kind === 'L2') { node.group.name = name; node.group.levels.P5.full = detail; node.group.enabled = enabled }
     if (node.kind === 'L3') {
       var hours = String(form.get('hours') || '').trim()
-      if (showHoursError(editForm.elements.hours)) return
+      if (showHoursError(editForm.elements.hours)) {
+        editForm.elements.hours.focus()
+        return
+      }
       node.path.name = name
       node.path.enabled = enabled
       node.path.startLevel = String(form.get('startLevel') || '').trim()
