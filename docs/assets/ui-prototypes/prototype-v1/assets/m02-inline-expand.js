@@ -160,6 +160,7 @@ function actionSummary() {
   return `<div class="action-summary">
     <div><b>计划草稿：已选 ${selected.length} 项</b><span>${missing ? `待补月份 ${missing} 项` : "计划月份已完整"}</span></div>
     <div class="action-buttons">
+      ${state.message?.type === "success" ? '<a class="btn" href="m04-selected.html?year=2026">查看学习任务</a>' : ""}
       <button type="button" class="btn primary" data-action="generate">生成所选学习任务</button>
     </div>
   </div>`;

@@ -2196,7 +2196,7 @@ describe('AssessmentGapPage', () => {
     await waitFor(() => expect(document.activeElement).toBe(month))
   })
 
-  it('generation success keeps the auto-saved local rating visible (#201)', async () => {
+  it('generation success offers the task list without leaving or resetting the draft (#201)', async () => {
     const draft = mockDraft({
       details: [
         {
@@ -2234,6 +2234,19 @@ describe('AssessmentGapPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '生成所选学习任务' }))
     await waitFor(() => expect(gen).toHaveBeenCalledTimes(1))
+    expect(gen).toHaveBeenCalledWith(
+      7,
+      ['P01.01.01'],
+      expect.any(Number),
+      expect.any(String),
+    )
+    const taskLink = await screen.findByRole('link', {
+      name: '查看学习任务',
+    })
+    expect(taskLink.getAttribute('href')).toBe('/growth/tasks?year=2026')
+    expect(
+      screen.getByRole('heading', { name: '能力评级与提升计划' }),
+    ).toBeTruthy()
     expect(save.mock.calls[0][1][0]).toMatchObject({ current_level: 3 })
     expect(save.mock.calls[1][1][0]).not.toHaveProperty('current_level')
     expect(save.mock.calls[1][1][0]).not.toHaveProperty('target_adjusted')

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import s from './AssessmentGapPage.module.css'
 import { useYear } from './YearContext'
 import {
@@ -1907,6 +1908,11 @@ export function AssessmentGapPage() {
               </span>
             </div>
             <div className={s.actionButtons}>
+              {generationSummary && (
+                <Link className="button" to={`/growth/tasks?year=${year}`}>
+                  查看学习任务
+                </Link>
+              )}
               <button
                 type="button"
                 className="primary"
