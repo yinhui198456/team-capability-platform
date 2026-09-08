@@ -543,6 +543,42 @@
   z-index: 50;
 }
 
+.editDrawer {
+  border: 0;
+  left: auto;
+  margin: 0;
+  max-height: none;
+  padding: 0;
+  width: min(520px, 100vw);
+}
+
+.editDrawer::backdrop {
+  background: rgb(16 24 40 / 45%);
+}
+
+.editForm {
+  border: 0;
+  border-radius: 0;
+  box-sizing: border-box;
+  margin: 0;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.editForm textarea {
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font: inherit;
+  min-height: 88px;
+  padding: 8px;
+  resize: vertical;
+}
+
+.editForm input[readonly] {
+  background: #f9fafb;
+  color: #475467;
+}
+
 .drawer:focus {
   outline: none;
 }

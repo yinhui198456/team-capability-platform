@@ -237,6 +237,7 @@ function mockFetchWithAuth(
     status?: number
     json: () => Promise<unknown>
   }>,
+  capabilityModel = model,
 ) {
   return vi.fn((input: string) => {
     if (input === '/api/auth/me') return userResponse
@@ -262,7 +263,8 @@ function mockFetchWithAuth(
         })),
       })
     }
-    if (input.startsWith('/api/capability-model')) return response(model)
+    if (input.startsWith('/api/capability-model'))
+      return response(capabilityModel)
     if (input === '/api/learning-resources/P01-M001') return response(detail)
     if (input.includes('name=%E4%BA%A7%E5%93%81%E4%BD%93%E7%B3%BB')) {
       return response([resources[0]])
@@ -478,6 +480,7 @@ describe('catalog routes', () => {
     fireEvent.click(row)
 
     const dialog = await screen.findByRole('dialog', { name: /P01\.01\.01/ })
+    expect(dialog.getAttribute('aria-modal')).toBeNull()
     expect(within(dialog).getByText(/P01 · Data Infra 能力/)).toBeTruthy()
     expect(
       within(dialog).getByText(/P01\.01 · Data Infra 产品体系认知/),
@@ -808,6 +811,77 @@ describe('catalog routes', () => {
     expect(screen.getByTestId('location').textContent).toBe(
       '/capability/model?keep=1#P02.01',
     )
+  })
+
+  it('keeps a long combobox active option visible while focus stays on search', async () => {
+    const longModel = structuredClone(model)
+    longModel.domains[0].children[0].children = Array.from(
+      { length: 30 },
+      (_, index) => ({
+        ...longModel.domains[0].children[0].children[0],
+        code: `P01.01.${String(index + 1).padStart(2, '0')}`,
+        name: `长列表路径 ${index + 1}`,
+        resources: [],
+        unmatched_materials: [],
+      }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      mockFetchWithAuth(
+        response({
+          id: 2,
+          username: 'member',
+          full_name: 'Member User',
+          roles: ['Member'],
+        }),
+        longModel,
+      ),
+    )
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollIntoView',
+    )
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    try {
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      const search = screen.getByRole('combobox', { name: '搜索能力地图' })
+      act(() => search.focus())
+      fireEvent.change(search, { target: { value: '长列表路径' } })
+      expect(
+        within(screen.getByRole('listbox')).getAllByRole('option'),
+      ).toHaveLength(30)
+      scrollIntoView.mockClear()
+
+      fireEvent.keyDown(search, { key: 'End' })
+
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }),
+      )
+      expect(search.getAttribute('aria-activedescendant')).toBe(
+        'capability-search-option-29',
+      )
+      expect(document.activeElement).toBe(search)
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          'scrollIntoView',
+          descriptor,
+        )
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+      }
+    }
   })
 
   it('does not refetch the capability model during local navigation', async () => {
@@ -1142,6 +1216,76 @@ describe('Leader catalog controls', () => {
     fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
     expect(screen.getAllByText('编辑').length).toBeGreaterThanOrEqual(2)
     expect(screen.getAllByText('编辑节点').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('resets local fields when switching edit nodes and sends no unintended PUT', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.02'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '未保存的 A 节点名称' },
+    })
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.02.01'))
+    const form = getFormByHeading('编辑 P01.02.01 (L3)')
+    fireEvent.click(form.getByText('保存'))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: '编辑 P01.02.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(capabilityPutBodies()).toHaveLength(0)
+  })
+
+  it('opens an isolated edit dialog with context, focus loop, Escape, and focus return', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    const trigger = screen.getByTestId('l3-edit-P01.01.01')
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', {
+      name: '编辑 P01.01.01 (L3)',
+    })
+    const form = within(dialog)
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect((form.getByLabelText('代码') as HTMLInputElement).readOnly).toBe(
+      true,
+    )
+    expect((form.getByLabelText('所属能力组') as HTMLInputElement).value).toBe(
+      'P01.01 · Data Infra 产品体系认知',
+    )
+    expect(form.getByLabelText('原始学习材料').tagName).toBe('TEXTAREA')
+    expect(form.getByRole('checkbox', { name: '启用' })).toBeTruthy()
+    const name = form.getByLabelText('名称')
+    await waitFor(() => expect(document.activeElement).toBe(name))
+
+    const close = form.getByRole('button', { name: '关闭编辑' })
+    const save = form.getByRole('button', { name: '保存' })
+    close.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(save)
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('closes stale editing state when browser history changes the selected path', async () => {

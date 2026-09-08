@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
@@ -45,6 +46,7 @@ type EditableNode = {
   output_type?: string | null
   notes?: string | null
   resource_codes?: string[]
+  parentContext?: string
 }
 
 const START_LEVELS = [
@@ -124,6 +126,22 @@ function textField(
   )
 }
 
+function textAreaField(
+  label: string,
+  value: string,
+  onChange: (value: string) => void,
+) {
+  return (
+    <label key={label}>
+      {label}
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  )
+}
+
 function NodeEditForm({
   node,
   resources,
@@ -135,6 +153,7 @@ function NodeEditForm({
   onClose: () => void
   onSaved: () => void
 }) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
   const [name, setName] = useState(node.name)
   const [enabled, setEnabled] = useState(node.enabled ?? true)
   const [p4, setP4] = useState(node.p4_description ?? '')
@@ -168,6 +187,41 @@ function NodeEditForm({
 
   const isL3 = node.nodeType === 'L3'
   const isL2 = node.nodeType === 'L2'
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (typeof dialog.showModal === 'function') dialog.showModal()
+    else dialog.setAttribute('open', '')
+    dialog.querySelector<HTMLInputElement>('input[name="name"]')?.focus()
+    return () => {
+      if (typeof dialog.close === 'function' && dialog.open) dialog.close()
+      else dialog.removeAttribute('open')
+    }
+  }, [])
+
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDialogElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      ),
+    )
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last?.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first?.focus()
+    }
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -242,135 +296,183 @@ function NodeEditForm({
   }
 
   return (
-    <form className="edit-form" onSubmit={handleSubmit}>
-      <h3>
-        编辑 {node.code} ({node.nodeType})
-      </h3>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {textField('名称', name, setName, { required: true })}
-      <label className="checkbox">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        启用
-      </label>
-      {node.nodeType === 'L1' && textField('一级概述', overview, setOverview)}
-      {isL2 && (
-        <>
-          {textField('P4 描述', p4, setP4)}
-          {textField('P5 描述', p5, setP5)}
-          {textField('P6 描述', p6, setP6)}
-          {textField('P7 描述', p7, setP7)}
-          {textField('P8 描述', p8, setP8)}
-        </>
-      )}
-      {isL3 && (
-        <>
-          <label>
-            建议起始等级
-            <select
-              value={recommended}
-              onChange={(event) => setRecommended(event.target.value)}
-            >
-              <option value="">未设置</option>
-              {!START_LEVELS.includes(recommended) && recommended && (
-                <option value={recommended}>{recommended}</option>
-              )}
-              {START_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
-          </label>
-          {textField('原始学习材料', materialsText, setMaterialsText)}
-          {textField('预期输出', expectedOutput, setExpectedOutput)}
-          {replaceHours ? (
-            <label>
-              预计时长（小时）
-              <input
-                id="estimated-hours"
-                value={estimatedHours}
-                aria-invalid={Boolean(hoursValidationError)}
-                aria-describedby={
-                  hoursValidationError ? 'estimated-hours-error' : undefined
-                }
-                onChange={(event) => setEstimatedHours(event.target.value)}
-              />
-              {hoursValidationError && (
-                <small id="estimated-hours-error" role="alert">
-                  {hoursValidationError}
-                </small>
-              )}
-              {!originalHoursEditable && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEstimatedHours(numericHours(node.estimated_hours))
-                    setHoursValidationError('')
-                    setReplaceHours(false)
-                  }}
-                >
-                  取消修改时长
-                </button>
-              )}
-            </label>
-          ) : (
-            <p>
-              预计时长：{node.estimated_hours}{' '}
-              <button type="button" onClick={() => setReplaceHours(true)}>
-                修改时长
-              </button>
-            </p>
-          )}
-          <label>
-            输出类型
-            <select
-              value={outputType}
-              onChange={(event) => setOutputType(event.target.value)}
-            >
-              <option value="">未设置</option>
-              {!OUTPUT_TYPES.includes(outputType) && outputType && (
-                <option value={outputType}>{outputType}</option>
-              )}
-              {OUTPUT_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </label>
-          {textField('备注', notes, setNotes)}
+    <dialog
+      ref={dialogRef}
+      className={`${styles.drawer} ${styles.editDrawer}`}
+      aria-labelledby="node-edit-title"
+      aria-modal="true"
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+      onKeyDown={handleDialogKeyDown}
+    >
+      <form className={`edit-form ${styles.editForm}`} onSubmit={handleSubmit}>
+        <div className={styles.drawerHeader}>
+          <div>
+            <p className={styles.sectionKicker}>标准维护</p>
+            <h2 id="node-edit-title">
+              编辑 {node.code} ({node.nodeType})
+            </h2>
+          </div>
+          <button
+            type="button"
+            className={styles.drawerClose}
+            aria-label="关闭编辑"
+            onClick={() => onClose()}
+            disabled={saving}
+          >
+            ×
+          </button>
+        </div>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {isL3 && (
           <fieldset className="link-set">
-            <legend>关联资源</legend>
-            {resources.map((resource) => (
-              <label className="checkbox" key={resource.material_code}>
-                <input
-                  type="checkbox"
-                  checked={new Set(resourceCodes).has(resource.material_code)}
-                  onChange={() => toggleResource(resource.material_code)}
-                />
-                {resource.material_code} · {resource.name}
-              </label>
-            ))}
+            <legend>只读上下文</legend>
+            <label>
+              代码
+              <input value={node.code} readOnly />
+            </label>
+            <label>
+              所属能力组
+              <input value={node.parentContext ?? ''} readOnly />
+            </label>
           </fieldset>
-        </>
-      )}
-      <div className="form-actions">
-        <button type="submit" disabled={saving}>
-          保存
-        </button>
-        <button type="button" onClick={onClose} disabled={saving}>
-          取消
-        </button>
-      </div>
-    </form>
+        )}
+        <label>
+          名称
+          <input
+            name="name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+          />
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => setEnabled(event.target.checked)}
+          />
+          启用
+        </label>
+        {node.nodeType === 'L1' &&
+          textAreaField('一级概述', overview, setOverview)}
+        {isL2 && (
+          <>
+            {textAreaField('P4 描述', p4, setP4)}
+            {textAreaField('P5 描述', p5, setP5)}
+            {textAreaField('P6 描述', p6, setP6)}
+            {textAreaField('P7 描述', p7, setP7)}
+            {textAreaField('P8 描述', p8, setP8)}
+          </>
+        )}
+        {isL3 && (
+          <>
+            <label>
+              建议起始等级
+              <select
+                value={recommended}
+                onChange={(event) => setRecommended(event.target.value)}
+              >
+                <option value="">未设置</option>
+                {!START_LEVELS.includes(recommended) && recommended && (
+                  <option value={recommended}>{recommended}</option>
+                )}
+                {START_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {textAreaField('原始学习材料', materialsText, setMaterialsText)}
+            {textAreaField('预期输出', expectedOutput, setExpectedOutput)}
+            {replaceHours ? (
+              <label>
+                预计时长（小时）
+                <input
+                  id="estimated-hours"
+                  value={estimatedHours}
+                  aria-invalid={Boolean(hoursValidationError)}
+                  aria-describedby={
+                    hoursValidationError ? 'estimated-hours-error' : undefined
+                  }
+                  onChange={(event) => setEstimatedHours(event.target.value)}
+                />
+                {hoursValidationError && (
+                  <small id="estimated-hours-error" role="alert">
+                    {hoursValidationError}
+                  </small>
+                )}
+                {!originalHoursEditable && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEstimatedHours(numericHours(node.estimated_hours))
+                      setHoursValidationError('')
+                      setReplaceHours(false)
+                    }}
+                  >
+                    取消修改时长
+                  </button>
+                )}
+              </label>
+            ) : (
+              <p>
+                预计时长：{node.estimated_hours}{' '}
+                <button type="button" onClick={() => setReplaceHours(true)}>
+                  修改时长
+                </button>
+              </p>
+            )}
+            <label>
+              输出类型
+              <select
+                value={outputType}
+                onChange={(event) => setOutputType(event.target.value)}
+              >
+                <option value="">未设置</option>
+                {!OUTPUT_TYPES.includes(outputType) && outputType && (
+                  <option value={outputType}>{outputType}</option>
+                )}
+                {OUTPUT_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {textAreaField('备注', notes, setNotes)}
+            <fieldset className="link-set">
+              <legend>关联资源</legend>
+              {resources.map((resource) => (
+                <label className="checkbox" key={resource.material_code}>
+                  <input
+                    type="checkbox"
+                    checked={new Set(resourceCodes).has(resource.material_code)}
+                    onChange={() => toggleResource(resource.material_code)}
+                  />
+                  {resource.material_code} · {resource.name}
+                </label>
+              ))}
+            </fieldset>
+          </>
+        )}
+        <div className="form-actions">
+          <button type="button" onClick={() => onClose()} disabled={saving}>
+            取消
+          </button>
+          <button type="submit" disabled={saving}>
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
   )
 }
 
@@ -665,6 +767,8 @@ export function CapabilityModelPage() {
   const pendingDrawerCode = useRef('')
   const pendingDomainScroll = useRef<{ code: string; y: number } | null>(null)
   const consumedFocusTarget = useRef('')
+  const editReturnFocus = useRef<HTMLElement | null>(null)
+  const restoreEditFocus = useRef(false)
 
   const domains = useMemo(() => enabledDomains(model), [model])
   const currentDomain =
@@ -708,6 +812,13 @@ export function CapabilityModelPage() {
       restoreFocus.current = false
     }
   }, [selectedL3])
+
+  useLayoutEffect(() => {
+    if (editingNode || !restoreEditFocus.current) return
+    restoreEditFocus.current = false
+    if (editReturnFocus.current?.isConnected) editReturnFocus.current.focus()
+    editReturnFocus.current = null
+  }, [editingNode])
 
   useEffect(() => {
     if (!focusTarget || focusTarget === consumedFocusTarget.current) return
@@ -812,6 +923,13 @@ export function CapabilityModelPage() {
     return () => window.removeEventListener('keydown', handleEscape)
   }, [searchOpen])
 
+  useEffect(() => {
+    if (!searchOpen || searchActiveIndex < 0) return
+    document
+      .getElementById(`capability-search-option-${searchActiveIndex}`)
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }, [normalizedQuery, searchActiveIndex, searchOpen])
+
   function closeDrawer(shouldRestore = true) {
     restoreFocus.current = shouldRestore
     setSelectedL3(null)
@@ -912,8 +1030,15 @@ export function CapabilityModelPage() {
     if (!selectCode(result.code)) focusResult(result)
   }
 
-  function startEdit(node: EditableNode) {
+  function closeEditor(shouldRestore = true) {
+    restoreEditFocus.current = shouldRestore
+    setEditingNode(null)
+  }
+
+  function startEdit(node: EditableNode, trigger: HTMLElement) {
     closeBeforeNavigation()
+    editReturnFocus.current = trigger
+    restoreEditFocus.current = false
     setEditingNode(node)
   }
 
@@ -1170,14 +1295,17 @@ export function CapabilityModelPage() {
                   <button
                     type="button"
                     className="inline-edit"
-                    onClick={() =>
-                      startEdit({
-                        code: currentDomain.code,
-                        nodeType: 'L1',
-                        name: currentDomain.name,
-                        enabled: true,
-                        overview: currentDomain.overview,
-                      })
+                    onClick={(event) =>
+                      startEdit(
+                        {
+                          code: currentDomain.code,
+                          nodeType: 'L1',
+                          name: currentDomain.name,
+                          enabled: true,
+                          overview: currentDomain.overview,
+                        },
+                        event.currentTarget,
+                      )
                     }
                   >
                     编辑
@@ -1260,18 +1388,21 @@ export function CapabilityModelPage() {
                             type="button"
                             className="inline-edit"
                             data-testid={`l2-edit-${l2.code}`}
-                            onClick={() =>
-                              startEdit({
-                                code: l2.code,
-                                nodeType: 'L2',
-                                name: l2.name,
-                                enabled: true,
-                                p4_description: l2.p4_description,
-                                p5_description: l2.p5_description,
-                                p6_description: l2.p6_description,
-                                p7_description: l2.p7_description,
-                                p8_description: l2.p8_description,
-                              })
+                            onClick={(event) =>
+                              startEdit(
+                                {
+                                  code: l2.code,
+                                  nodeType: 'L2',
+                                  name: l2.name,
+                                  enabled: true,
+                                  p4_description: l2.p4_description,
+                                  p5_description: l2.p5_description,
+                                  p6_description: l2.p6_description,
+                                  p7_description: l2.p7_description,
+                                  p8_description: l2.p8_description,
+                                },
+                                event.currentTarget,
+                              )
                             }
                           >
                             编辑
@@ -1410,24 +1541,28 @@ export function CapabilityModelPage() {
                                       type="button"
                                       className={`inline-edit ${styles.l3Edit}`}
                                       data-testid={`l3-edit-${l3.code}`}
-                                      onClick={() =>
-                                        startEdit({
-                                          code: l3.code,
-                                          nodeType: 'L3',
-                                          name: l3.name,
-                                          enabled: true,
-                                          recommended_start_level:
-                                            l3.recommended_start_level,
-                                          materials_text: l3.materials_text,
-                                          expected_output: l3.expected_output,
-                                          estimated_hours: l3.estimated_hours,
-                                          output_type: l3.output_type,
-                                          notes: l3.notes,
-                                          resource_codes: l3.resources.map(
-                                            (resource) =>
-                                              resource.material_code,
-                                          ),
-                                        })
+                                      onClick={(event) =>
+                                        startEdit(
+                                          {
+                                            code: l3.code,
+                                            nodeType: 'L3',
+                                            name: l3.name,
+                                            enabled: true,
+                                            recommended_start_level:
+                                              l3.recommended_start_level,
+                                            materials_text: l3.materials_text,
+                                            expected_output: l3.expected_output,
+                                            estimated_hours: l3.estimated_hours,
+                                            output_type: l3.output_type,
+                                            notes: l3.notes,
+                                            resource_codes: l3.resources.map(
+                                              (resource) =>
+                                                resource.material_code,
+                                            ),
+                                            parentContext: `${l2.code} · ${l2.name}`,
+                                          },
+                                          event.currentTarget,
+                                        )
                                       }
                                     >
                                       编辑节点
@@ -1453,7 +1588,6 @@ export function CapabilityModelPage() {
           ref={drawerRef}
           className={styles.drawer}
           role="dialog"
-          aria-modal="true"
           aria-labelledby="l3-drawer-title"
           data-testid="l3-drawer"
           tabIndex={-1}
@@ -1619,12 +1753,13 @@ export function CapabilityModelPage() {
 
       {editingNode && (
         <NodeEditForm
+          key={`${editingNode.nodeType}-${editingNode.code}`}
           node={editingNode}
           resources={resources ?? []}
-          onClose={() => setEditingNode(null)}
+          onClose={closeEditor}
           onSaved={() => {
             refreshModel()
-            setEditingNode(null)
+            closeEditor()
           }}
         />
       )}
