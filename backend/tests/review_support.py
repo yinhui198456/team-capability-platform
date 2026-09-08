@@ -1,4 +1,4 @@
-"""Issue #62 shared review test support: full v0009 schema + approval helpers."""
+"""Shared full-schema test fixtures for current planning flows."""
 
 import psycopg
 import pytest
@@ -10,19 +10,17 @@ from app.access.repository import (
 )
 from app.access.schema import create_access_schema
 from app.assessment.repository import (
-    get_assessment,
-    save_assessment_draft,
-    submit_assessment,
-    submit_assessment_review,
+    generate_plan_items_for_selection,
+    patch_assessment_draft,
 )
 from app.assessment.schema import create_assessment_schema
 from tests.standard_target_support import (
     create_scoped_draft,
     ensure_capability_nodes,
-    standard_target_payload,
 )
 
 _ALL_TABLES = (
+    "task_requirement_decision",
     "annual_plan_change_proposal_detail",
     "annual_plan_change_proposal",
     "review_idempotency_key",
@@ -79,6 +77,60 @@ def reset_full_schema(connection: psycopg.Connection) -> None:
     connection.commit()
 
 
+def save_canonical_draft(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    details: list[dict[str, object]],
+    *,
+    assessment_type: str = "年度",
+) -> int:
+    """Seed a current M02 canonical draft without retired review writes."""
+    codes = [str(detail["l3_code"]) for detail in details]
+    ensure_capability_nodes(connection, codes)
+    assessment_id = create_scoped_draft(connection, member_id, year, assessment_type)
+    rows = connection.execute(
+        "SELECT l3_code, l3_node_id FROM assessment_detail WHERE assessment_id=%s",
+        (assessment_id,),
+    ).fetchall()
+    node_ids = {
+        str(code): int(node_id) for code, node_id in rows if node_id is not None
+    }
+    payload = []
+    for detail in details:
+        code = str(detail["l3_code"])
+        payload.append({**detail, "l3_node_id": node_ids[code]})
+    patch_assessment_draft(
+        connection, assessment_id, member_id, expected_revision=1, details=payload
+    )
+    connection.commit()
+    return assessment_id
+
+
+def create_generated_plan_items(
+    connection: psycopg.Connection,
+    member_id: int,
+    year: int,
+    details: list[dict[str, object]],
+    *,
+    assessment_type: str = "年度",
+) -> int:
+    """Seed current M02 flow: canonical draft, then explicit generation."""
+    assessment_id = save_canonical_draft(
+        connection, member_id, year, details, assessment_type=assessment_type
+    )
+    codes = [str(detail["l3_code"]) for detail in details]
+    generate_plan_items_for_selection(
+        connection,
+        assessment_id,
+        member_id,
+        codes,
+        expected_revision=2,
+    )
+    connection.commit()
+    return assessment_id
+
+
 @pytest.fixture
 def review_schema(connection: psycopg.Connection) -> psycopg.Connection:
     reset_full_schema(connection)
@@ -86,7 +138,7 @@ def review_schema(connection: psycopg.Connection) -> psycopg.Connection:
 
 
 class ReviewTestBase:
-    """Helpers for approval-flow tests on a full v0009 schema."""
+    """Shared full-schema user and capability-node fixture helpers."""
 
     def setup_users(self, connection: psycopg.Connection) -> tuple[int, int]:
         member_id = create_user(connection, "rv-member", "RV Member", "secret")
@@ -104,67 +156,3 @@ class ReviewTestBase:
     def ensure_nodes(self, connection: psycopg.Connection, l3_codes: list[str]) -> None:
         ensure_capability_nodes(connection, l3_codes)
         connection.commit()
-
-    def submit(
-        self,
-        connection: psycopg.Connection,
-        member_id: int,
-        year: int,
-        details: list[dict[str, object]],
-    ) -> int:
-        assessment_id = create_scoped_draft(connection, member_id, year)
-        connection.execute(
-            """
-            UPDATE assessment
-            SET member_current_level_snapshot = 'P4',
-                member_target_level_snapshot = 'P5'
-            WHERE id = %s
-            """,
-            (assessment_id,),
-        )
-        normalized = []
-        for detail in details:
-            item = dict(detail)
-            if "current_level" not in item:
-                item["current_level"] = 3
-            normalized.append(item)
-        payload = standard_target_payload(connection, assessment_id, normalized)
-        save_assessment_draft(
-            connection, assessment_id, member_id, payload, expected_revision=1
-        )
-        submit_assessment(connection, assessment_id, member_id, expected_revision=2)
-        connection.commit()
-        return assessment_id
-
-    def approve(
-        self,
-        connection: psycopg.Connection,
-        assessment_id: int,
-        buddy_id: int,
-        *,
-        conclusion: str = "认可",
-        feedback: str = "符合预期",
-        expected_revision: int = 3,
-        idempotency_key: str | None = None,
-    ) -> dict[str, object]:
-        review_id = connection.execute(
-            "SELECT id FROM assessment_review WHERE assessment_id=%s",
-            (assessment_id,),
-        ).fetchone()[0]
-        result = submit_assessment_review(
-            connection,
-            int(review_id),
-            buddy_id,
-            conclusion,
-            feedback,
-            expected_revision=expected_revision,
-            assessment_id_from_url=assessment_id,
-            idempotency_key=idempotency_key,
-        )
-        connection.commit()
-        return result
-
-    def get_assessment(
-        self, connection: psycopg.Connection, assessment_id: int
-    ) -> dict[str, object] | None:
-        return get_assessment(connection, assessment_id)

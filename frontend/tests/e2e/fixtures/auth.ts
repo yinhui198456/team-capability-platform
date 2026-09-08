@@ -34,7 +34,7 @@ export type ExtendedRole = Role | 'member2'
 const defaultRoutes: Record<ExtendedRole, string> = {
   member: '/dashboard/member',
   member2: '/dashboard/member',
-  buddy: '/mentoring/dashboard',
+  buddy: '/mentoring/evidence-review',
   leader: '/operations/analytics',
   admin: '/system/users',
 }

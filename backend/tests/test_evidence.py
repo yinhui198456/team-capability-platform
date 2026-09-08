@@ -14,7 +14,6 @@ from app.main import app
 from app.planning.schema import create_planning_schema
 from tests.standard_target_support import (
     ensure_capability_nodes,
-    standard_target_payload,
 )
 
 SESSION_COOKIE = "tcp_session"
@@ -275,17 +274,17 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+def _create_assessment_and_generate_plan_items(
+    connection: psycopg.Connection, username: str
+) -> int:
     desired_details = [
         {
             "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
+            "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
     ensure_capability_nodes(connection, ["P01-L2A-L3A"])
@@ -305,44 +304,40 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     assert status == 200
     assert body is not None
     assessment_id = body["id"]
+    node_id = connection.execute(
+        "SELECT l3_node_id FROM assessment_detail "
+        "WHERE assessment_id=%s AND l3_code=%s",
+        (assessment_id, desired_details[0]["l3_code"]),
+    ).fetchone()
+    assert node_id is not None and node_id[0] is not None
     status, body, _ = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
-            "details": standard_target_payload(
-                connection, assessment_id, desired_details
-            ),
+            "details": [{**desired_details[0], "l3_node_id": int(node_id[0])}],
             "expected_revision": 1,
         },
         cookies=cookies,
     )
     assert status == 200
+    persisted = connection.execute(
+        "SELECT current_level, target_level, standard_target_level, "
+        "include_in_plan, plan_month FROM assessment_detail "
+        "WHERE assessment_id=%s AND l3_code=%s",
+        (assessment_id, desired_details[0]["l3_code"]),
+    ).fetchone()
+    assert persisted is not None and persisted[3:] == (True, "2026-05"), persisted
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {
+            "l3_codes": [detail["l3_code"] for detail in desired_details],
+            "expected_revision": 2,
+        },
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 200, body
     return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
 
 def _seed_learning_task(
@@ -354,8 +349,7 @@ def _seed_learning_task(
     _ensure_l3_node(connection, "P01-L2A-L3A")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, "member_evidence")
-    _approve_assessment(connection, assessment_id, "buddy_evidence")
+    _create_assessment_and_generate_plan_items(connection, "member_evidence")
 
     member_cookies = _login(connection, "member_evidence")
 
@@ -657,8 +651,7 @@ def test_submit_evidence_without_buddy_returns_422(
     buddy_id = _create_test_user(evidence_schema, "buddy_no_buddy", ["Buddy"])
     create_buddy_relationship(evidence_schema, member_id, buddy_id)
     evidence_schema.commit()
-    assessment_id = _create_and_submit_assessment(evidence_schema, "member_no_buddy")
-    _approve_assessment(evidence_schema, assessment_id, "buddy_no_buddy")
+    _create_assessment_and_generate_plan_items(evidence_schema, "member_no_buddy")
 
     # Expire the buddy relationship so no primary buddy is assigned now.
     evidence_schema.execute(

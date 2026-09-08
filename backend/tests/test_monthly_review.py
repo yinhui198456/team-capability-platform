@@ -85,8 +85,7 @@ def _clone_plan_item(
     *,
     status: str,
     estimated_hours: str,
-    plan_month: int,
-    plan_quarter: str = "Q2",
+    plan_month: str,
 ) -> int:
     """INSERT a second plan item copying the seed row's provenance columns.
 
@@ -107,7 +106,7 @@ def _clone_plan_item(
             status,
             estimated_hours,
             plan_month,
-            plan_quarter,
+            f"Q{((int(plan_month[-2:]) - 1) // 3) + 1}",
             source_plan_item_id,
         ),
     ).fetchone()
@@ -230,7 +229,7 @@ def test_monthly_review_summary_reconciles_with_details(
         "P01-L2A-L3B",
         status="延期",
         estimated_hours="12",
-        plan_month=5,
+        plan_month="2026-05",
     )
     _clone_plan_item(
         profile_schema,
@@ -238,7 +237,7 @@ def test_monthly_review_summary_reconciles_with_details(
         "P01-L2A-L3C",
         status="暂停",
         estimated_hours="8",
-        plan_month=5,
+        plan_month="2026-05",
     )
     _clone_plan_item(
         profile_schema,
@@ -246,7 +245,7 @@ def test_monthly_review_summary_reconciles_with_details(
         "P01-L2A-L3D",
         status="取消",
         estimated_hours="8",
-        plan_month=5,
+        plan_month="2026-05",
     )
     _clone_plan_item(
         profile_schema,
@@ -254,7 +253,7 @@ def test_monthly_review_summary_reconciles_with_details(
         "P01-L2A-L3E",
         status="进行中",
         estimated_hours="8",
-        plan_month=5,
+        plan_month="2026-05",
     )
     for l3_code in ("P01-L2A-L3B", "P01-L2A-L3C", "P01-L2A-L3D", "P01-L2A-L3E"):
         _ensure_l3_node(profile_schema, l3_code)
@@ -324,7 +323,7 @@ def test_monthly_review_details_and_summary_carry_estimated_hours(
         "P01-L2A-L3B",
         status="进行中",
         estimated_hours="6-8",
-        plan_month=5,
+        plan_month="2026-05",
     )
     _clone_plan_item(
         profile_schema,
@@ -332,7 +331,7 @@ def test_monthly_review_details_and_summary_carry_estimated_hours(
         "P01-L2A-L3C",
         status="延期",
         estimated_hours="随时",
-        plan_month=5,
+        plan_month="2026-05",
     )
     _clone_plan_item(
         profile_schema,
@@ -340,7 +339,7 @@ def test_monthly_review_details_and_summary_carry_estimated_hours(
         "P01-L2A-L3D",
         status="暂停",
         estimated_hours=None,
-        plan_month=5,
+        plan_month="2026-05",
     )
     for l3_code in ("P01-L2A-L3B", "P01-L2A-L3C", "P01-L2A-L3D"):
         _ensure_l3_node(profile_schema, l3_code)
@@ -428,7 +427,7 @@ def test_monthly_review_details_are_month_scoped(
     # A March log exists from the seed (5h); a plan item planned for June must
     # not appear in May's review even though its task carries March logs.
     profile_schema.execute(
-        "UPDATE plan_item SET plan_month = 6, plan_quarter = 'Q2' WHERE id = %s",
+        "UPDATE plan_item SET plan_month = '2026-06' WHERE id = %s",
         (base_item,),
     )
     profile_schema.commit()

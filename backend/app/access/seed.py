@@ -149,10 +149,9 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
 
     from ..assessment.repository import (
         create_assessment_draft,
+        generate_plan_items_for_selection,
         get_assessment,
         save_assessment_draft,
-        submit_assessment,
-        submit_assessment_review,
     )
     from ..assessment.scope import compute_assessment_scope
     from ..planning.repository import (
@@ -203,33 +202,22 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
                     ),
                     "member_priority": "高" if is_demo_gap else None,
                     "include_in_plan": True if is_demo_gap else None,
-                    "plan_quarter": "Q1" if is_demo_gap else None,
-                    "plan_month": 3 if is_demo_gap else None,
+                    "plan_month": f"{year}-03" if is_demo_gap else None,
                 }
             )
-        save_assessment_draft(
+        saved = save_assessment_draft(
             connection,
             assessment_id,
             member_id,
             details,
             expected_revision=1,
         )
-        submitted = submit_assessment(
-            connection, assessment_id, member_id, expected_revision=2
-        )
-        assessment_review_id = connection.execute(
-            "SELECT id FROM assessment_review WHERE assessment_id = %s",
-            (assessment_id,),
-        ).fetchone()[0]
-        # Approval atomically creates the Annual Plan, Plan Item and Task.
-        review_result = submit_assessment_review(
+        generate_plan_items_for_selection(
             connection,
-            assessment_review_id,
-            buddy_id,
-            "认可",
-            "演示复核通过",
-            expected_revision=int(submitted["revision"]),
-            assessment_id_from_url=assessment_id,
+            assessment_id,
+            member_id,
+            [str(l3[0])],
+            expected_revision=int(saved["revision"]),
         )
         plan_item = connection.execute(
             """
@@ -240,22 +228,20 @@ def seed_demo_business_data(connection: psycopg.Connection) -> None:
             """,
             (member_id, year),
         ).fetchone()
-        # Issue #82: Plan may already exist from atomic generation on self-submit
-        # Assert plan_item exists (created by either flow)
+        # Explicit selection creates exactly the demo task from the draft.
         assert plan_item is not None
         task_id = connection.execute(
             "SELECT id FROM learning_task WHERE plan_item_id = %s",
             (plan_item[0],),
         ).fetchone()[0]
         # 补齐 UAT Mock 数据的计划预计时长，避免“有计划但时长 0h”的歧义。
-        current_month = date.today().month
         connection.execute(
             """
             UPDATE plan_item
-            SET estimated_hours = %s, target_month = %s
+            SET estimated_hours = %s
             WHERE id = %s
             """,
-            ("10", current_month, plan_item[0]),
+            ("10", plan_item[0]),
         )
         connection.execute(
             """

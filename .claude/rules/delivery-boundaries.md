@@ -15,6 +15,8 @@ description: Repository/host boundaries, one-writer rule, GitHub evidence discip
 - The host is constrained (2 vCPU / 8 GB). Do not start browsers, Docker/Compose services, databases, migrations, application deployment, UAT, or full product test suites unless an authorized rule/skill (e.g. tcp-uat-execution) explicitly calls for it.
 - Heavy or long-running operations require live task-level authorization; without it, stop before running them.
 - The canonical runtime checkout (`/opt/personal-agent-workspace/team-capability-platform`) is not a write root for sessions in this worktree — runtime/container/DB/migration mutations there require explicit live-task authorization.
+- TCP environments are classified as long-running user test, Issue-writer test, or retained isolated acceptance. A database write, migration, or stateful test may target only the single Issue-writer environment named by the current Issue's GitHub environment contract; the other two classes are read-only and must remain untouched.
+- Before a stateful operation, cite that GitHub environment contract, verify the configured connection target, and stop on any mismatch. Do not encode ephemeral ports, PIDs, SHAs, or container names in this durable rule.
 
 ## One writer
 

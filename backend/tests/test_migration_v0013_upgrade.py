@@ -26,7 +26,6 @@ import psycopg
 import pytest
 
 from tests.conftest import ADMIN_DATABASE_URL
-from tests.review_support import ReviewTestBase
 from tests.test_migration_v0009_upgrade import (
     _SCHEMA_SQL,
     _drop_everything,
@@ -202,89 +201,3 @@ def test_v0013_runner_rerun_idempotent(pre_v0013_db: psycopg.Connection) -> None
     ).fetchone()
     assert count is not None and int(count[0]) == 1
     assert _growth_goal_nullable(pre_v0013_db) == "YES"
-
-
-def test_first_assessment_approval_on_upgraded_database(
-    pre_v0013_db: psycopg.Connection,
-) -> None:
-    """The UAT Member-B shape: on a database upgraded through the supported
-    legacy path, a production first-assessment approval must atomically
-    create the initial plan, one item (growth_goal_id NULL by domain
-    design) and one task — never an uncontrolled NOT NULL violation.
-    Duplicate approval stays rejected with zero duplicate rows, and the
-    legacy growth-goal-linked item is untouched."""
-    _run_runner(pre_v0013_db)
-    data = pre_v0013_db.legacy_data
-    member_id = int(data["member_id"])
-    buddy_id = int(data["buddy_id"])
-    base = ReviewTestBase()
-    assessment_id = base.submit(
-        pre_v0013_db,
-        member_id,
-        2026,
-        [
-            {
-                "l3_code": "P01-L1-L2-L3",
-                "current_level": 2,
-                "target_level": 4,
-                "member_priority": "高",
-                "include_in_plan": True,
-                "plan_quarter": "Q2",
-                "plan_month": 5,
-            }
-        ],
-    )
-    result = base.approve(pre_v0013_db, assessment_id, buddy_id)
-    assert result["assessment_status"] == "已归档"
-    assert result["plan"]["items_created"] == 1
-    assert result["plan"]["tasks_created"] == 1
-
-    item = pre_v0013_db.execute(
-        """
-        SELECT growth_goal_id, planning_source_type FROM plan_item
-        WHERE source_assessment_id=%s
-        """,
-        (assessment_id,),
-    ).fetchone()
-    assert item is not None
-    assert item[0] is None  # assessment-approval items have no growth goal
-    assert item[1] == "assessment_approval"
-    task_count = pre_v0013_db.execute(
-        """
-        SELECT COUNT(*) FROM learning_task lt
-        JOIN plan_item pi ON pi.id = lt.plan_item_id
-        WHERE pi.source_assessment_id=%s
-        """,
-        (assessment_id,),
-    ).fetchone()
-    assert task_count is not None and int(task_count[0]) == 1
-
-    # Duplicate approval is rejected; nothing is duplicated.
-    from app.assessment.repository import ReviewError, submit_assessment_review
-
-    review_id = pre_v0013_db.execute(
-        "SELECT id FROM assessment_review WHERE assessment_id=%s",
-        (assessment_id,),
-    ).fetchone()[0]
-    with pytest.raises(ReviewError) as excinfo:
-        submit_assessment_review(
-            pre_v0013_db,
-            int(review_id),
-            buddy_id,
-            "认可",
-            "重复",
-            expected_revision=3,
-            assessment_id_from_url=assessment_id,
-        )
-    assert excinfo.value.code == "assessment_already_reviewed"
-    plan_count = pre_v0013_db.execute(
-        "SELECT COUNT(*) FROM annual_growth_plan WHERE member_id=%s AND year=2026",
-        (member_id,),
-    ).fetchone()
-    assert plan_count is not None and int(plan_count[0]) == 1
-
-    # The legacy growth-goal-linked item survived the whole flow.
-    legacy = pre_v0013_db.execute(
-        "SELECT growth_goal_id FROM plan_item WHERE id=%s", (data["item_id"],)
-    ).fetchone()
-    assert legacy is not None and int(legacy[0]) == int(data["goal_id"])

@@ -1,3 +1,5 @@
+from datetime import date
+
 import psycopg
 import pytest
 
@@ -303,6 +305,7 @@ def test_seed_business_data_builds_repeatable_core_loop(
         table: access_schema.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in (
             "assessment",
+            "assessment_review",
             "gap",
             "growth_goal",
             "plan_item",
@@ -313,12 +316,20 @@ def test_seed_business_data_builds_repeatable_core_loop(
             "capability_profile",
         )
     }
-    # the manual growth-goal lifecycle is closed; the approved assessment
-    # creates the plan directly
+    # Explicit selection creates the plan from the editable assessment draft;
+    # its calculated gap remains, but no Assessment Review is created.
     assert counts["growth_goal"] == 0
     expected = dict.fromkeys(counts, 1)
     expected["growth_goal"] = 0
+    expected["assessment_review"] = 0
     assert counts == expected
+    plan_item = access_schema.execute(
+        "SELECT plan_month, plan_quarter, target_month FROM plan_item"
+    ).fetchone()
+    assert plan_item == (f"{date.today().year}-03", "Q1", None)
+    assert (
+        access_schema.execute("SELECT status FROM assessment").fetchone()[0] == "草稿"
+    )
     assert (
         access_schema.execute("SELECT conclusion FROM evidence_review").fetchone()[0]
         == "通过"

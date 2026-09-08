@@ -1,5 +1,6 @@
 """
-Issue #82 Implementation: Generate annual plan and learning tasks on assessment submission.
+Issue #82 Implementation: generate annual plan and learning tasks on assessment
+submission.
 
 Core changes:
 1. Remove Buddy pre-approval gate for annual plan generation
@@ -7,8 +8,9 @@ Core changes:
 3. Ensure idempotency: do not duplicate tasks on repeated submissions
 """
 
-import psycopg
 from typing import Any
+
+import psycopg
 
 
 def generate_plan_and_tasks_from_assessment(
@@ -16,7 +18,8 @@ def generate_plan_and_tasks_from_assessment(
     assessment_id: int,
 ) -> dict[str, Any]:
     """
-    Atomically generate annual plan, plan items, and learning tasks from submitted assessment.
+    Atomically generate annual plan, plan items, and learning tasks from the
+    submitted assessment.
 
     Called from submit_assessment() in the same transaction.
 
@@ -48,8 +51,14 @@ def generate_plan_and_tasks_from_assessment(
     if assessment is None:
         raise ValueError(f"Assessment {assessment_id} not found")
 
-    (member_id, year, standard_version_id, assessment_revision,
-     member_current_snapshot, member_target_snapshot) = assessment
+    (
+        member_id,
+        year,
+        standard_version_id,
+        assessment_revision,
+        member_current_snapshot,
+        member_target_snapshot,
+    ) = assessment
 
     # Get or create annual plan
     plan_row = connection.execute(
@@ -102,16 +111,31 @@ def generate_plan_and_tasks_from_assessment(
 
     for detail in details:
         (
-            detail_id, l3_code, current_level, target_level,
-            gap_value, priority, plan_quarter, plan_month,
-            l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
-            scope_type, standard_target, adjusted_target, effective_target,
-            standard_job_snapshot
+            detail_id,
+            l3_code,
+            current_level,
+            target_level,
+            gap_value,
+            priority,
+            plan_quarter,
+            plan_month,
+            l3_node_id,
+            l1_code,
+            l1_name,
+            l2_code,
+            l2_name,
+            l3_name,
+            scope_type,
+            standard_target,
+            adjusted_target,
+            effective_target,
+            standard_job_snapshot,
         ) = detail
 
-        # Constraint requires priority to be non-NULL when planning_source_type='assessment_approval'
+        # Constraint requires priority non-NULL when planning_source_type =
+        # 'assessment_approval'
         if priority is None:
-            priority = '中'
+            priority = "中"
 
         # Get planning snapshot for this L3 capability
         snapshot = connection.execute(
@@ -153,6 +177,7 @@ def generate_plan_and_tasks_from_assessment(
                 source_assessment_id, source_assessment_detail_id,
                 capability_standard_version_id,
                 planning_snapshot_id,
+                learning_material, expected_output, estimated_hours,
                 l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
                 scope_type, standard_target_level, adjusted_target_level,
                 effective_target_level, standard_job_level_snapshot,
@@ -165,6 +190,7 @@ def generate_plan_and_tasks_from_assessment(
                 '未开始', 1,
                 %s, %s, %s,
                 %s,
+                %s, %s, %s,
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s,
@@ -174,15 +200,36 @@ def generate_plan_and_tasks_from_assessment(
             RETURNING id
             """,
             (
-                annual_plan_id, l3_code, current_level, target_level, priority,
-                assessment_id, detail_id, standard_version_id,
+                annual_plan_id,
+                l3_code,
+                current_level,
+                target_level,
+                priority,
+                assessment_id,
+                detail_id,
+                standard_version_id,
                 planning_snapshot_id,
-                l3_node_id, l1_code, l1_name, l2_code, l2_name, l3_name,
-                scope_type, standard_target, adjusted_target, effective_target,
+                # Frozen snapshot content, mirroring _insert_plan_item_and_task.
+                snapshot[1],
+                snapshot[2],
+                snapshot[3],
+                l3_node_id,
+                l1_code,
+                l1_name,
+                l2_code,
+                l2_name,
+                l3_name,
+                scope_type,
+                standard_target,
+                adjusted_target,
+                effective_target,
                 standard_job_snapshot,
-                member_current_snapshot, member_target_snapshot,
-                plan_quarter, plan_month, gap_value,
-                assessment_revision
+                member_current_snapshot,
+                member_target_snapshot,
+                plan_quarter,
+                plan_month,
+                gap_value,
+                assessment_revision,
             ),
         ).fetchone()
 

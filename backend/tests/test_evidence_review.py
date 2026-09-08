@@ -275,20 +275,20 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _create_and_submit_assessment(connection: psycopg.Connection, username: str) -> int:
+def _create_assessment_and_generate_plan_items(
+    connection: psycopg.Connection, username: str
+) -> int:
     desired_details = [
         {
-            "l3_code": "P01-L2A-L3A",
-            "current_level": 2,
-            "target_level": 4,
+            "l3_code": "P01-L2A-L3B",
+            "current_level": 0,
             "evidence_note": "测试中",
             "member_priority": "高",
             "include_in_plan": True,
-            "plan_quarter": "Q2",
-            "plan_month": 5,
+            "plan_month": "2026-05",
         }
     ]
-    ensure_capability_nodes(connection, ["P01-L2A-L3A"])
+    ensure_capability_nodes(connection, ["P01-L2A-L3B"])
     cookies = _login(connection, username)
     status, preview, _ = _request(
         "GET", "/api/assessments/scope-preview?year=2026", cookies=cookies
@@ -306,7 +306,7 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     assert body is not None
     assessment_id = body["id"]
     status, body, _ = _request(
-        "PUT",
+        "PATCH",
         f"/api/assessments/{assessment_id}/draft",
         {
             "details": standard_target_payload(
@@ -319,30 +319,14 @@ def _create_and_submit_assessment(connection: psycopg.Connection, username: str)
     assert status == 200
     status, body, _ = _request(
         "POST",
-        f"/api/assessments/{assessment_id}/submit",
-        {"expected_revision": 2},
+        f"/api/assessments/{assessment_id}/generate-plan-items",
+        {"l3_codes": ["P01-L2A-L3B"], "expected_revision": 2},
         cookies=cookies,
     )
     assert status == 200
+    assert status == 200
+    assert body["created"] == ["P01-L2A-L3B"]
     return assessment_id
-
-
-def _approve_assessment(
-    connection: psycopg.Connection, assessment_id: int, buddy_username: str
-) -> None:
-    buddy_cookies = _login(connection, buddy_username)
-    status, pending, _ = _request(
-        "GET", "/api/assessments/reviews/pending", cookies=buddy_cookies
-    )
-    assert status == 200
-    review_id = pending[0]["id"]  # evidence id (v0010 queue)
-    status, _, _ = _request(
-        "POST",
-        f"/api/assessments/{assessment_id}/reviews/{review_id}",
-        {"conclusion": "认可", "feedback": "符合预期", "expected_revision": 3},
-        cookies=buddy_cookies,
-    )
-    assert status == 200
 
 
 def _seed_submitted_evidence(
@@ -353,11 +337,10 @@ def _seed_submitted_evidence(
     member_id = _create_test_user(connection, member_username, ["Member"])
     buddy_id = _create_test_user(connection, buddy_username, ["Buddy"])
     create_buddy_relationship(connection, member_id, buddy_id)
-    _ensure_l3_node(connection, "P01-L2A-L3A")
+    _ensure_l3_node(connection, "P01-L2A-L3B")
     connection.commit()
 
-    assessment_id = _create_and_submit_assessment(connection, member_username)
-    _approve_assessment(connection, assessment_id, buddy_username)
+    _create_assessment_and_generate_plan_items(connection, member_username)
 
     member_cookies = _login(connection, member_username)
 
@@ -416,7 +399,7 @@ def test_buddy_pending_queue_includes_assigned_member(
     assert pending[0]["id"] == evidence_id  # v0010: queue yields evidence rows
     assert pending[0]["member_id"] is not None
     assert pending[0]["username"] is not None
-    assert pending[0]["l3_code"] == "P01-L2A-L3A"
+    assert pending[0]["l3_code"] == "P01-L2A-L3B"
     assert pending[0]["version_number"] == 1
 
 

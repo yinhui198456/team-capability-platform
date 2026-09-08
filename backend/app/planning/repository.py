@@ -32,6 +32,28 @@ def _serialize_datetime(value: Any) -> str | None:
     return str(value)
 
 
+def _canonical_plan_month(
+    plan_month: object, target_month: object, year: int | None = None
+) -> int | None:
+    if isinstance(plan_month, str):
+        try:
+            parsed = date.fromisoformat(f"{plan_month}-01")
+        except ValueError:
+            if year is not None:
+                raise PlanItemDateError(
+                    "plan_month must be YYYY-MM",
+                    field="plan_month",
+                ) from None
+        else:
+            if year is not None and parsed.year != year:
+                raise PlanItemDateError(
+                    "plan_month must belong to the annual plan year",
+                    field="plan_month",
+                )
+            return parsed.month
+    return int(target_month) if target_month is not None else None
+
+
 def _plan_item_row(row: tuple[Any, ...]) -> dict[str, object]:
     item = {
         "id": row[0],
@@ -200,6 +222,11 @@ class PlanItemValidationError(PlanningDomainError):
 
 class TaskValidationError(PlanningDomainError):
     code = "invalid_task"
+    entity_type = "learning_task"
+
+
+class TaskRequirementDecisionConflict(PlanningDomainError):
+    code = "task_requirement_decision_conflict"
     entity_type = "learning_task"
 
 
@@ -643,8 +670,8 @@ def _validate_plan_item_dates(
     plan_quarter = row[2]
     plan_month = row[3]
     target_month = row[4]
-    month = plan_month if plan_month is not None else target_month
     year = int(row[5])
+    month = _canonical_plan_month(plan_month, target_month, year)
 
     if start is not None and due is not None and start > due:
         raise PlanItemDateError(
@@ -799,21 +826,21 @@ def update_plan_item(
 
 
 def list_learning_tasks(
-    connection: psycopg.Connection, member_id: int
+    connection: psycopg.Connection, member_id: int, year: int | None = None
 ) -> list[dict[str, object]]:
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours, pi.target_month
+               pi.expected_output, pi.estimated_hours, pi.plan_month, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        WHERE agp.member_id = %s
+        WHERE agp.member_id = %s AND (%s::INTEGER IS NULL OR agp.year = %s)
         ORDER BY lt.l3_code
         """,
-        (member_id,),
+        (member_id, year, year),
     ).fetchall()
     tasks = _attach_l3_contexts(
         connection,
@@ -827,7 +854,8 @@ def list_learning_tasks(
                 "plan_item_learning_task_content": row[21],
                 "plan_item_expected_output": row[22],
                 "plan_item_estimated_hours": row[23],
-                "plan_item_target_month": row[24],
+                "plan_item_plan_month": row[24],
+                "plan_item_target_month": _canonical_plan_month(row[24], row[25]),
             }
             for row in rows
         ],
@@ -837,7 +865,153 @@ def list_learning_tasks(
         task["plan_item_estimated_hours_parsed"] = parse_estimated_hours(
             raw if isinstance(raw, str) else None
         ).as_dict()
+        task["requirement_change"] = get_task_requirement_change(
+            connection, member_id, int(task["id"])
+        )
     return tasks
+
+
+def get_task_requirement_change(
+    connection: psycopg.Connection, member_id: int, task_id: int
+) -> dict[str, object] | None:
+    """Latest material proposal against the task's current effective snapshot."""
+    row = connection.execute(
+        """
+        SELECT pd.id, pd.planning_snapshot_id, old.id, old.expected_output,
+               old.output_type, old.notes, new.expected_output, new.output_type,
+               new.notes,
+               d.choice, d.revision, d.selected_snapshot_id
+        FROM learning_task lt
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        JOIN LATERAL (
+            SELECT pd.* FROM annual_plan_change_proposal p
+            JOIN annual_plan_change_proposal_detail pd ON pd.proposal_id = p.id
+            WHERE p.member_id = agp.member_id AND p.year = agp.year
+              AND p.status = '待处理' AND pd.l3_code = lt.l3_code
+            ORDER BY p.id DESC LIMIT 1
+        ) pd ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT selected_snapshot_id FROM task_requirement_decision
+            WHERE learning_task_id = lt.id ORDER BY decided_at DESC, id DESC LIMIT 1
+        ) selected ON TRUE
+        JOIN capability_standard_planning_snapshot old
+          ON old.id = COALESCE(selected.selected_snapshot_id, pi.planning_snapshot_id)
+        JOIN capability_standard_planning_snapshot new
+          ON new.id = pd.planning_snapshot_id
+        LEFT JOIN task_requirement_decision d
+          ON d.learning_task_id = lt.id AND d.proposal_detail_id = pd.id
+        WHERE lt.id = %s AND agp.member_id = %s
+          AND d.id IS NULL
+          AND (old.expected_output IS DISTINCT FROM new.expected_output
+               OR old.output_type IS DISTINCT FROM new.output_type
+               OR old.notes IS DISTINCT FROM new.notes)
+        """,
+        (task_id, member_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "proposal_detail_id": row[0],
+        "new_snapshot_id": row[1],
+        "current_snapshot_id": row[2],
+        "current": {
+            "expected_output": row[3],
+            "output_type": row[4],
+            "notes": row[5],
+        },
+        "proposed": {
+            "expected_output": row[6],
+            "output_type": row[7],
+            "notes": row[8],
+        },
+        "decision": (
+            None
+            if row[9] is None
+            else {
+                "choice": row[9],
+                "revision": row[10],
+                "selected_snapshot_id": row[11],
+            }
+        ),
+    }
+
+
+def decide_task_requirement(
+    connection: psycopg.Connection,
+    member_id: int,
+    task_id: int,
+    proposal_detail_id: int,
+    choice: str,
+    expected_revision: int,
+) -> dict[str, object]:
+    if choice not in {"adopt_new", "continue_current"}:
+        raise TaskValidationError(
+            "invalid requirement choice", entity_id=task_id, field="choice"
+        )
+    with connection.transaction():
+        owned = connection.execute(
+            """SELECT lt.id FROM learning_task lt
+               JOIN plan_item pi ON pi.id = lt.plan_item_id
+               JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+               WHERE lt.id = %s AND agp.member_id = %s FOR UPDATE OF lt""",
+            (task_id, member_id),
+        ).fetchone()
+        if owned is None:
+            raise PermissionError("learning task does not belong to member")
+        existing = connection.execute(
+            """SELECT id, choice, revision, selected_snapshot_id
+               FROM task_requirement_decision
+               WHERE learning_task_id = %s AND proposal_detail_id = %s FOR UPDATE""",
+            (task_id, proposal_detail_id),
+        ).fetchone()
+        if existing is not None:
+            if int(existing[2]) != expected_revision:
+                raise TaskRequirementDecisionConflict(
+                    "requirement decision conflict", entity_id=task_id, field="revision"
+                )
+            if str(existing[1]) != choice:
+                raise TaskRequirementDecisionConflict(
+                    "requirement decision is immutable",
+                    entity_id=task_id,
+                    field="choice",
+                )
+            return {
+                "proposal_detail_id": proposal_detail_id,
+                "decision": {
+                    "choice": str(existing[1]),
+                    "revision": int(existing[2]),
+                    "selected_snapshot_id": int(existing[3]),
+                },
+            }
+        if expected_revision != 0:
+            raise TaskRequirementDecisionConflict(
+                "requirement decision conflict", entity_id=task_id, field="revision"
+            )
+        change = get_task_requirement_change(connection, member_id, task_id)
+        if change is None or int(change["proposal_detail_id"]) != proposal_detail_id:
+            raise TaskValidationError(
+                "requirement proposal is not pending",
+                entity_id=task_id,
+                field="proposal_detail_id",
+            )
+        selected = int(
+            change["new_snapshot_id"]
+            if choice == "adopt_new"
+            else change["current_snapshot_id"]
+        )
+        connection.execute(
+            """INSERT INTO task_requirement_decision
+               (learning_task_id, proposal_detail_id, selected_snapshot_id, choice)
+               VALUES (%s, %s, %s, %s)""",
+            (task_id, proposal_detail_id, selected, choice),
+        )
+    change["decision"] = {
+        "choice": choice,
+        "revision": 0,
+        "selected_snapshot_id": selected,
+    }
+    return change
 
 
 def get_learning_task(
@@ -848,7 +1022,7 @@ def get_learning_task(
         SELECT {_prefixed(_TASK_COLUMNS, "lt")},
                pi.current_level, pi.target_level, pi.priority,
                pi.learning_material, pi.learning_task_content,
-               pi.expected_output, pi.estimated_hours, pi.target_month
+               pi.expected_output, pi.estimated_hours, pi.plan_month, pi.target_month
         FROM learning_task lt
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
@@ -870,7 +1044,8 @@ def get_learning_task(
                 "plan_item_learning_task_content": row[21],
                 "plan_item_expected_output": row[22],
                 "plan_item_estimated_hours": row[23],
-                "plan_item_target_month": row[24],
+                "plan_item_plan_month": row[24],
+                "plan_item_target_month": _canonical_plan_month(row[24], row[25]),
             }
         ],
     )[0]
@@ -878,6 +1053,31 @@ def get_learning_task(
     task["plan_item_estimated_hours_parsed"] = parse_estimated_hours(
         raw if isinstance(raw, str) else None
     ).as_dict()
+    selected = connection.execute(
+        """SELECT s.id, s.expected_output, s.output_type, s.notes FROM learning_task lt
+           JOIN plan_item pi ON pi.id = lt.plan_item_id
+           LEFT JOIN LATERAL (
+               SELECT selected_snapshot_id FROM task_requirement_decision
+               WHERE learning_task_id = lt.id ORDER BY decided_at DESC, id DESC LIMIT 1
+           ) d ON TRUE
+           JOIN capability_standard_planning_snapshot s
+             ON s.id = COALESCE(d.selected_snapshot_id, pi.planning_snapshot_id)
+           WHERE lt.id = %s""",
+        (task_id,),
+    ).fetchone()
+    task["effective_requirement"] = (
+        {
+            "snapshot_id": selected[0],
+            "expected_output": selected[1],
+            "output_type": selected[2],
+            "notes": selected[3],
+        }
+        if selected
+        else None
+    )
+    task["requirement_change"] = get_task_requirement_change(
+        connection, member_id, task_id
+    )
     return task
 
 
@@ -2680,6 +2880,17 @@ def submit_evidence(
             raise PermissionError("evidence does not belong to member")
         evidence = _evidence_row(row[:19])
         task_status = str(row[19])
+        if (
+            get_task_requirement_change(
+                connection, member_id, int(evidence["learning_task_id"])
+            )
+            is not None
+        ):
+            raise TaskValidationError(
+                "choose the requirement version before submitting evidence",
+                entity_id=int(evidence["learning_task_id"]),
+                field="requirement_decision",
+            )
         if evidence["status"] != "草稿":
             raise EvidenceValidationError(
                 "only draft evidence can be submitted",
@@ -2757,36 +2968,164 @@ def _evidence_review_row(row: tuple[Any, ...]) -> dict[str, object]:
 
 
 def list_pending_evidence_reviews_for_buddy(
-    connection: psycopg.Connection, buddy_id: int
+    connection: psycopg.Connection, buddy_id: int, member_id: int | None = None
 ) -> list[dict[str, object]]:
     """The buddy's pending evidence queue — evidence rows awaiting review for
     members the buddy is currently (and effectively) assigned to."""
     rows = connection.execute(
         f"""
         SELECT {_prefixed(_EVIDENCE_COLUMNS, "e")},
-               agp.member_id, u.username
+               agp.member_id, u.username,
+               EXISTS (
+                   SELECT 1
+                   FROM evidence_review previous_review
+                   WHERE previous_review.evidence_id = e.supersedes_evidence_id
+                     AND previous_review.conclusion = '需补充'
+               ) AS is_resubmission
         FROM evidence e
         JOIN learning_task lt ON lt.id = e.learning_task_id
         JOIN plan_item pi ON pi.id = lt.plan_item_id
         JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
-        JOIN tcp_user u ON u.id = agp.member_id
+        JOIN tcp_user u ON u.id = agp.member_id AND u.is_active = TRUE
         JOIN buddy_relationship br
           ON br.member_id = agp.member_id
          AND br.buddy_id = %s
          AND br.is_primary = TRUE
-         AND br.effective_to IS NULL
+         AND br.effective_date <= CURRENT_DATE
+         AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
         WHERE e.status = '待 Review'
+          AND (%s::BIGINT IS NULL OR agp.member_id = %s::BIGINT)
         ORDER BY e.submitted_at ASC NULLS LAST
         """,
-        (buddy_id,),
+        (buddy_id, member_id, member_id),
     ).fetchall()
     items = []
     for row in rows:
         evidence = _evidence_row(row[:19])
         evidence["member_id"] = row[19]
         evidence["username"] = row[20]
+        evidence["is_resubmission"] = bool(row[21])
         items.append(evidence)
     return _attach_l3_contexts(connection, items)
+
+
+def get_evidence_review_workspace_for_buddy(
+    connection: psycopg.Connection, buddy_id: int, member_id: int | None = None
+) -> dict[str, object]:
+    """B01's current-relationship workspace; its metrics are never global."""
+    members = connection.execute(
+        """
+        SELECT u.id, u.username
+        FROM buddy_relationship br
+        JOIN tcp_user u ON u.id = br.member_id
+                      AND u.is_active = TRUE
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
+        WHERE br.buddy_id = %s
+          AND br.is_primary = TRUE
+          AND br.effective_date <= CURRENT_DATE
+          AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+        ORDER BY u.username, u.id
+        """,
+        (buddy_id,),
+    ).fetchall()
+    if member_id is not None and not any(int(row[0]) == member_id for row in members):
+        raise PermissionError("member does not belong to assigned buddy")
+
+    all_queue = list_pending_evidence_reviews_for_buddy(connection, buddy_id)
+
+    relationship_join = """
+        JOIN buddy_relationship br
+          ON br.member_id = agp.member_id
+         AND br.buddy_id = %s
+         AND br.is_primary = TRUE
+         AND br.effective_date <= CURRENT_DATE
+         AND (br.expiry_date IS NULL OR br.expiry_date >= CURRENT_DATE)
+        JOIN tcp_user current_member
+          ON current_member.id = br.member_id AND current_member.is_active = TRUE
+        JOIN tcp_user current_buddy
+          ON current_buddy.id = br.buddy_id AND current_buddy.is_active = TRUE
+        JOIN tcp_user_role buddy_role ON buddy_role.user_id = current_buddy.id
+        JOIN tcp_role buddy_role_code
+          ON buddy_role_code.id = buddy_role.role_id AND buddy_role_code.code = 'Buddy'
+    """
+    pending = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM evidence e
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        {relationship_join}
+        WHERE e.status = '待 Review'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    needs_supplement = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT ON (e.learning_task_id) e.status
+            FROM evidence e
+            JOIN learning_task lt ON lt.id = e.learning_task_id
+            JOIN plan_item pi ON pi.id = lt.plan_item_id
+            JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+            {relationship_join}
+            ORDER BY e.learning_task_id, e.version_number DESC
+        ) latest
+        WHERE latest.status = '需补充'
+        """,
+        (buddy_id,),
+    ).fetchone()
+    month_metrics = connection.execute(
+        f"""
+        SELECT
+            COUNT(*) FILTER (WHERE er.conclusion = '通过'),
+            AVG(EXTRACT(EPOCH FROM (er.reviewed_at - e.submitted_at)) / 86400.0)
+        FROM evidence_review er
+        JOIN evidence e ON e.id = er.evidence_id
+        JOIN learning_task lt ON lt.id = e.learning_task_id
+        JOIN plan_item pi ON pi.id = lt.plan_item_id
+        JOIN annual_growth_plan agp ON agp.id = pi.annual_growth_plan_id
+        {relationship_join}
+        WHERE er.buddy_id = %s
+          AND er.reviewed_at >= date_trunc('month', CURRENT_TIMESTAMP)
+          AND er.reviewed_at < date_trunc('month', CURRENT_TIMESTAMP)
+              + INTERVAL '1 month'
+        """,
+        (buddy_id, buddy_id),
+    ).fetchone()
+    return {
+        "summary": {
+            "pending_count": int(pending[0] or 0),
+            "needs_supplement_count": int(needs_supplement[0] or 0),
+            "approved_this_month_count": int(month_metrics[0] or 0),
+            "average_response_days": (
+                float(month_metrics[1]) if month_metrics[1] is not None else None
+            ),
+        },
+        "members": [
+            {
+                "id": row[0],
+                "username": row[1],
+                "pending_count": sum(item["member_id"] == row[0] for item in all_queue),
+            }
+            for row in members
+        ],
+        "queue": (
+            all_queue
+            if member_id is None
+            else [item for item in all_queue if item["member_id"] == member_id]
+        ),
+    }
 
 
 def get_evidence_review_for_buddy(
@@ -2848,6 +3187,15 @@ def _acquire_buddy_relationship_lock(
     connection.execute(
         "SELECT pg_advisory_xact_lock(hashtext(%s))",
         (f"tcp_buddy_relationship:{member_id}",),
+    )
+
+
+def _acquire_evidence_review_idempotency_lock(
+    connection: psycopg.Connection, idempotency_key: str
+) -> None:
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"tcp_evidence_review_idempotency:{idempotency_key}",),
     )
 
 
@@ -2919,16 +3267,28 @@ def submit_evidence_review(
 
         # Idempotent replay checked before any state validation.
         if idempotency_key is not None:
+            _acquire_evidence_review_idempotency_lock(connection, idempotency_key)
             existing = connection.execute(
                 """
-                SELECT er.id
+                SELECT er.id, er.evidence_id, er.buddy_id, er.conclusion, er.feedback
                 FROM evidence_review er
-                WHERE er.evidence_id = %s
-                  AND er.idempotency_key = %s
+                WHERE er.idempotency_key = %s
                 """,
-                (evidence_id, idempotency_key),
+                (idempotency_key,),
             ).fetchone()
             if existing is not None:
+                if (
+                    int(existing[1]) != evidence_id
+                    or int(existing[2]) != buddy_id
+                    or existing[3] != conclusion
+                    or existing[4] != feedback
+                ):
+                    raise EvidenceReviewConflict(
+                        "idempotency key was already used with a different "
+                        "review payload",
+                        entity_id=evidence_id,
+                        field="idempotency_key",
+                    )
                 row2 = connection.execute(
                     """
                     SELECT id, evidence_id, buddy_id, status, conclusion,
@@ -4581,8 +4941,9 @@ def _team_analytics_monthly_trends(
     ).fetchall()
     planned_values_by_month: dict[int, list[str | None]] = {}
     for month, estimated_hours in planned_rows:
-        if month is not None:
-            planned_values_by_month.setdefault(int(month), []).append(
+        canonical_month = _canonical_plan_month(month, None, year)
+        if canonical_month is not None:
+            planned_values_by_month.setdefault(canonical_month, []).append(
                 estimated_hours if isinstance(estimated_hours, str) else None
             )
     planned_by_month = {

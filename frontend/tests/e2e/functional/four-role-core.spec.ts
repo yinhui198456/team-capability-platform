@@ -36,42 +36,36 @@ test.describe('four-role core read paths', () => {
     await expect(page).toHaveURL(/\/login$/)
   })
 
-  test('Member: can view the self-assessment workspace', async ({ page }) => {
+  test('Member: can view the M02 rating and plan workspace', async ({
+    page,
+  }) => {
     await loginAs(page, 'member')
     await page.goto('/capability/assessment')
 
     await expect(
-      page.getByRole('heading', { name: '能力自评与 Gap 分析' }),
+      page.getByRole('heading', { name: '能力评级与提升计划' }),
     ).toBeVisible()
     await expect(page.getByText('数据范围：本人')).toBeVisible()
   })
 
-  test('Buddy: assessment review stays on the review center; evidence review is a standalone page', async ({
+  test('Buddy: retired review routes resolve to Evidence Review', async ({
     page,
   }) => {
     await loginAs(page, 'buddy')
     await page.goto('/mentoring/dashboard')
 
-    await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
-    await expect(page.getByText('数据范围：负责成员')).toBeVisible()
-    await expect(page.getByRole('heading', { name: '辅导成员' })).toBeVisible()
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
 
-    // Legacy assessment-review alias still resolves to the review center.
+    // Retired assessment-review no longer restores a review workspace.
     await page.goto('/mentoring/assessment-review')
-    await expect(page).toHaveURL(/\/mentoring\/dashboard$/)
-    await expect(
-      page.getByRole('heading', { name: 'Buddy 复核中心' }),
-    ).toBeVisible()
+    await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
 
-    // Evidence review is its own route now — it must NOT redirect to the
-    // assessment review center, and it must render the evidence page.
+    // Evidence Review remains the only Buddy workspace.
     await page.goto('/mentoring/evidence-review')
     await expect(page).toHaveURL(/\/mentoring\/evidence-review$/)
-    await expect(
-      page.getByRole('heading', { name: '待验收成果' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果验收' })).toBeVisible()
     await expect(
       page.getByRole('heading', { name: 'Buddy 复核中心' }),
     ).toHaveCount(0)

@@ -18,7 +18,9 @@ from tests.test_learning_task import (
 
 @pytest.fixture
 def seeded(learning_task_schema: psycopg.Connection) -> dict[str, object]:
-    member_cookies, plan = _seed_plan_items(learning_task_schema)
+    member_cookies, plan = _seed_plan_items(
+        learning_task_schema, ["P01-L2A-L3A", "P01-L2A-L3B"]
+    )
     task_id = int(plan["items"][0]["id"])
     tasks = _request("GET", "/api/planning/learning-tasks", cookies=member_cookies)[1]
     task_id = int(next(t for t in tasks if t["plan_item_id"] == task_id)["id"])

@@ -45,6 +45,7 @@ def _clear_catalog(connection: psycopg.Connection) -> None:
 
 def _clear_assessment(connection: psycopg.Connection) -> None:
     with connection.transaction():
+        connection.execute("DROP TABLE IF EXISTS task_requirement_decision")
         connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal_detail")
         connection.execute("DROP TABLE IF EXISTS annual_plan_change_proposal")
         connection.execute("DROP TABLE IF EXISTS review_idempotency_key")

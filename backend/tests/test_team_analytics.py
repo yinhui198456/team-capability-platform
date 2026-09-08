@@ -12,13 +12,6 @@ from app.access.repository import (
     create_user,
 )
 from app.access.schema import create_access_schema
-from app.assessment.repository import (
-    get_assessment,
-    get_pending_reviews_for_buddy,
-    save_assessment_draft,
-    submit_assessment,
-    submit_assessment_review,
-)
 from app.assessment.schema import create_assessment_schema
 from app.catalog.schema import create_catalog_schema
 from app.main import app
@@ -28,7 +21,6 @@ from app.planning.repository import (
     list_plan_items,
 )
 from app.planning.schema import create_planning_schema
-from tests.standard_target_support import create_scoped_draft
 
 SESSION_COOKIE = "tcp_session"
 
@@ -271,67 +263,76 @@ def _login(
     return {SESSION_COOKIE: _cookie_attributes(headers)[SESSION_COOKIE]}
 
 
-def _submit_and_approve_assessment(
+def _create_generated_assessment(
     connection: psycopg.Connection,
     member_id: int,
-    buddy_id: int,
     year: int,
     details: list[dict[str, object]],
 ) -> int:
-    assessment_id = create_scoped_draft(connection, member_id, year)
-    assessment = get_assessment(connection, assessment_id)
-    assert assessment is not None
-    supplied = {detail["l3_code"]: detail for detail in details}
-    migrated_details = []
-    for snapshot in assessment["details"]:
-        detail = supplied.get(snapshot["l3_code"])
-        if detail is None:
-            migrated = {
-                "l3_code": snapshot["l3_code"],
-                "l3_node_id": snapshot.get("l3_node_id"),
-                "current_level": (
-                    1 if snapshot["standard_target_applicable"] is True else None
-                ),
-                "evidence_note": "非本场景能力项",
-                "member_priority": "低",
-                "include_in_plan": False,
-            }
-            if snapshot["l3_code"] == "P02-L2B-L3A":
-                migrated.update(
-                    {
-                        "target_adjusted": True,
-                        "adjusted_target_level": 3,
-                        "target_adjustment_reason": "测试场景默认目标",
-                    }
-                )
-        else:
-            migrated = dict(detail)
-            migrated.pop("l3_node_id", None)
-            migrated.setdefault("l3_node_id", snapshot.get("l3_node_id"))
-            target_level = migrated.pop("target_level")
-            migrated.update(
-                {
-                    "target_adjusted": True,
-                    "adjusted_target_level": target_level,
-                    "target_adjustment_reason": "测试场景目标",
-                }
+    """Seed analytics through M02's canonical draft and explicit generation."""
+    from tests.review_support import create_generated_plan_items
+
+    canonical = []
+    for detail in details:
+        item = {
+            key: value
+            for key, value in detail.items()
+            if key not in {"target_level", "plan_quarter"}
+        }
+        if isinstance(item.get("plan_month"), int):
+            item["plan_month"] = f"{year}-{int(item['plan_month']):02d}"
+        item["current_level"] = 0
+        canonical.append(item)
+    assessment_id = create_generated_plan_items(connection, member_id, year, canonical)
+    # Analytics retains historical Assessment records as read-only input; this
+    # fixture is not a new Assessment Review or an M02 write path.
+    connection.execute(
+        "UPDATE assessment SET status='已归档', submitted_at=NOW(), archived_at=NOW() "
+        "WHERE id=%s",
+        (assessment_id,),
+    )
+    historical_details = list(details)
+    if not any(detail["l3_code"] == "P02-L2B-L3A" for detail in historical_details):
+        # Historical read-only coverage: the retired fixture recorded this
+        # snapshot even though the current plan only generates P01.
+        historical_details.append(
+            {"l3_code": "P02-L2B-L3A", "current_level": 1, "target_level": 3}
+        )
+    for detail in historical_details:
+        current_level = int(detail["current_level"])
+        target_level = int(detail["target_level"])
+        connection.execute(
+            "UPDATE assessment_detail SET current_level=%s, target_level=%s, "
+            "gap_value=%s WHERE assessment_id=%s AND l3_code=%s",
+            (
+                current_level,
+                target_level,
+                max(target_level - current_level, 0),
+                assessment_id,
+                detail["l3_code"],
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO gap (
+                assessment_id, l3_code, current_level, target_level, gap_value,
+                priority, plan_candidate
             )
-        migrated_details.append(migrated)
-    save_assessment_draft(
-        connection, assessment_id, member_id, migrated_details, expected_revision=1
-    )
-    submit_assessment(connection, assessment_id, member_id, expected_revision=2)
-    pending = get_pending_reviews_for_buddy(connection, buddy_id)
-    review = next(r for r in pending if r["assessment_id"] == assessment_id)
-    submit_assessment_review(
-        connection,
-        review["id"],
-        buddy_id,
-        "认可",
-        "符合预期",
-        expected_revision=3,
-        assessment_id_from_url=assessment_id,
-    )
+            VALUES (%s, %s, %s, %s, %s, '中', FALSE)
+            ON CONFLICT (assessment_id, l3_code) DO UPDATE
+            SET current_level = EXCLUDED.current_level,
+                target_level = EXCLUDED.target_level,
+                gap_value = EXCLUDED.gap_value
+            """,
+            (
+                assessment_id,
+                detail["l3_code"],
+                current_level,
+                target_level,
+                max(target_level - current_level, 0),
+            ),
+        )
+    connection.commit()
     return assessment_id
 
 
@@ -342,8 +343,8 @@ def _create_plan_item_data(
     year: int,
     details: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    # Approval atomically creates the plan, items and tasks.
-    _submit_and_approve_assessment(connection, member_id, buddy_id, year, details)
+    # M02 explicitly generates the plan items and tasks.
+    _create_generated_assessment(connection, member_id, year, details)
     return list_plan_items(connection, member_id)
 
 

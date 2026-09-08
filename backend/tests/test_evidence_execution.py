@@ -202,13 +202,11 @@ def test_assessment_review_is_isolated_from_evidence_review(
 ) -> None:
     mc, bc = seeded["member_cookies"], seeded["buddy_cookies"]
     task_id = int(seeded["task_id"])
-    # The approval chain left a closed assessment_review row.
     connection = seeded["connection"]
     assessment_reviews = connection.execute(
         "SELECT conclusion, status FROM assessment_review"
     ).fetchall()
-    assert assessment_reviews and assessment_reviews[0][1] == "已闭环"
-    assert assessment_reviews[0][0] == "认可"
+    assert assessment_reviews == []
 
     status, ev = _create_evidence(mc, task_id)
     ev_id = int(ev["id"])
@@ -224,18 +222,25 @@ def test_assessment_review_is_isolated_from_evidence_review(
     after = connection.execute(
         "SELECT conclusion, status FROM assessment_review"
     ).fetchall()
-    assert after == assessment_reviews
+    assert after == []
     evidence_reviews = connection.execute(
         "SELECT conclusion, status FROM evidence_review"
     ).fetchall()
     assert [(r[0], r[1]) for r in evidence_reviews] == [("通过", "已闭环")]
 
 
-def test_evidence_submission_requires_running_task(seeded: dict[str, object]) -> None:
-    mc = seeded["member_cookies"]
-    tasks = _request("GET", "/api/planning/learning-tasks", cookies=mc)[1]
-    second = next(t for t in tasks if t["id"] != int(seeded["task_id"]))
-    status, ev = _create_evidence(mc, int(second["id"]))
+def test_evidence_submission_requires_running_task(
+    learning_task_schema: psycopg.Connection,
+) -> None:
+    mc, plan = _seed_plan_items(learning_task_schema)
+    task_id = int(
+        next(
+            task["id"]
+            for task in _request("GET", "/api/planning/learning-tasks", cookies=mc)[1]
+            if task["plan_item_id"] == plan["items"][0]["id"]
+        )
+    )
+    status, ev = _create_evidence(mc, task_id)
     ev_id = int(ev["id"])
     status, body, _ = _request(
         "POST", f"/api/planning/evidences/{ev_id}/submit", {}, cookies=mc

@@ -240,15 +240,11 @@ def test_create_draft_save_details_submit_review(
                 {
                     "l3_node_id": node_id,
                     "l3_code": l3_code,
-                    "current_level": 2,
-                    "target_adjusted": True,
-                    "adjusted_target_level": 4,
-                    "target_adjustment_reason": "岗位项目要求",
+                    "current_level": 0,
                     "evidence_note": "测试中",
                     "member_priority": "高",
                     "include_in_plan": True,
-                    "plan_quarter": "Q2",
-                    "plan_month": 5,
+                    "plan_month": "2026-05",
                 }
             ],
             "expected_revision": 1,
@@ -270,23 +266,15 @@ def test_create_draft_save_details_submit_review(
         {"expected_revision": 2},
         cookies=cookies,
     )
-    assert status == 200
+    assert status == 422
+    assert body["detail"]["code"] == "legacy_assessment_submit_disabled"
 
     status, body, _ = _request(
         "GET", f"/api/assessments/{assessment_id}", cookies=cookies
     )
     assert status == 200
-    assert body["status"] == "待复核"
-    assert body["submitted_at"] is not None
-
-    status, history, _ = _request(
-        "GET", f"/api/assessments/{assessment_id}/history", cookies=cookies
-    )
-    assert status == 200
-    assert len(history) == 1
-    assert history[0]["status"] == "待复核"
-    assert history[0]["buddy_id"] == buddy_id
-    assert history[0]["conclusion"] is None
+    assert body["status"] == "草稿"
+    assert body["submitted_at"] is None
 
 
 def test_assessment_returns_l2_context_and_hides_live_requirements_from_history(
@@ -494,13 +482,7 @@ def test_submit_validation_returns_structured_l3_error(
     )
     assert status == 422
     detail = body["detail"]
-    assert detail["code"] == "assessment_validation_failed"
-    assert detail["l3_code"] == "C01.01.01"
-    assert "l3_node_id" in detail
-    assert isinstance(detail["l3_node_id"], int)
-    # With #61: evidence gate removed; validation now catches missing plan fields.
-    assert detail["reason"] == "priority_required"
-    assert "message" in detail
+    assert detail["code"] == "legacy_assessment_submit_disabled"
 
 
 def test_member_cannot_view_or_edit_other_draft(

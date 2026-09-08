@@ -172,7 +172,7 @@ def plan_items_in_month(
         WHERE agp.member_id = %s AND agp.year = %s AND pi.plan_month = %s
         ORDER BY pi.l3_code
         """,
-        (member_id, year, month),
+        (member_id, year, f"{year}-{month:02d}"),
     ).fetchall()
     return [
         {
