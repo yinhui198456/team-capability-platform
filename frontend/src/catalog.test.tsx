@@ -223,6 +223,17 @@ function response(payload: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) })
 }
 
+function deferredResponse(payload: unknown) {
+  let resolve!: () => void
+  const promise = new Promise<{
+    ok: true
+    json: () => Promise<unknown>
+  }>((done) => {
+    resolve = () => done({ ok: true, json: () => Promise.resolve(payload) })
+  })
+  return { promise, resolve }
+}
+
 function anonymousResponse() {
   return Promise.resolve({
     ok: false,
@@ -1147,7 +1158,11 @@ describe('Leader catalog controls', () => {
     return within(headingElement.closest('form')!)
   }
 
-  function stubLeaderModel(customModel: CapabilityModel, failPut = false) {
+  function stubLeaderModel(
+    customModel: CapabilityModel,
+    failPut = false,
+    putResponse?: ReturnType<typeof response>,
+  ) {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: string, init?: RequestInit) => {
@@ -1161,9 +1176,10 @@ describe('Leader catalog controls', () => {
         }
         if (
           input.startsWith('/api/capability-model/nodes/') &&
-          init?.method === 'PUT' &&
-          failPut
+          init?.method === 'PUT'
         ) {
+          if (putResponse) return putResponse
+          if (!failPut) return response(customModel)
           return Promise.resolve({
             ok: false,
             status: 500,
@@ -1286,6 +1302,96 @@ describe('Leader catalog controls', () => {
       ).toBeNull(),
     )
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it.each(['Escape', 'native cancel'])(
+    'prevents %s from dismissing the editor while save is pending',
+    async (dismissal) => {
+      const pendingPut = deferredResponse(model)
+      stubLeaderModel(model, false, pendingPut.promise)
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+      fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+      const dialog = await screen.findByRole('dialog', {
+        name: '编辑 P01.01.01 (L3)',
+      })
+      const form = within(dialog)
+      fireEvent.change(form.getByLabelText('名称'), {
+        target: { value: '等待保存的名称' },
+      })
+      fireEvent.click(form.getByRole('button', { name: '保存' }))
+      await waitFor(() =>
+        expect(
+          (form.getByRole('button', { name: '保存' }) as HTMLButtonElement)
+            .disabled,
+        ).toBe(true),
+      )
+
+      if (dismissal === 'Escape') {
+        fireEvent.keyDown(dialog, { key: 'Escape' })
+      } else {
+        fireEvent(dialog, new Event('cancel', { cancelable: true }))
+      }
+      expect(
+        screen.getByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeTruthy()
+
+      pendingPut.resolve()
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+        ).toBeNull(),
+      )
+      expect(capabilityPutBodies()).toEqual([{ name: '等待保存的名称' }])
+    },
+  )
+
+  it('ignores an obsolete save completion after navigation starts a later edit session', async () => {
+    const pendingPut = deferredResponse(model)
+    stubLeaderModel(model, false, pendingPut.promise)
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <HistoryControls />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '等待保存的 A 节点名称' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(capabilityPutBodies()).toHaveLength(1))
+
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.02'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.02.01'))
+    const laterDialog = await screen.findByRole('dialog', {
+      name: '编辑 P01.02.01 (L3)',
+    })
+    const laterName = within(laterDialog).getByLabelText('名称')
+    fireEvent.change(laterName, { target: { value: 'B 节点保留的草稿' } })
+
+    await act(async () => {
+      pendingPut.resolve()
+      await pendingPut.promise
+    })
+    expect(
+      screen.getByRole('dialog', { name: '编辑 P01.02.01 (L3)' }),
+    ).toBeTruthy()
+    expect((laterName as HTMLInputElement).value).toBe('B 节点保留的草稿')
+    expect(capabilityPutBodies()).toEqual([{ name: '等待保存的 A 节点名称' }])
   })
 
   it('closes stale editing state when browser history changes the selected path', async () => {

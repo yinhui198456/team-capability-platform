@@ -188,6 +188,10 @@ function NodeEditForm({
   const isL3 = node.nodeType === 'L3'
   const isL2 = node.nodeType === 'L2'
 
+  function requestClose() {
+    if (!saving) onClose()
+  }
+
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
@@ -203,7 +207,7 @@ function NodeEditForm({
   function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDialogElement>) {
     if (event.key === 'Escape') {
       event.preventDefault()
-      onClose()
+      requestClose()
       return
     }
     if (event.key !== 'Tab') return
@@ -225,6 +229,7 @@ function NodeEditForm({
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
+    if (saving) return
     setError('')
     const invalidHours = isL3 && replaceHours ? hoursError(estimatedHours) : ''
     if (invalidHours) {
@@ -276,7 +281,7 @@ function NodeEditForm({
         body.resource_codes = Array.from(resourceCodes)
       }
     }
-    if (!Object.keys(body).length) return onClose()
+    if (!Object.keys(body).length) return requestClose()
     setSaving(true)
     try {
       await updateCapabilityNode(node.code, body)
@@ -303,7 +308,7 @@ function NodeEditForm({
       aria-modal="true"
       onCancel={(event) => {
         event.preventDefault()
-        onClose()
+        requestClose()
       }}
       onKeyDown={handleDialogKeyDown}
     >
@@ -319,7 +324,7 @@ function NodeEditForm({
             type="button"
             className={styles.drawerClose}
             aria-label="关闭编辑"
-            onClick={() => onClose()}
+            onClick={requestClose}
             disabled={saving}
           >
             ×
@@ -464,7 +469,7 @@ function NodeEditForm({
           </>
         )}
         <div className="form-actions">
-          <button type="button" onClick={() => onClose()} disabled={saving}>
+          <button type="button" onClick={requestClose} disabled={saving}>
             取消
           </button>
           <button type="submit" disabled={saving}>
@@ -769,6 +774,7 @@ export function CapabilityModelPage() {
   const consumedFocusTarget = useRef('')
   const editReturnFocus = useRef<HTMLElement | null>(null)
   const restoreEditFocus = useRef(false)
+  const editSessionRef = useRef(0)
 
   const domains = useMemo(() => enabledDomains(model), [model])
   const currentDomain =
@@ -840,7 +846,7 @@ export function CapabilityModelPage() {
       setSelectedCode('')
       setActiveDomain(domains[0]?.code ?? '')
       closeDrawer(false)
-      setEditingNode(null)
+      closeEditor(false)
       if (isLaterNavigation && domains[0]) {
         requestFocusTarget(`capability-domain-content-${domains[0].code}`)
       }
@@ -860,7 +866,7 @@ export function CapabilityModelPage() {
             : `“${code}”无法识别，请搜索正确编号或选择能力域。`,
       )
       closeDrawer(false)
-      setEditingNode(null)
+      closeEditor(false)
       pendingDrawerCode.current = ''
       requestFocusTarget('capability-location-error')
       return
@@ -871,7 +877,7 @@ export function CapabilityModelPage() {
     } else {
       closeDrawer(false)
     }
-    setEditingNode(null)
+    closeEditor(false)
     setLocationError('')
     setSelectedCode(result.code)
     setActiveDomain(result.l1Code)
@@ -978,7 +984,7 @@ export function CapabilityModelPage() {
 
   function selectDomain(code: string) {
     closeBeforeNavigation()
-    setEditingNode(null)
+    closeEditor(false)
     setSelectedL2Level(null)
     pendingDomainScroll.current = { code, y: window.scrollY }
     if (!selectCode(code)) {
@@ -1026,17 +1032,19 @@ export function CapabilityModelPage() {
     setSearchOpen(false)
     setSearchActiveIndex(-1)
     closeBeforeNavigation()
-    setEditingNode(null)
+    closeEditor(false)
     if (!selectCode(result.code)) focusResult(result)
   }
 
   function closeEditor(shouldRestore = true) {
+    editSessionRef.current += 1
     restoreEditFocus.current = shouldRestore
     setEditingNode(null)
   }
 
   function startEdit(node: EditableNode, trigger: HTMLElement) {
     closeBeforeNavigation()
+    editSessionRef.current += 1
     editReturnFocus.current = trigger
     restoreEditFocus.current = false
     setEditingNode(node)
@@ -1049,6 +1057,8 @@ export function CapabilityModelPage() {
     if (!selectCode(node.code)) pendingDrawerCode.current = ''
     setSelectedL3(node.code)
   }
+
+  const editingSession = editSessionRef.current
 
   return (
     <section
@@ -1758,6 +1768,7 @@ export function CapabilityModelPage() {
           resources={resources ?? []}
           onClose={closeEditor}
           onSaved={() => {
+            if (editingSession !== editSessionRef.current) return
             refreshModel()
             closeEditor()
           }}
