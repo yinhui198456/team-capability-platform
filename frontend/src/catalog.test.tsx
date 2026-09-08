@@ -1,6 +1,7 @@
 /// @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,13 +13,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import type { CapabilityModel } from './catalog'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 
 function LocationDisplay() {
   const location = useLocation()
   return (
-    <span data-testid="location">{location.pathname + location.search}</span>
+    <span data-testid="location">
+      {location.pathname + location.search + location.hash}
+    </span>
   )
+}
+
+function HistoryControls() {
+  const navigate = useNavigate()
+  return (
+    <>
+      <button type="button" onClick={() => navigate(-1)}>
+        测试后退
+      </button>
+      <button type="button" onClick={() => navigate(1)}>
+        测试前进
+      </button>
+    </>
+  )
+}
+
+function capabilityPutBodies() {
+  return vi
+    .mocked(fetch)
+    .mock.calls.filter(
+      ([url, init]) =>
+        (url as string).startsWith('/api/capability-model/nodes/') &&
+        (init as RequestInit | undefined)?.method === 'PUT',
+    )
+    .map(([, init]) => JSON.parse((init as RequestInit).body as string))
 }
 
 function emptyDomain(code: string) {
@@ -29,6 +57,9 @@ function emptyDomain(code: string) {
     children: [],
   }
 }
+
+const LONG_REQUIREMENT =
+  '能够独立完成复杂能力场景的分析、方案设计、落地验证与复盘沉淀，并能向团队清晰说明关键取舍、风险边界、验证证据和后续改进方向，同时形成可供其他成员复用的实践指南与检查清单。'
 
 const model: CapabilityModel = {
   id: 1,
@@ -75,7 +106,7 @@ const model: CapabilityModel = {
           code: 'P01.02',
           name: '其他能力项',
           p4_description: 'L2 P4 完整描述',
-          p5_description: 'L2 P5 完整描述',
+          p5_description: LONG_REQUIREMENT,
           p6_description: 'L2 P6 完整描述',
           p7_description: 'L2 P7 完整描述',
           p8_description: 'L2 P8 完整描述',
@@ -192,6 +223,17 @@ function response(payload: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) })
 }
 
+function deferredResponse(payload: unknown) {
+  let resolve!: () => void
+  const promise = new Promise<{
+    ok: true
+    json: () => Promise<unknown>
+  }>((done) => {
+    resolve = () => done({ ok: true, json: () => Promise.resolve(payload) })
+  })
+  return { promise, resolve }
+}
+
 function anonymousResponse() {
   return Promise.resolve({
     ok: false,
@@ -206,6 +248,7 @@ function mockFetchWithAuth(
     status?: number
     json: () => Promise<unknown>
   }>,
+  capabilityModel = model,
 ) {
   return vi.fn((input: string) => {
     if (input === '/api/auth/me') return userResponse
@@ -231,7 +274,8 @@ function mockFetchWithAuth(
         })),
       })
     }
-    if (input.startsWith('/api/capability-model')) return response(model)
+    if (input.startsWith('/api/capability-model'))
+      return response(capabilityModel)
     if (input === '/api/learning-resources/P01-M001') return response(detail)
     if (input.includes('name=%E4%BA%A7%E5%93%81%E4%BD%93%E7%B3%BB')) {
       return response([resources[0]])
@@ -408,10 +452,19 @@ describe('catalog routes', () => {
     expect(
       screen.getByRole('tab', { name: /P01/ }).getAttribute('aria-selected'),
     ).toBe('true')
+    const tabs = screen.getByRole('tablist')
+    const p02Tab = screen.getByRole('tab', { name: /P02/ })
+    Object.defineProperties(tabs, {
+      clientWidth: { value: 200 },
+      scrollLeft: { value: 0, writable: true },
+    })
+    Object.defineProperties(p02Tab, {
+      offsetLeft: { value: 300 },
+      offsetWidth: { value: 100 },
+    })
     fireEvent.click(screen.getByRole('option', { name: /能力域.*P02/ }))
-    expect(
-      screen.getByRole('tab', { name: /P02/ }).getAttribute('aria-selected'),
-    ).toBe('true')
+    expect(p02Tab.getAttribute('aria-selected')).toBe('true')
+    expect(tabs.scrollLeft).toBe(200)
     expect(document.activeElement).toBe(
       screen.getByTestId('capability-domain-content-P02'),
     )
@@ -438,6 +491,7 @@ describe('catalog routes', () => {
     fireEvent.click(row)
 
     const dialog = await screen.findByRole('dialog', { name: /P01\.01\.01/ })
+    expect(dialog.getAttribute('aria-modal')).toBeNull()
     expect(within(dialog).getByText(/P01 · Data Infra 能力/)).toBeTruthy()
     expect(
       within(dialog).getByText(/P01\.01 · Data Infra 产品体系认知/),
@@ -448,16 +502,16 @@ describe('catalog routes', () => {
     expect(standard.textContent).toContain('Legacy Baseline v1')
     expect(standard.textContent).toContain('目标掌握度 1 / 5')
     expect(within(dialog).queryByText('L3 P4 完整描述')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(dialog))
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(row))
   })
 
   it('expands an L2 level description inline and handles an initial L3 hash', async () => {
-    window.history.replaceState({}, '', '/capability/model#P02.01.01')
     stubMember()
     render(
-      <MemoryRouter initialEntries={['/capability/model']}>
+      <MemoryRouter initialEntries={['/capability/model#P02.01.01']}>
         <App />
       </MemoryRouter>,
     )
@@ -471,11 +525,374 @@ describe('catalog routes', () => {
     ).toBe('true')
     expect(document.activeElement).toBe(row)
 
+    fireEvent.click(row)
+    const dialog = await screen.findByRole('dialog', { name: /P02\.01\.01/ })
+    expect(document.activeElement).toBe(dialog)
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '关闭达成路径详情' }),
+    )
+    await waitFor(() => expect(document.activeElement).toBe(row))
+
     fireEvent.click(screen.getByTestId('l2-level-summary-P02.01-P4'))
     expect(
       screen.getByTestId('l2-level-inline-description-P02.01-P4').textContent,
     ).toContain('P02 L2 P4')
-    window.history.replaceState({}, '', '/capability/model')
+  })
+
+  it('restores and focuses an initial L1 hash without opening detail', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model?source=test#P02']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+
+    const domain = await screen.findByTestId('capability-domain-content-P02')
+    expect(document.activeElement).toBe(domain)
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?source=test#P02',
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('shows short, long, and absent L2 requirements without duplicating short text', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model#P01.02']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const short = await screen.findByTestId('l2-level-summary-P01.02-P4')
+    expect(short.textContent).toBe('P4查看要求')
+    expect(short.textContent).not.toContain('L2 P4 完整描述')
+    fireEvent.click(short)
+    expect(
+      screen.getByTestId('l2-level-inline-description-P01.02-P4').textContent,
+    ).toContain('L2 P4 完整描述')
+
+    const long = screen.getByTestId('l2-level-summary-P01.02-P5')
+    expect(long.textContent).toContain('…')
+    expect(long.textContent).not.toContain(LONG_REQUIREMENT)
+    fireEvent.click(long)
+    expect(
+      screen.getByTestId('l2-level-inline-description-P01.02-P5').textContent,
+    ).toContain(LONG_REQUIREMENT)
+
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    const absent = screen.getByTestId('l2-level-summary-P01.01-P4')
+    expect(absent.textContent).toBe('P4查看要求')
+    fireEvent.click(absent)
+    expect(
+      screen.getByTestId('l2-level-inline-description-P01.01-P4').textContent,
+    ).toContain('未提供等级说明')
+  })
+
+  it('restores L2 hash navigation and preserves query parameters when search selects a path', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model?source=test#P02.01']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('l2-toggle-P02.01')
+    expect(
+      screen.getByRole('tab', { name: /P02/ }).getAttribute('aria-selected'),
+    ).toBe('true')
+    expect(
+      screen.getByTestId('l2-toggle-P02.01').getAttribute('aria-expanded'),
+    ).toBe('true')
+
+    fireEvent.change(screen.getByRole('combobox', { name: '搜索能力地图' }), {
+      target: { value: 'P01.01.01' },
+    })
+    fireEvent.click(screen.getByRole('option', { name: /P01\.01\.01/ }))
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?source=test#P01.01.01',
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('restores L1/L2/L3 and hashless state through exact back and forward history', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model?source=test']}>
+        <App />
+        <LocationDisplay />
+        <HistoryControls />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('l2-toggle-P01.01')
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?source=test',
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /P02/ }))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model?source=test#P02',
+      ),
+    )
+    fireEvent.click(screen.getByTestId('l2-toggle-P02.01'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model?source=test#P02.01',
+      ),
+    )
+    fireEvent.click(await screen.findByTestId('l3-row-P02.01.01'))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?source=test#P02.01.01',
+    )
+
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model?source=test#P02.01',
+      ),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('l2-toggle-P02.01'))
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model?source=test#P02',
+      ),
+    )
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('capability-domain-content-P02'),
+      ),
+    )
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model?source=test',
+      ),
+    )
+    expect(screen.getByTestId('capability-domain-content-P01')).toBeTruthy()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('capability-domain-content-P01'),
+      ),
+    )
+
+    for (const expected of ['#P02', '#P02.01', '#P02.01.01']) {
+      fireEvent.click(screen.getByText('测试前进'))
+      await waitFor(() =>
+        expect(screen.getByTestId('location').textContent).toBe(
+          `/capability/model?source=test${expected}`,
+        ),
+      )
+      if (expected === '#P02') {
+        await waitFor(() =>
+          expect(document.activeElement).toBe(
+            screen.getByTestId('capability-domain-content-P02'),
+          ),
+        )
+      } else if (expected === '#P02.01') {
+        await waitFor(() =>
+          expect(document.activeElement).toBe(
+            screen.getByTestId('l2-toggle-P02.01'),
+          ),
+        )
+        expect(
+          screen.getByTestId('l2-toggle-P02.01').getAttribute('aria-expanded'),
+        ).toBe('true')
+      }
+    }
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('l3-row-P02.01.01'))
+  })
+
+  it('collapses selected parents to one L1 history entry and leaves unrelated collapse unchanged', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model#P01.01.01']}>
+        <App />
+        <LocationDisplay />
+        <HistoryControls />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('l3-row-P01.01.01')
+    fireEvent.click(screen.getByRole('button', { name: '展开当前域' }))
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.02'))
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model#P01.01.01',
+    )
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model#P01',
+      ),
+    )
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model#P01.01.01',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: '收起当前域' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/capability/model#P01',
+      ),
+    )
+  })
+
+  it.each([
+    ['#P02.99', /不在当前模型中.*P02/, 'P02'],
+    ['#Z99', /无法识别/, null],
+    ['#%E0%A4%A', /编码无效/, null],
+  ])(
+    'shows explicit recovery for invalid hash %s without a fake selection',
+    async (hash, message, selectedDomain) => {
+      stubMember()
+      render(
+        <MemoryRouter initialEntries={[`/capability/model${hash}`]}>
+          <App />
+        </MemoryRouter>,
+      )
+
+      expect(await screen.findByText(message)).toBeTruthy()
+      for (const tab of screen.getAllByRole('tab')) {
+        expect(tab.getAttribute('aria-selected')).toBe(
+          tab.textContent?.includes(selectedDomain ?? '__none__')
+            ? 'true'
+            : 'false',
+        )
+      }
+      if (selectedDomain) {
+        expect(
+          screen.getByTestId(`capability-domain-content-${selectedDomain}`),
+        ).toBeTruthy()
+      } else {
+        expect(screen.queryByTestId('capability-domain-content-P01')).toBeNull()
+      }
+    },
+  )
+
+  it('supports combobox keys, clear, and refocuses a same-code result without adding history', async () => {
+    stubMember()
+    render(
+      <MemoryRouter initialEntries={['/capability/model?keep=1#P02.01']}>
+        <App />
+        <LocationDisplay />
+      </MemoryRouter>,
+    )
+
+    const l2 = await screen.findByTestId('l2-toggle-P02.01')
+    const search = screen.getByRole('combobox', { name: '搜索能力地图' })
+    fireEvent.change(search, { target: { value: 'Agent' } })
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'capability-search-option-0',
+    )
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'capability-search-option-1',
+    )
+    fireEvent.keyDown(search, { key: 'End' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'capability-search-option-2',
+    )
+    fireEvent.keyDown(search, { key: 'Home' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'capability-search-option-0',
+    )
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      'capability-search-option-2',
+    )
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(search.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.change(search, { target: { value: 'P02.01' } })
+    fireEvent.keyDown(search, { key: 'Home' })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(document.activeElement).toBe(l2))
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?keep=1#P02.01',
+    )
+    fireEvent.change(search, { target: { value: 'P01' } })
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/capability/model?keep=1#P02.01',
+    )
+  })
+
+  it('keeps a long combobox active option visible while focus stays on search', async () => {
+    const longModel = structuredClone(model)
+    longModel.domains[0].children[0].children = Array.from(
+      { length: 30 },
+      (_, index) => ({
+        ...longModel.domains[0].children[0].children[0],
+        code: `P01.01.${String(index + 1).padStart(2, '0')}`,
+        name: `长列表路径 ${index + 1}`,
+        resources: [],
+        unmatched_materials: [],
+      }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      mockFetchWithAuth(
+        response({
+          id: 2,
+          username: 'member',
+          full_name: 'Member User',
+          roles: ['Member'],
+        }),
+        longModel,
+      ),
+    )
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollIntoView',
+    )
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    try {
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      const search = screen.getByRole('combobox', { name: '搜索能力地图' })
+      act(() => search.focus())
+      fireEvent.change(search, { target: { value: '长列表路径' } })
+      expect(
+        within(screen.getByRole('listbox')).getAllByRole('option'),
+      ).toHaveLength(30)
+      scrollIntoView.mockClear()
+
+      fireEvent.keyDown(search, { key: 'End' })
+
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }),
+      )
+      expect(search.getAttribute('aria-activedescendant')).toBe(
+        'capability-search-option-29',
+      )
+      expect(document.activeElement).toBe(search)
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          'scrollIntoView',
+          descriptor,
+        )
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+      }
+    }
   })
 
   it('does not refetch the capability model during local navigation', async () => {
@@ -569,7 +986,13 @@ describe('catalog routes', () => {
     expect(search.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('listbox')).toBeNull()
 
-    fireEvent.focus(search)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('l2-toggle-P02.02'),
+      ),
+    )
+    act(() => search.focus())
+    expect(document.activeElement).toBe(search)
     expect(screen.getByRole('listbox')).toBeTruthy()
     fireEvent.keyDown(search, { key: 'Escape' })
     expect(screen.queryByRole('listbox')).toBeNull()
@@ -735,6 +1158,41 @@ describe('Leader catalog controls', () => {
     return within(headingElement.closest('form')!)
   }
 
+  function stubLeaderModel(
+    customModel: CapabilityModel,
+    failPut = false,
+    putResponse?: ReturnType<typeof response>,
+  ) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input === '/api/auth/me') {
+          return response({
+            id: 1,
+            username: 'leader',
+            full_name: 'Leader User',
+            roles: ['Leader'],
+          })
+        }
+        if (
+          input.startsWith('/api/capability-model/nodes/') &&
+          init?.method === 'PUT'
+        ) {
+          if (putResponse) return putResponse
+          if (!failPut) return response(customModel)
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({ detail: '保存失败，请重试' }),
+          })
+        }
+        if (input.startsWith('/api/capability-model'))
+          return response(customModel)
+        return response(resources)
+      }),
+    )
+  }
+
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -776,6 +1234,206 @@ describe('Leader catalog controls', () => {
     expect(screen.getAllByText('编辑节点').length).toBeGreaterThanOrEqual(1)
   })
 
+  it('resets local fields when switching edit nodes and sends no unintended PUT', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.02'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '未保存的 A 节点名称' },
+    })
+
+    fireEvent.click(screen.getByTestId('l3-edit-P01.02.01'))
+    const form = getFormByHeading('编辑 P01.02.01 (L3)')
+    fireEvent.click(form.getByText('保存'))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: '编辑 P01.02.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(capabilityPutBodies()).toHaveLength(0)
+  })
+
+  it('opens an isolated edit dialog with context, focus loop, Escape, and focus return', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    const trigger = screen.getByTestId('l3-edit-P01.01.01')
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', {
+      name: '编辑 P01.01.01 (L3)',
+    })
+    const form = within(dialog)
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect((form.getByLabelText('代码') as HTMLInputElement).readOnly).toBe(
+      true,
+    )
+    expect((form.getByLabelText('所属能力组') as HTMLInputElement).value).toBe(
+      'P01.01 · Data Infra 产品体系认知',
+    )
+    expect(form.getByLabelText('原始学习材料').tagName).toBe('TEXTAREA')
+    expect(form.getByRole('checkbox', { name: '启用' })).toBeTruthy()
+    const name = form.getByLabelText('名称')
+    await waitFor(() => expect(document.activeElement).toBe(name))
+
+    const close = form.getByRole('button', { name: '关闭编辑' })
+    const save = form.getByRole('button', { name: '保存' })
+    close.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(save)
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it.each(['Escape', 'native cancel'])(
+    'prevents %s from dismissing the editor while save is pending',
+    async (dismissal) => {
+      const pendingPut = deferredResponse(model)
+      stubLeaderModel(model, false, pendingPut.promise)
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+      fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+      const dialog = await screen.findByRole('dialog', {
+        name: '编辑 P01.01.01 (L3)',
+      })
+      const form = within(dialog)
+      fireEvent.change(form.getByLabelText('名称'), {
+        target: { value: '等待保存的名称' },
+      })
+      fireEvent.click(form.getByRole('button', { name: '保存' }))
+      await waitFor(() =>
+        expect(
+          (form.getByRole('button', { name: '保存' }) as HTMLButtonElement)
+            .disabled,
+        ).toBe(true),
+      )
+
+      if (dismissal === 'Escape') {
+        fireEvent.keyDown(dialog, { key: 'Escape' })
+      } else {
+        fireEvent(dialog, new Event('cancel', { cancelable: true }))
+      }
+      expect(
+        screen.getByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeTruthy()
+
+      pendingPut.resolve()
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+        ).toBeNull(),
+      )
+      expect(capabilityPutBodies()).toEqual([{ name: '等待保存的名称' }])
+    },
+  )
+
+  it('ignores an obsolete save completion after navigation starts a later edit session', async () => {
+    const pendingPut = deferredResponse(model)
+    stubLeaderModel(model, false, pendingPut.promise)
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <HistoryControls />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.01.01'))
+    fireEvent.change(screen.getByLabelText('名称'), {
+      target: { value: '等待保存的 A 节点名称' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(capabilityPutBodies()).toHaveLength(1))
+
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.02'))
+    fireEvent.click(screen.getByTestId('l3-edit-P01.02.01'))
+    const laterDialog = await screen.findByRole('dialog', {
+      name: '编辑 P01.02.01 (L3)',
+    })
+    const laterName = within(laterDialog).getByLabelText('名称')
+    fireEvent.change(laterName, { target: { value: 'B 节点保留的草稿' } })
+
+    await act(async () => {
+      pendingPut.resolve()
+      await pendingPut.promise
+    })
+    expect(
+      screen.getByRole('dialog', { name: '编辑 P01.02.01 (L3)' }),
+    ).toBeTruthy()
+    expect((laterName as HTMLInputElement).value).toBe('B 节点保留的草稿')
+    expect(capabilityPutBodies()).toEqual([{ name: '等待保存的 A 节点名称' }])
+  })
+
+  it('closes stale editing state when browser history changes the selected path', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+        <HistoryControls />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    expect(getFormByHeading('编辑 P01.01.01 (L3)')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('测试后退'))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(screen.getByTestId('capability-domain-content-P01')).toBeTruthy()
+  })
+
+  it('keeps a click-opened L3 Drawer while closing the stale editor', async () => {
+    stubLeader()
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    expect(getFormByHeading('编辑 P01.01.01 (L3)')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('l3-row-P01.01.01'))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(
+      screen.queryByRole('heading', { name: '编辑 P01.01.01 (L3)' }),
+    ).toBeNull()
+  })
+
   it('submits PUT to update a domain overview', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
@@ -809,14 +1467,10 @@ describe('Leader catalog controls', () => {
     )
     expect(putCall).toBeTruthy()
     const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body).toMatchObject({
-      name: 'Data Infra 能力',
-      enabled: true,
-      overview: '更新后的概述',
-    })
+    expect(body).toEqual({ overview: '更新后的概述' })
   })
 
-  it('submits PUT with L3-only fields and resource codes for an L3 node', async () => {
+  it('submits only changed L3 fields without recreating resource associations', async () => {
     render(
       <MemoryRouter initialEntries={['/capability/model']}>
         <App />
@@ -845,15 +1499,205 @@ describe('Leader catalog controls', () => {
     )
     expect(putCall).toBeTruthy()
     const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body).toMatchObject({
-      name: 'TDC / TDH / ArgoDB / TDS 产品定位',
-      enabled: true,
-      recommended_start_level: 'P6',
-      materials_text: 'P01-M001',
-      expected_output: '能力说明',
-      estimated_hours: '8',
-      resource_codes: ['P01-M001'],
+    expect(body).toEqual({ materials_text: 'P01-M001' })
+  })
+
+  it.each(['1', '1.5', ''])(
+    'accepts the supported hour value %j',
+    async (hours) => {
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+      fireEvent.click(screen.getAllByText('编辑节点')[0])
+      const form = getFormByHeading('编辑 P01.01.01 (L3)')
+
+      fireEvent.change(
+        form.getByRole('textbox', { name: '预计时长（小时）' }),
+        {
+          target: { value: hours },
+        },
+      )
+      fireEvent.click(form.getByText('保存'))
+
+      await waitFor(() => expect(capabilityPutBodies()).toHaveLength(1))
+      expect(capabilityPutBodies()[0]).toEqual({ estimated_hours: hours })
+    },
+  )
+
+  it('rejects invalid hour formats with inline focus and no request', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    const form = getFormByHeading('编辑 P01.01.01 (L3)')
+    const input = form.getByRole('textbox', { name: '预计时长（小时）' })
+
+    for (const value of ['1.23', '-1', '1e2', '8 小时']) {
+      fireEvent.change(input, { target: { value } })
+      fireEvent.click(form.getByText('保存'))
+      expect(form.getByRole('alert').textContent).toContain(
+        '请输入非负整数或至多一位小数',
+      )
+      expect(document.activeElement).toBe(input)
+      expect((input as HTMLInputElement).value).toBe(value)
+    }
+    expect(capabilityPutBodies()).toHaveLength(0)
+  })
+
+  it('preserves legacy hours and unknown selects until an explicit replacement', async () => {
+    const legacyModel = structuredClone(model)
+    const node = legacyModel.domains[0].children[0].children[0]
+    node.estimated_hours = '4–6h'
+    node.recommended_start_level = '历史等级'
+    node.output_type = '历史产出类型'
+    stubLeaderModel(legacyModel)
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    const form = getFormByHeading('编辑 P01.01.01 (L3)')
+
+    const startLevel = form.getByLabelText('建议起始等级') as HTMLSelectElement
+    expect(startLevel.value).toBe('历史等级')
+    expect(Array.from(startLevel.options, (option) => option.value)).toEqual([
+      '',
+      '历史等级',
+      'P4',
+      'P5',
+      'P6',
+      'P7',
+      'P8',
+      'P4–P5',
+      'P5–P6',
+      'P6–P7',
+      'P7–P8',
+      'P6–P8',
+      'P5–P8',
+    ])
+    expect(
+      new Set(Array.from(startLevel.options, (option) => option.value)).size,
+    ).toBe(startLevel.options.length)
+    const outputType = form.getByLabelText('输出类型') as HTMLSelectElement
+    expect(outputType.value).toBe('历史产出类型')
+    expect(Array.from(outputType.options, (option) => option.value)).toEqual([
+      '',
+      '历史产出类型',
+      '文档 / 演示',
+      '实操',
+      '方案设计',
+      '问题处理',
+      '经验沉淀',
+      '方法论沉淀',
+      '架构图+说明',
+      '实操+说明',
+      '实操+方案',
+      '实操+分析',
+      '实操+设计',
+      '实操+验证',
+      'Demo+交付物',
+      'POC 验证报告',
+    ])
+    expect(form.getByText(/预计时长：4–6h/)).toBeTruthy()
+    fireEvent.click(form.getByText('修改时长'))
+    const input = form.getByRole('textbox', { name: /预计时长（小时）/ })
+    fireEvent.change(input, { target: { value: '5' } })
+    fireEvent.click(form.getByText('取消修改时长'))
+    expect(form.queryByRole('textbox', { name: /预计时长（小时）/ })).toBeNull()
+    expect(form.getByText(/预计时长：4–6h/)).toBeTruthy()
+
+    fireEvent.click(form.getByText('修改时长'))
+    fireEvent.change(form.getByRole('textbox', { name: /预计时长（小时）/ }), {
+      target: { value: '5' },
     })
+    fireEvent.click(form.getByText('保存'))
+    await waitFor(() => expect(capabilityPutBodies()).toHaveLength(1))
+    expect(capabilityPutBodies()[0]).toEqual({ estimated_hours: '5' })
+  })
+
+  it.each(['1.23', '8 小时'])(
+    'does not validate or rewrite untouched historical hours %s',
+    async (historicalHours) => {
+      const legacyModel = structuredClone(model)
+      legacyModel.domains[0].children[0].children[0].estimated_hours =
+        historicalHours
+      stubLeaderModel(legacyModel)
+      render(
+        <MemoryRouter initialEntries={['/capability/model']}>
+          <App />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('tab', { name: /P01/ })
+      fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+      fireEvent.click(screen.getAllByText('编辑节点')[0])
+      const form = getFormByHeading('编辑 P01.01.01 (L3)')
+
+      fireEvent.change(form.getByLabelText('名称'), {
+        target: { value: '仅修改名称' },
+      })
+      fireEvent.click(form.getByText('保存'))
+      await waitFor(() => expect(capabilityPutBodies()).toHaveLength(1))
+      expect(capabilityPutBodies()[0]).toEqual({ name: '仅修改名称' })
+    },
+  )
+
+  it('closes a settled reverted form without sending a PUT', async () => {
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    const form = getFormByHeading('编辑 P01.01.01 (L3)')
+    const notes = form.getByLabelText('备注')
+    const resource = form.getByLabelText(/P01-M001 · 产品体系材料/)
+
+    fireEvent.change(notes, { target: { value: '临时修改' } })
+    fireEvent.change(notes, { target: { value: '' } })
+    fireEvent.click(resource)
+    fireEvent.click(resource)
+    fireEvent.click(form.getByText('保存'))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
+    )
+    expect(capabilityPutBodies()).toHaveLength(0)
+  })
+
+  it('keeps edited input after a failed PUT', async () => {
+    stubLeaderModel(model, true)
+    render(
+      <MemoryRouter initialEntries={['/capability/model']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('tab', { name: /P01/ })
+    fireEvent.click(screen.getByTestId('l2-toggle-P01.01'))
+    fireEvent.click(screen.getAllByText('编辑节点')[0])
+    const form = getFormByHeading('编辑 P01.01.01 (L3)')
+    const materials = form.getByLabelText('原始学习材料') as HTMLInputElement
+
+    fireEvent.change(materials, { target: { value: '未保存输入' } })
+    fireEvent.click(form.getByText('保存'))
+    expect((await form.findByRole('alert')).textContent).toContain(
+      '保存失败，请重试',
+    )
+    expect(materials.value).toBe('未保存输入')
   })
 
   it('does not expose legacy per-node standard target overrides', async () => {
@@ -871,21 +1715,11 @@ describe('Leader catalog controls', () => {
     fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/capability-model/nodes/P01.01.01',
-        expect.objectContaining({ method: 'PUT' }),
-      ),
+      expect(
+        screen.queryByRole('heading', { name: '编辑 P01.01.01 (L3)' }),
+      ).toBeNull(),
     )
-    const putCall = vi
-      .mocked(fetch)
-      .mock.calls.find(
-        ([url, init]) =>
-          url === '/api/capability-model/nodes/P01.01.01' &&
-          (init as RequestInit | undefined)?.method === 'PUT',
-      )
-    const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.standard_target_overrides).toBeUndefined()
-    expect(body.recommended_start_level).toBe('P6')
+    expect(capabilityPutBodies()).toHaveLength(0)
   })
 
   it('keeps recommended start level as a path display field', async () => {
@@ -1107,6 +1941,9 @@ describe('Leader catalog controls', () => {
     )
     await screen.findByRole('tab', { name: /P01/ })
     fireEvent.click(screen.getAllByText('编辑')[0])
+    fireEvent.change(screen.getByLabelText('一级概述'), {
+      target: { value: '更新后的概述' },
+    })
     fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() =>

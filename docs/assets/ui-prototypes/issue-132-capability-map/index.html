@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Issue #132 阶段 1 修订版高保真交互原型，供阶段 2 用户评审。" />
+    <title>能力地图 · 阶段 1 修订版高保真交互原型</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#capability-content">跳到能力地图内容</a>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="index.html">Team Capability Platform</a>
+        <div class="topbar-context" aria-label="当前用户">
+          <span>2026 年</span>
+          <span id="topbar-user">Member User</span>
+          <button id="logout" type="button">退出</button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="主导航" id="sidebar">
+        <section data-nav="member">
+          <h2>我的工作台</h2>
+          <a href="#prototype-only">我的工作台</a>
+        </section>
+        <section data-nav="member">
+          <h2>能力成长</h2>
+          <a href="#prototype-only">能力自评与 Gap</a>
+          <a href="#prototype-only">评估历史</a>
+        </section>
+        <section data-nav="member">
+          <h2>我的计划</h2>
+          <a href="#prototype-only">年度成长计划</a>
+          <a href="#prototype-only">学习任务</a>
+        </section>
+        <section data-nav="common">
+          <h2>成长管理</h2>
+          <a href="#prototype-only">月度复盘</a>
+          <a href="#prototype-only">成长档案</a>
+        </section>
+        <section data-nav="leader">
+          <h2>团队运营</h2>
+          <a href="#prototype-only">团队能力分析</a>
+          <a href="#prototype-only">团队年度能力规划</a>
+          <a href="#prototype-only">学习资源</a>
+        </section>
+        <section>
+          <h2>能力标准</h2>
+          <a class="active" href="index.html" aria-current="page">能力地图</a>
+        </section>
+      </aside>
+
+      <main class="content" id="capability-content">
+        <section class="page" aria-labelledby="page-title">
+          <header class="page-header">
+            <div class="title-block">
+              <p class="eyebrow">查看团队能力等级与能力项标准</p>
+              <h1 id="page-title">能力地图</h1>
+              <p class="muted">技术架构与开发专业线能力模型 · V1.0</p>
+            </div>
+
+            <div class="header-actions">
+              <div class="search-panel">
+                <label for="capability-search">搜索能力地图</label>
+                <div class="search-control">
+                  <input
+                    id="capability-search"
+                    type="search"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="search-results"
+                    aria-describedby="search-hint"
+                    autocomplete="off"
+                    placeholder="搜索 L1 / L2 / L3 编号或名称"
+                  />
+                  <button class="clear-search" type="button" hidden>清除</button>
+                </div>
+                <p class="sr-only" id="search-hint">
+                  输入后使用上下方向键浏览结果，Enter 选择，Escape 关闭。
+                </p>
+                <div
+                  class="search-results"
+                  id="search-results"
+                  role="listbox"
+                  aria-label="能力地图搜索结果"
+                  hidden
+                ></div>
+              </div>
+              <button id="standard-versions" class="standard-versions" type="button" hidden>标准版本维护</button>
+            </div>
+          </header>
+
+          <div class="path-error" id="path-error" role="alert" hidden>
+            <div>
+              <strong id="path-error-title">未找到该能力路径</strong>
+              <p id="path-error-copy"></p>
+            </div>
+            <button id="reset-invalid-path" type="button">
+              清除无效路径并返回 P01
+            </button>
+          </div>
+
+          <nav class="domain-tabs" aria-label="能力域导航" role="tablist"></nav>
+
+          <section class="domain-content" tabindex="-1" aria-live="polite">
+            <header class="domain-heading">
+              <div>
+                <p class="section-kicker">当前能力域</p>
+                <h2 id="domain-title"></h2>
+              </div>
+              <button id="edit-domain" class="l2-edit" type="button" hidden>编辑能力域</button>
+            </header>
+
+            <div class="domain-overview">
+              <p id="domain-overview-copy"></p>
+              <span id="domain-overview-counts"></span>
+            </div>
+
+            <div class="l2-toolbar">
+              <div>
+                <h3>能力组</h3>
+                <span id="l2-count"></span>
+              </div>
+              <div class="toolbar-actions">
+                <button id="expand-domain" type="button">展开当前域</button>
+                <button id="collapse-domain" type="button">收起当前域</button>
+              </div>
+            </div>
+
+            <div class="l2-list"></div>
+          </section>
+
+          <section class="not-found" id="not-found" tabindex="-1" hidden>
+            <p class="section-kicker">能力路径未找到</p>
+            <h2>这个链接没有对应的能力域、能力标准或达成路径</h2>
+            <p>请搜索正确编号，或清除无效路径后返回能力地图。</p>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div class="drawer-backdrop" hidden></div>
+    <aside
+      class="drawer view-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawer-title"
+      tabindex="-1"
+      hidden
+    >
+      <header>
+        <div>
+          <p class="section-kicker">达成路径详情</p>
+          <h2 id="drawer-title"></h2>
+          <p class="muted" id="drawer-name"></p>
+        </div>
+        <button class="drawer-close" type="button">关闭</button>
+      </header>
+      <div class="drawer-body"></div>
+    </aside>
+
+    <aside class="drawer edit-drawer" role="dialog" aria-modal="true" aria-labelledby="edit-drawer-title" tabindex="-1" hidden>
+      <header>
+        <div><p class="section-kicker">标准维护</p><h2 id="edit-drawer-title">编辑能力标准</h2></div>
+        <button class="drawer-close" type="button">关闭</button>
+      </header>
+      <form class="edit-form" id="edit-form"></form>
+    </aside>
+    <p class="save-notice" id="save-notice" role="status" aria-live="polite" hidden></p>
+
+    <p class="sr-only" id="live-status" aria-live="polite" aria-atomic="true"></p>
+    <script src="assets/prototype.js"></script>
+  </body>
+</html>

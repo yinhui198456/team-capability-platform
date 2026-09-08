@@ -3,11 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TCP 页面三版本原型</title>
-    <script type="module" crossorigin src="./assets/index-LwRo0KzH.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Cw_G5jg6.css">
+    <title>TCP 阶段 2 评审包</title>
+    <meta name="description" content="TCP 阶段 2 评审包：CM01 阶段 1 修订版高保真交互原型与九个既有定版页面。" />
+    <style>:root{color:#101828;font:16px system-ui,-apple-system,"Segoe UI",sans-serif}*{box-sizing:border-box}body{background:#edf3f9;margin:0}.top{background:#0f4694;color:#fff;padding:28px max(24px,calc((100vw - 1180px)/2))}.top p{color:#dbeafe;margin:6px 0 0}main{margin:28px auto 48px;max-width:1180px;padding:0 24px}h1,h2,p{margin-top:0}.lead{color:#475467;line-height:1.6;max-width:70ch}.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}article{background:#fff;border:1px solid #dbe3ec;border-radius:10px;padding:18px}article p{color:#475467;line-height:1.55;min-height:3.1em}.code{color:#175cd3;font-size:13px;font-weight:750}.links{display:flex;flex-wrap:wrap;gap:10px}a{color:#175cd3}a.button{border:1px solid #b2ccff;border-radius:6px;font-weight:700;padding:8px 10px;text-decoration:none}a.button:hover,a.button:focus-visible{background:#eef4ff}.cm{border-color:#84adff;grid-column:1/-1}.cm .links{margin-top:12px}@media (max-width:600px){.top{padding:22px 16px}main{margin-top:20px;padding:0 16px}.grid{grid-template-columns:1fr}}</style>
   </head>
   <body>
-    <div id="root"></div>
+    <main id="catalog">
+      <h1>TCP 阶段 2 评审包</h1>
+      <p class="lead">CM01 是“阶段 1 修订版高保真交互原型”，用于供阶段 2 用户评审；其余九页保持既有定版入口。</p>
+      <section class="grid" aria-label="评审页面目录">
+        <article class="cm"><span class="code">CM01 · 能力地图</span><h2>能力地图</h2><p>查看能力标准；Leader 状态仅演示维护交互，不连接后端。</p><div class="links"><a class="button" href="../issue-132-capability-map/index.html?role=member">全员只读</a><a class="button" href="../issue-132-capability-map/index.html?role=leader">Leader 维护</a></div></article>
+        <article><span class="code">M01</span><h2>我的工作台</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=M01">打开 M01</a></article>
+        <article><span class="code">M02</span><h2>能力评级与提升计划</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=M02">打开 M02</a></article>
+        <article><span class="code">M03</span><h2>年度成长计划</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=M03">打开 M03</a></article>
+        <article><span class="code">M04</span><h2>学习任务</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=M04">打开 M04</a></article>
+        <article><span class="code">M05</span><h2>学习任务详情</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=M05">打开 M05</a></article>
+        <article><span class="code">B01</span><h2>成果验收</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=B01">打开 B01</a></article>
+        <article><span class="code">D01</span><h2>成员学习进度看板</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=D01">打开 D01</a></article>
+        <article><span class="code">L01</span><h2>团队能力分析</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=L01">打开 L01</a></article>
+        <article><span class="code">A01</span><h2>用户、角色与辅导关系</h2><p>既有定版页面。</p><a class="button" href="viewer.html?collection=selected&amp;page=A01">打开 A01</a></article>
+      </section>
+    </main>
+    <script>
+      const query = location.search;
+      if (new URLSearchParams(query).has('collection') || new URLSearchParams(query).has('page')) location.replace('viewer.html' + query + location.hash);
+    </script>
   </body>
 </html>
