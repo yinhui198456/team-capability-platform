@@ -4,8 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TCP 页面三版本原型</title>
+    <script>
+      (() => {
+        const isSelectedM02 = () => {
+          const query = new URLSearchParams(location.search)
+          return (
+            query.get('collection') === 'selected' &&
+            query.get('page') === 'M02'
+          )
+        }
+        if (isSelectedM02()) {
+          location.replace('./pages/m02-selected.html')
+          return
+        }
+        const replaceState = history.replaceState
+        history.replaceState = function (...args) {
+          replaceState.apply(this, args)
+          if (isSelectedM02()) location.replace('./pages/m02-selected.html')
+        }
+      })()
+    </script>
     <script type="module" crossorigin src="./assets/index-LwRo0KzH.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Cw_G5jg6.css">
+    <link rel="stylesheet" crossorigin href="./assets/index-Cw_G5jg6.css" />
   </head>
   <body>
     <div id="root"></div>

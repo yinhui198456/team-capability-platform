@@ -1,7 +1,7 @@
 /** Issue #62: 显式生成学习任务（#194 兼容改造）— E2E scenarios.
 
-  Issue #194 将“提交自评并自动生成学习任务”废止为三个独立动作：
-  保存能力评级 → 加入/移出计划草稿（include_in_plan）→ 显式生成所选学习任务
+  Issue #194 将“提交自评并自动生成学习任务”废止为连续流程：
+  能力评级逐项自动保存 → 加入/移出计划草稿（include_in_plan）→ 显式生成所选学习任务
   （POST /generate-plan-items，Idempotency-Key 前缀 generate-plan-items:）。
   原 10 个场景以“Buddy 自评复核认可 → 自动生成计划”为主线（已废止），现按
   新合同重写：每条场景保留原意图（零写入、幂等重放、冲突恢复、权限边界、

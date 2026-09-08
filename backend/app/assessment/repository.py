@@ -1704,6 +1704,12 @@ def save_assessment_draft(
                 and gap_value > 0
             )
 
+            # Issue #201: joining a positive-gap item defaults priority to low.
+            # Do this before the cleanup snapshot so the default is canonical,
+            # not reported as an auto-cleared client value.
+            if can_plan and include_in_plan is True and member_priority is None:
+                member_priority = "低"
+
             # ── P1-3: Atomic plan field cleanup ──
             cleared_fields: list[str] = []
             orig_priority = member_priority
@@ -1780,9 +1786,8 @@ def save_assessment_draft(
                     )
                 plan_quarter = _quarter_of(plan_month)
 
-            # 已选提升项可作为不完整计划草稿持久化；优先级和月份均由显式
-            # 生成前校验，避免首个「加入提升计划」动作因 UI 尚未展示编辑区
-            # 而失败。
+            # 已选提升项可缺少月份，以便先持久化「加入提升计划」动作；
+            # 优先级已在上方默认低，月份由显式生成前校验。
 
             # Track auto-cleared fields
             if orig_priority != member_priority:
@@ -2326,7 +2331,7 @@ def generate_plan_items_for_selection(
     *,
     idempotency_key: str | None = None,
 ) -> dict[str, object]:
-    """Issue #194: 显式生成所选学习任务（M02 第三个独立动作）.
+    """Issue #194: 显式生成所选学习任务（M02 连续流程的显式生成步骤）.
 
     Generates plan items + learning tasks ONLY for the selected l3_codes.
 

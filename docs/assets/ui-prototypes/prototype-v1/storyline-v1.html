@@ -56,7 +56,7 @@
       </div>
       <aside class="card hero-side">
         <h2>已确认的三条边界</h2>
-        <div class="rule"><b>评级不产生任务</b><span>保存评级只更新能力数据。</span></div>
+        <div class="rule"><b>评级不产生任务</b><span>评级自动保存，只更新能力数据。</span></div>
         <div class="rule"><b>计划时间只有一个来源</b><span>直接选择计划年月，不重复填写其他时间字段。</span></div>
         <div class="rule"><b>Buddy 不审核评级</b><span>只验收学习成果 Evidence。</span></div>
       </aside>
@@ -69,9 +69,9 @@
       </div>
       <div class="backbone">
         <article class="step"><span class="number">1</span><div class="role">Leader / Admin</div><h3>发布适用能力标准</h3><p>明确岗位、当前职级和目标职级下真正适用的 L3。</p><dl><dt>结果</dt><dd>适用 L3 清单</dd><dt>规则</dt><dd>不适用项不进入分母</dd></dl></article>
-        <article class="step"><span class="number">2</span><div class="role">Member</div><h3>增量保存能力评级</h3><p>一次评 1 项或多项，随时保存；不要求全部完成。</p><dl><dt>输入</dt><dd>current_level 0…5</dd><dt>结果</dt><dd>评级与 Gap 更新</dd></dl></article>
-        <article class="step"><span class="number">3</span><div class="role">Member</div><h3>选择本次提升项</h3><p>只从“已评级且 Gap &gt; 0”的 L3 中选择。</p><dl><dt>输入</dt><dd>一个或多个 L3</dd><dt>结果</dt><dd>形成待计划批次</dd></dl></article>
-        <article class="step"><span class="number">4</span><div class="role">Member</div><h3>补充计划月份</h3><p>每个选中项选择一个年月；整个输入框都可以点击打开选择面板。</p><dl><dt>输入</dt><dd>计划年月</dd><dt>结果</dt><dd>计划草稿就绪</dd></dl></article>
+        <article class="step"><span class="number">2</span><div class="role">Member</div><h3>评级自动保存</h3><p>一次评 1 项或多项，每次选择自动保存；不要求全部完成。</p><dl><dt>输入</dt><dd>current_level 0…5</dd><dt>结果</dt><dd>评级与 Gap 更新</dd></dl></article>
+        <article class="step"><span class="number">3</span><div class="role">Member</div><h3>选择本次提升项</h3><p>只从“已评级且 Gap &gt; 0”的 L3 中选择；加入时优先级默认低，可选调整为中/高。</p><dl><dt>输入</dt><dd>一个或多个 L3</dd><dt>结果</dt><dd>形成待计划批次</dd></dl></article>
+        <article class="step"><span class="number">4</span><div class="role">Member</div><h3>补充计划月份</h3><p>每个选中项必须选择一个年月；整个输入框都可以点击打开选择面板。</p><dl><dt>输入</dt><dd>计划年月</dd><dt>结果</dt><dd>计划草稿就绪</dd></dl></article>
         <article class="step"><span class="number">5</span><div class="role">Member → 系统</div><h3>生成所选学习任务</h3><p>显式提交所选批次；任一缺月份，整批零写入并保留输入。</p><dl><dt>规则</dt><dd>原子、幂等</dd><dt>结果</dt><dd>正式计划与任务</dd></dl></article>
         <article class="step"><span class="number">6</span><div class="role">Member</div><h3>执行学习并记录</h3><p>记录学习日志、投入时长、阶段产出和复盘。</p><dl><dt>结果</dt><dd>可追踪的执行记录</dd><dt>下一步</dt><dd>提交 Evidence</dd></dl></article>
         <article class="step"><span class="number">7</span><div class="role">Buddy</div><h3>验收学习成果</h3><p>只判断 Evidence 是否达标；通过或要求补充。</p><dl><dt>保留</dt><dd>Evidence Review</dd><dt>取消</dt><dd>自评复核</dd></dl></article>
@@ -80,12 +80,12 @@
     </section>
 
     <section class="card section">
-      <div class="section-head"><div><h2>2. 四个动作的业务边界</h2><p>它们不是四个全局页面阶段，而是每个 L3 可独立推进的状态变化。</p></div></div>
+      <div class="section-head"><div><h2>2. 四个连续环节的业务边界</h2><p>它们不是四个全局页面阶段，而是每个 L3 可独立推进的状态变化。</p></div></div>
       <div class="boundary">
-        <article class="action"><span class="tag ok">动作 A</span><h3>保存能力评级</h3><ul><li>保存本次改动的任意若干项</li><li><b>0</b> 表示已评级；<b>null</b> 表示未评级</li><li>不创建计划、任务或 Review</li></ul><div class="scope">阻断范围：仅本次填写值是否合法</div></article>
-        <article class="action"><span class="tag ok">动作 B</span><h3>选择提升项</h3><ul><li>已评级且 Gap &gt; 0 才可选择</li><li>支持单选或多选</li><li>其他未评级 L3 与本批次无关</li></ul><div class="scope">阻断范围：仅所选项是否具备提升资格</div></article>
-        <article class="action"><span class="tag ok">动作 C</span><h3>补充计划月份</h3><ul><li>只填写一个年月字段</li><li>整框点击即可打开年月面板</li><li>与已选提升项一起保存为计划草稿</li></ul><div class="scope">阻断范围：不阻断评级保存，只影响正式生成</div></article>
-        <article class="action"><span class="tag ok">动作 D</span><h3>生成所选学习任务</h3><ul><li>这是唯一创建任务的入口</li><li>所选任一项缺月份则整批零写入</li><li>重复提交复用已有任务</li></ul><div class="scope">阻断范围：仅本次所选批次，批次内原子</div></article>
+        <article class="action"><span class="tag ok">环节 A</span><h3>评级自动保存</h3><ul><li>每次评级选择自动保存</li><li><b>0</b> 表示已评级；<b>null</b> 表示未评级</li><li>不创建计划、任务或 Review</li></ul><div class="scope">反馈范围：保存中、已保存或失败</div></article>
+        <article class="action"><span class="tag ok">环节 B</span><h3>选择提升项</h3><ul><li>已评级且 Gap &gt; 0 才可选择</li><li>加入时优先级默认低，可选调整为中/高</li><li>其他未评级 L3 与本批次无关</li></ul><div class="scope">阻断范围：仅所选项是否具备提升资格</div></article>
+        <article class="action"><span class="tag ok">环节 C</span><h3>补充计划月份</h3><ul><li>计划月份必填，只填写一个年月字段</li><li>整框点击即可打开年月面板</li><li>与已选提升项一起保存为计划草稿</li></ul><div class="scope">阻断范围：不阻断评级自动保存，只影响正式生成</div></article>
+        <article class="action"><span class="tag ok">环节 D</span><h3>生成所选学习任务</h3><ul><li>这是唯一创建任务的入口</li><li>所选任一项缺月份则整批零写入</li><li>重复提交复用已有任务</li></ul><div class="scope">阻断范围：仅本次所选批次，批次内原子</div></article>
       </div>
     </section>
 
@@ -156,7 +156,7 @@
       <div class="section-head"><div><h2>7. 已确认的计划草稿规则</h2><p>选择提升项和计划月份都属于可恢复草稿，不因退出页面或重新登录而丢失。</p></div><span class="tag ok">已确认</span></div>
       <div class="decision">
         <div><h3>草稿保存</h3><p>“已选择提升项 + 计划月份”持久保存；用户可以分多次完成，也可以取消尚未生成的选择。</p></div>
-        <div><h3>正式生成边界</h3><p>只有点击“生成所选学习任务”才创建正式计划和任务；保存评级、选择提升项、填写月份都不会偷偷生成任务。</p></div>
+        <div><h3>正式生成边界</h3><p>只有点击“生成所选学习任务”才创建正式计划和任务；评级自动保存、选择提升项、填写月份都不会偷偷生成任务。</p></div>
       </div>
     </section>
 

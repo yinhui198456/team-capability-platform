@@ -253,7 +253,7 @@ export async function repairDraftTargetSnapshots(
 }
 
 /** 稀疏 PATCH 行：只包含调用方提供的字段，未提供的键不发送。
-  Issue #194 P1：保存评级与计划草稿自动保存是两个独立动作，各自只提交
+  Issue #201：评级与计划草稿自动保存是两个独立稀疏队列，各自只提交
   自己的字段（plan_quarter 由服务端派生，永不作为输入发送）。 */
 export type DraftDetailInput = {
   l3_node_id?: number | null
@@ -298,7 +298,7 @@ export async function saveDraft(
   )
 }
 
-/** Issue #194: M02 第三个独立动作 — 显式生成所选学习任务。
+/** Issue #194: M02 连续流程的显式生成步骤。
 
 Retired contract: POST /submit (submit-and-auto-generate) → 422
 legacy_assessment_submit_disabled; generation is now explicit and
