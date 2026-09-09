@@ -31,6 +31,15 @@
 - agent 是否具备可写工具不等于获准写入；角色、允许对象、检查维度、禁止动作、证据要求、停止条件和返回格式必须写进当前合同。Reviewer 的结论不是 writer 自述的替代品。
 - 上述并行不改变全局共享资源上限：除非用户另行授权，全 TCP 同时最多一个 code writer/commit owner 和一个 mutable test/database stack。需要切换 writer 时，先验证旧 writer 已停止写入，以及 pane、worktree、branch/HEAD、工作区状态和目标环境身份。
 
+## Codex 会话启动与权限核验
+
+- TCP Codex 总控与监控按用户指定的 `gpt-6-astra` + YOLO 启动；模型选择不改变各 Issue 的 controller、Goal/Plan 和 writer 归属。
+- 新建或 resume 前核对当前 CLI 帮助，显式传入其支持的 `--dangerously-bypass-approvals-and-sandbox`；不依赖默认权限或沿用上次设置。启动后分别用 `/status` 核验总控与监控的 `Full Access`、session ID、工作目录与模型；resume 保留原 ID。
+- 既有会话只在安全空闲点使用当前支持的会话权限设置（如 `/permissions`）切换；随后用 `/status` 独立核验 `Full Access`、原 session ID、工作目录与模型，保留原总控和监控会话身份。
+- `sandbox: danger-full-access` 只说明 sandbox 范围，不代表无需审批；queue 参数、命令被接受或模型自述均不能替代上述权限核验。
+- 命令审批与 App/MCP 审批独立核查；YOLO 不代表外部工具已获全局放行，未获用户授权不得更改其全局审批设置。
+- YOLO 不扩大业务授权：监控仍只读、只向本 Issue 总控路由，不接管 writer；唯一 writer/commit owner、唯一状态栈，以及业务确认、数据、部署、merge 和用户最终验收边界均不变。
+
 ## 七阶段交付与反馈回退
 
 既有历史编号保持原记录、不倒填；新 Issue 统一使用下表语义：
