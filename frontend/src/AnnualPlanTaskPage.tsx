@@ -896,35 +896,58 @@ function TaskExecutionPanel({
 
   return (
     <div className={s.taskPanel} data-testid="task-detail-panel">
-      <div className={s.taskGrid}>
-        <div className={s.taskField}>
-          <span>任务状态</span>
-          <strong>{task.status}</strong>
+      {/* Issue #176: summary + actions first; full metadata collapsible. */}
+      <div className={s.taskSummary} data-testid="task-summary">
+        <div className={s.taskSummaryMain}>
+          <div>
+            <div className={s.taskSummaryPath}>
+              {formatCapabilityPath(item)} · {item.l3_name ?? item.l3_code}
+            </div>
+            <div className={s.taskSummaryDates}>
+              <span className={`${s.status} ${statusClass(task.status)}`}>
+                {task.status}
+              </span>
+              <span>
+                实际耗时 <strong>{task.actual_hours} h</strong>
+              </span>
+              <span>优先级 {item.priority}</span>
+              {task.revised_due_date && (
+                <span>
+                  修订截止 <strong>{task.revised_due_date}</strong>
+                </span>
+              )}
+            </div>
+          </div>
+          {allowedActions.length > 0 && (
+            <div className={s.actions}>
+              {allowedActions.map((to) => (
+                <button key={to} type="button" onClick={() => beginAction(to)}>
+                  {actionLabel(task, to)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <div className={s.taskField}>
-          <span>实际耗时</span>
-          <strong>{task.actual_hours} h</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划开始日期</span>
-          <input
-            aria-label="计划开始日期"
-            type="date"
-            value={startDate}
-            onChange={(event) => setStartDate(event.target.value)}
-          />
-        </div>
-        <div className={s.taskField}>
-          <span>计划结束日期</span>
-          <input
-            aria-label="计划结束日期"
-            type="date"
-            value={endDate}
-            onChange={(event) => setEndDate(event.target.value)}
-          />
-        </div>
-        <div className={s.taskField}>
-          <span />
+        <div className={s.taskSummarySchedule}>
+          <label>
+            计划开始
+            <input
+              aria-label="计划开始日期"
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+            />
+          </label>
+          <span>~</span>
+          <label>
+            计划结束
+            <input
+              aria-label="计划结束日期"
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+            />
+          </label>
           <button
             type="button"
             onClick={() => void saveDates()}
@@ -933,108 +956,111 @@ function TaskExecutionPanel({
             保存日期
           </button>
         </div>
-        <div className={s.taskField}>
-          <span>学习材料</span>
-          <strong>{item.learning_material ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>任务内容</span>
-          <strong>{item.learning_task_content ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>预期输出</span>
-          <strong>{item.expected_output ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>优先级</span>
-          <strong>{item.priority}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>来源评估</span>
-          <strong>
-            {item.source_assessment_id != null
-              ? `评估 #${item.source_assessment_id}`
-              : '—'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划季度</span>
-          <strong>{item.plan_quarter ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>计划月份</span>
-          <strong>{item.plan_month ? `${item.plan_month} 月` : '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>来源类型</span>
-          <strong>
-            {item.planning_source_type === 'assessment_approval'
-              ? '评估认可生成'
-              : '—'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>评估版本</span>
-          <strong>{item.assessment_revision ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>纳入计划</span>
-          <strong>
-            {item.include_in_plan == null
-              ? '—'
-              : item.include_in_plan
-                ? '是'
-                : '否'}
-          </strong>
-        </div>
-        <div className={s.taskField}>
-          <span>实际开始时间</span>
-          <strong>{formatDateTime(task.actual_started_at)}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>完成时间</span>
-          <strong>{formatDateTime(task.actual_completed_at)}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>修订截止日期</span>
-          <strong>{task.revised_due_date ?? '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>延期原因</span>
-          <strong>{task.delay_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>暂停原因</span>
-          <strong>{task.pause_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>取消原因</span>
-          <strong>{task.cancel_reason || '—'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>复盘结论</span>
-          <strong>{task.review_conclusion || '待补充'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>下一步行动</span>
-          <strong>{task.next_action || '待补充'}</strong>
-        </div>
-        <div className={s.taskField}>
-          <span>完成质量</span>
-          <strong>{task.completion_quality || '待补充'}</strong>
-        </div>
       </div>
 
-      {/* Conditional actions */}
-      {allowedActions.length > 0 && (
-        <div className={s.actions}>
-          {allowedActions.map((to) => (
-            <button key={to} type="button" onClick={() => beginAction(to)}>
-              {actionLabel(task, to)}
-            </button>
-          ))}
+      <details className={s.taskDetails} data-testid="task-metadata-details">
+        <summary>查看完整资料</summary>
+        <div className={s.taskGrid}>
+          <div className={s.taskField}>
+            <span>任务状态</span>
+            <strong>{task.status}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>实际耗时</span>
+            <strong>{task.actual_hours} h</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>学习材料</span>
+            <strong>{item.learning_material ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>任务内容</span>
+            <strong>{item.learning_task_content ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>预期输出</span>
+            <strong>{item.expected_output ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>优先级</span>
+            <strong>{item.priority}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>来源评估</span>
+            <strong>
+              {item.source_assessment_id != null
+                ? `评估 #${item.source_assessment_id}`
+                : '—'}
+            </strong>
+          </div>
+          <div className={s.taskField}>
+            <span>计划季度</span>
+            <strong>{item.plan_quarter ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>计划月份</span>
+            <strong>{item.plan_month ? `${item.plan_month} 月` : '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>来源类型</span>
+            <strong>
+              {item.planning_source_type === 'assessment_approval'
+                ? '评估认可生成'
+                : '—'}
+            </strong>
+          </div>
+          <div className={s.taskField}>
+            <span>评估版本</span>
+            <strong>{item.assessment_revision ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>纳入计划</span>
+            <strong>
+              {item.include_in_plan == null
+                ? '—'
+                : item.include_in_plan
+                  ? '是'
+                  : '否'}
+            </strong>
+          </div>
+          <div className={s.taskField}>
+            <span>实际开始时间</span>
+            <strong>{formatDateTime(task.actual_started_at)}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>完成时间</span>
+            <strong>{formatDateTime(task.actual_completed_at)}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>修订截止日期</span>
+            <strong>{task.revised_due_date ?? '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>延期原因</span>
+            <strong>{task.delay_reason || '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>暂停原因</span>
+            <strong>{task.pause_reason || '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>取消原因</span>
+            <strong>{task.cancel_reason || '—'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>复盘结论</span>
+            <strong>{task.review_conclusion || '待补充'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>下一步行动</span>
+            <strong>{task.next_action || '待补充'}</strong>
+          </div>
+          <div className={s.taskField}>
+            <span>完成质量</span>
+            <strong>{task.completion_quality || '待补充'}</strong>
+          </div>
         </div>
-      )}
+      </details>
       {panelError && (
         <p className="error" role="alert">
           {panelError}
